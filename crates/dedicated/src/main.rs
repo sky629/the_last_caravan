@@ -4,6 +4,8 @@
 //!
 //! - `--debug-net`: 주고받는 모든 메시지를 읽을 수 있는 형태로 출력합니다. 스냅샷은 요약해서 출력합니다.
 //! - `--waves 100,200,300`: 무리마다 몬스터의 수를 바꿉니다. 부하를 시험할 때 씁니다.
+//! - `--stress`: 마차, 감시탑, 플레이어를 죽지 않게 하고 몬스터를 Tick마다 한 마리씩 등장시킵니다.
+//!   기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로, 몬스터 수백 마리의 부하는 이 옵션으로 만듭니다.
 //!
 //! 1초에 한 줄씩 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 기록합니다.
 
@@ -22,7 +24,7 @@ const DEFAULT_ADDR: &str = "127.0.0.1:7777";
 /// Tick 사이에도 이 간격으로 접속 방식을 확인합니다. 입장 요청에 답하는 지연의 상한입니다.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const USAGE: &str =
-    "usage: caravan-dedicated [--addr HOST:PORT] [--debug-net] [--waves SIZE,SIZE,...]";
+    "usage: caravan-dedicated [--addr HOST:PORT] [--debug-net] [--waves SIZE,SIZE,...] [--stress]";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
@@ -30,6 +32,7 @@ struct Options {
     debug_net: bool,
     /// 무리마다 몬스터의 수입니다. 없으면 기본 수치를 씁니다.
     waves: Option<Vec<u32>>,
+    stress: bool,
 }
 
 fn parse_args(args: &[String]) -> Result<Options, String> {
@@ -37,6 +40,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         addr: DEFAULT_ADDR.to_string(),
         debug_net: false,
         waves: None,
+        stress: false,
     };
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -46,6 +50,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                 None => return Err("--addr needs a value such as 127.0.0.1:7777".to_string()),
             },
             "--debug-net" => options.debug_net = true,
+            "--stress" => options.stress = true,
             "--waves" => match rest.next() {
                 Some(value) => options.waves = Some(parse_waves(value)?),
                 None => return Err("--waves needs a list such as 100,200,300".to_string()),
@@ -84,6 +89,12 @@ fn tuning_from(options: &Options) -> Tuning {
     let mut tuning = Tuning::default();
     if let Some(sizes) = &options.waves {
         tuning.waves.sizes = sizes.clone();
+    }
+    if options.stress {
+        tuning.wagon.max_hp = u32::MAX;
+        tuning.structures.watchtower.max_hp = u32::MAX;
+        tuning.player.max_hp = u32::MAX;
+        tuning.waves.spawn_interval_secs = tuning.dt();
     }
     tuning
 }
@@ -200,7 +211,8 @@ mod tests {
             Ok(Options {
                 addr: "127.0.0.1:7777".to_string(),
                 debug_net: false,
-                waves: None
+                waves: None,
+                stress: false
             })
         );
         assert_eq!(
@@ -208,7 +220,8 @@ mod tests {
             Ok(Options {
                 addr: "0.0.0.0:9000".to_string(),
                 debug_net: true,
-                waves: None
+                waves: None,
+                stress: false
             })
         );
     }
@@ -225,6 +238,24 @@ mod tests {
         );
         assert_eq!(tuning_from(&parse_args(&[]).unwrap()), Tuning::default());
         assert_eq!(parse_waves(" 7 , 8 "), Ok(vec![7, 8]), "spaces are allowed");
+    }
+
+    #[test]
+    fn stress_makes_everything_unkillable_and_spawns_a_monster_every_tick() {
+        let tuning = tuning_from(&parse_args(&args(&["--stress"])).unwrap());
+        assert_eq!(
+            tuning.validate(),
+            Ok(()),
+            "stress numbers keep the rules' premises"
+        );
+        assert_eq!(tuning.wagon.max_hp, u32::MAX);
+        assert_eq!(tuning.player.max_hp, u32::MAX);
+        assert_eq!(tuning.ticks(tuning.waves.spawn_interval_secs), 1);
+        assert_eq!(
+            tuning.waves.sizes,
+            Tuning::default().waves.sizes,
+            "wave sizes stay"
+        );
     }
 
     #[test]
