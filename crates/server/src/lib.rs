@@ -4,10 +4,11 @@
 //! 호출하는 쪽이 접속 방식과 현재 시각을 넘기고 `GameServer::pump`를 반복해서 호출합니다.
 //! 그래서 전용 서버 실행 파일과 테스트가 같은 코드를 실행하고, 다른 게임 프로세스에 내장할 수도 있습니다.
 //!
-//! 읽는 순서: `room`(방 하나), `hub`(접속과 방), `clock`(Tick 일정), 이 파일.
+//! 읽는 순서: `input`(플레이어 한 명의 입력), `room`(방 하나), `hub`(접속과 방), `clock`(Tick 일정), 이 파일.
 
 mod clock;
 mod hub;
+mod input;
 mod room;
 
 use std::fmt;

@@ -38,6 +38,10 @@ pub struct ServerLimits {
     /// 입장한 접속이 아무 메시지도 보내지 않고 지날 수 있는 시간입니다. 넘으면 접속을 닫고 플레이어를 방에서 뺍니다.
     /// 클라이언트는 Tick마다 입력을 보내므로 살아 있는 클라이언트는 닿지 않습니다. 소켓은 열려 있지만 멈춘 클라이언트가 자리를 차지하지 못하게 합니다.
     pub idle_timeout: Duration,
+    /// 입력 메시지가 이 Tick 수만큼 오지 않으면 그 플레이어를 아무것도 누르지 않은 상태로 움직입니다.
+    /// 그 전까지는 마지막 입력을 다시 씁니다. 입력이 한두 Tick 늦는 것은 버티고, 백그라운드로 밀려서 멈춘 브라우저 탭은 멈추게 합니다.
+    /// 소켓이 열려 있는 한 접속은 `idle_timeout`까지 유지되므로, 이 값은 접속이 아니라 캐릭터의 움직임만 다룹니다.
+    pub input_stale_ticks: u32,
 }
 
 impl Default for ServerLimits {
@@ -54,6 +58,7 @@ impl Default for ServerLimits {
             events_per_pump: 512,
             join_deadline: Duration::from_secs(5),
             idle_timeout: Duration::from_secs(30),
+            input_stale_ticks: 10,
         }
     }
 }

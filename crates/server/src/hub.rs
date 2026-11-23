@@ -39,6 +39,7 @@ pub(crate) struct Hub {
     tuning: Tuning,
     join_deadline: Duration,
     idle_timeout: Duration,
+    input_stale_ticks: u32,
     links: BTreeMap<LinkId, LinkState>,
     rooms: BTreeMap<RoomCode, Room>,
 }
@@ -49,6 +50,7 @@ impl Hub {
             tuning,
             join_deadline: limits.join_deadline,
             idle_timeout: limits.idle_timeout,
+            input_stale_ticks: limits.input_stale_ticks,
             links: BTreeMap::new(),
             rooms: BTreeMap::new(),
         }
@@ -106,9 +108,19 @@ impl Hub {
             (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Join { version, room }) => {
                 self.handle_join(link, version, &room, now)
             }
-            // 규칙이 아직 플레이어의 입력을 사용하지 않으므로, 입력은 접속이 살아 있다는 표시로만 씁니다.
-            (Some(LinkState::InRoom { deadline, .. }), ClientMsg::Input(_)) => {
+            // 입력은 접속이 살아 있다는 표시이기도 하므로, 버려지는 입력도 기한을 미룹니다.
+            (
+                Some(LinkState::InRoom {
+                    room,
+                    player,
+                    deadline,
+                }),
+                ClientMsg::Input(input),
+            ) => {
                 *deadline = now + self.idle_timeout;
+                if let Some(room) = self.rooms.get_mut(room) {
+                    room.submit_input(*player, &input);
+                }
                 Vec::new()
             }
             // 입장하기 전의 입력과 두 번째 `Join`은 약속 위반입니다.
@@ -159,11 +171,11 @@ impl Hub {
             });
         }
         let code = RoomCode::parse(raw_room).map_err(|_| RejectReason::BadRoomCode)?;
-        let tuning = &self.tuning;
+        let (tuning, stale_ticks) = (&self.tuning, self.input_stale_ticks);
         let room = self
             .rooms
             .entry(code.clone())
-            .or_insert_with(|| Room::new(tuning.clone()));
+            .or_insert_with(|| Room::new(tuning.clone(), stale_ticks));
         let (player, welcome) = room
             .admit(link)
             .map_err(|JoinError::RoomFull { capacity }| RejectReason::RoomFull {

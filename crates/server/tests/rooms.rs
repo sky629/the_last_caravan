@@ -1,113 +1,20 @@
 //! 방의 입장, 퇴장, 정원 초과, Tick 일정을 공개 API(`GameServer`)로만 확인합니다.
 //! 프로세스 내부 전달과 가짜 시각을 사용하므로 소켓, 스레드, 대기가 없습니다.
 
-use std::time::{Duration, Instant};
+mod common;
+
+use std::time::Duration;
 
 use caravan_protocol::{
-    ClientEvent, ClientMsg, ClientTransport, InputMsg, LoopbackClient, LoopbackConnector,
-    PROTOCOL_VERSION, RejectReason, ServerLimits, ServerMsg, Snapshot, loopback,
+    ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
+    ServerLimits, ServerMsg, WireLife, WirePhase,
 };
 use caravan_rules::{PlayerId, Tuning};
-use caravan_server::{GameServer, Notice};
-
-struct Rig {
-    server: GameServer,
-    connector: LoopbackConnector,
-    now: Instant,
-    period: Duration,
-}
-
-fn rig() -> Rig {
-    rig_with(Tuning::default())
-}
-
-fn rig_with(tuning: Tuning) -> Rig {
-    rig_with_limits(tuning, ServerLimits::default())
-}
-
-fn rig_with_limits(tuning: Tuning, limits: ServerLimits) -> Rig {
-    let (transport, connector) = loopback();
-    let now = Instant::now();
-    let period = Duration::from_secs(1) / tuning.tick_hz;
-    Rig {
-        server: GameServer::new(Box::new(transport), tuning, limits, now),
-        connector,
-        now,
-        period,
-    }
-}
-
-impl Rig {
-    /// 시각을 바꾸지 않고 서버를 한 번 진행합니다. 입장과 퇴장은 처리되지만 Tick은 실행되지 않습니다.
-    fn pump(&mut self) -> Vec<Notice> {
-        self.server.pump(self.now)
-    }
-
-    /// Tick 간격만큼씩 `ticks`번 시각을 옮기면서 서버를 진행합니다.
-    fn run_ticks(&mut self, ticks: u32) -> Vec<Notice> {
-        let mut notices = Vec::new();
-        for _ in 0..ticks {
-            self.now += self.period;
-            notices.extend(self.server.pump(self.now));
-        }
-        notices
-    }
-
-    /// 접속하고 `Join`을 보낸 뒤, 서버가 보낸 첫 답을 돌려줍니다.
-    fn join(&mut self, room: &str) -> (LoopbackClient, ServerMsg) {
-        self.join_with_version(room, PROTOCOL_VERSION)
-    }
-
-    fn join_with_version(&mut self, room: &str, version: u32) -> (LoopbackClient, ServerMsg) {
-        let mut client = self.connector.connect();
-        assert!(matches!(client.poll(), Some(ClientEvent::Connected)));
-        client.send(&ClientMsg::Join {
-            version,
-            room: room.to_string(),
-        });
-        self.pump();
-        match client.poll() {
-            Some(ClientEvent::Message(answer)) => (client, answer),
-            other => panic!("expected an answer to Join, got {other:?}"),
-        }
-    }
-
-    fn join_ok(&mut self, room: &str) -> (LoopbackClient, u32) {
-        match self.join(room) {
-            (client, ServerMsg::Welcome(welcome)) => (client, welcome.you),
-            (_, other) => panic!("expected Welcome, got {other:?}"),
-        }
-    }
-}
-
-fn input(seq: u32) -> ClientMsg {
-    ClientMsg::Input(InputMsg {
-        seq,
-        ..InputMsg::default()
-    })
-}
-
-fn drain(client: &mut LoopbackClient) -> Vec<ClientEvent> {
-    std::iter::from_fn(|| client.poll()).collect()
-}
-
-fn snapshots(client: &mut LoopbackClient) -> Vec<Snapshot> {
-    drain(client)
-        .into_iter()
-        .filter_map(|event| match event {
-            ClientEvent::Message(ServerMsg::Snapshot(snapshot)) => Some(snapshot),
-            _ => None,
-        })
-        .collect()
-}
-
-fn player_ids(snapshot: &Snapshot) -> Vec<u32> {
-    snapshot.players.iter().map(|player| player.id).collect()
-}
-
-fn ticks(snapshots: &[Snapshot]) -> Vec<u64> {
-    snapshots.iter().map(|s| s.tick).collect()
-}
+use caravan_server::Notice;
+use common::{
+    assert_near, drain, input, input_with, last_snapshot, player, player_ids, position, rig,
+    rig_with, rig_with_limits, snapshots, ticks,
+};
 
 #[test]
 fn the_first_joiner_is_welcomed_and_then_gets_one_snapshot_per_tick() {
@@ -466,5 +373,139 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
         player_ids(&last),
         [1],
         "the silent player is gone from the room"
+    );
+}
+
+#[test]
+fn the_welcome_reports_the_players_id_the_capacity_and_the_tick_rate_from_the_tuning() {
+    let mut rig = rig_with(Tuning {
+        max_players: 3,
+        tick_hz: 10,
+        ..Tuning::default()
+    });
+    let (_a, _) = rig.join("test");
+    let (_b, answer) = rig.join("test");
+    let ServerMsg::Welcome(welcome) = answer else {
+        panic!("expected Welcome, got {answer:?}");
+    };
+    assert_eq!((welcome.you, welcome.capacity, welcome.tick_hz), (2, 3, 10));
+    assert_eq!(welcome.world.towers.len(), 1);
+}
+
+#[test]
+fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
+    let mut rig = rig();
+    let (mut a, _) = rig.join_ok("test");
+    // 첫 무리는 3초(60 Tick) 뒤에 나타나므로 3.1초를 기다리면 싸우는 중입니다.
+    rig.run_ticks(62);
+    let fighting = last_snapshot(&mut a);
+    assert_eq!(fighting.phase, WirePhase::Fighting { wave: 1 });
+
+    let (mut b, b_id) = rig.join_ok("test");
+    rig.run_ticks(1);
+    let first_seen = last_snapshot(&mut b);
+    assert_eq!(first_seen.expedition, 1, "no new expedition starts");
+    assert_eq!(first_seen.phase, WirePhase::Fighting { wave: 1 });
+    assert!(
+        !first_seen.monsters.is_empty(),
+        "the newcomer sees the monsters already on the field"
+    );
+    assert_eq!(
+        player(&first_seen, b_id).life,
+        WireLife::Alive {
+            hp: 100,
+            max_hp: 100,
+            interaction: None
+        }
+    );
+}
+
+#[test]
+fn a_second_join_on_one_link_closes_it_and_removes_its_player() {
+    let mut rig = rig();
+    let (mut a, _) = rig.join_ok("test");
+    let (mut b, _) = rig.join_ok("test");
+
+    a.send(&ClientMsg::Join {
+        version: PROTOCOL_VERSION,
+        room: "elsewhere".to_string(),
+    });
+    let notices = rig.pump();
+    assert!(
+        matches!(drain(&mut a)[..], [ClientEvent::Disconnected { .. }]),
+        "the link that broke the protocol is closed"
+    );
+    assert!(
+        matches!(notices[..], [Notice::Left { members: 1, .. }]),
+        "and its player leaves the room: {notices:?}"
+    );
+
+    rig.run_ticks(1);
+    assert_eq!(player_ids(&last_snapshot(&mut b)), [2]);
+}
+
+#[test]
+fn every_snapshot_carries_a_tick_larger_than_the_one_before() {
+    let mut rig = rig();
+    let (mut a, _) = rig.join_ok("test");
+    let mut seen = Vec::new();
+    let mut visitor = None;
+    for step in 0..60 {
+        // 중간에 사람이 들어오고 나가도 방의 Tick은 끊기지 않습니다.
+        if step == 20 {
+            visitor = Some(rig.join_ok("test"));
+        }
+        if step == 40 {
+            visitor = None;
+        }
+        rig.run_ticks(1);
+        seen.extend(snapshots(&mut a));
+    }
+    drop(visitor);
+    assert_eq!(ticks(&seen), (1..=60).collect::<Vec<u64>>());
+}
+
+#[test]
+fn a_players_movement_in_one_room_is_not_visible_in_another_room() {
+    let mut rig = rig();
+    let (mut red, red_id) = rig.join_ok("red");
+    let (mut blue, blue_id) = rig.join_ok("blue");
+    assert_eq!(red_id, blue_id, "both rooms call their first player 1");
+
+    red.send(&input_with(1, (1.0, 0.0), false));
+    rig.run_ticks(5);
+
+    assert_near(
+        position(&last_snapshot(&mut red), red_id).x,
+        13.0,
+        "the red player moved",
+    );
+    assert_near(
+        position(&last_snapshot(&mut blue), blue_id).x,
+        12.0,
+        "the blue player did not move",
+    );
+}
+
+#[test]
+fn after_a_player_leaves_the_room_keeps_running_for_the_one_who_stays() {
+    let mut rig = rig();
+    let (a, a_id) = rig.join_ok("test");
+    let (mut b, b_id) = rig.join_ok("test");
+    rig.run_ticks(2);
+    drop(a);
+
+    b.send(&input_with(1, (0.0, -1.0), false));
+    rig.run_ticks(3);
+    let snapshot = last_snapshot(&mut b);
+    assert_eq!(snapshot.tick, 5, "the room never stopped");
+    assert!(
+        snapshot.players.iter().all(|p| p.id != a_id),
+        "the leaver is gone"
+    );
+    assert_near(
+        position(&snapshot, b_id).y,
+        14.5 - 0.6,
+        "the one who stays still answers to input",
     );
 }
