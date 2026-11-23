@@ -8,7 +8,7 @@ use crate::monster::{self, Monster, PlayerFields};
 use crate::nav::{FlowField, NavGrid};
 use crate::player::{self, Interaction, Player};
 use crate::spatial::MonsterGrid;
-use crate::structures::Wagon;
+use crate::structures::{self, Tower, Wagon};
 use crate::tuning::{MapSpec, Tuning};
 use crate::world::{Ctx, Statics, World};
 
@@ -51,16 +51,25 @@ impl Sim {
         );
         let wagon_goals = nav.cells_near(map.wagon, tuning.monsters.longest_engage_distance());
         let wagon_field = FlowField::toward(&nav, &wagon_goals);
+        let towers = structures::build_towers(&tuning);
+        let tower_fields = towers
+            .values()
+            .map(|tower| {
+                let goals = nav.cells_near(tower.rect, tuning.monsters.longest_engage_distance());
+                (tower.id, FlowField::toward(&nav, &goals))
+            })
+            .collect();
 
         Sim {
             expedition: 1,
             phase: expedition::opening_phase(&tuning),
-            world: World::new(Wagon::new(&tuning)),
+            world: World::new(Wagon::new(&tuning), towers),
             statics: Statics {
                 bounds,
                 solids,
                 nav,
                 wagon_field,
+                tower_fields,
             },
             monster_grid: MonsterGrid::new(bounds, map.spatial_cell),
             player_fields: PlayerFields::new(),
@@ -120,6 +129,7 @@ impl Sim {
         player::update_interactions(&mut self.world, &ctx);
         player::move_players(&mut self.world, &ctx);
         player::player_attacks(&mut self.world, &ctx, &mut hits);
+        structures::towers_fire(&mut self.world, &ctx, &mut hits);
         monster::monsters_act(&mut self.world, &ctx, &mut self.player_fields, &mut hits);
         self.world.apply_hits(&hits, &self.tuning);
         player::advance_life_timers(&mut self.world, &self.tuning);
@@ -133,6 +143,7 @@ impl Sim {
         self.phase = expedition::opening_phase(&self.tuning);
         self.world.monsters.clear();
         self.world.wagon = Wagon::new(&self.tuning);
+        self.world.towers = structures::build_towers(&self.tuning);
         for (slot, player) in self.world.players.values_mut().enumerate() {
             player.reset(spawn_point(&self.tuning.map, slot), &self.tuning);
         }
@@ -177,6 +188,11 @@ impl Sim {
     /// 번호가 작은 몬스터부터 차례로 돌려줍니다.
     pub fn monsters(&self) -> impl Iterator<Item = &Monster> {
         self.world.monsters.iter()
+    }
+
+    /// 번호가 작은 시설부터 차례로 돌려줍니다.
+    pub fn towers(&self) -> impl Iterator<Item = &Tower> {
+        self.world.towers.values()
     }
 
     pub fn wagon(&self) -> &Wagon {

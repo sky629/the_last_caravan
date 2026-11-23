@@ -9,6 +9,7 @@ use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
 use crate::player::{Life, Player};
 use crate::sim::Sim;
+use crate::structures::{Tower, TowerState};
 use crate::tuning::{MapSpec, StructurePlacement, Tuning};
 
 pub(crate) struct Scenario {
@@ -77,6 +78,25 @@ impl Scenario {
     /// 지금 있는 몬스터를 모두 한꺼번에 없앱니다. 플레이어가 무리를 처치한 상황을 만들 때 씁니다.
     pub fn clear_monsters(&mut self) {
         self.sim.world_mut().monsters.clear();
+    }
+
+    /// 맵에 처음 놓인 감시탑입니다.
+    pub fn tower(&self) -> &Tower {
+        self.sim.towers().next().expect("the map has a tower")
+    }
+
+    /// 감시탑의 HP를 바꿉니다. 쏘는 동안의 쿨다운과 마지막 사격은 그대로 둡니다.
+    pub fn set_tower_hp(&mut self, hp: u32) {
+        let tower = self
+            .sim
+            .world_mut()
+            .towers
+            .values_mut()
+            .next()
+            .expect("the map has a tower");
+        if let TowerState::Standing { hp: current, .. } = &mut tower.state {
+            *current = hp;
+        }
     }
 
     pub fn set_wagon_hp(&mut self, hp: u32) {

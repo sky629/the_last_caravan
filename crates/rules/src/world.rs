@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use crate::collision::Body;
-use crate::ids::{MonsterId, PlayerId};
+use crate::ids::{MonsterId, PlayerId, TowerId};
 use crate::input::PlayerInputs;
 use crate::kind::MonsterKind;
 use crate::math::{Rect, Vec2};
@@ -19,7 +19,7 @@ use crate::monster::Monster;
 use crate::nav::{FlowField, NavGrid};
 use crate::player::Player;
 use crate::spatial::MonsterGrid;
-use crate::structures::Wagon;
+use crate::structures::{Tower, Wagon};
 use crate::tuning::Tuning;
 
 /// 원정 동안 변하는 상태 전체입니다. `Sim`이 하나만 가집니다.
@@ -29,15 +29,18 @@ pub(crate) struct World {
     /// 번호가 작은 몬스터가 앞에 옵니다. 몬스터는 번호 순서로 추가되고 순서를 바꾸지 않고 제거하므로 이 순서가 유지됩니다.
     /// 수백 마리를 차례로 처리하기에 가장 단순하고 빠른 연속 배열입니다.
     pub monsters: Vec<Monster>,
+    /// 시설은 번호를 키로 하는 모음입니다. 1단계에는 감시탑 하나만 있습니다.
+    pub towers: BTreeMap<TowerId, Tower>,
     pub wagon: Wagon,
     next_monster: u32,
 }
 
 impl World {
-    pub fn new(wagon: Wagon) -> World {
+    pub fn new(wagon: Wagon, towers: BTreeMap<TowerId, Tower>) -> World {
         World {
             players: BTreeMap::new(),
             monsters: Vec::new(),
+            towers,
             wagon,
             next_monster: 1,
         }
@@ -58,8 +61,9 @@ pub(crate) struct Statics {
     /// 장애물, 마차, 시설입니다. 파괴된 시설도 잔해로 남아서 길을 막습니다.
     pub solids: Vec<Rect>,
     pub nav: NavGrid,
-    /// 마차는 움직이지 않으므로 마차를 향하는 흐름장은 한 번만 만듭니다.
+    /// 마차와 시설은 움직이지 않으므로 이들을 향하는 흐름장은 한 번만 만듭니다.
     pub wagon_field: FlowField,
+    pub tower_fields: BTreeMap<TowerId, FlowField>,
 }
 
 /// 한 Tick 동안 규칙이 읽기만 하는 값을 묶은 것입니다.
@@ -76,6 +80,7 @@ pub(crate) struct Ctx<'a> {
 pub(crate) enum Target {
     Player(PlayerId),
     Monster(MonsterId),
+    Tower(TowerId),
     Wagon,
 }
 
@@ -102,6 +107,11 @@ impl World {
                         monster.hp = monster.hp.saturating_sub(hit.amount);
                     }
                 }
+                Target::Tower(id) => {
+                    if let Some(tower) = self.towers.get_mut(&id) {
+                        tower.take_damage(hit.amount);
+                    }
+                }
                 Target::Wagon => {
                     self.wagon.hp = self.wagon.hp.saturating_sub(hit.amount);
                 }
@@ -126,6 +136,7 @@ impl World {
                     radius: t.monsters.get(monster.kind).radius,
                 })
             }
+            Target::Tower(id) => self.towers.get(&id).map(|tower| Body::Box(tower.rect)),
             Target::Wagon => Some(Body::Box(self.wagon.rect)),
         }
     }

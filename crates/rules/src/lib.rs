@@ -36,7 +36,7 @@ pub use math::{Rect, Vec2};
 pub use monster::Monster;
 pub use player::{Interaction, Life, Player};
 pub use sim::{JoinError, Sim};
-pub use structures::Wagon;
+pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
     MapSpec, MonsterTable, MonsterTuning, PlayerTuning, ReviveTuning, StructurePlacement,
     StructureTable, StructureTuning, Tuning, WagonTuning, WaveTuning,

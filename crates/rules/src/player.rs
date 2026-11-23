@@ -6,6 +6,7 @@ use crate::collision::{Body, move_circle};
 use crate::ids::{PlayerId, Team, TowerId};
 use crate::math::Vec2;
 use crate::stats::UnitStats;
+use crate::structures::TowerState;
 use crate::tuning::Tuning;
 use crate::world::{Ctx, Hit, Target, World};
 
@@ -157,12 +158,15 @@ impl Player {
     }
 }
 
-/// 상호작용 키(F)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활을 계속하거나, 새로 시작하거나, 취소합니다.
+/// 상호작용 키(F)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활이나 수리를 계속하거나, 새로 시작하거나, 취소합니다.
 ///
 /// 진행 중인 부활은 키를 누르고 있고, 대상이 여전히 쓰러진 동료이고, 거리가 범위 안인 동안만 이어집니다.
 /// 공격받는 것은 조건이 아닙니다 (D38). 조건이 하나라도 깨지면 `Interaction` 값을 버리므로 진행도가 처음으로 돌아갑니다 (D22).
 /// 쓰러진 플레이어 한 명은 한 명만 부활시킬 수 있습니다. 이미 진행 중인 부활이 먼저 대상을 차지하고,
 /// 새로 시작하려는 플레이어는 번호 순서로 남은 대상을 차지합니다.
+///
+/// 수리는 진행도가 없으므로 Tick마다 대상을 다시 고릅니다. 그래서 수리하던 플레이어 곁의 동료가 쓰러지면 곧바로 부활로 바뀝니다 (D48).
+/// 수리는 정해진 간격마다 감시탑의 HP를 회복시키고, 멈춰도 이미 회복한 HP는 그대로입니다. 여러 명이 수리하면 회복량이 더해집니다.
 pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     let holding = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.interact);
@@ -170,6 +174,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     // 읽기: 이번 Tick에 플레이어마다 가지게 될 상호작용을 정합니다.
     let mut next: BTreeMap<PlayerId, Option<Interaction>> = BTreeMap::new();
     let mut claimed: BTreeSet<PlayerId> = BTreeSet::new();
+    let mut repairs: Vec<(TowerId, u32)> = Vec::new();
     for player in world.players.values() {
         if let Some(Interaction::Reviving {
             target,
@@ -192,13 +197,20 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
         if !player.is_alive() || next.contains_key(&player.id) {
             continue;
         }
-        let chosen = if holding(player.id) {
+        let mut chosen = if holding(player.id) {
             choose_interaction(world, player, &claimed, t)
         } else {
             None
         };
         if let Some(Interaction::Reviving { target, .. }) = &chosen {
             claimed.insert(*target);
+        }
+        if let Some(Interaction::Repairing { tower, .. }) = chosen {
+            let (interaction, repaired) = count_repair_tick(world, player.interaction(), tower, t);
+            if let Some(amount) = repaired {
+                repairs.push((tower, amount));
+            }
+            chosen = Some(interaction);
         }
         next.insert(player.id, chosen);
     }
@@ -215,10 +227,17 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
             *slot = interaction;
         }
     }
+    for (id, amount) in repairs {
+        if let Some(tower) = world.towers.get_mut(&id) {
+            let max_hp = t.structures.get(tower.kind).max_hp;
+            tower.repair(amount, max_hp);
+        }
+    }
 }
 
-/// 새로 시작할 상호작용을 고릅니다. 범위 안의 쓰러진 동료가 있으면 가장 가까운 동료를 부활시킵니다.
-/// 이미 다른 플레이어가 부활시키는 동료(`claimed`)는 고르지 않습니다.
+/// 새로 시작할 상호작용을 고릅니다. 범위 안의 쓰러진 동료가 있으면 가장 가까운 동료를 부활시키고,
+/// 없으면 범위 안에서 손상된 가장 가까운 감시탑을 수리합니다 (D48).
+/// 이미 다른 플레이어가 부활시키는 동료(`claimed`)와, 파괴된 감시탑(D49)과, HP가 가득 찬 감시탑은 고르지 않습니다.
 fn choose_interaction(
     world: &World,
     me: &Player,
@@ -238,10 +257,68 @@ fn choose_interaction(
             nearest = Some((distance, other.id));
         }
     }
-    nearest.map(|(_, target)| Interaction::Reviving {
-        target,
-        elapsed_ticks: 1,
+    if let Some((_, target)) = nearest {
+        return Some(Interaction::Reviving {
+            target,
+            elapsed_ticks: 1,
+        });
+    }
+
+    let mut nearest_tower: Option<(f32, TowerId)> = None;
+    for tower in world.towers.values() {
+        let TowerState::Standing { hp, .. } = tower.state else {
+            continue;
+        };
+        let spec = t.structures.get(tower.kind);
+        if hp >= spec.max_hp || !me.team.is_allied_with(tower.team) {
+            continue;
+        }
+        let gap = Body::Box(tower.rect).gap_from(me.pos, t.player.radius);
+        if gap <= spec.repair_range && nearest_tower.is_none_or(|(best, _)| gap < best) {
+            nearest_tower = Some((gap, tower.id));
+        }
+    }
+    nearest_tower.map(|(_, tower)| Interaction::Repairing {
+        tower,
+        since_pulse_ticks: 0,
     })
+}
+
+/// 수리하는 한 Tick을 셉니다. 같은 감시탑을 계속 수리하면 지난 Tick에서 이어서 세고, 새로 시작하면 1부터 셉니다.
+/// 정해진 간격이 차면 카운터를 0으로 돌리고 이번에 회복시킬 HP를 함께 돌려줍니다.
+fn count_repair_tick(
+    world: &World,
+    previous: Option<&Interaction>,
+    tower: TowerId,
+    t: &Tuning,
+) -> (Interaction, Option<u32>) {
+    let counted = match previous {
+        Some(Interaction::Repairing {
+            tower: before,
+            since_pulse_ticks,
+        }) if *before == tower => since_pulse_ticks + 1,
+        _ => 1,
+    };
+    let spec = world
+        .towers
+        .get(&tower)
+        .map(|found| t.structures.get(found.kind));
+    match spec {
+        Some(spec) if counted >= t.ticks(spec.repair_pulse_secs) => (
+            Interaction::Repairing {
+                tower,
+                since_pulse_ticks: 0,
+            },
+            Some(spec.repair_hp_per_pulse),
+        ),
+        _ => (
+            Interaction::Repairing {
+                tower,
+                since_pulse_ticks: counted,
+            },
+            None,
+        ),
+    }
 }
 
 fn revive_still_valid(world: &World, reviver: &Player, target: PlayerId, t: &Tuning) -> bool {
