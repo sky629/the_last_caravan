@@ -318,36 +318,3 @@ fn tick_time_grows_in_proportion_to_the_monster_count() {
         println!("{count} monsters: average {average:?} per tick, slowest {slowest:?}");
     }
 }
-
-#[test]
-fn zz_probe_queue() {
-    let mut s = Scenario::open_field();
-    for row in 0..10 {
-        for column in 0..10 {
-            s.monster_at(6.0 + 0.5 * column as f32, 9.0 + 0.5 * row as f32);
-        }
-    }
-    for round in 0..6 {
-        s.run_ticks(s.ticks(5.0));
-        let mut d: Vec<f32> = s
-            .sim
-            .monsters()
-            .map(|m| s.sim.wagon().rect.distance_to(m.pos))
-            .collect();
-        d.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let (mut minx, mut maxx, mut miny, mut maxy) = (99.0f32, -99.0f32, 99.0f32, -99.0f32);
-        for m in s.sim.monsters() {
-            minx = minx.min(m.pos.x);
-            maxx = maxx.max(m.pos.x);
-            miny = miny.min(m.pos.y);
-            maxy = maxy.max(m.pos.y);
-        }
-        eprintln!(
-            "Q round={round} n={} d_min={:.1} d_med={:.1} d_max={:.1} bbox=({minx:.1},{miny:.1})-({maxx:.1},{maxy:.1})",
-            d.len(),
-            d[0],
-            d[d.len() / 2],
-            d[d.len() - 1]
-        );
-    }
-}

@@ -60,8 +60,3 @@ fn durations_are_written_in_seconds_and_become_whole_ticks_in_one_place() {
     };
     assert_eq!(slow.ticks(8.0), 80);
 }
-
-#[test]
-fn the_room_capacity_comes_from_the_tuning() {
-    assert_eq!(Tuning::default().max_players, 4);
-}

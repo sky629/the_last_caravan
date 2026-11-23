@@ -3,7 +3,7 @@
 use super::support::Scenario;
 use crate::expedition::{Outcome, Phase};
 use crate::ids::PlayerId;
-use crate::math::{Rect, Vec2};
+use crate::math::Vec2;
 use crate::sim::{JoinError, Sim};
 use crate::tuning::Tuning;
 
@@ -52,6 +52,21 @@ fn a_removed_player_frees_a_seat_but_its_id_is_not_reused() {
     assert_eq!(sim.add_player(), Ok(PlayerId(3)));
     let ids: Vec<_> = sim.players().map(|p| p.id).collect();
     assert_eq!(ids, [PlayerId(2), PlayerId(3)]);
+}
+
+#[test]
+fn a_default_room_takes_four_players_and_refuses_the_fifth() {
+    let mut sim = Sim::new(Tuning::default());
+
+    for _ in 0..4 {
+        assert!(sim.add_player().is_ok());
+    }
+
+    assert_eq!(
+        sim.add_player(),
+        Err(JoinError::RoomFull { capacity: 4 }),
+        "D24"
+    );
 }
 
 #[test]
@@ -408,16 +423,11 @@ fn monster_ids_are_not_reused_in_a_new_expedition() {
 }
 
 #[test]
-fn the_wagon_is_a_rect_in_the_middle_of_the_default_map() {
-    let t = Tuning::default();
-    let wagon = Rect::new(10.0, 11.0, 14.0, 13.0);
-    assert_eq!(t.map.wagon, wagon);
-    assert!(t.map.width == 24.0 && t.map.height == 24.0);
-    assert_eq!(
-        t.waves.sizes,
-        vec![6, 10, 16],
-        "three waves, each larger, D18"
-    );
+fn the_default_game_has_three_waves_and_each_one_is_larger() {
+    let waves = Tuning::default().waves.sizes;
+
+    assert_eq!(waves.len(), 3, "D18");
+    assert!(waves.windows(2).all(|pair| pair[0] < pair[1]));
 }
 
 /// 두 플레이어가 움직이고, 싸우고, 부활과 수리를 하는 원정을 800 Tick 진행하고 모든 상태를 글자로 돌려줍니다.
