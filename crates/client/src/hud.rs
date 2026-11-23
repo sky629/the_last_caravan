@@ -239,7 +239,7 @@ pub fn setup(mut commands: Commands) {
 }
 
 /// 입장한 직후 한 번, 감시탑과 동료의 막대를 만듭니다.
-/// 막대의 수는 `Welcome`이 알려 준 세계의 감시탑 수와 방의 정원에서 정합니다.
+/// 막대의 수는 `Welcome`이 알려 준 세계의 감시탑 수와 방의 정원에서 정합니다. `Session`이 입장할 때 이 값들의 상한을 확인했으므로 그대로 믿습니다.
 pub fn build_roster(
     mut commands: Commands,
     session: Res<ClientSession>,

@@ -60,7 +60,11 @@ fn open(launch: Result<LaunchOptions, LaunchError>) -> (Session, Option<Net>) {
 }
 
 /// 접속 방식에 도착한 이벤트를 모두 `Session`에 넘기고, 서버에 보낼 답이 있으면 보냅니다.
-pub fn pump_network(net: Option<NonSendMut<Net>>, mut session: ResMut<ClientSession>) {
+pub fn pump_network(
+    mut commands: Commands,
+    net: Option<NonSendMut<Net>>,
+    mut session: ResMut<ClientSession>,
+) {
     let Some(mut net) = net else {
         return;
     };
@@ -79,6 +83,12 @@ pub fn pump_network(net: Option<NonSendMut<Net>>, mut session: ResMut<ClientSess
         if !is_snapshot {
             info!("{}", session.0.status_text());
         }
+    }
+    // 입장이 끝났거나 거절되었거나 믿을 수 없는 서버이면 접속 방식을 버립니다. 버리면 접속이 닫힙니다.
+    if session.0.is_over() {
+        commands.queue(|world: &mut World| {
+            world.remove_non_send::<Net>();
+        });
     }
 }
 

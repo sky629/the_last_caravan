@@ -6,6 +6,12 @@
 use caravan_protocol::{ClientEvent, ClientMsg, ClientTransport, decode_server, encode_client};
 use ewebsock::{Options, WsEvent, WsMessage, WsReceiver, WsSender};
 
+/// 서버가 보내는 메시지 하나의 최대 크기(바이트)입니다. 몬스터 한 마리가 약 10바이트이므로 수만 마리까지 담는 크기입니다.
+///
+/// 정상적인 서버의 메시지는 이보다 훨씬 작습니다. 이 한계는 터무니없이 큰 메시지로 클라이언트의 메모리를 쓰게 하는 서버를 막습니다.
+/// PC에서는 ewebsock이 이 크기를 넘는 프레임을 읽지 않고 접속을 끊고, 브라우저에서는 ewebsock이 이 설정을 무시하므로 받은 뒤에 크기를 확인합니다.
+pub const MAX_SERVER_MESSAGE_BYTES: usize = 256 * 1024;
+
 pub struct WsClient {
     sender: WsSender,
     receiver: WsReceiver,
@@ -17,7 +23,11 @@ pub struct WsClient {
 impl WsClient {
     /// 접속을 시작하고 바로 돌아옵니다. 접속의 성공과 실패는 나중에 `poll`로 도착합니다.
     pub fn connect(url: &str) -> Result<WsClient, String> {
-        let (sender, receiver) = ewebsock::connect(url, Options::default())?;
+        let options = Options {
+            max_incoming_frame_size: MAX_SERVER_MESSAGE_BYTES,
+            ..Options::default()
+        };
+        let (sender, receiver) = ewebsock::connect(url, options)?;
         Ok(WsClient {
             sender,
             receiver,
@@ -41,6 +51,12 @@ impl ClientTransport for WsClient {
             match self.receiver.try_recv()? {
                 WsEvent::Opened => return Some(ClientEvent::Connected),
                 WsEvent::Message(WsMessage::Binary(bytes)) => {
+                    if bytes.len() > MAX_SERVER_MESSAGE_BYTES {
+                        return self.finish(format!(
+                            "the server sent a message of {} bytes, above the limit of {MAX_SERVER_MESSAGE_BYTES}",
+                            bytes.len()
+                        ));
+                    }
                     return match decode_server(&bytes) {
                         Ok(msg) => Some(ClientEvent::Message(msg)),
                         Err(err) => self.finish(format!("bad message from the server: {err}")),
