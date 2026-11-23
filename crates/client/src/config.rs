@@ -33,6 +33,14 @@ pub const BAR_GAP: f32 = 7.0;
 /// 막대의 바깥 테두리 두께입니다.
 pub const BAR_BORDER: f32 = 1.0;
 
+// 효과. 시간은 서버 Tick으로 셉니다.
+pub const SWING_TICKS: f64 = 4.0;
+pub const SHOT_TICKS: f64 = 3.0;
+/// 근접 공격 표시의 반지름(타일)과 부채꼴의 절반 각도(라디안)입니다. 서버의 공격 범위를 흉내 낸 표현이고, 판정은 서버가 합니다.
+pub const SWING_REACH_TILES: f32 = 1.35;
+pub const SWING_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_3;
+pub const SWING_ARC_STEPS: usize = 10;
+
 pub const BACKGROUND: Color = Color::srgb(0.07, 0.06, 0.06);
 pub const GROUND_A: Color = Color::srgb(0.20, 0.27, 0.18);
 pub const GROUND_B: Color = Color::srgb(0.23, 0.31, 0.21);
@@ -52,3 +60,7 @@ pub const BAR_BACK: Color = Color::srgb(0.06, 0.06, 0.06);
 pub const BAR_PLAYER: Color = Color::srgb(0.30, 0.85, 0.35);
 pub const BAR_MONSTER: Color = Color::srgb(0.95, 0.35, 0.30);
 pub const BAR_TOWER: Color = Color::srgb(0.45, 0.70, 1.00);
+pub const SWING: Color = Color::srgb(1.00, 1.00, 0.80);
+pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
+/// 효과 선의 굵기(픽셀)입니다.
+pub const EFFECT_LINE_WIDTH: f32 = 3.0;

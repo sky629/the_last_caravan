@@ -20,6 +20,12 @@ pub struct Scene {
     pub you: u32,
     pub player: Footprint,
     monsters: Vec<MonsterLook>,
+    towers: Vec<TowerPlace>,
+}
+
+struct TowerPlace {
+    id: u32,
+    center: Ground,
 }
 
 /// 캐릭터가 지면에 닿는 곳입니다. 규칙의 충돌 원을 지면에 그린 타원이 그림자가 됩니다.
@@ -37,6 +43,14 @@ pub struct MonsterLook {
 impl Scene {
     pub fn monster(&self, kind: WireMonsterKind) -> Option<&MonsterLook> {
         self.monsters.iter().find(|look| look.kind == kind)
+    }
+
+    /// 감시탑이 서 있는 지면 위치입니다. 파괴되어도 같은 자리에 잔해가 남습니다.
+    pub fn tower_center(&self, id: u32) -> Option<Ground> {
+        self.towers
+            .iter()
+            .find(|place| place.id == id)
+            .map(|place| place.center)
     }
 }
 
@@ -115,6 +129,7 @@ pub fn spawn_world(
     for center in core::tile_centers(world.wagon.to_rect()) {
         spawn_block(&mut commands, &palette.wagon_block, &palette.wagon, center);
     }
+    let mut towers = Vec::new();
     for site in &world.towers {
         let center = site.rect.to_rect().center();
         let bar_y = config::TOWER_HEIGHT + config::BAR_GAP;
@@ -130,6 +145,10 @@ pub fn spawn_world(
             .entity(tower)
             .insert(TowerView { id: site.id, bar })
             .add_children(&bar.entities());
+        towers.push(TowerPlace {
+            id: site.id,
+            center,
+        });
     }
 
     let monsters = world
@@ -145,6 +164,7 @@ pub fn spawn_world(
         you: welcome.you,
         player: footprint(&mut meshes, world.player_radius),
         monsters,
+        towers,
     });
 
     // 카메라는 맵 전체가 들어오는 자리에 고정합니다. 모든 클라이언트가 같은 화면을 보므로 동기화를 눈으로 비교하기 쉽습니다.

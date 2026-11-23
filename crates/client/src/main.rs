@@ -12,6 +12,7 @@ mod characters;
 mod config;
 mod convert;
 mod diagnostics;
+mod effects;
 mod input;
 mod net;
 mod palette;
@@ -42,7 +43,14 @@ fn main() {
     app.insert_resource(ClearColor(config::BACKGROUND))
         .init_resource::<input::HeldControls>()
         .init_resource::<characters::Spawned>()
-        .add_systems(Startup, (palette::setup_palette, setup_scene))
+        .add_systems(
+            Startup,
+            (
+                palette::setup_palette,
+                effects::configure_gizmos,
+                setup_scene,
+            ),
+        )
         // 한 프레임에 하는 일을 순서대로 모두 나열한 곳입니다. 앞 단계가 쓴 값을 뒤 단계가 읽습니다.
         .add_systems(
             Update,
@@ -52,6 +60,7 @@ fn main() {
                 view::spawn_world.run_if(not(resource_exists::<view::Scene>)),
                 view::sync_structures.run_if(resource_exists::<view::Scene>),
                 characters::sync_characters.run_if(resource_exists::<view::Scene>),
+                effects::draw_effects.run_if(resource_exists::<view::Scene>),
                 show_status,
                 input::read_controls,
                 net::send_input,
