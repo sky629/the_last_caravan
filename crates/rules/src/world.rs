@@ -1,12 +1,12 @@
 //! 한 원정 동안 변하는 상태(`World`), 변하지 않는 맵 정보(`Statics`), 한 Tick 동안 규칙이 읽는 값(`Ctx`),
 //! 그리고 피해가 상태로 바뀌는 유일한 곳(`World::apply_hits`)입니다.
 //!
-//! Tick을 처리하는 함수는 모두 같은 순서로 일합니다.
-//! 1. `World`를 읽기만 하면서 무엇을 할지 결정해서 `Vec`에 모읍니다.
-//! 2. 결정을 `&mut World`로 적용합니다.
-//!
-//! 공격하는 쪽은 `Hit`만 만들고, 모든 공격이 결정된 뒤에 `apply_hits`가 한꺼번에 적용합니다.
-//! 그래서 개체를 어떤 순서로 방문해도 결과가 같고, 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다.
+//! 공격하는 쪽(플레이어, 감시탑, 몬스터)은 피해를 직접 적용하지 않고 `Hit`만 만듭니다.
+//! 모든 공격이 결정된 뒤에 `apply_hits`가 한꺼번에 적용하므로, 개체를 어떤 순서로 방문해도 결과가 같고,
+//! 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다.
+//! 한 개체의 행동이 다른 개체의 현재 상태에 달린 곳(상호작용, 몬스터의 이동)도 같은 방식으로,
+//! 먼저 `&World`를 읽기만 하면서 모든 결정을 `Vec`에 모으고 그 뒤에 `&mut World`로 적용합니다.
+//! 그래서 한 맵을 읽으면서 같은 맵을 고치려는 대여 충돌이 생기지 않습니다.
 
 use std::collections::BTreeMap;
 
@@ -121,21 +121,15 @@ impl World {
         self.monsters.retain(|monster| monster.hp > 0);
     }
 
-    /// 거리를 잴 때 쓰는 대상의 모양입니다. 대상이 사라졌으면 `None`입니다.
+    /// 몬스터가 쫓거나 공격하는 대상의 모양입니다. 대상이 사라졌으면 `None`입니다.
     pub fn body_of(&self, target: Target, t: &Tuning) -> Option<Body> {
         match target {
             Target::Player(id) => self.players.get(&id).map(|player| Body::Circle {
                 center: player.pos,
                 radius: t.player.radius,
             }),
-            Target::Monster(id) => {
-                let index = self.monsters.binary_search_by_key(&id, |m| m.id).ok()?;
-                let monster = &self.monsters[index];
-                Some(Body::Circle {
-                    center: monster.pos,
-                    radius: t.monsters.get(monster.kind).radius,
-                })
-            }
+            // 몬스터는 다른 몬스터를 쫓지 않으므로, 몬스터의 모양은 아직 필요하지 않습니다.
+            Target::Monster(_) => None,
             Target::Tower(id) => self.towers.get(&id).map(|tower| Body::Box(tower.rect)),
             Target::Wagon => Some(Body::Box(self.wagon.rect)),
         }

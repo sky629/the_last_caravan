@@ -1,6 +1,7 @@
 //! 몬스터의 목표 선택, 이동, 공격 (C4, C11, D17, D33).
 
 use super::support::Scenario;
+use crate::expedition::{Outcome, Phase};
 use crate::math::{Rect, Vec2};
 
 #[test]
@@ -198,4 +199,155 @@ fn monsters_spread_around_their_target_instead_of_stacking() {
             .all(|p| s.sim.wagon().rect.distance_to(*p) < 2.0),
         "and they are all at the wagon"
     );
+}
+
+#[test]
+fn a_crowd_queues_behind_the_front_line_instead_of_piling_onto_one_spot() {
+    let mut s = Scenario::open_field();
+    for row in 0..10 {
+        for column in 0..10 {
+            s.monster_at(6.0 + 0.5 * column as f32, 9.0 + 0.5 * row as f32);
+        }
+    }
+
+    s.run_ticks(s.ticks(25.0));
+
+    let positions: Vec<Vec2> = s.sim.monsters().map(|m| m.pos).collect();
+    let half_body = s.sim.tuning().monsters.grunt.radius;
+    let mut deep_overlaps = 0;
+    for (i, a) in positions.iter().enumerate() {
+        for b in &positions[i + 1..] {
+            if a.distance(*b) < half_body {
+                deep_overlaps += 1;
+            }
+        }
+    }
+    let nearest_to_wagon = positions
+        .iter()
+        .map(|p| s.sim.wagon().rect.distance_to(*p))
+        .fold(f32::MAX, f32::min);
+    assert!(
+        nearest_to_wagon < 1.0,
+        "the front of the crowd reached the wagon"
+    );
+    assert!(
+        deep_overlaps <= 5,
+        "{deep_overlaps} pairs sit on top of each other"
+    );
+}
+
+/// 몬스터 300마리가 1 Tick 간격으로 나타나는 한 무리입니다.
+/// 마차와 감시탑은 버티고, 맵 전체를 덮는 감시탑이 2 Tick마다 한 마리씩 처치합니다.
+fn crowd_of_300() -> Scenario {
+    Scenario::with_waves(|t| {
+        t.map = crate::tuning::MapSpec::stage1();
+        t.waves.sizes = vec![300];
+        t.waves.first_delay_secs = 0.05;
+        t.waves.spawn_interval_secs = 0.05;
+        t.wagon.max_hp = u32::MAX;
+        let tower = &mut t.structures.watchtower;
+        tower.max_hp = u32::MAX;
+        tower.range = 40.0;
+        tower.damage = t.monsters.grunt.max_hp;
+        tower.cooldown_secs = 0.1;
+    })
+}
+
+#[test]
+fn a_wave_of_300_monsters_runs_to_victory() {
+    // 몬스터가 수백 마리여도 Tick이 끝까지 진행되는지 확인합니다. 근접 공격, 감시탑의 목표 선택, 몬스터 사이의 밀어내기가
+    // 모두 격자 조회를 거치므로, 모든 쌍을 비교하는 방식이었다면 이 테스트는 눈에 띄게 느려집니다.
+    let mut s = crowd_of_300();
+    let mut most_alive = 0;
+
+    s.run_until(3000, |sim| {
+        most_alive = most_alive.max(sim.monsters().count());
+        matches!(sim.phase(), Phase::Over { .. })
+    });
+
+    assert!(
+        matches!(
+            s.sim.phase(),
+            Phase::Over {
+                outcome: Outcome::Victory,
+                ..
+            }
+        ),
+        "the wave is cleared"
+    );
+    assert!(
+        most_alive >= 150,
+        "the field was crowded, at most {most_alive} alive"
+    );
+}
+
+/// 몬스터가 `count`마리 마차 둘레에 모여 있을 때, Tick 1,000번의 실행 시간을 재서 (평균, 가장 느린 Tick)을 돌려줍니다.
+fn tick_time_with(count: u32) -> (std::time::Duration, std::time::Duration) {
+    let mut s = Scenario::with_waves(|t| {
+        t.map = crate::tuning::MapSpec::stage1();
+        t.waves.sizes = vec![count];
+        t.waves.first_delay_secs = 0.05;
+        t.waves.spawn_interval_secs = 0.05;
+        t.wagon.max_hp = u32::MAX;
+        t.structures.watchtower.max_hp = u32::MAX;
+        t.structures.watchtower.damage = 0;
+    });
+    s.run_until(count + 100, |sim| sim.monsters().count() == count as usize);
+    s.run_ticks(600);
+    assert_eq!(s.sim.monsters().count(), count as usize, "nobody died");
+
+    let mut total = std::time::Duration::ZERO;
+    let mut slowest = std::time::Duration::ZERO;
+    for _ in 0..1000 {
+        let started = std::time::Instant::now();
+        s.run_ticks(1);
+        let took = started.elapsed();
+        total += took;
+        slowest = slowest.max(took);
+    }
+    (total / 1000, slowest)
+}
+
+/// `cargo test -p caravan_rules --release tick_time_grows -- --ignored --nocapture`로 실행합니다.
+/// 몬스터 수가 두 배가 되면 Tick 하나의 실행 시간도 두 배 가까이 늘어나는지(몬스터 수에 비례하는지) 봅니다.
+#[test]
+#[ignore = "benchmark: run in release mode with --ignored --nocapture"]
+fn tick_time_grows_in_proportion_to_the_monster_count() {
+    for count in [75, 150, 300, 600] {
+        let (average, slowest) = tick_time_with(count);
+        println!("{count} monsters: average {average:?} per tick, slowest {slowest:?}");
+    }
+}
+
+#[test]
+fn zz_probe_queue() {
+    let mut s = Scenario::open_field();
+    for row in 0..10 {
+        for column in 0..10 {
+            s.monster_at(6.0 + 0.5 * column as f32, 9.0 + 0.5 * row as f32);
+        }
+    }
+    for round in 0..6 {
+        s.run_ticks(s.ticks(5.0));
+        let mut d: Vec<f32> = s
+            .sim
+            .monsters()
+            .map(|m| s.sim.wagon().rect.distance_to(m.pos))
+            .collect();
+        d.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let (mut minx, mut maxx, mut miny, mut maxy) = (99.0f32, -99.0f32, 99.0f32, -99.0f32);
+        for m in s.sim.monsters() {
+            minx = minx.min(m.pos.x);
+            maxx = maxx.max(m.pos.x);
+            miny = miny.min(m.pos.y);
+            maxy = maxy.max(m.pos.y);
+        }
+        eprintln!(
+            "Q round={round} n={} d_min={:.1} d_med={:.1} d_max={:.1} bbox=({minx:.1},{miny:.1})-({maxx:.1},{maxy:.1})",
+            d.len(),
+            d[0],
+            d[d.len() / 2],
+            d[d.len() - 1]
+        );
+    }
 }

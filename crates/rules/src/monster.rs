@@ -226,24 +226,33 @@ fn plan(
             direction * (monster.stats(t).move_speed * t.dt()),
         )
     };
-    let push = separation(index, world, ctx, neighbours) * (kind.separation_speed * t.dt());
     Action {
         goal,
         heading,
-        step: walk + push,
+        step: crowd_step(index, walk, world, ctx, neighbours),
         in_reach,
     }
 }
 
-/// 겹친 몬스터에게서 멀어지는 방향입니다. 겹친 정도가 클수록 길고, 길이는 1을 넘지 않습니다.
-/// 이 힘이 몬스터를 부드럽게 밀어내므로, 몬스터가 한 점에 쌓이지 않고 목표 둘레에 고리 모양으로 모입니다.
-fn separation(index: usize, world: &World, ctx: &Ctx, neighbours: &mut Vec<usize>) -> Vec2 {
+/// 걸음(`walk`)에 주변 몬스터와의 관계를 반영해서, 이번 Tick에 실제로 옮길 거리를 돌려줍니다.
+///
+/// - 겹친 몬스터 쪽으로 걷는 성분은 없앱니다. 앞선 몬스터를 밀고 들어가지 않고 그 뒤에 줄을 서므로, 몬스터가 한 점에 쌓이지 않습니다.
+/// - 겹친 몬스터에게서 멀어지는 방향으로 부드럽게 밀려납니다. 겹친 정도가 클수록 많이 밀립니다.
+///
+/// 이 두 가지 덕분에 몬스터가 목표 둘레에 고리 모양으로 모이고, 몬스터가 수백 마리여도 한 칸에 몰리는 수가 늘지 않습니다.
+fn crowd_step(
+    index: usize,
+    mut walk: Vec2,
+    world: &World,
+    ctx: &Ctx,
+    neighbours: &mut Vec<usize>,
+) -> Vec2 {
     let t = ctx.t;
     let monster = &world.monsters[index];
-    let radius = t.monsters.get(monster.kind).radius;
+    let kind = t.monsters.get(monster.kind);
     ctx.grid.query(
         monster.pos,
-        radius + t.monsters.largest_radius(),
+        kind.radius + t.monsters.largest_radius(),
         neighbours,
     );
 
@@ -253,7 +262,7 @@ fn separation(index: usize, world: &World, ctx: &Ctx, neighbours: &mut Vec<usize
             continue;
         }
         let other = &world.monsters[other_index];
-        let touching = radius + t.monsters.get(other.kind).radius;
+        let touching = kind.radius + t.monsters.get(other.kind).radius;
         let offset = monster.pos - other.pos;
         let distance = offset.length();
         if distance >= touching {
@@ -268,10 +277,13 @@ fn separation(index: usize, world: &World, ctx: &Ctx, neighbours: &mut Vec<usize
             Vec2::new(-1.0, 0.0)
         };
         push = push + away * ((touching - distance) / touching);
+        let into_neighbour = -walk.dot(away);
+        if into_neighbour > 0.0 {
+            walk = walk + away * into_neighbour;
+        }
     }
     if push.length() > 1.0 {
-        push.normalize_or_zero()
-    } else {
-        push
+        push = push.normalize_or_zero();
     }
+    walk + push * (kind.separation_speed * t.dt())
 }

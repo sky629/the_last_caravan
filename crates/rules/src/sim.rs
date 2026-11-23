@@ -36,6 +36,7 @@ pub enum JoinError {
 
 impl Sim {
     /// 플레이어가 없는 방을 만들고 첫 원정을 준비합니다.
+    /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만듭니다.
     pub fn new(tuning: Tuning) -> Sim {
         let map = &tuning.map;
         let bounds = Rect::new(0.0, 0.0, map.width, map.height);

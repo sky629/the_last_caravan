@@ -148,7 +148,7 @@ impl Scenario {
 
     /// `done`이 참이 될 때까지 한 Tick씩 진행합니다. `max_ticks` 안에 참이 되지 않으면 테스트가 실패합니다.
     /// 이 함수가 돌려주는 값은 걸린 Tick 수입니다.
-    pub fn run_until(&mut self, max_ticks: u32, done: impl Fn(&Sim) -> bool) -> u32 {
+    pub fn run_until(&mut self, max_ticks: u32, mut done: impl FnMut(&Sim) -> bool) -> u32 {
         for elapsed in 0..max_ticks {
             if done(&self.sim) {
                 return elapsed;

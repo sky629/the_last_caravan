@@ -419,3 +419,46 @@ fn the_wagon_is_a_rect_in_the_middle_of_the_default_map() {
         "three waves, each larger, D18"
     );
 }
+
+/// 두 플레이어가 움직이고, 싸우고, 부활과 수리를 하는 원정을 800 Tick 진행하고 모든 상태를 글자로 돌려줍니다.
+fn play_a_scripted_expedition() -> String {
+    let mut s = Scenario::with_waves(|t| t.map = crate::tuning::MapSpec::stage1());
+    let a = s.sim.add_player().unwrap();
+    let b = s.sim.add_player().unwrap();
+    for tick in 0..800 {
+        let phase = tick / 100;
+        for (id, offset) in [(a, 0.0), (b, 1.7)] {
+            s.hold(
+                id,
+                crate::input::PlayerInput {
+                    seq: tick,
+                    move_dir: crate::input::MoveDir::new(
+                        (phase as f32 + offset).sin(),
+                        (phase as f32).cos(),
+                    ),
+                    aim: crate::input::AimDir::new((tick as f32 * 0.1 + offset).cos(), 0.5),
+                    attack: tick % 3 != 0,
+                    interact: phase % 2 == 1,
+                },
+            );
+        }
+        s.run_ticks(1);
+    }
+    let players: Vec<_> = s.sim.players().collect();
+    let monsters: Vec<_> = s.sim.monsters().collect();
+    let towers: Vec<_> = s.sim.towers().collect();
+    format!(
+        "{players:?} {monsters:?} {towers:?} {:?} {:?}",
+        s.sim.wagon(),
+        s.sim.phase()
+    )
+}
+
+#[test]
+fn the_same_inputs_always_produce_the_same_game() {
+    let first = play_a_scripted_expedition();
+    let second = play_a_scripted_expedition();
+
+    assert_eq!(first, second);
+    assert!(first.contains("Monster"), "the script reached a fight");
+}
