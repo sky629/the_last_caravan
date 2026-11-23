@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use caravan_protocol::{
@@ -121,15 +121,16 @@ async fn accept_loop(listener: TcpListener, inbound: mpsc::Sender<Inbound>, limi
                 continue;
             }
         };
-        while let Ok(ip) = released.try_recv() {
-            seats.give_back(ip);
+        while let Ok(key) = released.try_recv() {
+            seats.give_back(key);
         }
         // 자리가 없으면 `stream`을 버려서 접속을 바로 닫습니다.
-        if !seats.take(peer.ip()) {
+        let key = seat_key(peer.ip());
+        if !seats.take(key) {
             continue;
         }
         let seat = Seat {
-            ip: peer.ip(),
+            key,
             release: release.clone(),
         };
         let link = LinkId(next_link);
@@ -138,10 +139,25 @@ async fn accept_loop(listener: TcpListener, inbound: mpsc::Sender<Inbound>, limi
     }
 }
 
-/// 열려 있는 접속(연결 절차 중인 접속 포함)의 수를 전체와 IP 주소별로 셉니다. accept 반복만 이 값을 소유합니다.
+/// 접속 수를 셀 때 상대를 구분하는 열쇠입니다.
+///
+/// IPv6 호스트 하나는 보통 /64 대역(주소의 앞 64비트가 같은 주소 전체)을 받으므로, 주소마다 세면 한 호스트가 주소를 바꿔 가며 한도를 여러 번 채울 수 있습니다.
+/// 그래서 IPv6 주소는 뒤 64비트를 0으로 바꿔서 같은 /64 대역을 하나로 셉니다.
+/// IPv4를 IPv6 형식으로 표현한 주소(`::ffff:a.b.c.d`)는 먼저 IPv4 주소로 바꾸므로, 같은 IPv4 주소와 함께 셉니다.
+fn seat_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => IpAddr::V4(v4),
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            IpAddr::V6(Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+        }
+    }
+}
+
+/// 열려 있는 접속(연결 절차 중인 접속 포함)의 수를 전체와 `seat_key`별로 셉니다. accept 반복만 이 값을 소유합니다.
 struct Seats {
     total: usize,
-    per_ip: HashMap<IpAddr, usize>,
+    per_key: HashMap<IpAddr, usize>,
     max_links: usize,
     max_links_per_ip: usize,
 }
@@ -150,29 +166,29 @@ impl Seats {
     fn new(limits: ServerLimits) -> Seats {
         Seats {
             total: 0,
-            per_ip: HashMap::new(),
+            per_key: HashMap::new(),
             max_links: limits.max_links,
             max_links_per_ip: limits.max_links_per_ip,
         }
     }
 
-    /// 전체 자리와 그 IP 주소의 자리가 모두 남아 있으면 하나씩 차지하고 `true`를 돌려줍니다.
-    fn take(&mut self, ip: IpAddr) -> bool {
-        let used_by_ip = self.per_ip.get(&ip).copied().unwrap_or(0);
-        if self.total >= self.max_links || used_by_ip >= self.max_links_per_ip {
+    /// 전체 자리와 그 열쇠의 자리가 모두 남아 있으면 하나씩 차지하고 `true`를 돌려줍니다.
+    fn take(&mut self, key: IpAddr) -> bool {
+        let used_by_key = self.per_key.get(&key).copied().unwrap_or(0);
+        if self.total >= self.max_links || used_by_key >= self.max_links_per_ip {
             return false;
         }
         self.total += 1;
-        self.per_ip.insert(ip, used_by_ip + 1);
+        self.per_key.insert(key, used_by_key + 1);
         true
     }
 
-    fn give_back(&mut self, ip: IpAddr) {
+    fn give_back(&mut self, key: IpAddr) {
         self.total = self.total.saturating_sub(1);
-        if let Some(count) = self.per_ip.get_mut(&ip) {
+        if let Some(count) = self.per_key.get_mut(&key) {
             *count -= 1;
             if *count == 0 {
-                self.per_ip.remove(&ip);
+                self.per_key.remove(&key);
             }
         }
     }
@@ -181,13 +197,13 @@ impl Seats {
 /// 접속 하나가 차지한 자리입니다. 접속 작업이 어느 경로로 끝나든(연결 절차의 실패나 시간 초과 포함)
 /// 이 값이 버려지면서 accept 반복에 자리를 돌려줍니다.
 struct Seat {
-    ip: IpAddr,
+    key: IpAddr,
     release: mpsc::UnboundedSender<IpAddr>,
 }
 
 impl Drop for Seat {
     fn drop(&mut self) {
-        let _ = self.release.send(self.ip);
+        let _ = self.release.send(self.key);
     }
 }
 
@@ -280,5 +296,37 @@ impl RateWindow {
         }
         self.count += 1;
         self.count <= max_per_window
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn ip(text: &str) -> IpAddr {
+        text.parse().unwrap()
+    }
+
+    #[test]
+    fn an_ipv4_address_is_its_own_key() {
+        assert_eq!(seat_key(ip("203.0.113.7")), ip("203.0.113.7"));
+        assert_ne!(seat_key(ip("203.0.113.7")), seat_key(ip("203.0.113.8")));
+    }
+
+    #[test]
+    fn an_ipv4_mapped_ipv6_address_counts_as_its_ipv4_address() {
+        let mapped = IpAddr::V6(Ipv4Addr::new(203, 0, 113, 7).to_ipv6_mapped());
+        assert_eq!(seat_key(mapped), ip("203.0.113.7"));
+    }
+
+    #[test]
+    fn ipv6_addresses_share_a_key_exactly_when_they_share_a_64_bit_prefix() {
+        let a = seat_key(ip("2001:db8:1:2::1"));
+        let b = seat_key(ip("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+        let other_prefix = seat_key(ip("2001:db8:1:3::1"));
+        assert_eq!(a, b);
+        assert_eq!(a, ip("2001:db8:1:2::"));
+        assert_ne!(a, other_prefix);
     }
 }
