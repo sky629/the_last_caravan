@@ -13,6 +13,10 @@ pub struct ServerLimits {
     /// 동시에 열어 둘 수 있는 접속(연결 절차 중인 접속 포함)의 수입니다.
     /// 접속을 많이 여는 상대가 메모리와 파일 핸들을 모두 쓰지 못하게 합니다. 넘치는 접속은 받자마자 닫습니다.
     pub max_links: usize,
+    /// IP 주소 하나가 동시에 열어 둘 수 있는 접속의 수입니다.
+    /// 상대 하나가 `max_links`의 자리를 모두 차지하지 못하게 합니다. 한 집이나 한 장소에서 여러 명이 같은 IP 주소로 접속해도 닿지 않게 넉넉하게 정했습니다.
+    /// 리버스 프록시 뒤에 서버를 두면 모든 접속이 프록시의 IP 주소 하나로 보이므로, 이 값을 올리거나 프록시가 전달한 주소로 세도록 바꿔야 합니다.
+    pub max_links_per_ip: usize,
     /// 네트워크 스레드가 게임 스레드에 넘기고 아직 처리되지 않은 이벤트의 최대 수입니다 (모든 접속 합계).
     /// 가득 차면 읽기 작업이 기다리고, 그동안 소켓을 읽지 않으므로 보내는 쪽이 느려집니다. 메모리가 끝없이 늘지 않습니다.
     pub inbound_capacity: usize,
@@ -31,6 +35,9 @@ pub struct ServerLimits {
     pub events_per_pump: usize,
     /// 접속한 뒤 `Join`을 보내야 하는 시간입니다. 입장하지 않고 접속 자리만 차지하는 상대를 닫습니다.
     pub join_deadline: Duration,
+    /// 입장한 접속이 아무 메시지도 보내지 않고 지날 수 있는 시간입니다. 넘으면 접속을 닫고 플레이어를 방에서 뺍니다.
+    /// 클라이언트는 Tick마다 입력을 보내므로 살아 있는 클라이언트는 닿지 않습니다. 소켓은 열려 있지만 멈춘 클라이언트가 자리를 차지하지 못하게 합니다.
+    pub idle_timeout: Duration,
 }
 
 impl Default for ServerLimits {
@@ -38,6 +45,7 @@ impl Default for ServerLimits {
         ServerLimits {
             handshake_timeout: Duration::from_secs(5),
             max_links: 64,
+            max_links_per_ip: 16,
             inbound_capacity: 1024,
             max_messages_per_sec: 100,
             max_message_bytes: 4096,
@@ -45,6 +53,7 @@ impl Default for ServerLimits {
             write_timeout: Duration::from_secs(3),
             events_per_pump: 512,
             join_deadline: Duration::from_secs(5),
+            idle_timeout: Duration::from_secs(30),
         }
     }
 }

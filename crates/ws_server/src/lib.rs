@@ -10,8 +10,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use caravan_protocol::{
@@ -20,7 +19,7 @@ use caravan_protocol::{
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -111,19 +110,27 @@ impl ServerTransport for WsServer {
 }
 
 async fn accept_loop(listener: TcpListener, inbound: mpsc::Sender<Inbound>, limits: ServerLimits) {
-    let seats = Arc::new(Semaphore::new(limits.max_links));
+    let mut seats = Seats::new(limits);
+    let (release, mut released) = mpsc::unbounded_channel();
     let mut next_link = 1;
     loop {
-        let stream = match listener.accept().await {
-            Ok((stream, _peer)) => stream,
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
             Err(_) => {
                 tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
                 continue;
             }
         };
+        while let Ok(ip) = released.try_recv() {
+            seats.give_back(ip);
+        }
         // 자리가 없으면 `stream`을 버려서 접속을 바로 닫습니다.
-        let Ok(seat) = seats.clone().try_acquire_owned() else {
+        if !seats.take(peer.ip()) {
             continue;
+        }
+        let seat = Seat {
+            ip: peer.ip(),
+            release: release.clone(),
         };
         let link = LinkId(next_link);
         next_link += 1;
@@ -131,15 +138,67 @@ async fn accept_loop(listener: TcpListener, inbound: mpsc::Sender<Inbound>, limi
     }
 }
 
+/// 열려 있는 접속(연결 절차 중인 접속 포함)의 수를 전체와 IP 주소별로 셉니다. accept 반복만 이 값을 소유합니다.
+struct Seats {
+    total: usize,
+    per_ip: HashMap<IpAddr, usize>,
+    max_links: usize,
+    max_links_per_ip: usize,
+}
+
+impl Seats {
+    fn new(limits: ServerLimits) -> Seats {
+        Seats {
+            total: 0,
+            per_ip: HashMap::new(),
+            max_links: limits.max_links,
+            max_links_per_ip: limits.max_links_per_ip,
+        }
+    }
+
+    /// 전체 자리와 그 IP 주소의 자리가 모두 남아 있으면 하나씩 차지하고 `true`를 돌려줍니다.
+    fn take(&mut self, ip: IpAddr) -> bool {
+        let used_by_ip = self.per_ip.get(&ip).copied().unwrap_or(0);
+        if self.total >= self.max_links || used_by_ip >= self.max_links_per_ip {
+            return false;
+        }
+        self.total += 1;
+        self.per_ip.insert(ip, used_by_ip + 1);
+        true
+    }
+
+    fn give_back(&mut self, ip: IpAddr) {
+        self.total = self.total.saturating_sub(1);
+        if let Some(count) = self.per_ip.get_mut(&ip) {
+            *count -= 1;
+            if *count == 0 {
+                self.per_ip.remove(&ip);
+            }
+        }
+    }
+}
+
+/// 접속 하나가 차지한 자리입니다. 접속 작업이 어느 경로로 끝나든(연결 절차의 실패나 시간 초과 포함)
+/// 이 값이 버려지면서 accept 반복에 자리를 돌려줍니다.
+struct Seat {
+    ip: IpAddr,
+    release: mpsc::UnboundedSender<IpAddr>,
+}
+
+impl Drop for Seat {
+    fn drop(&mut self) {
+        let _ = self.release.send(self.ip);
+    }
+}
+
 /// 접속 하나를 처리합니다. 받은 프레임을 해석해서 게임 스레드에 넘기고, 송신 대기열의 메시지를 소켓에 씁니다.
 /// 게임 스레드가 보내는 끝을 버리면, 대기열에 남은 메시지를 모두 쓴 뒤 닫기 프레임을 보내고 끝납니다.
-/// `_seat`은 이 작업이 끝날 때 함께 버려지며, 그때 접속 자리 하나가 비워집니다.
 async fn serve_link(
     stream: TcpStream,
     link: LinkId,
     inbound: mpsc::Sender<Inbound>,
     limits: ServerLimits,
-    _seat: OwnedSemaphorePermit,
+    seat: Seat,
 ) {
     let config = WebSocketConfig::default()
         .max_message_size(Some(limits.max_message_bytes))
@@ -194,6 +253,8 @@ async fn serve_link(
             },
         }
     }
+    // 자리를 먼저 돌려준 뒤 닫힘을 알립니다. 게임 스레드가 `Disconnected`를 받았을 때 그 자리는 이미 비어 있습니다.
+    drop(seat);
     let _ = inbound.send(Inbound::Closed(link)).await;
 }
 

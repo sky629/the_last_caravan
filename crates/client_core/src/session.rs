@@ -26,6 +26,10 @@ pub enum Session {
         tick_hz: u32,
         /// 가장 최근에 받은 스냅샷의 Tick입니다. 이보다 오래된 스냅샷은 버립니다.
         latest_tick: Option<u64>,
+        /// 다음에 보낼 입력의 순서 번호입니다.
+        next_seq: u32,
+        /// 다음 입력을 보낼 시각입니다 (앱이 시작된 뒤 지난 초).
+        next_input_at: f64,
     },
     Rejected {
         reason: RejectReason,
@@ -72,6 +76,8 @@ impl Session {
                     you,
                     tick_hz,
                     latest_tick: None,
+                    next_seq: 1,
+                    next_input_at: 0.0,
                 };
                 Reaction::Nothing
             }
@@ -101,6 +107,33 @@ impl Session {
             // 순서에 맞지 않는 메시지(입장 전의 스냅샷 등)는 무시합니다.
             _ => Reaction::Nothing,
         }
+    }
+
+    /// 입장한 뒤 서버의 Tick 간격마다 입력 하나를 돌려줍니다. `now_secs`는 앱이 시작된 뒤 지난 시간(초)입니다.
+    /// 서버는 일정 시간 동안 메시지가 없는 접속을 닫으므로, 입력은 접속이 살아 있다는 표시도 됩니다.
+    pub fn input_due(&mut self, now_secs: f64) -> Option<ClientMsg> {
+        let Session::InRoom {
+            tick_hz,
+            next_seq,
+            next_input_at,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        if now_secs < *next_input_at {
+            return None;
+        }
+        let period = 1.0 / f64::from(*tick_hz);
+        // 프레임이 오래 멈췄다가 다시 돌아도 밀린 입력을 몰아서 보내지 않습니다.
+        *next_input_at = if *next_input_at + period > now_secs {
+            *next_input_at + period
+        } else {
+            now_secs + period
+        };
+        let seq = *next_seq;
+        *next_seq += 1;
+        Some(ClientMsg::Input { seq })
     }
 
     /// 화면의 상태 표시줄에 쓰는 문장입니다. Bevy의 기본 글꼴은 영문만 표시하므로 영어로 씁니다.
@@ -200,6 +233,29 @@ mod tests {
             session.on_event(message(ServerMsg::Snapshot(snapshot(6)))),
             Reaction::Show(snapshot(6))
         );
+    }
+
+    #[test]
+    fn in_the_room_one_input_is_due_per_server_tick_with_increasing_seq() {
+        let mut session = Session::new(room());
+        assert_eq!(session.input_due(0.0), None, "no input before joining");
+        session.on_event(ClientEvent::Connected);
+        session.on_event(message(ServerMsg::Welcome {
+            you: 3,
+            tick_hz: 20,
+        }));
+
+        assert_eq!(session.input_due(1.000), Some(ClientMsg::Input { seq: 1 }));
+        assert_eq!(session.input_due(1.020), None);
+        assert_eq!(session.input_due(1.051), Some(ClientMsg::Input { seq: 2 }));
+        assert_eq!(session.input_due(1.060), None);
+        assert_eq!(
+            session.input_due(9.000),
+            Some(ClientMsg::Input { seq: 3 }),
+            "after a stall"
+        );
+        assert_eq!(session.input_due(9.010), None, "no burst of missed inputs");
+        assert_eq!(session.input_due(9.051), Some(ClientMsg::Input { seq: 4 }));
     }
 
     #[test]

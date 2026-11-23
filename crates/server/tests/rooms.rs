@@ -413,3 +413,50 @@ fn a_flood_of_events_is_spread_over_pumps_and_the_due_tick_still_runs() {
         .count();
     assert_eq!(answered + welcomed_later, 10, "no event was lost");
 }
+
+#[test]
+fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
+    let mut rig = rig_with_limits(
+        Tuning::default(),
+        ServerLimits {
+            idle_timeout: Duration::from_secs(30),
+            ..ServerLimits::default()
+        },
+    );
+    let (mut talker, _) = rig.join_ok("test");
+    let (mut silent, _) = rig.join_ok("test");
+
+    // 말하는 클라이언트는 1초마다 입력을 보내고, 조용한 클라이언트는 입장한 뒤 아무것도 보내지 않습니다.
+    for seq in 1..=29 {
+        talker.send(&ClientMsg::Input { seq });
+        rig.now += Duration::from_secs(1);
+        rig.pump();
+    }
+    assert!(
+        !drain(&mut silent)
+            .iter()
+            .any(|e| matches!(e, ClientEvent::Disconnected { .. })),
+        "still connected after 29 s"
+    );
+
+    talker.send(&ClientMsg::Input { seq: 30 });
+    rig.now += Duration::from_secs(1);
+    let notices = rig.pump();
+    let room = caravan_protocol::RoomCode::parse("test").unwrap();
+    assert_eq!(
+        notices,
+        [Notice::Left {
+            room,
+            player: PlayerId(2),
+            members: 1
+        }]
+    );
+    assert!(matches!(
+        drain(&mut silent)[..],
+        [ClientEvent::Disconnected { .. }]
+    ));
+
+    rig.run_ticks(1);
+    let last = snapshots(&mut talker).pop().unwrap();
+    assert_eq!(last.players, [1], "the silent player is gone from the room");
+}

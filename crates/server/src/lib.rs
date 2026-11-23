@@ -80,13 +80,13 @@ impl GameServer {
         GameServer {
             transport,
             clock: TickClock::new(tuning.tick_hz, now),
-            hub: Hub::new(tuning, limits.join_deadline),
+            hub: Hub::new(tuning, limits),
             events_per_pump: limits.events_per_pump,
         }
     }
 
     /// 서버를 한 번 진행합니다. 기다리지 않습니다.
-    /// 접속 방식에 도착한 이벤트를 `events_per_pump`개까지 처리하고, 입장 시간이 지난 접속을 닫고,
+    /// 접속 방식에 도착한 이벤트를 `events_per_pump`개까지 처리하고, 정해진 시간 동안 메시지가 없는 접속을 닫고,
     /// `now`까지 실행해야 하는 Tick을 실행한 뒤, 알릴 일을 돌려줍니다. 처리하지 못한 이벤트는 다음 호출이 처리합니다.
     pub fn pump(&mut self, now: Instant) -> Vec<Notice> {
         let mut notices = Vec::new();
@@ -97,7 +97,7 @@ impl GameServer {
             let outs = self.hub.handle_event(event, now);
             self.apply(outs, &mut notices);
         }
-        let outs = self.hub.close_late_joiners(now);
+        let outs = self.hub.close_silent_links(now);
         self.apply(outs, &mut notices);
         for _ in 0..self.clock.due(now) {
             let outs = self.hub.tick();

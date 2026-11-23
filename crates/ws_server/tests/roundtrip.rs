@@ -176,3 +176,45 @@ async fn sockets_over_the_link_cap_are_refused_until_a_stalled_handshake_times_o
     let (_client, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
     connected_link(&mut server).await;
 }
+
+#[tokio::test]
+async fn one_ip_cannot_open_more_links_than_its_cap_and_a_closed_link_frees_its_seat() {
+    let limits = ServerLimits {
+        max_links_per_ip: 2,
+        ..ServerLimits::default()
+    };
+    let mut server = WsServer::bind("127.0.0.1:0", limits).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+
+    let (mut first, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let first_link = connected_link(&mut server).await;
+    let (mut second, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let second_link = connected_link(&mut server).await;
+    assert!(
+        tokio_tungstenite::connect_async(&url).await.is_err(),
+        "a third link from 127.0.0.1 is refused"
+    );
+
+    let welcome = ServerMsg::Welcome {
+        you: 1,
+        tick_hz: 20,
+    };
+    server.send(first_link, &welcome);
+    server.send(second_link, &welcome);
+    assert!(
+        matches!(first.next().await, Some(Ok(Message::Binary(_)))),
+        "first stays open"
+    );
+    assert!(
+        matches!(second.next().await, Some(Ok(Message::Binary(_)))),
+        "second stays open"
+    );
+
+    drop(first);
+    match next_event(&mut server, Duration::from_secs(5)).await {
+        ServerEvent::Disconnected(gone) => assert_eq!(gone, first_link),
+        other => panic!("expected the first link to close, got {other:?}"),
+    }
+    let (_third, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    connected_link(&mut server).await;
+}
