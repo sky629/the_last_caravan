@@ -6,10 +6,17 @@
 //!                              +--JoinRejected--> Rejected
 //! (모든 상태) --Disconnected--> Disconnected   (Rejected는 거절 사유를 유지합니다)
 //! ```
+//!
+//! 방에 들어간 뒤에 필요한 값(입장 안내, 스냅샷, 입력 순서 번호)은 `InRoom`에만 있습니다.
+//! 그래서 입장하기 전에 스냅샷을 그리거나 입력을 보내는 일은 값이 없어서 일어날 수 없습니다.
 
 use caravan_protocol::{
-    ClientEvent, ClientMsg, InputMsg, PROTOCOL_VERSION, RejectReason, RoomCode, ServerMsg, Snapshot,
+    ClientEvent, ClientMsg, PROTOCOL_VERSION, RejectReason, RoomCode, ServerMsg, Snapshot, Welcome,
 };
+use caravan_rules::Vec2;
+
+use crate::input::{Controls, InputSender};
+use crate::interp::{Frame, SnapshotBuffer};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Session {
@@ -20,17 +27,7 @@ pub enum Session {
     Joining {
         room: RoomCode,
     },
-    InRoom {
-        room: RoomCode,
-        you: u32,
-        tick_hz: u32,
-        /// 가장 최근에 받은 스냅샷의 Tick입니다. 이보다 오래된 스냅샷은 버립니다.
-        latest_tick: Option<u64>,
-        /// 다음에 보낼 입력의 순서 번호입니다.
-        next_seq: u32,
-        /// 다음 입력을 보낼 시각입니다 (앱이 시작된 뒤 지난 초).
-        next_input_at: f64,
-    },
+    InRoom(Joined),
     Rejected {
         reason: RejectReason,
     },
@@ -44,12 +41,25 @@ pub enum Session {
     },
 }
 
-/// 이벤트 하나를 처리한 뒤 호출한 쪽(Bevy 앱)이 할 일입니다.
+/// 방에 들어간 뒤의 상태입니다.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Reaction {
-    Nothing,
-    Send(ClientMsg),
-    Show(Snapshot),
+pub struct Joined {
+    pub room: RoomCode,
+    /// 서버가 입장할 때 알려 준 값입니다. 내 플레이어 번호, 진영, Tick 속도, 고정된 세계가 들어 있습니다.
+    pub welcome: Welcome,
+    snapshots: SnapshotBuffer,
+    inputs: InputSender,
+}
+
+impl Joined {
+    fn new(room: RoomCode, welcome: Welcome) -> Joined {
+        Joined {
+            room,
+            snapshots: SnapshotBuffer::new(welcome.tick_hz),
+            inputs: InputSender::new(welcome.tick_hz),
+            welcome,
+        }
+    }
 }
 
 impl Session {
@@ -57,7 +67,8 @@ impl Session {
         Session::Connecting { room }
     }
 
-    pub fn on_event(&mut self, event: ClientEvent) -> Reaction {
+    /// 이벤트 하나를 처리합니다. 서버에 답으로 보낼 메시지가 있으면 돌려줍니다.
+    pub fn on_event(&mut self, event: ClientEvent) -> Option<ClientMsg> {
         match (&mut *self, event) {
             (Session::Connecting { room }, ClientEvent::Connected) => {
                 let join = ClientMsg::Join {
@@ -65,91 +76,81 @@ impl Session {
                     room: room.as_str().to_string(),
                 };
                 *self = Session::Joining { room: room.clone() };
-                Reaction::Send(join)
+                Some(join)
             }
             (Session::Joining { room }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
-                *self = Session::InRoom {
-                    room: room.clone(),
-                    you: welcome.you,
-                    tick_hz: welcome.tick_hz,
-                    latest_tick: None,
-                    next_seq: 1,
-                    next_input_at: 0.0,
-                };
-                Reaction::Nothing
+                *self = Session::InRoom(Joined::new(room.clone(), welcome));
+                None
             }
             (Session::Joining { .. }, ClientEvent::Message(ServerMsg::JoinRejected { reason })) => {
                 *self = Session::Rejected { reason };
-                Reaction::Nothing
+                None
             }
-            (
-                Session::InRoom { latest_tick, .. },
-                ClientEvent::Message(ServerMsg::Snapshot(snapshot)),
-            ) => {
-                // 접속 방식에 따라 메시지의 순서가 바뀔 수 있으므로, 이미 그린 것보다 오래된 상태는 그리지 않습니다.
-                if latest_tick.is_some_and(|latest| snapshot.tick <= latest) {
-                    return Reaction::Nothing;
-                }
-                *latest_tick = Some(snapshot.tick);
-                Reaction::Show(snapshot)
+            (Session::InRoom(joined), ClientEvent::Message(ServerMsg::Snapshot(snapshot))) => {
+                joined.snapshots.push(snapshot);
+                None
             }
             (
                 Session::Rejected { .. } | Session::Failed { .. },
                 ClientEvent::Disconnected { .. },
-            ) => Reaction::Nothing,
+            ) => None,
             (_, ClientEvent::Disconnected { reason }) => {
                 *self = Session::Disconnected { reason };
-                Reaction::Nothing
+                None
             }
             // 순서에 맞지 않는 메시지(입장 전의 스냅샷 등)는 무시합니다.
-            _ => Reaction::Nothing,
+            _ => None,
         }
     }
 
-    /// 입장한 뒤 서버의 Tick 간격마다 입력 하나를 돌려줍니다. `now_secs`는 앱이 시작된 뒤 지난 시간(초)입니다.
-    /// 서버는 일정 시간 동안 메시지가 없는 접속을 닫으므로, 입력은 접속이 살아 있다는 표시도 됩니다.
-    pub fn input_due(&mut self, now_secs: f64) -> Option<ClientMsg> {
-        let Session::InRoom {
-            tick_hz,
-            next_seq,
-            next_input_at,
-            ..
-        } = self
-        else {
-            return None;
-        };
-        if now_secs < *next_input_at {
-            return None;
+    /// 방에 들어갔을 때의 상태입니다.
+    pub fn joined(&self) -> Option<&Joined> {
+        match self {
+            Session::InRoom(joined) => Some(joined),
+            _ => None,
         }
-        let period = 1.0 / f64::from(*tick_hz);
-        // 프레임이 오래 멈췄다가 다시 돌아도 밀린 입력을 몰아서 보내지 않습니다.
-        *next_input_at = if *next_input_at + period > now_secs {
-            *next_input_at + period
-        } else {
-            now_secs + period
-        };
-        let seq = *next_seq;
-        *next_seq += 1;
-        Some(ClientMsg::Input(InputMsg {
-            seq,
-            ..InputMsg::default()
-        }))
     }
 
-    /// 화면의 상태 표시줄에 쓰는 문장입니다. Bevy의 기본 글꼴은 영문만 표시하므로 영어로 씁니다.
+    /// 프레임마다 부릅니다. 재생 시각을 프레임 시간만큼 앞으로 보냅니다.
+    pub fn advance(&mut self, dt_secs: f64) {
+        if let Session::InRoom(joined) = self {
+            joined.snapshots.advance(dt_secs);
+        }
+    }
+
+    /// 지금 화면에 그릴 방의 모습입니다. 첫 스냅샷을 받고 `advance`를 부르기 전에는 없습니다.
+    pub fn frame(&self) -> Option<Frame> {
+        self.joined()?.snapshots.frame()
+    }
+
+    /// 서버가 가장 최근에 보낸 스냅샷입니다. 화면에 그리는 것보다 100ms 앞서 있습니다.
+    pub fn newest_snapshot(&self) -> Option<&Snapshot> {
+        self.joined()?.snapshots.newest()
+    }
+
+    /// 프레임마다 부릅니다. 입력을 보낼 때가 되었으면 입력 메시지를 돌려줍니다.
+    /// `now_secs`는 앱이 시작된 뒤 지난 시간(초)이고, `me`는 내 캐릭터가 화면에 그려진 지면 위치입니다.
+    pub fn input_due(
+        &mut self,
+        now_secs: f64,
+        controls: &Controls,
+        me: Option<Vec2>,
+    ) -> Option<ClientMsg> {
+        let Session::InRoom(joined) = self else {
+            return None;
+        };
+        joined
+            .inputs
+            .poll(now_secs, controls, me)
+            .map(ClientMsg::Input)
+    }
+
+    /// 화면의 접속 상태 표시줄에 쓰는 문장입니다. Bevy의 기본 글꼴은 영문만 표시하므로 영어로 씁니다.
     pub fn status_text(&self) -> String {
         match self {
             Session::Connecting { room } => format!("Connecting... (room {room})"),
             Session::Joining { room } => format!("Joining room {room}..."),
-            Session::InRoom {
-                room,
-                you,
-                latest_tick,
-                ..
-            } => match latest_tick {
-                Some(tick) => format!("Room {room} | player {you} | tick {tick}"),
-                None => format!("Room {room} | player {you} | waiting for the first snapshot"),
-            },
+            Session::InRoom(_) => "Connected".to_string(),
             Session::Rejected { reason } => match reason {
                 RejectReason::RoomFull { capacity } => {
                     format!("Join rejected: the room is full ({capacity} players)")
@@ -168,7 +169,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::Welcome;
+    use caravan_protocol::InputMsg;
     use caravan_rules::{Sim, Tuning};
 
     fn room() -> RoomCode {
@@ -190,13 +191,6 @@ mod tests {
         ServerMsg::Welcome(welcome)
     }
 
-    fn input(seq: u32) -> ClientMsg {
-        ClientMsg::Input(InputMsg {
-            seq,
-            ..InputMsg::default()
-        })
-    }
-
     fn message(msg: ServerMsg) -> ClientEvent {
         ClientEvent::Message(msg)
     }
@@ -208,12 +202,19 @@ mod tests {
         session
     }
 
+    fn seq_of(msg: Option<ClientMsg>) -> Option<u32> {
+        match msg {
+            Some(ClientMsg::Input(InputMsg { seq, .. })) => Some(seq),
+            _ => None,
+        }
+    }
+
     #[test]
     fn connecting_sends_join_with_the_room_code_and_protocol_version() {
         let mut session = Session::new(room());
         assert_eq!(
             session.on_event(ClientEvent::Connected),
-            Reaction::Send(ClientMsg::Join {
+            Some(ClientMsg::Join {
                 version: PROTOCOL_VERSION,
                 room: "test".to_string()
             })
@@ -222,45 +223,39 @@ mod tests {
     }
 
     #[test]
-    fn welcome_enters_the_room_and_snapshots_are_shown_in_tick_order() {
-        let mut session = in_room();
-        assert!(matches!(
-            session,
-            Session::InRoom {
-                you: 3,
-                tick_hz: 20,
-                ..
-            }
-        ));
+    fn welcome_enters_the_room_and_keeps_what_the_server_said() {
+        let session = in_room();
+
+        let joined = session.joined().expect("in the room");
+        assert_eq!(joined.room, room());
+        assert_eq!(joined.welcome.you, 3);
+        assert_eq!(joined.welcome.tick_hz, 20);
+        let tuning = Tuning::default();
         assert_eq!(
-            session.on_event(message(ServerMsg::Snapshot(snapshot(5)))),
-            Reaction::Show(snapshot(5))
+            joined.welcome.world.obstacles.len(),
+            tuning.map.obstacles.len()
         );
         assert_eq!(
-            session.on_event(message(ServerMsg::Snapshot(snapshot(4)))),
-            Reaction::Nothing,
-            "an older snapshot is dropped"
-        );
-        assert_eq!(
-            session.on_event(message(ServerMsg::Snapshot(snapshot(6)))),
-            Reaction::Show(snapshot(6))
+            joined.welcome.world.towers.len(),
+            tuning.map.structures.len()
         );
     }
 
     #[test]
-    fn in_the_room_one_input_is_due_per_server_tick_with_increasing_seq() {
-        let mut session = Session::new(room());
-        assert_eq!(session.input_due(0.0), None, "no input before joining");
-        session.on_event(ClientEvent::Connected);
-        session.on_event(message(welcome(3)));
+    fn snapshots_are_buffered_and_an_older_one_is_dropped() {
+        let mut session = in_room();
+        assert!(
+            session.frame().is_none(),
+            "nothing to draw before a snapshot"
+        );
 
-        assert_eq!(session.input_due(1.000), Some(input(1)));
-        assert_eq!(session.input_due(1.020), None);
-        assert_eq!(session.input_due(1.051), Some(input(2)));
-        assert_eq!(session.input_due(1.060), None);
-        assert_eq!(session.input_due(9.000), Some(input(3)), "after a stall");
-        assert_eq!(session.input_due(9.010), None, "no burst of missed inputs");
-        assert_eq!(session.input_due(9.051), Some(input(4)));
+        session.on_event(message(ServerMsg::Snapshot(snapshot(5))));
+        session.on_event(message(ServerMsg::Snapshot(snapshot(4))));
+        session.on_event(message(ServerMsg::Snapshot(snapshot(6))));
+        session.advance(0.016);
+
+        assert_eq!(session.newest_snapshot().map(|s| s.tick), Some(6));
+        assert!(session.frame().is_some());
     }
 
     #[test]
@@ -269,9 +264,10 @@ mod tests {
         session.on_event(ClientEvent::Connected);
         assert_eq!(
             session.on_event(message(ServerMsg::Snapshot(snapshot(1)))),
-            Reaction::Nothing
+            None
         );
         assert_eq!(session, Session::Joining { room: room() });
+        assert!(session.newest_snapshot().is_none());
     }
 
     #[test]
@@ -284,23 +280,59 @@ mod tests {
             reason: "closed".to_string(),
         });
         assert_eq!(session, Session::Rejected { reason });
+        assert_eq!(
+            session.status_text(),
+            "Join rejected: the room is full (4 players)"
+        );
+    }
+
+    #[test]
+    fn every_rejection_reason_is_explained_on_screen() {
+        for (reason, expected) in [
+            (RejectReason::BadRoomCode, "bad room code"),
+            (
+                RejectReason::VersionMismatch { server: 9 },
+                "server protocol 9",
+            ),
+        ] {
+            let text = Session::Rejected { reason }.status_text();
+            assert!(text.contains(expected), "{text}");
+        }
     }
 
     #[test]
     fn losing_the_connection_in_the_room_ends_the_session() {
         let mut session = in_room();
         session.on_event(ClientEvent::Disconnected {
-            reason: "connection closed".to_string(),
+            reason: "the server closed the connection".to_string(),
         });
         assert_eq!(
             session,
             Session::Disconnected {
-                reason: "connection closed".to_string()
+                reason: "the server closed the connection".to_string()
             }
         );
         assert_eq!(
-            session.on_event(message(ServerMsg::Snapshot(snapshot(9)))),
-            Reaction::Nothing
+            session.status_text(),
+            "Disconnected: the server closed the connection"
         );
+        assert_eq!(
+            session.on_event(message(ServerMsg::Snapshot(snapshot(9)))),
+            None
+        );
+        assert!(session.frame().is_none());
+    }
+
+    #[test]
+    fn inputs_are_sent_only_in_the_room_one_per_server_tick() {
+        let idle = Controls::default();
+        let mut session = Session::new(room());
+        assert_eq!(session.input_due(0.0, &idle, None), None);
+        session.on_event(ClientEvent::Connected);
+        session.on_event(message(welcome(3)));
+
+        assert_eq!(seq_of(session.input_due(1.000, &idle, None)), Some(1));
+        assert_eq!(seq_of(session.input_due(1.020, &idle, None)), None);
+        assert_eq!(seq_of(session.input_due(1.051, &idle, None)), Some(2));
     }
 }

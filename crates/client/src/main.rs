@@ -5,15 +5,16 @@
 //!
 //! 서버가 Tick마다 보내는 스냅샷을 받아서 첫 번째 플레이어의 자리에 표식(사각형) 하나를 그리고, 화면 왼쪽 위에 접속 상태를 표시합니다.
 
+// Bevy 시스템은 매개변수가 많고 쿼리 타입이 길어지는 것이 정상입니다.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
+mod convert;
+mod diagnostics;
+mod input;
 mod net;
 
 use bevy::prelude::*;
 use caravan_client_core::{LaunchError, LaunchOptions};
-use caravan_protocol::Snapshot;
-
-/// 지면 좌표 1타일을 화면에서 몇 픽셀로 그릴지 정합니다.
-const PIXELS_PER_TILE: f32 = 40.0;
-const MARKER_SIZE: f32 = 32.0;
 
 #[derive(Component)]
 struct Marker;
@@ -36,8 +37,21 @@ fn main() {
     }));
     // 로그는 `DefaultPlugins`가 설정하므로, 접속을 시작하는 로그를 남기려면 플러그인을 먼저 추가합니다.
     net::install(&mut app, launch);
-    app.add_systems(Startup, setup_scene)
-        .add_systems(Update, (draw_marker, show_status))
+    app.init_resource::<input::HeldControls>()
+        .add_systems(Startup, setup_scene)
+        .add_systems(
+            Update,
+            (
+                net::pump_network,
+                net::advance_playback,
+                draw_marker,
+                show_status,
+                input::read_controls,
+                net::send_input,
+                diagnostics::report,
+            )
+                .chain(),
+        )
         .run();
 }
 
@@ -61,9 +75,8 @@ fn read_launch_options() -> Result<LaunchOptions, LaunchError> {
 fn setup_scene(mut commands: Commands) {
     commands.spawn(Camera2d);
     commands.spawn((
-        Sprite::from_color(Color::srgb(0.95, 0.75, 0.3), Vec2::splat(MARKER_SIZE)),
+        Sprite::from_color(Color::srgb(0.95, 0.75, 0.3), Vec2::splat(20.0)),
         Transform::default(),
-        // 첫 스냅샷을 받기 전에는 그리지 않습니다. 서버가 계산한 위치만 화면에 나타납니다.
         Visibility::Hidden,
         Marker,
     ));
@@ -84,33 +97,23 @@ fn setup_scene(mut commands: Commands) {
 }
 
 fn draw_marker(
-    link: Res<net::Link>,
+    frame: Res<net::CurrentFrame>,
     marker: Single<(&mut Transform, &mut Visibility), With<Marker>>,
 ) {
-    let Some(snapshot) = &link.latest else {
-        return;
-    };
     let (mut transform, mut visibility) = marker.into_inner();
-    let Some(first) = snapshot.players.first() else {
+    let Some(first) = frame.0.as_ref().and_then(|frame| frame.players.first()) else {
         *visibility = Visibility::Hidden;
         return;
     };
-    let position = first.pos.to_tiles();
-    transform.translation.x = position.x * PIXELS_PER_TILE;
-    transform.translation.y = position.y * PIXELS_PER_TILE;
+    let position = convert::screen_pos(first.pos);
+    transform.translation.x = position.x;
+    transform.translation.y = position.y;
     *visibility = Visibility::Visible;
 }
 
-fn show_status(link: Res<net::Link>, mut text: Single<&mut Text, With<StatusText>>) {
-    let mut status = link.session.status_text();
-    if let Some(snapshot) = &link.latest {
-        status.push_str(&format!("\nplayers in room: {:?}", player_ids(snapshot)));
-    }
+fn show_status(session: Res<net::ClientSession>, mut text: Single<&mut Text, With<StatusText>>) {
+    let status = session.0.status_text();
     if text.0 != status {
         text.0 = status;
     }
-}
-
-fn player_ids(snapshot: &Snapshot) -> Vec<u32> {
-    snapshot.players.iter().map(|player| player.id).collect()
 }

@@ -1,36 +1,37 @@
-//! 접속 방식과 Bevy를 연결합니다. 프레임마다 접속 방식의 이벤트를 모두 읽어서 `Session`에 넘기고, `Session`이 정한 일을 합니다.
+//! 접속 방식과 Bevy를 연결합니다. 프레임마다 접속 방식의 이벤트를 모두 읽어서 `Session`에 넘기고,
+//! 재생 시각을 앞으로 보내서 화면에 그릴 `Frame`을 만들고, 입력을 서버 Tick마다 하나씩 보냅니다.
 
 use bevy::prelude::*;
-use caravan_client_core::{LaunchError, LaunchOptions, Reaction, Session};
-use caravan_protocol::{ClientEvent, ClientTransport, ServerMsg, Snapshot};
+use caravan_client_core::{Frame, LaunchError, LaunchOptions, Session};
+use caravan_protocol::{ClientEvent, ClientTransport, ServerMsg};
 use caravan_ws_client::WsClient;
+
+use crate::input::HeldControls;
 
 /// 접속 방식입니다. 웹의 WebSocket은 다른 스레드로 옮길 수 없으므로 non-send 리소스로 보관합니다.
 /// Bevy는 non-send 리소스를 사용하는 시스템을 항상 메인 스레드에서 실행합니다.
-struct Net {
+pub struct Net {
     transport: Box<dyn ClientTransport>,
     debug_net: bool,
 }
 
-/// 화면을 그리는 시스템이 읽는 접속 상태와 가장 최근의 스냅샷입니다.
+/// 접속 상태입니다. `Session`은 Bevy를 모르는 크레이트의 타입이므로 리소스로 쓰려면 감싸야 합니다.
 #[derive(Resource)]
-pub struct Link {
-    pub session: Session,
-    pub latest: Option<Snapshot>,
-}
+pub struct ClientSession(pub Session);
 
+/// 이번 프레임에 화면에 그릴 방의 모습입니다. 입장하기 전과 첫 스냅샷을 받기 전에는 없습니다.
+#[derive(Resource, Default)]
+pub struct CurrentFrame(pub Option<Frame>);
+
+/// 리소스를 넣고 접속을 시작합니다. 시스템은 `main.rs`의 프레임 순서에 있습니다.
 pub fn install(app: &mut App, launch: Result<LaunchOptions, LaunchError>) {
     let (session, net) = open(launch);
     info!("{}", session.status_text());
-    app.insert_resource(Link {
-        session,
-        latest: None,
-    });
+    app.insert_resource(ClientSession(session))
+        .init_resource::<CurrentFrame>();
     if let Some(net) = net {
         app.insert_non_send(net);
     }
-    app.add_systems(PreUpdate, pump_network)
-        .add_systems(Update, log_progress);
 }
 
 /// 클라이언트가 접속 방식을 고르는 곳은 이 함수 하나입니다. 다른 접속 방식을 추가하면 여기만 바꿉니다.
@@ -58,40 +59,62 @@ fn open(launch: Result<LaunchOptions, LaunchError>) -> (Session, Option<Net>) {
     }
 }
 
-fn pump_network(net: Option<NonSendMut<Net>>, mut link: ResMut<Link>, time: Res<Time>) {
+/// 프레임 순서 1: 접속 방식에 도착한 이벤트를 모두 `Session`에 넘기고, 서버에 보낼 답이 있으면 보냅니다.
+pub fn pump_network(net: Option<NonSendMut<Net>>, mut session: ResMut<ClientSession>) {
     let Some(mut net) = net else {
         return;
     };
     while let Some(event) = net.transport.poll() {
         if net.debug_net {
-            info!("net <- {event:?}");
+            info!("net <- {}", describe(&event));
         }
         let is_snapshot = matches!(event, ClientEvent::Message(ServerMsg::Snapshot(_)));
-        match link.session.on_event(event) {
-            Reaction::Nothing => {}
-            Reaction::Send(msg) => {
-                if net.debug_net {
-                    info!("net -> {msg:?}");
-                }
-                net.transport.send(&msg);
+        if let Some(reply) = session.0.on_event(event) {
+            if net.debug_net {
+                info!("net -> {reply:?}");
             }
-            Reaction::Show(snapshot) => {
-                if link.latest.is_none() {
-                    info!(
-                        "first snapshot: tick {} players {}",
-                        snapshot.tick,
-                        snapshot.players.len()
-                    );
-                }
-                link.latest = Some(snapshot);
-            }
+            net.transport.send(&reply);
         }
-        // 스냅샷은 초당 20개이므로 상태가 바뀌는 이벤트만 기록합니다.
+        // 스냅샷은 초당 20개이므로 상태가 바뀔 수 있는 이벤트만 기록합니다.
         if !is_snapshot {
-            info!("{}", link.session.status_text());
+            info!("{}", session.0.status_text());
         }
     }
-    if let Some(input) = link.session.input_due(time.elapsed_secs_f64()) {
+}
+
+/// 프레임 순서 2: 재생 시각을 프레임 시간만큼 앞으로 보내고, 그릴 모습을 만듭니다.
+pub fn advance_playback(
+    time: Res<Time<Real>>,
+    mut session: ResMut<ClientSession>,
+    mut frame: ResMut<CurrentFrame>,
+) {
+    session.0.advance(time.delta_secs_f64());
+    frame.0 = session.0.frame();
+}
+
+/// 프레임 순서 9: 입력을 보낼 때가 되었으면 지금의 조작을 서버에 보냅니다.
+pub fn send_input(
+    net: Option<NonSendMut<Net>>,
+    time: Res<Time<Real>>,
+    controls: Res<HeldControls>,
+    frame: Res<CurrentFrame>,
+    mut session: ResMut<ClientSession>,
+) {
+    let Some(mut net) = net else {
+        return;
+    };
+    let Some(joined) = session.0.joined() else {
+        return;
+    };
+    let me = frame
+        .0
+        .as_ref()
+        .and_then(|frame| frame.player(joined.welcome.you))
+        .map(|player| player.pos);
+    if let Some(input) = session
+        .0
+        .input_due(time.elapsed_secs_f64(), &controls.0, me)
+    {
         if net.debug_net {
             info!("net -> {input:?}");
         }
@@ -99,18 +122,15 @@ fn pump_network(net: Option<NonSendMut<Net>>, mut link: ResMut<Link>, time: Res<
     }
 }
 
-/// 창을 보지 않고도 동기화를 확인할 수 있도록, 1초에 한 번 가장 최근의 Tick을 기록합니다.
-fn log_progress(link: Res<Link>, time: Res<Time>, mut next_report: Local<f64>) {
-    let now = time.elapsed_secs_f64();
-    if now < *next_report {
-        return;
-    }
-    *next_report = now + 1.0;
-    if let Some(snapshot) = &link.latest {
-        info!(
-            "latest tick {} players {}",
+/// 스냅샷은 몬스터가 수백 마리일 수 있으므로 요약해서 출력합니다.
+fn describe(event: &ClientEvent) -> String {
+    match event {
+        ClientEvent::Message(ServerMsg::Snapshot(snapshot)) => format!(
+            "Snapshot {{ tick: {}, players: {}, monsters: {} }}",
             snapshot.tick,
-            snapshot.players.len()
-        );
+            snapshot.players.len(),
+            snapshot.monsters.len()
+        ),
+        other => format!("{other:?}"),
     }
 }
