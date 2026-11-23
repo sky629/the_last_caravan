@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use caravan_protocol::{
     ClientMsg, LinkId, PROTOCOL_VERSION, RejectReason, RoomCode, ServerEvent, ServerLimits,
-    ServerMsg,
+    ServerMsg, Welcome,
 };
 use caravan_rules::{JoinError, PlayerId, Tuning};
 
@@ -107,12 +107,12 @@ impl Hub {
                 self.handle_join(link, version, &room, now)
             }
             // 규칙이 아직 플레이어의 입력을 사용하지 않으므로, 입력은 접속이 살아 있다는 표시로만 씁니다.
-            (Some(LinkState::InRoom { deadline, .. }), ClientMsg::Input { .. }) => {
+            (Some(LinkState::InRoom { deadline, .. }), ClientMsg::Input(_)) => {
                 *deadline = now + self.idle_timeout;
                 Vec::new()
             }
             // 입장하기 전의 입력과 두 번째 `Join`은 약속 위반입니다.
-            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Input { .. })
+            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Input(_))
             | (Some(LinkState::InRoom { .. }), ClientMsg::Join { .. }) => self.close_link(link),
             (Some(LinkState::Closing) | None, _) => Vec::new(),
         }
@@ -126,14 +126,8 @@ impl Hub {
         now: Instant,
     ) -> Vec<Out> {
         match self.admit(link, version, raw_room, now) {
-            Ok((code, player, members)) => vec![
-                Out::Send(
-                    link,
-                    ServerMsg::Welcome {
-                        you: player.0,
-                        tick_hz: self.tuning.tick_hz,
-                    },
-                ),
+            Ok((code, player, members, welcome)) => vec![
+                Out::Send(link, ServerMsg::Welcome(welcome)),
                 Out::Notice(Notice::Joined {
                     room: code,
                     player,
@@ -158,7 +152,7 @@ impl Hub {
         version: u32,
         raw_room: &str,
         now: Instant,
-    ) -> Result<(RoomCode, PlayerId, usize), RejectReason> {
+    ) -> Result<(RoomCode, PlayerId, usize, Welcome), RejectReason> {
         if version != PROTOCOL_VERSION {
             return Err(RejectReason::VersionMismatch {
                 server: PROTOCOL_VERSION,
@@ -170,7 +164,7 @@ impl Hub {
             .rooms
             .entry(code.clone())
             .or_insert_with(|| Room::new(tuning.clone()));
-        let player = room
+        let (player, welcome) = room
             .admit(link)
             .map_err(|JoinError::RoomFull { capacity }| RejectReason::RoomFull {
                 capacity: capacity as u32,
@@ -184,7 +178,7 @@ impl Hub {
                 deadline: now + self.idle_timeout,
             },
         );
-        Ok((code, player, members))
+        Ok((code, player, members, welcome))
     }
 
     /// 서버가 접속을 닫습니다. 방에 있던 플레이어는 `Disconnected`를 기다리지 않고 바로 제거하므로,

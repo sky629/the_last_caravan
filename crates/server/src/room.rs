@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use caravan_protocol::{LinkId, ServerMsg, Snapshot};
+use caravan_protocol::{LinkId, ServerMsg, Snapshot, Welcome};
 use caravan_rules::{JoinError, PlayerId, PlayerInputs, Sim, Tuning};
 
 use crate::hub::Out;
@@ -21,10 +21,13 @@ impl Room {
         }
     }
 
-    pub fn admit(&mut self, link: LinkId) -> Result<PlayerId, JoinError> {
+    /// 플레이어를 추가하고, 그 플레이어에게 보낼 입장 안내를 함께 돌려줍니다.
+    pub fn admit(&mut self, link: LinkId) -> Result<(PlayerId, Welcome), JoinError> {
         let player = self.sim.add_player()?;
         self.members.insert(player, link);
-        Ok(player)
+        // `add_player`가 방금 이 번호의 플레이어를 넣었으므로 항상 있습니다.
+        let me = self.sim.player(player).expect("the player was just added");
+        Ok((player, Welcome::from_sim(&self.sim, me)))
     }
 
     pub fn remove(&mut self, player: PlayerId) {

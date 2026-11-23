@@ -3,12 +3,13 @@
 //! PC: `cargo run -p caravan_client -- --room test --server ws://127.0.0.1:7777`
 //! 웹: `cd crates/client && trunk serve` 뒤에 `http://127.0.0.1:8080/?room=test` 열기
 //!
-//! 서버가 Tick마다 보내는 스냅샷을 받아서 표식(사각형) 하나를 그리고, 화면 왼쪽 위에 접속 상태를 표시합니다.
+//! 서버가 Tick마다 보내는 스냅샷을 받아서 첫 번째 플레이어의 자리에 표식(사각형) 하나를 그리고, 화면 왼쪽 위에 접속 상태를 표시합니다.
 
 mod net;
 
 use bevy::prelude::*;
 use caravan_client_core::{LaunchError, LaunchOptions};
+use caravan_protocol::Snapshot;
 
 /// 지면 좌표 1타일을 화면에서 몇 픽셀로 그릴지 정합니다.
 const PIXELS_PER_TILE: f32 = 40.0;
@@ -89,8 +90,12 @@ fn draw_marker(
     let Some(snapshot) = &link.latest else {
         return;
     };
-    let position = snapshot.marker.to_tiles();
     let (mut transform, mut visibility) = marker.into_inner();
+    let Some(first) = snapshot.players.first() else {
+        *visibility = Visibility::Hidden;
+        return;
+    };
+    let position = first.pos.to_tiles();
     transform.translation.x = position.x * PIXELS_PER_TILE;
     transform.translation.y = position.y * PIXELS_PER_TILE;
     *visibility = Visibility::Visible;
@@ -99,9 +104,13 @@ fn draw_marker(
 fn show_status(link: Res<net::Link>, mut text: Single<&mut Text, With<StatusText>>) {
     let mut status = link.session.status_text();
     if let Some(snapshot) = &link.latest {
-        status.push_str(&format!("\nplayers in room: {:?}", snapshot.players));
+        status.push_str(&format!("\nplayers in room: {:?}", player_ids(snapshot)));
     }
     if text.0 != status {
         text.0 = status;
     }
+}
+
+fn player_ids(snapshot: &Snapshot) -> Vec<u32> {
+    snapshot.players.iter().map(|player| player.id).collect()
 }

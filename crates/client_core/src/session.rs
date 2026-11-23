@@ -8,7 +8,7 @@
 //! ```
 
 use caravan_protocol::{
-    ClientEvent, ClientMsg, PROTOCOL_VERSION, RejectReason, RoomCode, ServerMsg, Snapshot,
+    ClientEvent, ClientMsg, InputMsg, PROTOCOL_VERSION, RejectReason, RoomCode, ServerMsg, Snapshot,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -67,14 +67,11 @@ impl Session {
                 *self = Session::Joining { room: room.clone() };
                 Reaction::Send(join)
             }
-            (
-                Session::Joining { room },
-                ClientEvent::Message(ServerMsg::Welcome { you, tick_hz }),
-            ) => {
+            (Session::Joining { room }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
                 *self = Session::InRoom {
                     room: room.clone(),
-                    you,
-                    tick_hz,
+                    you: welcome.you,
+                    tick_hz: welcome.tick_hz,
                     latest_tick: None,
                     next_seq: 1,
                     next_input_at: 0.0,
@@ -133,7 +130,10 @@ impl Session {
         };
         let seq = *next_seq;
         *next_seq += 1;
-        Some(ClientMsg::Input { seq })
+        Some(ClientMsg::Input(InputMsg {
+            seq,
+            ..InputMsg::default()
+        }))
     }
 
     /// 화면의 상태 표시줄에 쓰는 문장입니다. Bevy의 기본 글꼴은 영문만 표시하므로 영어로 씁니다.
@@ -168,18 +168,33 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::WirePos;
+    use caravan_protocol::Welcome;
+    use caravan_rules::{Sim, Tuning};
 
     fn room() -> RoomCode {
         RoomCode::parse("test").unwrap()
     }
 
     fn snapshot(tick: u64) -> Snapshot {
-        Snapshot {
-            tick,
-            players: vec![1],
-            marker: WirePos { x: 0, y: 0 },
-        }
+        let mut snapshot = Snapshot::from_sim(&Sim::new(Tuning::default()));
+        snapshot.tick = tick;
+        snapshot
+    }
+
+    /// 플레이어 번호가 `you`인 입장 안내입니다.
+    fn welcome(you: u32) -> ServerMsg {
+        let mut sim = Sim::new(Tuning::default());
+        let first = sim.add_player().unwrap();
+        let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
+        welcome.you = you;
+        ServerMsg::Welcome(welcome)
+    }
+
+    fn input(seq: u32) -> ClientMsg {
+        ClientMsg::Input(InputMsg {
+            seq,
+            ..InputMsg::default()
+        })
     }
 
     fn message(msg: ServerMsg) -> ClientEvent {
@@ -189,10 +204,7 @@ mod tests {
     fn in_room() -> Session {
         let mut session = Session::new(room());
         session.on_event(ClientEvent::Connected);
-        session.on_event(message(ServerMsg::Welcome {
-            you: 3,
-            tick_hz: 20,
-        }));
+        session.on_event(message(welcome(3)));
         session
     }
 
@@ -240,22 +252,15 @@ mod tests {
         let mut session = Session::new(room());
         assert_eq!(session.input_due(0.0), None, "no input before joining");
         session.on_event(ClientEvent::Connected);
-        session.on_event(message(ServerMsg::Welcome {
-            you: 3,
-            tick_hz: 20,
-        }));
+        session.on_event(message(welcome(3)));
 
-        assert_eq!(session.input_due(1.000), Some(ClientMsg::Input { seq: 1 }));
+        assert_eq!(session.input_due(1.000), Some(input(1)));
         assert_eq!(session.input_due(1.020), None);
-        assert_eq!(session.input_due(1.051), Some(ClientMsg::Input { seq: 2 }));
+        assert_eq!(session.input_due(1.051), Some(input(2)));
         assert_eq!(session.input_due(1.060), None);
-        assert_eq!(
-            session.input_due(9.000),
-            Some(ClientMsg::Input { seq: 3 }),
-            "after a stall"
-        );
+        assert_eq!(session.input_due(9.000), Some(input(3)), "after a stall");
         assert_eq!(session.input_due(9.010), None, "no burst of missed inputs");
-        assert_eq!(session.input_due(9.051), Some(ClientMsg::Input { seq: 4 }));
+        assert_eq!(session.input_due(9.051), Some(input(4)));
     }
 
     #[test]

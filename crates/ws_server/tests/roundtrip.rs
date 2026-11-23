@@ -3,12 +3,42 @@
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientMsg, LinkId, PROTOCOL_VERSION, ServerEvent, ServerLimits, ServerMsg, ServerTransport,
-    Snapshot, WirePos, decode_server, encode_client,
+    ClientMsg, InputMsg, LinkId, PROTOCOL_VERSION, RejectReason, ServerEvent, ServerLimits,
+    ServerMsg, ServerTransport, Snapshot, WireAngle, WireMonster, WireMonsterKind, WirePhase,
+    WirePos, WireWagon, decode_server, encode_client,
 };
 use caravan_ws_server::WsServer;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
+
+/// 어떤 메시지든 상관없는 테스트가 쓰는 가장 작은 서버 메시지입니다.
+fn some_server_msg() -> ServerMsg {
+    ServerMsg::JoinRejected {
+        reason: RejectReason::BadRoomCode,
+    }
+}
+
+/// 몬스터가 `monsters`마리인 스냅샷입니다. 몬스터 하나가 약 9바이트입니다.
+fn snapshot_of(monsters: u32) -> Snapshot {
+    Snapshot {
+        tick: 1,
+        expedition: 1,
+        phase: WirePhase::Fighting { wave: 1 },
+        wave_count: 3,
+        wagon: WireWagon { hp: 1, max_hp: 1 },
+        towers: vec![],
+        players: vec![],
+        monsters: (1..=monsters)
+            .map(|id| WireMonster {
+                id,
+                kind: WireMonsterKind::Grunt,
+                pos: WirePos { x: 1000, y: 1000 },
+                facing: WireAngle(0),
+                hp: 60,
+            })
+            .collect(),
+    }
+}
 
 /// 게임 스레드처럼 `poll`을 반복해서 다음 이벤트를 기다립니다.
 async fn next_event(server: &mut WsServer, within: Duration) -> ServerEvent {
@@ -56,16 +86,13 @@ async fn messages_cross_a_real_socket_as_binary_frames_and_close_delivers_the_la
         other => panic!("expected the Join, got {other:?}"),
     }
 
-    let welcome = ServerMsg::Welcome {
-        you: 1,
-        tick_hz: 20,
-    };
-    server.send(link, &welcome);
+    let answer = some_server_msg();
+    server.send(link, &answer);
     server.close(link);
 
     match client.next().await {
-        Some(Ok(Message::Binary(bytes))) => assert_eq!(decode_server(&bytes), Ok(welcome)),
-        other => panic!("expected a binary Welcome, got {other:?}"),
+        Some(Ok(Message::Binary(bytes))) => assert_eq!(decode_server(&bytes), Ok(answer)),
+        other => panic!("expected a binary answer, got {other:?}"),
     }
     assert!(matches!(client.next().await, Some(Ok(Message::Close(_)))));
     match next_event(&mut server, Duration::from_secs(5)).await {
@@ -89,13 +116,7 @@ async fn an_undecodable_frame_closes_only_that_link() {
         other => panic!("expected the bad link to close, got {other:?}"),
     }
 
-    server.send(
-        good_link,
-        &ServerMsg::Welcome {
-            you: 2,
-            tick_hz: 20,
-        },
-    );
+    server.send(good_link, &some_server_msg());
     assert!(matches!(good.next().await, Some(Ok(Message::Binary(_)))));
 }
 
@@ -107,11 +128,7 @@ async fn a_client_that_stops_reading_is_disconnected() {
     let link = connected_link(&mut server).await;
 
     // 메시지 하나가 약 60 KB이므로 500개(약 30 MB)는 운영체제의 소켓 버퍼에 다 들어가지 않습니다.
-    let big = ServerMsg::Snapshot(Snapshot {
-        tick: 1,
-        players: (100_000..120_000).collect(),
-        marker: WirePos { x: 0, y: 0 },
-    });
+    let big = ServerMsg::Snapshot(snapshot_of(7_000));
     for _ in 0..500 {
         server.send(link, &big);
     }
@@ -133,7 +150,10 @@ async fn a_link_that_sends_faster_than_the_rate_limit_is_disconnected() {
     let link = connected_link(&mut server).await;
 
     for seq in 1..=50 {
-        let input = encode_client(&ClientMsg::Input { seq });
+        let input = encode_client(&ClientMsg::Input(InputMsg {
+            seq,
+            ..InputMsg::default()
+        }));
         if client.send(Message::binary(input)).await.is_err() {
             break;
         }
@@ -195,12 +215,9 @@ async fn one_ip_cannot_open_more_links_than_its_cap_and_a_closed_link_frees_its_
         "a third link from 127.0.0.1 is refused"
     );
 
-    let welcome = ServerMsg::Welcome {
-        you: 1,
-        tick_hz: 20,
-    };
-    server.send(first_link, &welcome);
-    server.send(second_link, &welcome);
+    let answer = some_server_msg();
+    server.send(first_link, &answer);
+    server.send(second_link, &answer);
     assert!(
         matches!(first.next().await, Some(Ok(Message::Binary(_)))),
         "first stays open"

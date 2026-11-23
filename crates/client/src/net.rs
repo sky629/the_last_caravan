@@ -78,8 +78,9 @@ fn pump_network(net: Option<NonSendMut<Net>>, mut link: ResMut<Link>, time: Res<
             Reaction::Show(snapshot) => {
                 if link.latest.is_none() {
                     info!(
-                        "first snapshot: tick {} players {:?}",
-                        snapshot.tick, snapshot.players
+                        "first snapshot: tick {} players {}",
+                        snapshot.tick,
+                        snapshot.players.len()
                     );
                 }
                 link.latest = Some(snapshot);
@@ -107,8 +108,9 @@ fn log_progress(link: Res<Link>, time: Res<Time>, mut next_report: Local<f64>) {
     *next_report = now + 1.0;
     if let Some(snapshot) = &link.latest {
         info!(
-            "latest tick {} players {:?}",
-            snapshot.tick, snapshot.players
+            "latest tick {} players {}",
+            snapshot.tick,
+            snapshot.players.len()
         );
     }
 }

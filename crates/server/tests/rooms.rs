@@ -4,8 +4,8 @@
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientEvent, ClientMsg, ClientTransport, LoopbackClient, LoopbackConnector, PROTOCOL_VERSION,
-    RejectReason, ServerLimits, ServerMsg, Snapshot, loopback,
+    ClientEvent, ClientMsg, ClientTransport, InputMsg, LoopbackClient, LoopbackConnector,
+    PROTOCOL_VERSION, RejectReason, ServerLimits, ServerMsg, Snapshot, loopback,
 };
 use caravan_rules::{PlayerId, Tuning};
 use caravan_server::{GameServer, Notice};
@@ -74,10 +74,17 @@ impl Rig {
 
     fn join_ok(&mut self, room: &str) -> (LoopbackClient, u32) {
         match self.join(room) {
-            (client, ServerMsg::Welcome { you, .. }) => (client, you),
+            (client, ServerMsg::Welcome(welcome)) => (client, welcome.you),
             (_, other) => panic!("expected Welcome, got {other:?}"),
         }
     }
+}
+
+fn input(seq: u32) -> ClientMsg {
+    ClientMsg::Input(InputMsg {
+        seq,
+        ..InputMsg::default()
+    })
 }
 
 fn drain(client: &mut LoopbackClient) -> Vec<ClientEvent> {
@@ -94,6 +101,10 @@ fn snapshots(client: &mut LoopbackClient) -> Vec<Snapshot> {
         .collect()
 }
 
+fn player_ids(snapshot: &Snapshot) -> Vec<u32> {
+    snapshot.players.iter().map(|player| player.id).collect()
+}
+
 fn ticks(snapshots: &[Snapshot]) -> Vec<u64> {
     snapshots.iter().map(|s| s.tick).collect()
 }
@@ -101,19 +112,16 @@ fn ticks(snapshots: &[Snapshot]) -> Vec<u64> {
 #[test]
 fn the_first_joiner_is_welcomed_and_then_gets_one_snapshot_per_tick() {
     let mut rig = rig();
-    let (mut a, welcome) = rig.join("test");
-    assert_eq!(
-        welcome,
-        ServerMsg::Welcome {
-            you: 1,
-            tick_hz: 20
-        }
-    );
+    let (mut a, answer) = rig.join("test");
+    let ServerMsg::Welcome(welcome) = answer else {
+        panic!("expected Welcome, got {answer:?}");
+    };
+    assert_eq!((welcome.you, welcome.tick_hz, welcome.capacity), (1, 20, 4));
 
     rig.run_ticks(3);
     let received = snapshots(&mut a);
     assert_eq!(ticks(&received), [1, 2, 3]);
-    assert!(received.iter().all(|s| s.players == [1]));
+    assert!(received.iter().all(|s| player_ids(s) == [1]));
 }
 
 #[test]
@@ -128,7 +136,7 @@ fn two_clients_in_one_room_see_the_same_ticks_and_both_players() {
     let seen_by_b = snapshots(&mut b);
     assert_eq!(seen_by_a, seen_by_b);
     assert_eq!(ticks(&seen_by_a), [1, 2]);
-    assert_eq!(seen_by_a[1].players, [1, 2]);
+    assert_eq!(player_ids(&seen_by_a[1]), [1, 2]);
 }
 
 #[test]
@@ -139,8 +147,8 @@ fn clients_in_different_rooms_never_see_each_other() {
     assert_eq!(blue_id, 1, "each room numbers its own players");
 
     rig.run_ticks(1);
-    assert_eq!(snapshots(&mut red)[0].players, [1]);
-    assert_eq!(snapshots(&mut blue)[0].players, [1]);
+    assert_eq!(player_ids(&snapshots(&mut red)[0]), [1]);
+    assert_eq!(player_ids(&snapshots(&mut blue)[0]), [1]);
 }
 
 #[test]
@@ -149,7 +157,7 @@ fn room_codes_ignore_case() {
     let (_a, _) = rig.join_ok("Test");
     let (mut b, _) = rig.join_ok("TEST");
     rig.run_ticks(1);
-    assert_eq!(snapshots(&mut b)[0].players, [1, 2]);
+    assert_eq!(player_ids(&snapshots(&mut b)[0]), [1, 2]);
 }
 
 #[test]
@@ -205,7 +213,7 @@ fn input_before_join_closes_the_link_without_a_welcome() {
     let mut rig = rig();
     let mut client = rig.connector.connect();
     client.poll();
-    client.send(&ClientMsg::Input { seq: 1 });
+    client.send(&input(1));
     client.send(&ClientMsg::Join {
         version: PROTOCOL_VERSION,
         room: "test".to_string(),
@@ -228,7 +236,7 @@ fn a_leaver_disappears_from_the_snapshots_of_the_others() {
     let (mut b, _) = rig.join_ok("test");
     drop(a);
     rig.run_ticks(1);
-    assert_eq!(snapshots(&mut b)[0].players, [2]);
+    assert_eq!(player_ids(&snapshots(&mut b)[0]), [2]);
 }
 
 #[test]
@@ -424,7 +432,7 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
 
     // 말하는 클라이언트는 1초마다 입력을 보내고, 조용한 클라이언트는 입장한 뒤 아무것도 보내지 않습니다.
     for seq in 1..=29 {
-        talker.send(&ClientMsg::Input { seq });
+        talker.send(&input(seq));
         rig.now += Duration::from_secs(1);
         rig.pump();
     }
@@ -435,7 +443,7 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
         "still connected after 29 s"
     );
 
-    talker.send(&ClientMsg::Input { seq: 30 });
+    talker.send(&input(30));
     rig.now += Duration::from_secs(1);
     let notices = rig.pump();
     let room = caravan_protocol::RoomCode::parse("test").unwrap();
@@ -454,5 +462,9 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
 
     rig.run_ticks(1);
     let last = snapshots(&mut talker).pop().unwrap();
-    assert_eq!(last.players, [1], "the silent player is gone from the room");
+    assert_eq!(
+        player_ids(&last),
+        [1],
+        "the silent player is gone from the room"
+    );
 }
