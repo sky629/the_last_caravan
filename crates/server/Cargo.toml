@@ -1,0 +1,13 @@
+[package]
+name = "caravan_server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+caravan_rules.workspace = true
+caravan_protocol.workspace = true
+
+[lints]
+workspace = true
