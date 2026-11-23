@@ -1,0 +1,245 @@
+//! 클라이언트의 접속 상태입니다. 상태 하나를 열거형 하나로 표현하므로 화면에는 항상 상태 하나만 표시됩니다.
+//!
+//! ```text
+//! Connecting --Connected--> Joining --Welcome--> InRoom
+//!                              |
+//!                              +--JoinRejected--> Rejected
+//! (모든 상태) --Disconnected--> Disconnected   (Rejected는 거절 사유를 유지합니다)
+//! ```
+
+use caravan_protocol::{
+    ClientEvent, ClientMsg, PROTOCOL_VERSION, RejectReason, RoomCode, ServerMsg, Snapshot,
+};
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Session {
+    Connecting {
+        room: RoomCode,
+    },
+    /// `Join`을 보내고 `Welcome`이나 `JoinRejected`를 기다립니다.
+    Joining {
+        room: RoomCode,
+    },
+    InRoom {
+        room: RoomCode,
+        you: u32,
+        tick_hz: u32,
+        /// 가장 최근에 받은 스냅샷의 Tick입니다. 이보다 오래된 스냅샷은 버립니다.
+        latest_tick: Option<u64>,
+    },
+    Rejected {
+        reason: RejectReason,
+    },
+    /// 접속이 끝났습니다. 1단계에는 자동 재접속이 없습니다.
+    Disconnected {
+        reason: String,
+    },
+    /// 실행 인자가 잘못되었거나 접속을 시작하지 못했습니다.
+    Failed {
+        reason: String,
+    },
+}
+
+/// 이벤트 하나를 처리한 뒤 호출한 쪽(Bevy 앱)이 할 일입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Reaction {
+    Nothing,
+    Send(ClientMsg),
+    Show(Snapshot),
+}
+
+impl Session {
+    pub fn new(room: RoomCode) -> Session {
+        Session::Connecting { room }
+    }
+
+    pub fn on_event(&mut self, event: ClientEvent) -> Reaction {
+        match (&mut *self, event) {
+            (Session::Connecting { room }, ClientEvent::Connected) => {
+                let join = ClientMsg::Join {
+                    version: PROTOCOL_VERSION,
+                    room: room.as_str().to_string(),
+                };
+                *self = Session::Joining { room: room.clone() };
+                Reaction::Send(join)
+            }
+            (
+                Session::Joining { room },
+                ClientEvent::Message(ServerMsg::Welcome { you, tick_hz }),
+            ) => {
+                *self = Session::InRoom {
+                    room: room.clone(),
+                    you,
+                    tick_hz,
+                    latest_tick: None,
+                };
+                Reaction::Nothing
+            }
+            (Session::Joining { .. }, ClientEvent::Message(ServerMsg::JoinRejected { reason })) => {
+                *self = Session::Rejected { reason };
+                Reaction::Nothing
+            }
+            (
+                Session::InRoom { latest_tick, .. },
+                ClientEvent::Message(ServerMsg::Snapshot(snapshot)),
+            ) => {
+                // 접속 방식에 따라 메시지의 순서가 바뀔 수 있으므로, 이미 그린 것보다 오래된 상태는 그리지 않습니다.
+                if latest_tick.is_some_and(|latest| snapshot.tick <= latest) {
+                    return Reaction::Nothing;
+                }
+                *latest_tick = Some(snapshot.tick);
+                Reaction::Show(snapshot)
+            }
+            (
+                Session::Rejected { .. } | Session::Failed { .. },
+                ClientEvent::Disconnected { .. },
+            ) => Reaction::Nothing,
+            (_, ClientEvent::Disconnected { reason }) => {
+                *self = Session::Disconnected { reason };
+                Reaction::Nothing
+            }
+            // 순서에 맞지 않는 메시지(입장 전의 스냅샷 등)는 무시합니다.
+            _ => Reaction::Nothing,
+        }
+    }
+
+    /// 화면의 상태 표시줄에 쓰는 문장입니다. Bevy의 기본 글꼴은 영문만 표시하므로 영어로 씁니다.
+    pub fn status_text(&self) -> String {
+        match self {
+            Session::Connecting { room } => format!("Connecting... (room {room})"),
+            Session::Joining { room } => format!("Joining room {room}..."),
+            Session::InRoom {
+                room,
+                you,
+                latest_tick,
+                ..
+            } => match latest_tick {
+                Some(tick) => format!("Room {room} | player {you} | tick {tick}"),
+                None => format!("Room {room} | player {you} | waiting for the first snapshot"),
+            },
+            Session::Rejected { reason } => match reason {
+                RejectReason::RoomFull { capacity } => {
+                    format!("Join rejected: the room is full ({capacity} players)")
+                }
+                RejectReason::BadRoomCode => "Join rejected: bad room code".to_string(),
+                RejectReason::VersionMismatch { server } => format!(
+                    "Join rejected: server protocol {server}, client protocol {PROTOCOL_VERSION}. Update or reload."
+                ),
+            },
+            Session::Disconnected { reason } => format!("Disconnected: {reason}"),
+            Session::Failed { reason } => format!("Cannot start: {reason}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caravan_protocol::WirePos;
+
+    fn room() -> RoomCode {
+        RoomCode::parse("test").unwrap()
+    }
+
+    fn snapshot(tick: u64) -> Snapshot {
+        Snapshot {
+            tick,
+            players: vec![1],
+            marker: WirePos { x: 0, y: 0 },
+        }
+    }
+
+    fn message(msg: ServerMsg) -> ClientEvent {
+        ClientEvent::Message(msg)
+    }
+
+    fn in_room() -> Session {
+        let mut session = Session::new(room());
+        session.on_event(ClientEvent::Connected);
+        session.on_event(message(ServerMsg::Welcome {
+            you: 3,
+            tick_hz: 20,
+        }));
+        session
+    }
+
+    #[test]
+    fn connecting_sends_join_with_the_room_code_and_protocol_version() {
+        let mut session = Session::new(room());
+        assert_eq!(
+            session.on_event(ClientEvent::Connected),
+            Reaction::Send(ClientMsg::Join {
+                version: PROTOCOL_VERSION,
+                room: "test".to_string()
+            })
+        );
+        assert_eq!(session, Session::Joining { room: room() });
+    }
+
+    #[test]
+    fn welcome_enters_the_room_and_snapshots_are_shown_in_tick_order() {
+        let mut session = in_room();
+        assert!(matches!(
+            session,
+            Session::InRoom {
+                you: 3,
+                tick_hz: 20,
+                ..
+            }
+        ));
+        assert_eq!(
+            session.on_event(message(ServerMsg::Snapshot(snapshot(5)))),
+            Reaction::Show(snapshot(5))
+        );
+        assert_eq!(
+            session.on_event(message(ServerMsg::Snapshot(snapshot(4)))),
+            Reaction::Nothing,
+            "an older snapshot is dropped"
+        );
+        assert_eq!(
+            session.on_event(message(ServerMsg::Snapshot(snapshot(6)))),
+            Reaction::Show(snapshot(6))
+        );
+    }
+
+    #[test]
+    fn a_snapshot_before_welcome_is_ignored() {
+        let mut session = Session::new(room());
+        session.on_event(ClientEvent::Connected);
+        assert_eq!(
+            session.on_event(message(ServerMsg::Snapshot(snapshot(1)))),
+            Reaction::Nothing
+        );
+        assert_eq!(session, Session::Joining { room: room() });
+    }
+
+    #[test]
+    fn a_rejection_stays_on_screen_after_the_server_closes() {
+        let mut session = Session::new(room());
+        session.on_event(ClientEvent::Connected);
+        let reason = RejectReason::RoomFull { capacity: 4 };
+        session.on_event(message(ServerMsg::JoinRejected { reason }));
+        session.on_event(ClientEvent::Disconnected {
+            reason: "closed".to_string(),
+        });
+        assert_eq!(session, Session::Rejected { reason });
+    }
+
+    #[test]
+    fn losing_the_connection_in_the_room_ends_the_session() {
+        let mut session = in_room();
+        session.on_event(ClientEvent::Disconnected {
+            reason: "connection closed".to_string(),
+        });
+        assert_eq!(
+            session,
+            Session::Disconnected {
+                reason: "connection closed".to_string()
+            }
+        );
+        assert_eq!(
+            session.on_event(message(ServerMsg::Snapshot(snapshot(9)))),
+            Reaction::Nothing
+        );
+    }
+}
