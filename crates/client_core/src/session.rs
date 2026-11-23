@@ -4,7 +4,8 @@
 //! Connecting --Connected--> Joining --Welcome--> InRoom
 //!                              |
 //!                              +--JoinRejected--> Rejected
-//! (모든 상태) --Disconnected--> Disconnected   (Rejected는 거절 사유를 유지합니다)
+//!                              +--(상한을 넘은 Welcome)--> Failed
+//! (모든 상태) --Disconnected--> Disconnected   (Rejected와 Failed는 사유를 유지합니다)
 //! ```
 //!
 //! 방에 들어간 뒤에 필요한 값(입장 안내, 스냅샷, 입력 순서 번호)은 `InRoom`에만 있습니다.
@@ -17,6 +18,7 @@ use caravan_rules::Vec2;
 
 use crate::input::{Controls, InputSender};
 use crate::interp::{Frame, SnapshotBuffer};
+use crate::limits::check_welcome;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Session {
@@ -79,7 +81,13 @@ impl Session {
                 Some(join)
             }
             (Session::Joining { room }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
-                *self = Session::InRoom(Joined::new(room.clone(), welcome));
+                // 서버가 보낸 값을 처음 믿기 전에 확인합니다. 여기를 통과한 값은 화면 코드가 다시 확인하지 않습니다.
+                *self = match check_welcome(&welcome) {
+                    Ok(()) => Session::InRoom(Joined::new(room.clone(), welcome)),
+                    Err(reason) => Session::Failed {
+                        reason: format!("the server sent an unusable welcome: {reason}"),
+                    },
+                };
                 None
             }
             (Session::Joining { .. }, ClientEvent::Message(ServerMsg::JoinRejected { reason })) => {
@@ -101,6 +109,14 @@ impl Session {
             // 순서에 맞지 않는 메시지(입장 전의 스냅샷 등)는 무시합니다.
             _ => None,
         }
+    }
+
+    /// 입장이 거절되었거나, 접속이 끊겼거나, 시작하지 못해서 더 할 일이 없는 상태입니다. 이때 접속 방식을 닫아도 됩니다.
+    pub fn is_over(&self) -> bool {
+        matches!(
+            self,
+            Session::Rejected { .. } | Session::Disconnected { .. } | Session::Failed { .. }
+        )
     }
 
     /// 방에 들어갔을 때의 상태입니다.
@@ -263,6 +279,43 @@ mod tests {
             joined.welcome.world.towers.len(),
             tuning.map.structures.len()
         );
+    }
+
+    #[test]
+    fn a_welcome_over_a_limit_fails_the_session_with_a_reason() {
+        let mut session = Session::new(room());
+        session.on_event(ClientEvent::Connected);
+        let ServerMsg::Welcome(mut hostile) = welcome(3) else {
+            unreachable!("welcome() builds a Welcome");
+        };
+        hostile.capacity = u32::MAX;
+
+        session.on_event(message(ServerMsg::Welcome(hostile)));
+
+        let Session::Failed { reason } = &session else {
+            panic!("expected Failed, got {session:?}");
+        };
+        assert!(reason.contains("capacity"), "{reason}");
+        assert!(session.is_over());
+        assert!(session.joined().is_none());
+        // 닫히는 접속이 거절 이유를 지우지 않고, 이후의 스냅샷은 그려지지 않습니다.
+        session.on_event(ClientEvent::Disconnected {
+            reason: "closed".to_string(),
+        });
+        session.on_event(message(ServerMsg::Snapshot(snapshot(1))));
+        assert!(matches!(session, Session::Failed { .. }));
+        assert!(session.frame().is_none());
+    }
+
+    #[test]
+    fn only_a_finished_session_is_over() {
+        assert!(!Session::new(room()).is_over());
+        assert!(!in_room().is_over());
+        let mut disconnected = in_room();
+        disconnected.on_event(ClientEvent::Disconnected {
+            reason: "closed".to_string(),
+        });
+        assert!(disconnected.is_over());
     }
 
     #[test]
