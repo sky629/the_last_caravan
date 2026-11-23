@@ -13,6 +13,7 @@ mod config;
 mod convert;
 mod diagnostics;
 mod effects;
+mod hud;
 mod input;
 mod net;
 mod palette;
@@ -21,9 +22,6 @@ mod view;
 
 use bevy::prelude::*;
 use caravan_client_core::{LaunchError, LaunchOptions};
-
-#[derive(Component)]
-struct StatusText;
 
 fn main() {
     let launch = read_launch_options();
@@ -48,7 +46,8 @@ fn main() {
             (
                 palette::setup_palette,
                 effects::configure_gizmos,
-                setup_scene,
+                hud::setup,
+                setup_camera,
             ),
         )
         // 한 프레임에 하는 일을 순서대로 모두 나열한 곳입니다. 앞 단계가 쓴 값을 뒤 단계가 읽습니다.
@@ -61,7 +60,8 @@ fn main() {
                 view::sync_structures.run_if(resource_exists::<view::Scene>),
                 characters::sync_characters.run_if(resource_exists::<view::Scene>),
                 effects::draw_effects.run_if(resource_exists::<view::Scene>),
-                show_status,
+                hud::build_roster,
+                hud::update,
                 input::read_controls,
                 net::send_input,
                 diagnostics::report,
@@ -88,27 +88,6 @@ fn read_launch_options() -> Result<LaunchOptions, LaunchError> {
     LaunchOptions::from_values(get("room"), get("server"), debug_net)
 }
 
-fn setup_scene(mut commands: Commands) {
+fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
-    commands.spawn((
-        Text::new(""),
-        TextFont {
-            font_size: FontSize::Px(20.0),
-            ..default()
-        },
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(12),
-            left: px(12),
-            ..default()
-        },
-        StatusText,
-    ));
-}
-
-fn show_status(session: Res<net::ClientSession>, mut text: Single<&mut Text, With<StatusText>>) {
-    let status = session.0.status_text();
-    if text.0 != status {
-        text.0 = status;
-    }
 }

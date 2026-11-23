@@ -145,25 +145,49 @@ impl Session {
             .map(ClientMsg::Input)
     }
 
-    /// 화면의 접속 상태 표시줄에 쓰는 문장입니다. Bevy의 기본 글꼴은 영문만 표시하므로 영어로 씁니다.
-    pub fn status_text(&self) -> String {
+    /// 입장하지 못했거나 접속이 끊겼을 때, 그 이유를 화면에 크게 보여 주는 데 쓰는 값입니다. 그 밖의 상태에서는 없습니다.
+    pub fn problem(&self) -> Option<Problem> {
         match self {
-            Session::Connecting { room } => format!("Connecting... (room {room})"),
-            Session::Joining { room } => format!("Joining room {room}..."),
-            Session::InRoom(_) => "Connected".to_string(),
-            Session::Rejected { reason } => match reason {
-                RejectReason::RoomFull { capacity } => {
-                    format!("Join rejected: the room is full ({capacity} players)")
-                }
-                RejectReason::BadRoomCode => "Join rejected: bad room code".to_string(),
-                RejectReason::VersionMismatch { server } => format!(
-                    "Join rejected: server protocol {server}, client protocol {PROTOCOL_VERSION}. Update or reload."
-                ),
-            },
-            Session::Disconnected { reason } => format!("Disconnected: {reason}"),
-            Session::Failed { reason } => format!("Cannot start: {reason}"),
+            Session::Rejected { reason } => Some(Problem {
+                heading: "Join rejected",
+                reason: match reason {
+                    RejectReason::RoomFull { capacity } => {
+                        format!("the room is full ({capacity} players)")
+                    }
+                    RejectReason::BadRoomCode => "bad room code".to_string(),
+                    RejectReason::VersionMismatch { server } => format!(
+                        "server protocol {server}, client protocol {PROTOCOL_VERSION}. Update or reload."
+                    ),
+                },
+            }),
+            Session::Disconnected { reason } => Some(Problem {
+                heading: "Disconnected",
+                reason: reason.clone(),
+            }),
+            Session::Failed { reason } => Some(Problem {
+                heading: "Cannot start",
+                reason: reason.clone(),
+            }),
+            _ => None,
         }
     }
+
+    /// 화면의 접속 상태 표시줄에 쓰는 문장입니다. Bevy의 기본 글꼴은 영문만 표시하므로 영어로 씁니다.
+    pub fn status_text(&self) -> String {
+        match (self, self.problem()) {
+            (_, Some(Problem { heading, reason })) => format!("{heading}: {reason}"),
+            (Session::Connecting { room }, None) => format!("Connecting... (room {room})"),
+            (Session::Joining { room }, None) => format!("Joining room {room}..."),
+            _ => "Connected".to_string(),
+        }
+    }
+}
+
+/// 접속하지 못한 이유입니다. `heading`은 짧은 제목이고 `reason`은 서버나 접속 방식이 알려 준 이유입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Problem {
+    pub heading: &'static str,
+    pub reason: String,
 }
 
 #[cfg(test)]

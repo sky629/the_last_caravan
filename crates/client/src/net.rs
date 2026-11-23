@@ -59,7 +59,7 @@ fn open(launch: Result<LaunchOptions, LaunchError>) -> (Session, Option<Net>) {
     }
 }
 
-/// 프레임 순서 1: 접속 방식에 도착한 이벤트를 모두 `Session`에 넘기고, 서버에 보낼 답이 있으면 보냅니다.
+/// 접속 방식에 도착한 이벤트를 모두 `Session`에 넘기고, 서버에 보낼 답이 있으면 보냅니다.
 pub fn pump_network(net: Option<NonSendMut<Net>>, mut session: ResMut<ClientSession>) {
     let Some(mut net) = net else {
         return;
@@ -82,7 +82,7 @@ pub fn pump_network(net: Option<NonSendMut<Net>>, mut session: ResMut<ClientSess
     }
 }
 
-/// 프레임 순서 2: 재생 시각을 프레임 시간만큼 앞으로 보내고, 그릴 모습을 만듭니다.
+/// 재생 시각을 프레임 시간만큼 앞으로 보내고, 그릴 모습을 만듭니다.
 pub fn advance_playback(
     time: Res<Time<Real>>,
     mut session: ResMut<ClientSession>,
@@ -92,7 +92,7 @@ pub fn advance_playback(
     frame.0 = session.0.frame();
 }
 
-/// 프레임 순서 9: 입력을 보낼 때가 되었으면 지금의 조작을 서버에 보냅니다.
+/// 입력을 보낼 때가 되었으면 지금의 조작을 서버에 보냅니다.
 pub fn send_input(
     net: Option<NonSendMut<Net>>,
     time: Res<Time<Real>>,

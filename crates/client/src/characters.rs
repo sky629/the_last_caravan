@@ -206,7 +206,7 @@ fn monster_look(
     }
 }
 
-/// 프레임 순서 5: 플레이어와 몬스터의 도형을 이번 프레임의 모습에 맞춥니다 (C2, C5, C12, C15, C18).
+/// 플레이어와 몬스터의 도형을 이번 프레임의 모습에 맞춥니다 (C2, C5, C12, C15, C18).
 pub fn sync_characters(
     frame: Res<CurrentFrame>,
     scene: Res<Scene>,

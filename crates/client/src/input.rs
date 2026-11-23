@@ -11,7 +11,7 @@ use crate::convert;
 #[derive(Resource, Default)]
 pub struct HeldControls(pub Controls);
 
-/// 프레임 순서 8: 키보드와 마우스의 상태를 읽습니다.
+/// 키보드와 마우스의 상태를 읽습니다.
 pub fn read_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,

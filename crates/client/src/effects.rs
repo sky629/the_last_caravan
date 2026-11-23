@@ -19,7 +19,7 @@ pub fn configure_gizmos(mut store: ResMut<GizmoConfigStore>) {
     config.line.width = config::EFFECT_LINE_WIDTH;
 }
 
-/// 프레임 순서 6: 공격과 사격 효과를 그립니다.
+/// 공격과 사격 효과를 그립니다.
 pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Gizmos) {
     let Some(frame) = &frame.0 else {
         return;

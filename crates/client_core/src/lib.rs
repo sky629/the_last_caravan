@@ -25,4 +25,4 @@ pub use iso::{
     map_view, screen_dir_to_ground, screen_to_ground, tile_centers,
 };
 pub use launch::{DEFAULT_ROOM, DEFAULT_SERVER, LaunchError, LaunchOptions};
-pub use session::{Joined, Session};
+pub use session::{Joined, Problem, Session};

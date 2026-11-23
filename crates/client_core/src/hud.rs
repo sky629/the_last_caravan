@@ -134,26 +134,28 @@ impl Hud {
 }
 
 /// 방에 들어가기 전, 거절, 접속이 끊긴 뒤에 화면 가운데에 띄울 안내입니다.
+/// 이유가 길 수 있으므로 짧은 제목을 크게, 이유를 그 아래에 작게 나눠서 보여 줍니다.
 fn session_banner(session: &Session, frame: Option<&Frame>) -> Option<Banner> {
-    let tone = match session {
-        Session::Connecting { .. } | Session::Joining { .. } => BannerTone::Info,
-        Session::InRoom(_) if frame.is_none() => {
-            return Some(Banner {
-                title: "Waiting for the first snapshot...".to_string(),
-                detail: None,
-                tone: BannerTone::Info,
-            });
-        }
-        Session::InRoom(_) => return None,
-        Session::Rejected { .. } | Session::Disconnected { .. } | Session::Failed { .. } => {
-            BannerTone::Bad
-        }
-    };
-    Some(Banner {
-        title: session.status_text(),
-        detail: None,
-        tone,
-    })
+    if let Some(problem) = session.problem() {
+        return Some(Banner {
+            title: problem.heading.to_uppercase(),
+            detail: Some(problem.reason),
+            tone: BannerTone::Bad,
+        });
+    }
+    match session {
+        Session::InRoom(_) if frame.is_some() => None,
+        Session::InRoom(_) => Some(Banner {
+            title: "Waiting for the first snapshot...".to_string(),
+            detail: None,
+            tone: BannerTone::Info,
+        }),
+        _ => Some(Banner {
+            title: session.status_text(),
+            detail: None,
+            tone: BannerTone::Info,
+        }),
+    }
 }
 
 fn result_banner(outcome: WireOutcome, secs_left: f32) -> Banner {
@@ -554,7 +556,11 @@ mod tests {
         }));
         let hud = Hud::of(&session, None);
         let banner = hud.banner.unwrap();
-        assert_eq!(banner.title, "Join rejected: the room is full (4 players)");
+        assert_eq!(banner.title, "JOIN REJECTED");
+        assert_eq!(
+            banner.detail.as_deref(),
+            Some("the room is full (4 players)")
+        );
         assert_eq!(banner.tone, BannerTone::Bad);
         assert_eq!(hud.me, None);
     }
@@ -567,12 +573,16 @@ mod tests {
         });
         let hud = Hud::of(&session, None);
         let banner = hud.banner.unwrap();
+        assert_eq!(banner.title, "DISCONNECTED");
         assert_eq!(
-            banner.title,
-            "Disconnected: the server closed the connection"
+            banner.detail.as_deref(),
+            Some("the server closed the connection")
         );
         assert_eq!(banner.tone, BannerTone::Bad);
-        assert_eq!(hud.connection, banner.title);
+        assert_eq!(
+            hud.connection,
+            "Disconnected: the server closed the connection"
+        );
         assert_eq!(hud.wave, None);
         assert_eq!(hud.room, None);
     }
