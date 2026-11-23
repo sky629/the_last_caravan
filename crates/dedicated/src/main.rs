@@ -6,7 +6,7 @@
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use caravan_protocol::{LinkId, ServerEvent, ServerMsg, ServerTransport};
+use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
 use caravan_rules::Tuning;
 use caravan_server::GameServer;
 use caravan_ws_server::WsServer;
@@ -75,7 +75,8 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let ws = match WsServer::bind(&options.addr) {
+    let limits = ServerLimits::default();
+    let ws = match WsServer::bind(&options.addr, limits) {
         Ok(ws) => ws,
         Err(err) => {
             eprintln!("cannot listen on {}: {err}", options.addr);
@@ -91,7 +92,7 @@ fn main() -> ExitCode {
     } else {
         Box::new(ws)
     };
-    let mut server = GameServer::new(transport, Tuning::default(), Instant::now());
+    let mut server = GameServer::new(transport, Tuning::default(), limits, Instant::now());
     // 프로세스를 종료하면(Ctrl-C) 반복도 끝납니다.
     loop {
         let now = Instant::now();

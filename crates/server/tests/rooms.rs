@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, LoopbackClient, LoopbackConnector, PROTOCOL_VERSION,
-    RejectReason, ServerMsg, Snapshot, loopback,
+    RejectReason, ServerLimits, ServerMsg, Snapshot, loopback,
 };
 use caravan_rules::{PlayerId, Tuning};
 use caravan_server::{GameServer, Notice};
@@ -22,11 +22,15 @@ fn rig() -> Rig {
 }
 
 fn rig_with(tuning: Tuning) -> Rig {
+    rig_with_limits(tuning, ServerLimits::default())
+}
+
+fn rig_with_limits(tuning: Tuning, limits: ServerLimits) -> Rig {
     let (transport, connector) = loopback();
     let now = Instant::now();
     let period = Duration::from_secs(1) / tuning.tick_hz;
     Rig {
-        server: GameServer::new(Box::new(transport), tuning, now),
+        server: GameServer::new(Box::new(transport), tuning, limits, now),
         connector,
         now,
         period,
@@ -318,4 +322,94 @@ fn after_a_long_stall_the_server_runs_at_most_five_catch_up_ticks() {
         [6],
         "the schedule restarts from the stall"
     );
+}
+
+#[test]
+fn a_link_that_does_not_join_within_the_deadline_is_closed() {
+    let mut rig = rig_with_limits(
+        Tuning::default(),
+        ServerLimits {
+            join_deadline: Duration::from_secs(5),
+            ..ServerLimits::default()
+        },
+    );
+    let mut idle = rig.connector.connect();
+    idle.poll();
+    rig.pump();
+    let (mut player, _) = rig.join_ok("test");
+
+    rig.now += Duration::from_millis(4_900);
+    rig.pump();
+    assert!(
+        drain(&mut idle).is_empty(),
+        "still open just before the deadline"
+    );
+
+    rig.now += Duration::from_millis(100);
+    rig.pump();
+    assert!(matches!(
+        drain(&mut idle)[..],
+        [ClientEvent::Disconnected { .. }]
+    ));
+    assert!(
+        !drain(&mut player)
+            .iter()
+            .any(|e| matches!(e, ClientEvent::Disconnected { .. })),
+        "a player who joined in time stays connected"
+    );
+}
+
+#[test]
+fn a_flood_of_events_is_spread_over_pumps_and_the_due_tick_still_runs() {
+    let mut rig = rig_with_limits(
+        Tuning::default(),
+        ServerLimits {
+            events_per_pump: 3,
+            ..ServerLimits::default()
+        },
+    );
+    let (mut player, _) = rig.join_ok("home");
+
+    // 접속마다 이벤트가 두 개(Connected, Join)이므로 20개의 이벤트가 쌓입니다.
+    let mut flood: Vec<LoopbackClient> = (0..10)
+        .map(|i| {
+            let mut client = rig.connector.connect();
+            client.poll();
+            client.send(&ClientMsg::Join {
+                version: PROTOCOL_VERSION,
+                room: format!("flood-{i}"),
+            });
+            client
+        })
+        .collect();
+
+    rig.run_ticks(1);
+    assert_eq!(
+        ticks(&snapshots(&mut player)),
+        [1],
+        "the due tick ran despite the backlog"
+    );
+    let answered = flood
+        .iter_mut()
+        .map(drain)
+        .filter(|events| !events.is_empty())
+        .count();
+    assert!(
+        answered < 10,
+        "one pump handled only part of the backlog ({answered} answered)"
+    );
+
+    for _ in 0..10 {
+        rig.pump();
+    }
+    let welcomed_later = flood
+        .iter_mut()
+        .map(drain)
+        .filter(|events| {
+            events
+                .iter()
+                .any(|e| matches!(e, ClientEvent::Message(ServerMsg::Welcome { .. })))
+        })
+        .count();
+    assert_eq!(answered + welcomed_later, 10, "no event was lost");
 }

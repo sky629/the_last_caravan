@@ -13,7 +13,7 @@ mod room;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use caravan_protocol::{RejectReason, RoomCode, ServerTransport};
+use caravan_protocol::{RejectReason, RoomCode, ServerLimits, ServerTransport};
 use caravan_rules::{PlayerId, Tuning};
 
 use clock::TickClock;
@@ -67,25 +67,38 @@ pub struct GameServer {
     transport: Box<dyn ServerTransport>,
     hub: Hub,
     clock: TickClock,
+    events_per_pump: usize,
 }
 
 impl GameServer {
-    pub fn new(transport: Box<dyn ServerTransport>, tuning: Tuning, now: Instant) -> GameServer {
+    pub fn new(
+        transport: Box<dyn ServerTransport>,
+        tuning: Tuning,
+        limits: ServerLimits,
+        now: Instant,
+    ) -> GameServer {
         GameServer {
             transport,
             clock: TickClock::new(tuning.tick_hz, now),
-            hub: Hub::new(tuning),
+            hub: Hub::new(tuning, limits.join_deadline),
+            events_per_pump: limits.events_per_pump,
         }
     }
 
     /// 서버를 한 번 진행합니다. 기다리지 않습니다.
-    /// 접속 방식에 도착한 이벤트를 모두 처리하고, `now`까지 실행해야 하는 Tick을 실행한 뒤, 알릴 일을 돌려줍니다.
+    /// 접속 방식에 도착한 이벤트를 `events_per_pump`개까지 처리하고, 입장 시간이 지난 접속을 닫고,
+    /// `now`까지 실행해야 하는 Tick을 실행한 뒤, 알릴 일을 돌려줍니다. 처리하지 못한 이벤트는 다음 호출이 처리합니다.
     pub fn pump(&mut self, now: Instant) -> Vec<Notice> {
         let mut notices = Vec::new();
-        while let Some(event) = self.transport.poll() {
-            let outs = self.hub.handle_event(event);
+        for _ in 0..self.events_per_pump {
+            let Some(event) = self.transport.poll() else {
+                break;
+            };
+            let outs = self.hub.handle_event(event, now);
             self.apply(outs, &mut notices);
         }
+        let outs = self.hub.close_late_joiners(now);
+        self.apply(outs, &mut notices);
         for _ in 0..self.clock.due(now) {
             let outs = self.hub.tick();
             self.apply(outs, &mut notices);

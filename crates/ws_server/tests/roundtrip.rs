@@ -3,8 +3,8 @@
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientMsg, LinkId, PROTOCOL_VERSION, ServerEvent, ServerMsg, ServerTransport, Snapshot,
-    WirePos, decode_server, encode_client,
+    ClientMsg, LinkId, PROTOCOL_VERSION, ServerEvent, ServerLimits, ServerMsg, ServerTransport,
+    Snapshot, WirePos, decode_server, encode_client,
 };
 use caravan_ws_server::WsServer;
 use futures_util::{SinkExt, StreamExt};
@@ -34,7 +34,7 @@ async fn connected_link(server: &mut WsServer) -> LinkId {
 
 #[tokio::test]
 async fn messages_cross_a_real_socket_as_binary_frames_and_close_delivers_the_last_one() {
-    let mut server = WsServer::bind("127.0.0.1:0").unwrap();
+    let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
     let url = format!("ws://{}", server.local_addr());
     let (mut client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
 
@@ -76,7 +76,7 @@ async fn messages_cross_a_real_socket_as_binary_frames_and_close_delivers_the_la
 
 #[tokio::test]
 async fn an_undecodable_frame_closes_only_that_link() {
-    let mut server = WsServer::bind("127.0.0.1:0").unwrap();
+    let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
     let url = format!("ws://{}", server.local_addr());
     let (mut bad, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
     let bad_link = connected_link(&mut server).await;
@@ -101,7 +101,7 @@ async fn an_undecodable_frame_closes_only_that_link() {
 
 #[tokio::test]
 async fn a_client_that_stops_reading_is_disconnected() {
-    let mut server = WsServer::bind("127.0.0.1:0").unwrap();
+    let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
     let url = format!("ws://{}", server.local_addr());
     let (_silent_client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
     let link = connected_link(&mut server).await;
@@ -119,4 +119,60 @@ async fn a_client_that_stops_reading_is_disconnected() {
         ServerEvent::Disconnected(gone) => assert_eq!(gone, link),
         other => panic!("expected the slow link to be dropped, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn a_link_that_sends_faster_than_the_rate_limit_is_disconnected() {
+    let limits = ServerLimits {
+        max_messages_per_sec: 10,
+        ..ServerLimits::default()
+    };
+    let mut server = WsServer::bind("127.0.0.1:0", limits).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+    let (mut client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    let link = connected_link(&mut server).await;
+
+    for seq in 1..=50 {
+        let input = encode_client(&ClientMsg::Input { seq });
+        if client.send(Message::binary(input)).await.is_err() {
+            break;
+        }
+    }
+
+    let mut delivered = 0;
+    loop {
+        match next_event(&mut server, Duration::from_secs(5)).await {
+            ServerEvent::Message(from, _) if from == link => delivered += 1,
+            ServerEvent::Disconnected(gone) if gone == link => break,
+            other => panic!("unexpected event {other:?}"),
+        }
+    }
+    assert_eq!(
+        delivered, 10,
+        "only the messages within the limit reach the game"
+    );
+}
+
+#[tokio::test]
+async fn sockets_over_the_link_cap_are_refused_until_a_stalled_handshake_times_out() {
+    let limits = ServerLimits {
+        max_links: 1,
+        handshake_timeout: Duration::from_millis(300),
+        ..ServerLimits::default()
+    };
+    let mut server = WsServer::bind("127.0.0.1:0", limits).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+
+    // 연결 절차를 시작하지 않는 상대가 하나뿐인 자리를 차지합니다.
+    let _stalled = tokio::net::TcpStream::connect(server.local_addr())
+        .await
+        .unwrap();
+    assert!(
+        tokio_tungstenite::connect_async(&url).await.is_err(),
+        "no seat left while the stalled socket holds it"
+    );
+
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let (_client, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    connected_link(&mut server).await;
 }

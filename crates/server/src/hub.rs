@@ -2,6 +2,7 @@
 //! 접속 방식을 직접 호출하지 않고, 해야 할 일을 `Out` 목록으로 돌려줍니다. 그래서 동기 코드 하나가 모든 상태를 소유하고 잠금이 필요 없습니다.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use caravan_protocol::{
     ClientMsg, LinkId, PROTOCOL_VERSION, RejectReason, RoomCode, ServerEvent, ServerMsg,
@@ -20,8 +21,10 @@ pub(crate) enum Out {
 }
 
 enum LinkState {
-    /// 접속했지만 아직 `Join`을 보내지 않았습니다.
-    AwaitingJoin,
+    /// 접속했지만 아직 `Join`을 보내지 않았습니다. `deadline`까지 보내지 않으면 닫습니다.
+    AwaitingJoin {
+        deadline: Instant,
+    },
     InRoom {
         room: RoomCode,
         player: PlayerId,
@@ -32,28 +35,46 @@ enum LinkState {
 
 pub(crate) struct Hub {
     tuning: Tuning,
+    join_deadline: Duration,
     links: BTreeMap<LinkId, LinkState>,
     rooms: BTreeMap<RoomCode, Room>,
 }
 
 impl Hub {
-    pub fn new(tuning: Tuning) -> Hub {
+    pub fn new(tuning: Tuning, join_deadline: Duration) -> Hub {
         Hub {
             tuning,
+            join_deadline,
             links: BTreeMap::new(),
             rooms: BTreeMap::new(),
         }
     }
 
-    pub fn handle_event(&mut self, event: ServerEvent) -> Vec<Out> {
+    pub fn handle_event(&mut self, event: ServerEvent, now: Instant) -> Vec<Out> {
         match event {
             ServerEvent::Connected(link) => {
-                self.links.insert(link, LinkState::AwaitingJoin);
+                let deadline = now + self.join_deadline;
+                self.links
+                    .insert(link, LinkState::AwaitingJoin { deadline });
                 Vec::new()
             }
             ServerEvent::Message(link, msg) => self.handle_message(link, msg),
             ServerEvent::Disconnected(link) => self.handle_leave(link),
         }
+    }
+
+    /// `Join`을 보내야 하는 시간이 지난 접속을 닫습니다.
+    pub fn close_late_joiners(&mut self, now: Instant) -> Vec<Out> {
+        let mut outs = Vec::new();
+        for (&link, state) in self.links.iter_mut() {
+            if let LinkState::AwaitingJoin { deadline } = *state
+                && now >= deadline
+            {
+                *state = LinkState::Closing;
+                outs.push(Out::Close(link));
+            }
+        }
+        outs
     }
 
     /// 모든 방을 Tick 하나만큼 진행합니다. 방은 서로의 플레이어와 Tick 번호를 알지 못합니다.
@@ -66,7 +87,7 @@ impl Hub {
 
     fn handle_message(&mut self, link: LinkId, msg: ClientMsg) -> Vec<Out> {
         match (self.links.get(&link), msg) {
-            (Some(LinkState::AwaitingJoin), ClientMsg::Join { version, room }) => {
+            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Join { version, room }) => {
                 match self.admit(link, version, &room) {
                     Ok((code, player, members)) => vec![
                         Out::Send(
@@ -95,7 +116,7 @@ impl Hub {
             // 규칙이 아직 플레이어의 입력을 사용하지 않으므로 받은 입력은 버립니다.
             (Some(LinkState::InRoom { .. }), ClientMsg::Input { .. }) => Vec::new(),
             // 입장하기 전의 입력은 약속 위반입니다.
-            (Some(LinkState::AwaitingJoin), ClientMsg::Input { .. }) => {
+            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Input { .. }) => {
                 self.links.insert(link, LinkState::Closing);
                 vec![Out::Close(link)]
             }
