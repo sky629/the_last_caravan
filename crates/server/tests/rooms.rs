@@ -129,10 +129,6 @@ fn two_clients_in_one_room_see_the_same_ticks_and_both_players() {
     assert_eq!(seen_by_a, seen_by_b);
     assert_eq!(ticks(&seen_by_a), [1, 2]);
     assert_eq!(seen_by_a[1].players, [1, 2]);
-    assert_ne!(
-        seen_by_a[0].marker, seen_by_a[1].marker,
-        "the marker moves each tick"
-    );
 }
 
 #[test]

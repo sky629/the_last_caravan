@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use caravan_protocol::{LinkId, ServerMsg, Snapshot};
-use caravan_rules::{JoinError, PlayerId, Sim, Tuning};
+use caravan_rules::{JoinError, PlayerId, PlayerInputs, Sim, Tuning};
 
 use crate::hub::Out;
 
@@ -38,7 +38,7 @@ impl Room {
 
     /// 게임을 Tick 하나만큼 진행하고, 같은 스냅샷을 모든 접속에 보냅니다.
     pub fn tick(&mut self) -> Vec<Out> {
-        self.sim.step();
+        self.sim.step(&PlayerInputs::new());
         let snapshot = Snapshot::from_sim(&self.sim);
         self.members
             .values()

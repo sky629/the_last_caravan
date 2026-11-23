@@ -12,6 +12,7 @@ pub struct Snapshot {
     pub tick: u64,
     /// 방에 있는 플레이어의 번호입니다. 작은 번호부터 정렬되어 있습니다.
     pub players: Vec<u32>,
+    /// 클라이언트가 표식으로 그리는 위치입니다. 번호가 가장 작은 플레이어의 위치이고, 플레이어가 없으면 맵의 중심입니다.
     pub marker: WirePos,
 }
 
@@ -19,8 +20,18 @@ impl Snapshot {
     pub fn from_sim(sim: &Sim) -> Snapshot {
         Snapshot {
             tick: sim.tick(),
-            players: sim.players().map(|id| id.0).collect(),
-            marker: WirePos::from_tiles(sim.marker()),
+            players: sim.players().map(|player| player.id.0).collect(),
+            marker: WirePos::from_tiles(marker_position(sim)),
+        }
+    }
+}
+
+fn marker_position(sim: &Sim) -> Vec2 {
+    match sim.players().next() {
+        Some(player) => player.pos,
+        None => {
+            let map = &sim.tuning().map;
+            Vec2::new(map.width * 0.5, map.height * 0.5)
         }
     }
 }
