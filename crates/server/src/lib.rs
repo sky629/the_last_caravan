@@ -144,13 +144,7 @@ impl GameServer {
     }
 
     pub fn stats(&self) -> ServerStats {
-        let (rooms, members, monsters) = self.hub.size();
-        ServerStats {
-            rooms,
-            members,
-            monsters,
-            ticks: self.ticks_run,
-        }
+        self.hub.stats(self.ticks_run)
     }
 
     /// 다음 Tick까지 남은 시간입니다. 실행 파일은 이 시간만큼 쉰 뒤 다시 `pump`를 호출합니다.

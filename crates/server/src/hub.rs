@@ -10,8 +10,8 @@ use caravan_protocol::{
 };
 use caravan_rules::{JoinError, PlayerId, Tuning};
 
-use crate::Notice;
 use crate::room::Room;
+use crate::{Notice, ServerStats};
 
 /// 허브가 요청하는 일입니다. `GameServer::apply`만 이 값을 실행합니다.
 pub(crate) enum Out {
@@ -95,11 +95,14 @@ impl Hub {
             .collect()
     }
 
-    /// 방의 수, 모든 방의 플레이어 수, 모든 방의 몬스터 수입니다.
-    pub fn size(&self) -> (usize, usize, usize) {
-        let members = self.rooms.values().map(Room::member_count).sum();
-        let monsters = self.rooms.values().map(Room::monster_count).sum();
-        (self.rooms.len(), members, monsters)
+    /// 방, 플레이어, 몬스터의 수를 셉니다. `ticks`는 서버가 실행한 Tick의 수이며 허브는 알지 못하므로 호출하는 쪽이 넘깁니다.
+    pub fn stats(&self, ticks: u64) -> ServerStats {
+        ServerStats {
+            rooms: self.rooms.len(),
+            members: self.rooms.values().map(Room::member_count).sum(),
+            monsters: self.rooms.values().map(Room::monster_count).sum(),
+            ticks,
+        }
     }
 
     /// 모든 방을 Tick 하나만큼 진행합니다. 방은 서로의 플레이어와 Tick 번호를 알지 못합니다.

@@ -24,7 +24,7 @@ pub enum ClientMsg {
 }
 
 /// 플레이어가 한 Tick 동안 요청하는 조작입니다. 클라이언트가 서버에 보내는 게임 정보는 이 다섯 필드가 전부입니다 (C6).
-/// 필드를 더하는 일은 이 구조체를 고쳐야 하므로 눈에 띕니다. 위치나 피해량 같은 필드를 넣어서는 안 됩니다.
+/// 필드를 더하려면 이 구조체를 고쳐야 하므로 변경이 바로 드러납니다. 위치나 피해량 같은 필드를 넣어서는 안 됩니다.
 ///
 /// 값은 믿을 수 없는 입력입니다. 서버가 `caravan_rules`의 `MoveDir::new`와 `AimDir::new`로 검사하고 고칩니다.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

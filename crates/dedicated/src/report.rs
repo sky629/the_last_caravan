@@ -27,7 +27,7 @@ impl TickTimer {
 
     /// `pump` 한 번이 `ticks`개의 Tick을 실행하는 데 `spent`가 걸렸다는 기록입니다.
     /// Tick이 없었던 `pump`는 입장과 퇴장만 처리한 것이므로 기록하지 않습니다.
-    /// 여러 Tick을 한꺼번에 밀려서 실행했다면 Tick 하나가 걸린 시간을 똑같이 나눕니다.
+    /// 밀린 Tick을 한꺼번에 실행했다면 Tick 하나가 걸린 시간을 똑같이 나눕니다.
     pub fn record(&mut self, ticks: u64, spent: Duration) {
         if ticks == 0 {
             return;

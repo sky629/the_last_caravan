@@ -50,7 +50,7 @@ impl MemberInput {
     /// - 지난 Tick 이후 받아들인 입력이 있으면 그것들을 합친 값입니다.
     /// - 없으면 가장 최근 입력을 다시 씁니다. 키를 누르고 있는 동안 입력이 한두 Tick 늦어도 캐릭터가 멈추지 않습니다.
     /// - 그렇게 `stale_ticks`번을 넘겨서 입력이 없으면 아무것도 누르지 않은 입력입니다.
-    ///   백그라운드로 밀린 브라우저 탭이 마지막 키를 누른 채로 계속 달리지 않게 합니다.
+    ///   백그라운드에서 실행이 제한된 브라우저 탭의 캐릭터가 마지막 키를 누른 채로 계속 달리지 않게 합니다.
     pub fn for_tick(&mut self, stale_ticks: u32) -> PlayerInput {
         if let Some(merged) = self.merged.take() {
             self.silent_ticks = 0;
