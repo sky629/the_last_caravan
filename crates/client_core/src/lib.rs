@@ -18,8 +18,8 @@ pub use fps::FpsMeter;
 pub use input::Controls;
 pub use interp::{Frame, MonsterView, PlayerView, effect_progress};
 pub use iso::{
-    MapView, TILE_HEIGHT_PX, TILE_WIDTH_PX, depth, ground_to_screen, map_view,
-    screen_dir_to_ground, screen_to_ground, tile_centers,
+    MapView, TILE_HEIGHT_PX, TILE_WIDTH_PX, circle_to_screen_radii, depth, ground_to_screen,
+    map_view, screen_dir_to_ground, screen_to_ground, tile_centers,
 };
 pub use launch::{DEFAULT_ROOM, DEFAULT_SERVER, LaunchError, LaunchOptions};
 pub use session::{Joined, Session};

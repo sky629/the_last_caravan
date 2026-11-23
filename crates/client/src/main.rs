@@ -3,21 +3,23 @@
 //! PC: `cargo run -p caravan_client -- --room test --server ws://127.0.0.1:7777`
 //! 웹: `cd crates/client && trunk serve` 뒤에 `http://127.0.0.1:8080/?room=test` 열기
 //!
-//! 서버가 Tick마다 보내는 스냅샷을 받아서 첫 번째 플레이어의 자리에 표식(사각형) 하나를 그리고, 화면 왼쪽 위에 접속 상태를 표시합니다.
+//! 서버가 Tick마다 보내는 방 전체의 상태를 받아서 쿼터뷰로 그립니다. 읽는 순서는 `main`(한 프레임의 순서), `net`, `view`, `characters`입니다.
 
 // Bevy 시스템은 매개변수가 많고 쿼리 타입이 길어지는 것이 정상입니다.
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
+mod characters;
+mod config;
 mod convert;
 mod diagnostics;
 mod input;
 mod net;
+mod palette;
+mod parts;
+mod view;
 
 use bevy::prelude::*;
 use caravan_client_core::{LaunchError, LaunchOptions};
-
-#[derive(Component)]
-struct Marker;
 
 #[derive(Component)]
 struct StatusText;
@@ -37,14 +39,19 @@ fn main() {
     }));
     // 로그는 `DefaultPlugins`가 설정하므로, 접속을 시작하는 로그를 남기려면 플러그인을 먼저 추가합니다.
     net::install(&mut app, launch);
-    app.init_resource::<input::HeldControls>()
-        .add_systems(Startup, setup_scene)
+    app.insert_resource(ClearColor(config::BACKGROUND))
+        .init_resource::<input::HeldControls>()
+        .init_resource::<characters::Spawned>()
+        .add_systems(Startup, (palette::setup_palette, setup_scene))
+        // 한 프레임에 하는 일을 순서대로 모두 나열한 곳입니다. 앞 단계가 쓴 값을 뒤 단계가 읽습니다.
         .add_systems(
             Update,
             (
                 net::pump_network,
                 net::advance_playback,
-                draw_marker,
+                view::spawn_world.run_if(not(resource_exists::<view::Scene>)),
+                view::sync_structures.run_if(resource_exists::<view::Scene>),
+                characters::sync_characters.run_if(resource_exists::<view::Scene>),
                 show_status,
                 input::read_controls,
                 net::send_input,
@@ -75,12 +82,6 @@ fn read_launch_options() -> Result<LaunchOptions, LaunchError> {
 fn setup_scene(mut commands: Commands) {
     commands.spawn(Camera2d);
     commands.spawn((
-        Sprite::from_color(Color::srgb(0.95, 0.75, 0.3), Vec2::splat(20.0)),
-        Transform::default(),
-        Visibility::Hidden,
-        Marker,
-    ));
-    commands.spawn((
         Text::new(""),
         TextFont {
             font_size: FontSize::Px(20.0),
@@ -94,21 +95,6 @@ fn setup_scene(mut commands: Commands) {
         },
         StatusText,
     ));
-}
-
-fn draw_marker(
-    frame: Res<net::CurrentFrame>,
-    marker: Single<(&mut Transform, &mut Visibility), With<Marker>>,
-) {
-    let (mut transform, mut visibility) = marker.into_inner();
-    let Some(first) = frame.0.as_ref().and_then(|frame| frame.players.first()) else {
-        *visibility = Visibility::Hidden;
-        return;
-    };
-    let position = convert::screen_pos(first.pos);
-    transform.translation.x = position.x;
-    transform.translation.y = position.y;
-    *visibility = Visibility::Visible;
 }
 
 fn show_status(session: Res<net::ClientSession>, mut text: Single<&mut Text, With<StatusText>>) {

@@ -32,6 +32,15 @@ pub fn screen_to_ground(screen: Vec2) -> Vec2 {
     Vec2::new((x_plus_y + x_minus_y) * 0.5, (x_plus_y - x_minus_y) * 0.5)
 }
 
+/// 지면에서 반지름이 `radius`(타일)인 원이 화면에서 그려지는 타원의 가로, 세로 반지름(픽셀)입니다.
+/// 투영이 마름모 모양이므로 원은 가로로 긴 타원이 됩니다. 캐릭터의 충돌 원을 지면에 그릴 때 씁니다.
+pub fn circle_to_screen_radii(radius: f32) -> Vec2 {
+    Vec2::new(
+        radius * HALF_TILE_WIDTH * std::f32::consts::SQRT_2,
+        radius * HALF_TILE_HEIGHT * std::f32::consts::SQRT_2,
+    )
+}
+
 /// 화면에서 누른 방향(W는 위쪽, D는 오른쪽)을 지면의 이동 방향으로 바꿉니다. 길이가 0이 아니면 길이 1입니다.
 pub fn screen_dir_to_ground(dir: Vec2) -> Vec2 {
     Vec2::new(dir.x + dir.y, dir.y - dir.x).normalize_or_zero()
@@ -136,6 +145,19 @@ mod tests {
         assert!(right.x > 0.0 && right.y.abs() < 1e-4);
         assert!(down.y < 0.0 && down.x.abs() < 1e-4);
         assert!(left.x < 0.0 && left.y.abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_ground_circle_is_drawn_as_the_ellipse_that_holds_all_its_points() {
+        let radius = 0.4;
+        let radii = circle_to_screen_radii(radius);
+        for step in 0..16 {
+            let angle = step as f32 * std::f32::consts::TAU / 16.0;
+            let on_circle = Vec2::new(radius * angle.cos(), radius * angle.sin());
+            let screen = ground_to_screen(on_circle);
+            let ellipse = (screen.x / radii.x).powi(2) + (screen.y / radii.y).powi(2);
+            assert!((ellipse - 1.0).abs() < 1e-4, "step {step}: {ellipse}");
+        }
     }
 
     #[test]
