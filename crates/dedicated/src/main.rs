@@ -92,7 +92,13 @@ fn main() -> ExitCode {
     } else {
         Box::new(ws)
     };
-    let mut server = GameServer::new(transport, Tuning::default(), limits, Instant::now());
+    let mut server = match GameServer::new(transport, Tuning::default(), limits, Instant::now()) {
+        Ok(server) => server,
+        Err(err) => {
+            eprintln!("cannot start the server: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
     // 프로세스를 종료하면(Ctrl-C) 반복도 끝납니다.
     loop {
         let now = Instant::now();

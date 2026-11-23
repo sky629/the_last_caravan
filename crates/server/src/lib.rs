@@ -11,6 +11,7 @@ mod hub;
 mod input;
 mod room;
 
+use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -64,26 +65,60 @@ impl fmt::Display for Notice {
     }
 }
 
+/// 서버를 만들지 못한 이유입니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServerError {
+    /// `Tuning::validate`가 거절한 수치입니다. 값은 어긋난 첫 항목을 설명하는 문장입니다.
+    InvalidTuning(String),
+}
+
+impl fmt::Display for ServerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ServerError::InvalidTuning(why) => write!(f, "invalid tuning: {why}"),
+        }
+    }
+}
+
+impl Error for ServerError {}
+
+/// 서버의 현재 규모입니다. 실행 파일이 주기적으로 기록하는 용도입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ServerStats {
+    pub rooms: usize,
+    /// 모든 방의 플레이어 수 합계입니다.
+    pub members: usize,
+    /// 모든 방에 살아 있는 몬스터 수 합계입니다.
+    pub monsters: usize,
+    /// 서버가 시작된 뒤 시계가 실행한 Tick의 수입니다. 한 Tick은 모든 방을 한 번씩 진행합니다.
+    pub ticks: u64,
+}
+
 pub struct GameServer {
     transport: Box<dyn ServerTransport>,
     hub: Hub,
     clock: TickClock,
     events_per_pump: usize,
+    ticks_run: u64,
 }
 
 impl GameServer {
+    /// 수치가 규칙의 전제를 지키는지 한 번 검사하고, 어긋나면 오류를 돌려줍니다.
+    /// 이 검사를 통과한 수치로 만든 방은 개체가 벽을 통과하는 것 같은 오동작을 일으키지 않습니다.
     pub fn new(
         transport: Box<dyn ServerTransport>,
         tuning: Tuning,
         limits: ServerLimits,
         now: Instant,
-    ) -> GameServer {
-        GameServer {
+    ) -> Result<GameServer, ServerError> {
+        tuning.validate().map_err(ServerError::InvalidTuning)?;
+        Ok(GameServer {
             transport,
             clock: TickClock::new(tuning.tick_hz, now),
             hub: Hub::new(tuning, limits),
             events_per_pump: limits.events_per_pump,
-        }
+            ticks_run: 0,
+        })
     }
 
     /// 서버를 한 번 진행합니다. 기다리지 않습니다.
@@ -102,9 +137,20 @@ impl GameServer {
         self.apply(outs, &mut notices);
         for _ in 0..self.clock.due(now) {
             let outs = self.hub.tick();
+            self.ticks_run += 1;
             self.apply(outs, &mut notices);
         }
         notices
+    }
+
+    pub fn stats(&self) -> ServerStats {
+        let (rooms, members, monsters) = self.hub.size();
+        ServerStats {
+            rooms,
+            members,
+            monsters,
+            ticks: self.ticks_run,
+        }
     }
 
     /// 다음 Tick까지 남은 시간입니다. 실행 파일은 이 시간만큼 쉰 뒤 다시 `pump`를 호출합니다.

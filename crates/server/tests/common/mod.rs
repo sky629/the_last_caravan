@@ -32,7 +32,8 @@ pub fn rig_with_limits(tuning: Tuning, limits: ServerLimits) -> Rig {
     let now = Instant::now();
     let period = Duration::from_secs(1) / tuning.tick_hz;
     Rig {
-        server: GameServer::new(Box::new(transport), tuning, limits, now),
+        server: GameServer::new(Box::new(transport), tuning, limits, now)
+            .expect("the test tuning is valid"),
         connector,
         now,
         period,

@@ -55,6 +55,10 @@ impl Room {
         self.members.len()
     }
 
+    pub fn monster_count(&self) -> usize {
+        self.sim.monsters().count()
+    }
+
     /// 플레이어가 보낸 입력을 받습니다. 이미 방을 떠난 플레이어의 입력은 무시합니다.
     pub fn submit_input(&mut self, player: PlayerId, msg: &InputMsg) {
         if let Some(member) = self.members.get_mut(&player) {

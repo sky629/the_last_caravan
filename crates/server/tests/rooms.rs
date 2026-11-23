@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
-    ServerLimits, ServerMsg, WireLife, WirePhase,
+    ServerLimits, ServerMsg, WireLife, WirePhase, loopback,
 };
 use caravan_rules::{PlayerId, Tuning};
-use caravan_server::Notice;
+use caravan_server::{GameServer, Notice, ServerError, ServerStats};
 use common::{
     assert_near, drain, input, input_with, last_snapshot, player, player_ids, position, rig,
     rig_with, rig_with_limits, snapshots, ticks,
@@ -201,7 +201,7 @@ fn pump_reports_joins_and_leaves_with_member_counts() {
 
 #[test]
 fn the_snapshot_rate_follows_tuning_tick_hz() {
-    for tick_hz in [10, 20] {
+    for tick_hz in [20, 40] {
         let mut rig = rig_with(Tuning {
             tick_hz,
             ..Tuning::default()
@@ -380,7 +380,7 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
 fn the_welcome_reports_the_players_id_the_capacity_and_the_tick_rate_from_the_tuning() {
     let mut rig = rig_with(Tuning {
         max_players: 3,
-        tick_hz: 10,
+        tick_hz: 30,
         ..Tuning::default()
     });
     let (_a, _) = rig.join("test");
@@ -388,7 +388,7 @@ fn the_welcome_reports_the_players_id_the_capacity_and_the_tick_rate_from_the_tu
     let ServerMsg::Welcome(welcome) = answer else {
         panic!("expected Welcome, got {answer:?}");
     };
-    assert_eq!((welcome.you, welcome.capacity, welcome.tick_hz), (2, 3, 10));
+    assert_eq!((welcome.you, welcome.capacity, welcome.tick_hz), (2, 3, 30));
     assert_eq!(welcome.world.towers.len(), 1);
 }
 
@@ -508,4 +508,62 @@ fn after_a_player_leaves_the_room_keeps_running_for_the_one_who_stays() {
         14.5 - 0.6,
         "the one who stays still answers to input",
     );
+}
+
+#[test]
+fn a_server_refuses_to_start_with_numbers_that_break_the_rules() {
+    let build = |tuning: Tuning| {
+        let (transport, _connector) = loopback();
+        GameServer::new(
+            Box::new(transport),
+            tuning,
+            ServerLimits::default(),
+            std::time::Instant::now(),
+        )
+        .map(|_| ())
+    };
+    assert_eq!(build(Tuning::default()), Ok(()));
+
+    let mut too_fast = Tuning::default();
+    too_fast.player.speed = 100.0;
+    assert!(matches!(
+        build(too_fast),
+        Err(ServerError::InvalidTuning(why)) if why.contains("player")
+    ));
+    assert!(matches!(
+        build(Tuning {
+            tick_hz: 0,
+            ..Tuning::default()
+        }),
+        Err(ServerError::InvalidTuning(_))
+    ));
+}
+
+#[test]
+fn the_stats_count_rooms_members_monsters_and_ticks() {
+    let mut rig = rig();
+    let (_a1, _) = rig.join_ok("a");
+    let (_a2, _) = rig.join_ok("a");
+    let (b, _) = rig.join_ok("b");
+    assert_eq!(
+        rig.server.stats(),
+        ServerStats {
+            rooms: 2,
+            members: 3,
+            monsters: 0,
+            ticks: 0
+        }
+    );
+
+    // 첫 무리가 나타난 뒤에는 방마다 몬스터가 있습니다.
+    rig.run_ticks(62);
+    let busy = rig.server.stats();
+    assert_eq!((busy.rooms, busy.members, busy.ticks), (2, 3, 62));
+    assert!(busy.monsters >= 2, "one monster per room at least");
+
+    drop(b);
+    rig.pump();
+    let after = rig.server.stats();
+    assert_eq!((after.rooms, after.members), (1, 2));
+    assert!(after.monsters < busy.monsters, "the empty room is gone");
 }

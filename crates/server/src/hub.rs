@@ -95,6 +95,13 @@ impl Hub {
             .collect()
     }
 
+    /// 방의 수, 모든 방의 플레이어 수, 모든 방의 몬스터 수입니다.
+    pub fn size(&self) -> (usize, usize, usize) {
+        let members = self.rooms.values().map(Room::member_count).sum();
+        let monsters = self.rooms.values().map(Room::monster_count).sum();
+        (self.rooms.len(), members, monsters)
+    }
+
     /// 모든 방을 Tick 하나만큼 진행합니다. 방은 서로의 플레이어와 Tick 번호를 알지 못합니다.
     pub fn tick(&mut self) -> Vec<Out> {
         self.rooms
