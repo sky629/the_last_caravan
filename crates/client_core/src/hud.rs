@@ -234,7 +234,7 @@ fn ally_meter(ally: &PlayerView) -> Meter {
 
 fn tower_meter(id: u32, max_hp: u32, state: WireTowerState, numbered: bool) -> Meter {
     let name = if numbered {
-        format!("TOWER {}", id + 1)
+        format!("TOWER {id}")
     } else {
         "TOWER".to_string()
     };
@@ -362,7 +362,7 @@ mod tests {
                 max_hp: 500,
             },
             towers: vec![WireTower {
-                id: 0,
+                id: 1,
                 max_hp: 300,
                 state: WireTowerState::Standing {
                     hp: 250,
@@ -503,7 +503,7 @@ mod tests {
             WireLife::Alive {
                 hp: 100,
                 max_hp: 100,
-                interaction: Some(WireInteraction::Repairing { tower: 0 }),
+                interaction: Some(WireInteraction::Repairing { tower: 1 }),
             },
         );
         let action = Hud::of(&session, Some(&frame(vec![repairer])))

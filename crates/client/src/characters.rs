@@ -281,3 +281,270 @@ pub fn sync_characters(
     spawned.players.despawn_unseen(&mut commands);
     spawned.monsters.despawn_unseen(&mut commands);
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+    use crate::net::ClientSession;
+    use crate::view;
+    use caravan_client_core::{Frame, Session};
+    use caravan_protocol::{
+        ClientEvent, RoomCode, ServerMsg, Welcome, WireMonsterKind, WirePhase, WireTower,
+        WireTowerState, WireWagon,
+    };
+    use caravan_rules::{Sim, Tuning};
+
+    const YOU: u32 = 1;
+
+    /// 화면과 GPU 없이 시스템만 돌리는 앱입니다. 입장을 마친 세션과 카메라 하나를 가집니다.
+    fn app() -> App {
+        let mut sim = Sim::new(Tuning::default());
+        let first = sim.add_player().unwrap();
+        let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
+        welcome.you = YOU;
+        let mut session = Session::new(RoomCode::parse("test").unwrap());
+        session.on_event(ClientEvent::Connected);
+        session.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<ColorMaterial>()
+            .insert_resource(ClientSession(session))
+            .init_resource::<CurrentFrame>()
+            .init_resource::<Spawned>()
+            .add_systems(Startup, crate::palette::setup_palette)
+            .add_systems(
+                Update,
+                (
+                    view::spawn_world.run_if(not(resource_exists::<Scene>)),
+                    view::sync_structures.run_if(resource_exists::<Scene>),
+                    sync_characters.run_if(resource_exists::<Scene>),
+                )
+                    .chain(),
+            );
+        app.world_mut().spawn(Camera2d);
+        app
+    }
+
+    fn alive(hp: u32) -> WireLife {
+        WireLife::Alive {
+            hp,
+            max_hp: 100,
+            interaction: None,
+        }
+    }
+
+    fn player(id: u32, x: f32, y: f32, life: WireLife) -> PlayerView {
+        PlayerView {
+            id,
+            pos: Ground::new(x, y),
+            facing: Ground::new(1.0, 0.0),
+            life,
+            last_attack_tick: None,
+        }
+    }
+
+    fn monster(id: u32, x: f32, y: f32, hp: u32) -> MonsterView {
+        MonsterView {
+            id,
+            kind: WireMonsterKind::Grunt,
+            pos: Ground::new(x, y),
+            facing: Ground::new(0.0, 1.0),
+            hp,
+        }
+    }
+
+    fn frame(players: Vec<PlayerView>, monsters: Vec<MonsterView>) -> Frame {
+        Frame {
+            tick: 1.0,
+            expedition: 1,
+            phase: WirePhase::Fighting { wave: 1 },
+            wave_count: 3,
+            wagon: WireWagon {
+                hp: 500,
+                max_hp: 500,
+            },
+            towers: vec![WireTower {
+                id: 1,
+                max_hp: 300,
+                state: WireTowerState::Standing {
+                    hp: 300,
+                    last_shot: None,
+                },
+            }],
+            players,
+            monsters,
+        }
+    }
+
+    fn show(app: &mut App, frame: Frame) {
+        app.world_mut().resource_mut::<CurrentFrame>().0 = Some(frame);
+        app.update();
+    }
+
+    fn shapes(app: &mut App) -> HashSet<Entity> {
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<Entity, With<Parts>>();
+        query.iter(world).collect()
+    }
+
+    fn monster_entity(app: &App, id: u32) -> Entity {
+        app.world().resource::<Spawned>().monsters.entities[&id].entity
+    }
+
+    #[test]
+    fn a_monster_is_spawned_once_kept_while_it_lives_and_removed_when_it_is_gone() {
+        let mut app = app();
+        let me = player(YOU, 12.0, 9.0, alive(100));
+        show(
+            &mut app,
+            frame(
+                vec![me.clone()],
+                vec![monster(1, 3.0, 3.0, 60), monster(2, 4.0, 3.0, 60)],
+            ),
+        );
+        let first = shapes(&mut app);
+        assert_eq!(first.len(), 3, "one player and two monsters");
+        let kept = monster_entity(&app, 2);
+
+        // 같은 상태를 다시 그려도 새로 만들지 않습니다.
+        show(
+            &mut app,
+            frame(
+                vec![me.clone()],
+                vec![monster(1, 3.5, 3.0, 60), monster(2, 4.5, 3.0, 60)],
+            ),
+        );
+        assert_eq!(shapes(&mut app), first);
+
+        // 몬스터 1이 죽고 3이 나타납니다. 2는 같은 개체로 남습니다.
+        show(
+            &mut app,
+            frame(
+                vec![me],
+                vec![monster(2, 5.0, 3.0, 60), monster(3, 6.0, 3.0, 60)],
+            ),
+        );
+        let after = shapes(&mut app);
+        assert_eq!(after.len(), 3);
+        assert_eq!(
+            after.intersection(&first).count(),
+            2,
+            "me and monster 2 stay"
+        );
+        assert_eq!(monster_entity(&app, 2), kept);
+    }
+
+    #[test]
+    fn a_player_who_left_disappears() {
+        let mut app = app();
+        show(
+            &mut app,
+            frame(
+                vec![
+                    player(YOU, 12.0, 9.0, alive(100)),
+                    player(2, 8.0, 12.0, alive(100)),
+                ],
+                vec![],
+            ),
+        );
+        assert_eq!(shapes(&mut app).len(), 2);
+
+        show(
+            &mut app,
+            frame(vec![player(YOU, 12.0, 9.0, alive(100))], vec![]),
+        );
+        assert_eq!(shapes(&mut app).len(), 1);
+    }
+
+    #[test]
+    fn the_point_lower_on_the_screen_is_in_front() {
+        let mut app = app();
+        show(
+            &mut app,
+            frame(
+                vec![],
+                vec![monster(1, 10.0, 5.0, 60), monster(2, 10.0, 10.0, 60)],
+            ),
+        );
+        let near = app
+            .world()
+            .get::<Transform>(monster_entity(&app, 1))
+            .unwrap();
+        let far = app
+            .world()
+            .get::<Transform>(monster_entity(&app, 2))
+            .unwrap();
+        assert!(
+            near.translation.y < far.translation.y,
+            "lower on the screen"
+        );
+        assert!(near.translation.z > far.translation.z, "and drawn in front");
+    }
+
+    #[test]
+    fn you_an_ally_a_downed_and_a_dead_player_look_different() {
+        let mut app = app();
+        let downed = WireLife::Downed {
+            bleed_secs_left: 20.0,
+            revive_progress: None,
+        };
+        show(
+            &mut app,
+            frame(
+                vec![
+                    player(YOU, 12.0, 9.0, alive(100)),
+                    player(2, 8.0, 12.0, alive(100)),
+                    player(3, 9.0, 12.0, downed),
+                    player(4, 10.0, 12.0, WireLife::Dead),
+                ],
+                vec![],
+            ),
+        );
+
+        let palette = app.world().resource::<Palette>();
+        let expected = [
+            (YOU, palette.you.clone()),
+            (2, palette.ally.clone()),
+            (3, palette.downed.clone()),
+            (4, palette.dead.clone()),
+        ];
+        for (id, material) in expected {
+            let root = app.world().resource::<Spawned>().players.entities[&id].entity;
+            let parts = app.world().get::<Parts>(root).unwrap();
+            let body = app
+                .world()
+                .get::<MeshMaterial2d<ColorMaterial>>(parts.body)
+                .unwrap();
+            assert_eq!(body.0, material, "player {id}");
+        }
+    }
+
+    #[test]
+    fn a_destroyed_tower_changes_shape_and_colour() {
+        let mut app = app();
+        show(&mut app, frame(vec![], vec![]));
+        let standing = tower_look(&mut app);
+
+        let mut destroyed = frame(vec![], vec![]);
+        destroyed.towers[0].state = WireTowerState::Destroyed;
+        show(&mut app, destroyed);
+
+        let after = tower_look(&mut app);
+        assert_ne!(standing.0, after.0, "a different shape");
+        assert_ne!(standing.1, after.1, "a different colour");
+        let palette = app.world().resource::<Palette>();
+        assert_eq!(after.0, palette.rubble_block);
+    }
+
+    fn tower_look(app: &mut App) -> (Handle<Mesh>, Handle<ColorMaterial>) {
+        let world = app.world_mut();
+        let mut query =
+            world.query::<(&view::TowerView, &Mesh2d, &MeshMaterial2d<ColorMaterial>)>();
+        let (_, mesh, material) = query.single(world).expect("one tower");
+        (mesh.0.clone(), material.0.clone())
+    }
+}
