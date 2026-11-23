@@ -6,7 +6,7 @@ use crate::input::PlayerInputs;
 use crate::math::{Rect, Vec2};
 use crate::monster::{self, Monster, PlayerFields};
 use crate::nav::{FlowField, NavGrid};
-use crate::player::{self, Player};
+use crate::player::{self, Interaction, Player};
 use crate::spatial::MonsterGrid;
 use crate::structures::Wagon;
 use crate::tuning::{MapSpec, Tuning};
@@ -117,10 +117,12 @@ impl Sim {
             tick: self.tick,
         };
         let mut hits = Vec::new();
+        player::update_interactions(&mut self.world, &ctx);
         player::move_players(&mut self.world, &ctx);
         player::player_attacks(&mut self.world, &ctx, &mut hits);
         monster::monsters_act(&mut self.world, &ctx, &mut self.player_fields, &mut hits);
         self.world.apply_hits(&hits, &self.tuning);
+        player::advance_life_timers(&mut self.world, &self.tuning);
         expedition::settle_outcome(&mut self.phase, &self.world, &self.tuning);
     }
 
@@ -179,6 +181,22 @@ impl Sim {
 
     pub fn wagon(&self) -> &Wagon {
         &self.world.wagon
+    }
+
+    /// `downed`를 부활시키는 플레이어가 있으면 부활의 진행도(0.0 이상 1.0 이하)를 돌려줍니다.
+    /// 진행도는 부활시키는 플레이어의 `Interaction`에서 계산하며, 쓰러진 플레이어는 아무 값도 저장하지 않습니다.
+    pub fn revive_progress(&self, downed: PlayerId) -> Option<f32> {
+        let required = self.tuning.ticks(self.tuning.revive.revive_secs);
+        self.world
+            .players
+            .values()
+            .find_map(|player| match player.interaction() {
+                Some(Interaction::Reviving {
+                    target,
+                    elapsed_ticks,
+                }) if *target == downed => Some(*elapsed_ticks as f32 / required as f32),
+                _ => None,
+            })
     }
 }
 

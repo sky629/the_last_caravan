@@ -1,5 +1,7 @@
 //! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 근접 공격, 상호작용(부활과 수리)을 다룹니다.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::collision::{Body, move_circle};
 use crate::ids::{PlayerId, Team, TowerId};
 use crate::math::Vec2;
@@ -150,6 +152,151 @@ impl Player {
                 self.life = Life::Downed {
                     bleed_left_ticks: t.ticks(t.revive.bleed_secs),
                 };
+            }
+        }
+    }
+}
+
+/// 상호작용 키(F)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활을 계속하거나, 새로 시작하거나, 취소합니다.
+///
+/// 진행 중인 부활은 키를 누르고 있고, 대상이 여전히 쓰러진 동료이고, 거리가 범위 안인 동안만 이어집니다.
+/// 공격받는 것은 조건이 아닙니다 (D38). 조건이 하나라도 깨지면 `Interaction` 값을 버리므로 진행도가 처음으로 돌아갑니다 (D22).
+/// 쓰러진 플레이어 한 명은 한 명만 부활시킬 수 있습니다. 이미 진행 중인 부활이 먼저 대상을 차지하고,
+/// 새로 시작하려는 플레이어는 번호 순서로 남은 대상을 차지합니다.
+pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
+    let t = ctx.t;
+    let holding = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.interact);
+
+    // 읽기: 이번 Tick에 플레이어마다 가지게 될 상호작용을 정합니다.
+    let mut next: BTreeMap<PlayerId, Option<Interaction>> = BTreeMap::new();
+    let mut claimed: BTreeSet<PlayerId> = BTreeSet::new();
+    for player in world.players.values() {
+        if let Some(Interaction::Reviving {
+            target,
+            elapsed_ticks,
+        }) = player.interaction()
+            && holding(player.id)
+            && revive_still_valid(world, player, *target, t)
+        {
+            next.insert(
+                player.id,
+                Some(Interaction::Reviving {
+                    target: *target,
+                    elapsed_ticks: elapsed_ticks + 1,
+                }),
+            );
+            claimed.insert(*target);
+        }
+    }
+    for player in world.players.values() {
+        if !player.is_alive() || next.contains_key(&player.id) {
+            continue;
+        }
+        let chosen = if holding(player.id) {
+            choose_interaction(world, player, &claimed, t)
+        } else {
+            None
+        };
+        if let Some(Interaction::Reviving { target, .. }) = &chosen {
+            claimed.insert(*target);
+        }
+        next.insert(player.id, chosen);
+    }
+
+    // 적용
+    for (id, interaction) in next {
+        if let Some(Player {
+            life: Life::Alive {
+                interaction: slot, ..
+            },
+            ..
+        }) = world.players.get_mut(&id)
+        {
+            *slot = interaction;
+        }
+    }
+}
+
+/// 새로 시작할 상호작용을 고릅니다. 범위 안의 쓰러진 동료가 있으면 가장 가까운 동료를 부활시킵니다.
+/// 이미 다른 플레이어가 부활시키는 동료(`claimed`)는 고르지 않습니다.
+fn choose_interaction(
+    world: &World,
+    me: &Player,
+    claimed: &BTreeSet<PlayerId>,
+    t: &Tuning,
+) -> Option<Interaction> {
+    let mut nearest: Option<(f32, PlayerId)> = None;
+    for other in world.players.values() {
+        if other.id == me.id || !other.is_downed() || claimed.contains(&other.id) {
+            continue;
+        }
+        if !me.team.is_allied_with(other.team) {
+            continue;
+        }
+        let distance = me.pos.distance(other.pos);
+        if distance <= t.revive.range && nearest.is_none_or(|(best, _)| distance < best) {
+            nearest = Some((distance, other.id));
+        }
+    }
+    nearest.map(|(_, target)| Interaction::Reviving {
+        target,
+        elapsed_ticks: 1,
+    })
+}
+
+fn revive_still_valid(world: &World, reviver: &Player, target: PlayerId, t: &Tuning) -> bool {
+    world.players.get(&target).is_some_and(|other| {
+        other.is_downed()
+            && reviver.team.is_allied_with(other.team)
+            && reviver.pos.distance(other.pos) <= t.revive.range
+    })
+}
+
+/// 부활을 마무리하고 출혈 시간을 줄입니다.
+/// 부활시키는 플레이어가 이번 Tick에 쓰러졌다면 이미 `Alive`가 아니므로 부활이 끝나지 않습니다 (C8).
+pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
+    let required = t.ticks(t.revive.revive_secs);
+    let mut finished: Vec<(PlayerId, PlayerId)> = Vec::new();
+    let mut being_revived: BTreeSet<PlayerId> = BTreeSet::new();
+    for player in world.players.values() {
+        if let Some(Interaction::Reviving {
+            target,
+            elapsed_ticks,
+        }) = player.interaction()
+        {
+            being_revived.insert(*target);
+            if *elapsed_ticks >= required {
+                finished.push((player.id, *target));
+            }
+        }
+    }
+
+    for (reviver, target) in finished {
+        if let Some(Player {
+            life: Life::Alive { interaction, .. },
+            ..
+        }) = world.players.get_mut(&reviver)
+        {
+            *interaction = None;
+        }
+        if let Some(revived) = world.players.get_mut(&target) {
+            let hp = (t.player.max_hp * t.revive.revived_hp_percent / 100).max(1);
+            revived.life = Life::Alive {
+                hp,
+                cooldown_ticks: 0,
+                interaction: None,
+            };
+        }
+    }
+
+    // 부활이 진행되는 동안에는 출혈 시간이 멈춥니다 (D22).
+    for player in world.players.values_mut() {
+        if let Life::Downed { bleed_left_ticks } = &mut player.life
+            && !being_revived.contains(&player.id)
+        {
+            *bleed_left_ticks = bleed_left_ticks.saturating_sub(1);
+            if *bleed_left_ticks == 0 {
+                player.life = Life::Dead;
             }
         }
     }
