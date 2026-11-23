@@ -6,6 +6,8 @@
 
 mod support;
 
-mod expedition; // D24, D25: 입장, 퇴장, 정원
+mod combat; // C5, D16: 근접 공격의 범위, 부채꼴, 쿨다운
+mod expedition; // C10, C19, D18-D20, D24, D25, D35, D43, D45: 무리, 성공과 실패, 새 원정, 입장과 퇴장
+mod monsters; // C4, C11, D17, D33: 몬스터의 목표 선택, 이동 경로, 공격
 mod movement; // C11, C18: 장애물과 맵 경계, 이동 속도, 입력 보정
 mod tuning; // 기본 수치가 충돌 처리의 전제를 지키는지

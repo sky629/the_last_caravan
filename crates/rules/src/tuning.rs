@@ -40,6 +40,14 @@ pub struct PlayerTuning {
     pub attack_cooldown_secs: f32,
 }
 
+impl PlayerTuning {
+    /// 공격 부채꼴의 경계 각도에 대한 코사인입니다. 몬스터 방향과 조준 방향의 내적이 이 값 이상이면 부채꼴 안입니다.
+    /// 규칙에서 삼각함수를 쓰는 곳은 이 함수 하나입니다.
+    pub fn attack_arc_cos(&self) -> f32 {
+        self.attack_half_angle_deg.to_radians().cos()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReviveTuning {
     /// 쓰러진 플레이어가 사망 상태가 되기까지 걸리는 시간입니다.
@@ -87,6 +95,15 @@ impl MonsterTable {
         MonsterKind::ALL
             .iter()
             .map(|kind| self.get(*kind).radius)
+            .fold(0.0, f32::max)
+    }
+
+    /// 몬스터의 중심에서 대상의 가장자리까지 잰 공격 거리(반지름 더하기 공격 거리) 가운데 가장 긴 값입니다.
+    /// 이동 경로의 도착 칸을 정할 때 씁니다.
+    pub fn longest_engage_distance(&self) -> f32 {
+        MonsterKind::ALL
+            .iter()
+            .map(|kind| self.get(*kind).radius + self.get(*kind).attack_reach)
             .fold(0.0, f32::max)
     }
 }
@@ -144,6 +161,17 @@ pub struct WaveTuning {
     pub between_secs: f32,
     /// 원정의 결과를 보여 주는 시간입니다. 이 시간이 지나면 새 원정이 시작됩니다 (D20).
     pub restart_secs: f32,
+}
+
+impl WaveTuning {
+    /// `wave`번 무리(1부터 셉니다)의 몬스터 수입니다. 없는 무리는 0입니다.
+    pub fn size_of(&self, wave: u32) -> u32 {
+        (wave as usize)
+            .checked_sub(1)
+            .and_then(|index| self.sizes.get(index))
+            .copied()
+            .unwrap_or(0)
+    }
 }
 
 /// 마차나 시설을 놓는 위치입니다.
@@ -206,6 +234,14 @@ impl Tuning {
         }
         if self.waves.spawn_lanes == 0 {
             return Err("spawn_lanes must be at least 1".to_string());
+        }
+        // HP가 0인 개체는 만들어지는 순간 쓰러지거나 제거되므로, 모든 최대 HP는 1 이상이어야 합니다.
+        let all_hp = [self.player.max_hp, self.wagon.max_hp]
+            .into_iter()
+            .chain(MonsterKind::ALL.map(|kind| self.monsters.get(kind).max_hp))
+            .chain(StructureKind::ALL.map(|kind| self.structures.get(kind).max_hp));
+        if all_hp.into_iter().any(|hp| hp == 0) {
+            return Err("every max_hp must be at least 1".to_string());
         }
 
         let dt = self.dt();

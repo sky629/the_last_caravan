@@ -10,24 +10,33 @@
 //! `world`, `collision`, `nav`, `spatial`은 이 모듈들이 쓰는 도구입니다.
 
 mod collision;
+mod expedition;
 mod ids;
 mod input;
 mod kind;
 mod math;
+mod monster;
+mod nav;
 mod player;
 mod sim;
+mod spatial;
+mod stats;
+mod structures;
 mod tuning;
 mod world;
 
 #[cfg(test)]
 mod tests;
 
+pub use expedition::{Outcome, Phase};
 pub use ids::{MonsterId, PlayerId, Team, TowerId};
 pub use input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 pub use kind::{MonsterKind, StructureKind};
 pub use math::{Rect, Vec2};
+pub use monster::Monster;
 pub use player::{Interaction, Life, Player};
 pub use sim::{JoinError, Sim};
+pub use structures::Wagon;
 pub use tuning::{
     MapSpec, MonsterTable, MonsterTuning, PlayerTuning, ReviveTuning, StructurePlacement,
     StructureTable, StructureTuning, Tuning, WagonTuning, WaveTuning,

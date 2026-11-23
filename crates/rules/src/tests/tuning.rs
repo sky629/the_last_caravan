@@ -40,6 +40,13 @@ fn a_wave_with_no_monsters_is_rejected() {
 }
 
 #[test]
+fn a_body_with_zero_max_hp_is_rejected() {
+    let mut t = Tuning::default();
+    t.monsters.grunt.max_hp = 0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
 fn durations_are_written_in_seconds_and_become_whole_ticks_in_one_place() {
     let t = Tuning::default();
     assert_eq!(t.ticks(8.0), 160);

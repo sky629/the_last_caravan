@@ -8,6 +8,43 @@
 
 use crate::math::{Rect, Vec2};
 
+/// 거리를 잴 때 쓰는 모양입니다. 근접 공격, 추적 시작, 수리의 거리 판정이 모두 `gap_from` 하나를 거칩니다.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Body {
+    Circle { center: Vec2, radius: f32 },
+    Box(Rect),
+}
+
+impl Body {
+    /// 이 모양의 가장자리나 안쪽에서 `p`와 가장 가까운 점입니다.
+    pub fn closest_point(&self, p: Vec2) -> Vec2 {
+        match self {
+            Body::Circle { center, radius } => {
+                let offset = p - *center;
+                if offset.length() <= *radius {
+                    p
+                } else {
+                    *center + offset.normalize_or_zero() * *radius
+                }
+            }
+            Body::Box(rect) => rect.closest_point(p),
+        }
+    }
+
+    /// 중심이 `center`이고 반지름이 `radius`인 원의 가장자리에서 이 모양의 가장자리까지의 거리입니다.
+    /// 닿거나 겹치면 0입니다.
+    pub fn gap_from(&self, center: Vec2, radius: f32) -> f32 {
+        let distance = match self {
+            Body::Circle {
+                center: own_center,
+                radius: own_radius,
+            } => center.distance(*own_center) - own_radius,
+            Body::Box(rect) => rect.distance_to(center),
+        };
+        (distance - radius).max(0.0)
+    }
+}
+
 /// 원을 `delta`만큼 옮긴 뒤 `solids`와 `bounds`에 맞추어 보정하고, 새 중심을 돌려줍니다.
 pub(crate) fn move_circle(
     pos: Vec2,
