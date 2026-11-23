@@ -52,3 +52,11 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
+
+# Bevy의 설치 안내가 권하는 개발 빌드 설정입니다. 최적화하지 않은 Bevy는 매우 느리고 실행 파일도 커지므로,
+# 의존 크레이트는 최대로 최적화하고 이 워크스페이스의 코드는 조금만 최적화합니다.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
