@@ -371,3 +371,30 @@ fn the_same_inputs_always_produce_the_same_game() {
     assert_eq!(first, second);
     assert!(first.contains("Monster"), "the script reached a fight");
 }
+
+#[test]
+fn a_player_who_joins_where_towers_were_built_stands_on_a_free_tile_beside_them() {
+    let mut s = Scenario::default_game(|_| {});
+    for _ in 0..3 {
+        s.sim.add_player().unwrap();
+    }
+    // 넷째 플레이어의 등장 지점은 타일 네 개가 만나는 꼭짓점입니다. 그 네 타일에 감시탑이 서 있습니다.
+    let spawn = s.sim.tuning().map.player_spawns[3];
+    let (x, y) = (spawn.x as u16, spawn.y as u16);
+    for (tx, ty) in [(x - 1, y - 1), (x, y - 1), (x - 1, y), (x, y)] {
+        s.tower_at(tx, ty);
+    }
+
+    let late = s.sim.add_player().unwrap();
+
+    let pos = s.player(late).pos;
+    let radius = s.sim.tuning().player.radius;
+    for tower in s.sim.towers() {
+        assert!(
+            tower.rect().distance_to(pos) >= radius,
+            "the body at {pos:?} does not touch the tower on {:?}",
+            tower.tile
+        );
+    }
+    assert!(pos.distance(spawn) < 3.0, "and it is still near the wagon");
+}

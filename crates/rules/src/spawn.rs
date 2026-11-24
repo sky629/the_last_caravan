@@ -80,6 +80,7 @@ impl SpawnPlan {
             );
         }
 
+        // 자리는 마을의 범위 밖에서만 고릅니다. 범위 안의 타일에는 감시탑이 설 수 있기 때문입니다.
         // 한 타일에는 몬스터가 하나만 서므로, 이웃한 두 지점이 같은 타일을 고르지 않게 이미 고른 타일은 건너뜁니다.
         let wanted = t.guards.per_node as usize;
         let mut taken: BTreeSet<Tile> = BTreeSet::new();
@@ -89,6 +90,7 @@ impl SpawnPlan {
                 .free_around(*node)
                 .into_iter()
                 .filter(|tile| !taken.contains(tile))
+                .filter(|tile| wagon.distance_to(tile.center()) > t.village.build_range)
                 .take(wanted)
                 .collect();
             if posts.len() < wanted {

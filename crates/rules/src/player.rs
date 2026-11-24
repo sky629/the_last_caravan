@@ -476,12 +476,13 @@ pub(crate) fn repair_spec<'a>(
 /// 보관함의 자원이 비용보다 적으면 그 수리는 회복시키지 않고 아무것도 내지 않으므로, 보관함은 0 아래로 내려가지 않습니다.
 /// 같은 Tick에 여럿이 수리하면 번호가 작은 플레이어가 먼저 내고, 자원이 모자라면 번호가 큰 플레이어의 수리가 회복시키지 못합니다.
 /// 대상의 HP가 최대에 가까워서 회복시키는 양이 `hp_per_pulse`보다 적어도 비용은 같습니다.
+/// 같은 Tick의 앞선 수리가 대상을 이미 최대 HP로 만들었으면, 뒤의 수리는 회복시킬 것이 없으므로 비용도 내지 않습니다.
 fn apply_repairs(world: &mut World, pulses: &[RepairTarget], t: &Tuning) {
     for &target in pulses {
         let Some(spec) = repair_spec(world, target, t) else {
             continue;
         };
-        if world.stash < spec.cost_per_pulse {
+        if !is_below_max_hp(world, target, t) || world.stash < spec.cost_per_pulse {
             continue;
         }
         world.stash -= spec.cost_per_pulse;
@@ -495,6 +496,17 @@ fn apply_repairs(world: &mut World, pulses: &[RepairTarget], t: &Tuning) {
             }
             RepairTarget::Wagon => world.wagon.repair(amount, t.wagon.max_hp),
         }
+    }
+}
+
+/// 수리할 대상의 HP가 최대보다 적은지 봅니다. 대상이 사라졌으면 `false`입니다.
+fn is_below_max_hp(world: &World, target: RepairTarget, t: &Tuning) -> bool {
+    match target {
+        RepairTarget::Tower(id) => world
+            .towers
+            .get(&id)
+            .is_some_and(|tower| tower.hp() < t.structures.get(tower.kind).max_hp),
+        RepairTarget::Wagon => world.wagon.hp < t.wagon.max_hp,
     }
 }
 

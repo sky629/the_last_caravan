@@ -79,11 +79,28 @@ impl Sim {
             None,
             self.world.players.values().map(|p| p.spawn_slot),
         );
-        let spawn = spawn_point(&self.tuning.map, slot);
+        let spawn = self.clear_spot_near(spawn_point(&self.tuning.map, slot));
         let team = self.team_for_new_player();
         let player = Player::new(id, team, slot, spawn, &self.tuning);
         self.world.players.insert(id, player);
         Ok(id)
+    }
+
+    /// 플레이어의 몸이 막힌 타일에 걸치지 않고 설 수 있는 자리입니다. `wanted`에 설 수 있으면 `wanted`이고,
+    /// 원정 도중에 그 자리에 감시탑이 세워졌으면 가장 가까운 빈 타일의 중심입니다.
+    fn clear_spot_near(&self, wanted: Vec2) -> Vec2 {
+        let radius = self.tuning.player.radius;
+        let mut near = Vec::new();
+        self.world
+            .tiles
+            .blocked_rects_near(wanted, radius, &mut near);
+        if near.iter().all(|solid| solid.distance_to(wanted) >= radius) {
+            return wanted;
+        }
+        self.world
+            .tiles
+            .nearest_free(wanted)
+            .map_or(wanted, |tile| tile.center())
     }
 
     /// 플레이어를 즉시 제거합니다. 없는 번호는 무시하므로 같은 퇴장을 두 번 처리해도 안전합니다.

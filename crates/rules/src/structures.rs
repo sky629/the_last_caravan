@@ -128,7 +128,7 @@ impl Tower {
     /// HP를 `max_hp`까지 회복합니다. 짓는 중인 감시탑은 회복하지 않습니다.
     pub(crate) fn repair(&mut self, amount: u32, max_hp: u32) {
         if let TowerState::Standing { hp, .. } = &mut self.state {
-            *hp = (*hp + amount).min(max_hp);
+            *hp = hp.saturating_add(amount).min(max_hp);
         }
     }
 }

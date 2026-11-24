@@ -355,3 +355,22 @@ fn a_guard_goes_back_to_a_post_that_is_a_long_way_off_through_the_gap_in_a_wall(
             .is_some_and(|m| m.pos.distance(post.center()) < 0.1)
     });
 }
+
+#[test]
+fn a_guard_post_is_never_inside_the_village_where_a_tower_could_stand() {
+    // 이 지점은 마을의 범위 바로 밖에 있고, 동쪽 이웃 타일은 범위 안입니다.
+    let s = Scenario::with_cycle(|t| {
+        t.map.nodes = vec![Tile::new(6, 17)];
+        t.guards.per_node = 1;
+    });
+    let t = s.sim.tuning();
+
+    let posts: Vec<Tile> = guards(&s).iter().map(post_of).collect();
+
+    assert_eq!(posts.len(), 1);
+    assert!(
+        t.map.wagon.distance_to(posts[0].center()) > t.village.build_range,
+        "the post {:?} is outside the build range",
+        posts[0]
+    );
+}

@@ -583,3 +583,22 @@ fn a_build_in_progress_goes_on_while_f_is_held_with_a_damaged_wagon_beside() {
         "the tower was finished"
     );
 }
+
+#[test]
+fn a_second_repairer_pays_nothing_when_the_first_pulse_already_filled_the_wagon() {
+    let (mut s, _) = repairer_at_a_damaged_wagon();
+    let b = s.player_at(16.5, 17.5);
+    s.hold_interact(b);
+    let max_hp = s.sim.tuning().wagon.max_hp;
+    s.set_wagon_hp(max_hp - 20);
+    let stash = s.sim.stash();
+
+    s.run_ticks(repair_pulse(&s));
+
+    assert_eq!(s.sim.wagon().hp, max_hp);
+    assert_eq!(
+        s.sim.stash(),
+        stash - 1,
+        "only the pulse that healed was paid for"
+    );
+}
