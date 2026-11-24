@@ -211,6 +211,47 @@ fn a_healing_pulse_needs_a_length_and_a_reach() {
 }
 
 #[test]
+fn start_towers_must_be_free_tiles_of_the_village_within_the_limit() {
+    let valid = |sites: Vec<Tile>| {
+        let mut t = Tuning::default();
+        t.village.start_towers = sites;
+        t.validate()
+    };
+    let near_the_wagon = Tile::new(27, 29);
+    assert_eq!(valid(vec![near_the_wagon]), Ok(()));
+    assert!(
+        valid(vec![near_the_wagon, near_the_wagon]).is_err(),
+        "twice"
+    );
+    assert!(valid(vec![Tile::new(31, 31)]).is_err(), "on the wagon");
+    assert!(valid(vec![Tile::new(24, 24)]).is_err(), "on an obstacle");
+    assert!(
+        valid(vec![Tile::new(60, 60)]).is_err(),
+        "outside the village"
+    );
+    assert!(valid(vec![Tile::new(64, 31)]).is_err(), "outside the map");
+
+    let mut t = Tuning::default();
+    t.village.tower_limit = 1;
+    t.village.start_towers = vec![Tile::new(27, 29), Tile::new(25, 29)];
+    assert!(t.validate().is_err(), "more than the limit");
+}
+
+#[test]
+fn start_towers_that_wall_in_a_free_tile_are_rejected() {
+    // 타일 (26, 29)의 네 이웃을 모두 막으면 그 타일은 마차에서 걸어갈 수 없습니다.
+    let mut t = Tuning::default();
+    t.village.start_towers = vec![
+        Tile::new(25, 29),
+        Tile::new(27, 29),
+        Tile::new(26, 28),
+        Tile::new(26, 30),
+    ];
+    let err = t.validate().expect_err("one tile is cut off");
+    assert!(err.contains("connected to the wagon"), "{err}");
+}
+
+#[test]
 fn a_body_with_zero_max_hp_is_rejected() {
     let mut t = Tuning::default();
     t.monsters.grunt.max_hp = 0;

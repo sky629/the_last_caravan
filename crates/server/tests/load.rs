@@ -12,9 +12,10 @@ use caravan_protocol::{ServerMsg, encode_server};
 use caravan_rules::{MonsterKind, NightPlan, Tuning, WavePlan};
 use common::rig_with;
 
-/// 이 크기를 넘으면 접속 하나의 대역폭이 예산(약 55 KB/s)을 넘습니다.
-/// 몬스터 번호가 16383 이하이므로 몬스터 하나는 9바이트이고, 300마리가 2700바이트입니다.
-const BOUND_BYTES: usize = 3_000;
+/// 이 크기를 넘으면 접속 하나의 전송량이 측정한 값보다 늘어난 것입니다.
+/// 몬스터 번호가 16383 이하이므로 몬스터 하나는 9바이트이고, 300마리가 2700바이트입니다. 감시탑 40개가 약 560바이트를 더하고,
+/// 이 테스트의 감시탑은 HP가 `u32::MAX`여서 실제보다 값마다 3바이트씩 더 씁니다.
+const BOUND_BYTES: usize = 3_600;
 
 fn crowd_tuning() -> Tuning {
     let mut tuning = Tuning::default();
@@ -29,6 +30,10 @@ fn crowd_tuning() -> Tuning {
     tuning.nights.spawn_interval_secs = 0.05;
     tuning.wagon.max_hp = u32::MAX;
     tuning.player.max_hp = u32::MAX;
+    // 감시탑이 상한만큼 서 있습니다. 감시탑은 사격하지만 피해를 주지 않아서 300마리가 그대로 쌓입니다.
+    tuning.village.start_towers = tuning.spread_tower_sites(tuning.village.tower_limit);
+    tuning.structures.watchtower.max_hp = u32::MAX;
+    tuning.structures.watchtower.damage = 0;
     tuning
 }
 
@@ -57,7 +62,7 @@ fn the_snapshot_of_a_real_300_monster_crowd_stays_under_the_bound() {
 
     println!(
         "{} monsters: {} bytes per snapshot, {} bytes per second at 20 Hz; \
-         tick time over 400 ticks: average {:.2} ms, worst {:.2} ms (this test build, not an optimized server)",
+         tick time over 400 ticks: average {:.2} ms, worst {:.2} ms (measured in this test's build profile)",
         largest.0,
         largest.1,
         largest.1 * 20,

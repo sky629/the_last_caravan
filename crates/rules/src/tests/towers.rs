@@ -3,10 +3,13 @@
 //! 시나리오의 감시탑은 테스트가 놓은 타일 (1, 17)이고, 사각형은 (1, 17)에서 (2, 18)까지, 중심은 (1.5, 17.5)입니다.
 
 use super::support::Scenario;
+use crate::build::CannotBuild;
+use crate::expedition::{Outcome, Phase};
 use crate::input::PlayerInput;
 use crate::math::Rect;
 use crate::structures::{Shot, TowerState};
 use crate::tuning::Tuning;
+use crate::world::Tile;
 
 /// 타일 (1, 17)에 서 있는 감시탑이 하나 있는 빈 들판입니다.
 fn field_with_tower() -> Scenario {
@@ -405,4 +408,124 @@ fn a_new_expedition_frees_the_tiles_the_towers_stood_on() {
     s.run_ticks(s.ticks(3.0));
 
     assert!(s.player(a).pos.x < 1.0);
+}
+
+// 원정이 시작될 때 이미 서 있는 감시탑
+
+#[test]
+fn start_towers_stand_at_full_hp_when_the_expedition_begins_and_again_after_a_new_one() {
+    let sites = vec![Tile::new(14, 14), Tile::new(16, 14)];
+    let mut s = Scenario::with_tuning(|t| t.village.start_towers = sites.clone());
+
+    let standing: Vec<(Tile, u32)> = s
+        .sim
+        .towers()
+        .map(|tower| (tower.tile, tower.hp()))
+        .collect();
+    assert_eq!(standing, vec![(sites[0], 300), (sites[1], 300)]);
+
+    s.set_tower_hp(10);
+    s.sim.set_phase(Phase::Over {
+        outcome: Outcome::Defeat,
+        ticks_left: 1,
+    });
+    s.run_ticks(1);
+
+    assert_eq!(s.sim.expedition_number(), 2);
+    let standing: Vec<(Tile, u32)> = s
+        .sim
+        .towers()
+        .map(|tower| (tower.tile, tower.hp()))
+        .collect();
+    assert_eq!(standing, vec![(sites[0], 300), (sites[1], 300)]);
+}
+
+#[test]
+fn start_towers_count_toward_the_limit() {
+    let mut s = Scenario::with_tuning(|t| {
+        t.village.start_towers = vec![Tile::new(14, 14)];
+        t.village.tower_limit = 1;
+    });
+    let a = s.player_at(14.5, 12.5);
+
+    s.hold_build(a, 1.0, 0.0);
+    s.run_ticks(1);
+
+    assert_eq!(
+        s.player(a).build_refusal().map(|refusal| refusal.why),
+        Some(CannotBuild::TowerLimit)
+    );
+}
+
+#[test]
+fn start_towers_take_their_tiles() {
+    let mut s = Scenario::with_tuning(|t| t.village.start_towers = vec![Tile::new(14, 14)]);
+    let a = s.player_at(13.5, 14.5);
+
+    s.hold_build(a, 1.0, 0.0);
+    s.run_ticks(1);
+
+    assert_eq!(
+        s.player(a).build_refusal().map(|refusal| refusal.why),
+        Some(CannotBuild::TileTaken)
+    );
+}
+
+#[test]
+fn the_default_map_takes_a_full_set_of_spread_out_towers() {
+    let mut t = Tuning::default();
+    t.village.start_towers = t.spread_tower_sites(t.village.tower_limit);
+    assert_eq!(t.village.start_towers.len(), t.village.tower_limit as usize);
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "the towers leave every tile reachable"
+    );
+
+    let s = Scenario::default_game(|tuning| *tuning = t.clone());
+
+    assert_eq!(s.sim.towers().count(), t.village.tower_limit as usize);
+    assert!(s.sim.towers().all(|tower| tower.is_standing()));
+    for tower in s.sim.towers() {
+        let gap = s.sim.wagon().rect.distance_to(tower.tile.center());
+        assert!(
+            gap <= t.village.build_range,
+            "{:?} is outside the village",
+            tower.tile
+        );
+    }
+}
+
+#[test]
+fn spread_out_sites_leave_a_free_tile_between_neighbours_and_keep_the_player_spawns_clear() {
+    let t = Tuning::default();
+    let sites = t.spread_tower_sites(t.village.tower_limit);
+    let distinct: std::collections::BTreeSet<Tile> = sites.iter().copied().collect();
+    assert_eq!(distinct.len(), sites.len(), "no tile twice");
+    for (i, a) in sites.iter().enumerate() {
+        for b in &sites[i + 1..] {
+            let (dx, dy) = (a.x.abs_diff(b.x), a.y.abs_diff(b.y));
+            assert!(dx >= 2 || dy >= 2, "{a:?} and {b:?} touch");
+        }
+    }
+    for spawn in &t.map.player_spawns {
+        for site in &sites {
+            assert!(
+                site.rect().distance_to(*spawn) >= t.player.radius,
+                "{site:?} sits on a player spawn {spawn:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn asking_for_more_sites_than_the_village_has_gives_what_fits() {
+    let t = Tuning::default();
+    let all = t.spread_tower_sites(u32::MAX);
+    assert!(all.len() > t.village.tower_limit as usize);
+    assert!(
+        all.len() < 10_000,
+        "bounded by the village, got {}",
+        all.len()
+    );
 }

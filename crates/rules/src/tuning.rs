@@ -145,6 +145,9 @@ pub struct VillageTuning {
     pub build_range: f32,
     /// 서 있는 감시탑과 짓는 중인 감시탑을 합친 수의 상한입니다.
     pub tower_limit: u32,
+    /// 원정이 시작될 때 이미 서 있는 감시탑의 타일입니다. 기본 수치에서는 비어 있고, 부하 시험(`--stress`)과 테스트가
+    /// 감시탑이 많은 상황을 만들 때 씁니다. 건설과 같은 조건(마을 안의 빈 타일, 상한, 마차로 가는 길)을 지켜야 합니다.
+    pub start_towers: Vec<Tile>,
 }
 
 /// 자원의 수치입니다. 자원은 한 종류이고, 채집 지점에서 플레이어의 손으로, 손에서 마차의 보관함으로 옮겨집니다.
@@ -306,6 +309,40 @@ impl Tuning {
     pub fn ticks(&self, secs: f32) -> u32 {
         let ticks = (secs * self.tick_hz as f32).round() as u32;
         if secs > 0.0 { ticks.max(1) } else { 0 }
+    }
+
+    /// 마을 안에서 감시탑 `count`개를 놓을 자리를 마차에 가까운 순서로 돌려줍니다. 가로와 세로 모두 짝수인 타일만 고르므로
+    /// 감시탑 사이에 빈 타일이 한 칸씩 남고, 마차로 가는 길이 막히지 않습니다. 장애물, 마차, 플레이어의 등장 지점과 겹치는 타일은 건너뜁니다.
+    /// 자리가 모자라면 있는 만큼만 돌려줍니다. 부하 시험과 테스트가 감시탑이 상한만큼 서 있는 상황을 만들 때 씁니다.
+    pub fn spread_tower_sites(&self, count: u32) -> Vec<Tile> {
+        let map = &self.map;
+        let center = map.wagon.center();
+        let mut sites: Vec<(f32, Tile)> = Vec::new();
+        for x in (0..map.width as u16).step_by(2) {
+            for y in (0..map.height as u16).step_by(2) {
+                let tile = Tile::new(x, y);
+                let on_a_solid = map
+                    .obstacles
+                    .iter()
+                    .chain([&map.wagon])
+                    .any(|solid| solid.contains(tile.center()));
+                let on_a_spawn = map
+                    .player_spawns
+                    .iter()
+                    .any(|spawn| tile.rect().distance_to(*spawn) < self.player.radius);
+                let inside_the_village =
+                    map.wagon.distance_to(tile.center()) <= self.village.build_range;
+                if inside_the_village && !on_a_solid && !on_a_spawn {
+                    sites.push((tile.center().distance(center), tile));
+                }
+            }
+        }
+        sites.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        sites
+            .into_iter()
+            .take(count as usize)
+            .map(|(_, tile)| tile)
+            .collect()
     }
 
     /// 원정의 날 수입니다. 밤의 목록의 길이이므로, 날 수를 적는 곳은 따로 없습니다.
@@ -489,6 +526,32 @@ impl Tuning {
                 ));
             }
         }
+        if self.village.start_towers.len() > self.village.tower_limit as usize {
+            return Err(format!(
+                "{} start towers are more than the tower limit {}",
+                self.village.start_towers.len(),
+                self.village.tower_limit
+            ));
+        }
+        let mut occupied: BTreeSet<Tile> = BTreeSet::new();
+        for tower in &self.village.start_towers {
+            let center = tower.center();
+            let on_a_solid = map
+                .obstacles
+                .iter()
+                .chain([&map.wagon])
+                .any(|solid| solid.contains(center));
+            let inside_the_village = map.wagon.distance_to(center) <= self.village.build_range;
+            if !bounds.contains(center)
+                || on_a_solid
+                || !inside_the_village
+                || !occupied.insert(*tower)
+            {
+                return Err(format!(
+                    "start tower {tower:?} must be a free tile of the village that no other start tower takes"
+                ));
+            }
+        }
         check_not_negative("guards chase_range", self.guards.chase_range)?;
         if !map.nodes.is_empty() && resources.node_amount == 0 {
             return Err("node_amount must be at least 1 when the map has gather nodes".to_string());
@@ -630,6 +693,7 @@ impl Default for Tuning {
             village: VillageTuning {
                 build_range: 10.0,
                 tower_limit: 40,
+                start_towers: Vec::new(),
             },
             guards: GuardTuning {
                 kind: MonsterKind::Grunt,

@@ -69,10 +69,11 @@ fn ground(t: &Tuning) -> (TileMap, Vec<GatherNode>) {
 }
 
 impl World {
-    /// 원정이 시작될 때의 세계입니다. 플레이어, 몬스터, 감시탑, 떨어진 자원은 없고, 보관함에는 시작 자원이 있고, 채집 지점은 가득 차 있습니다.
+    /// 원정이 시작될 때의 세계입니다. 플레이어, 몬스터, 떨어진 자원은 없고, 감시탑은 `village.start_towers`에 적힌 것뿐입니다.
+    /// 보관함에는 시작 자원이 있고, 채집 지점은 가득 차 있습니다.
     pub fn new(t: &Tuning) -> World {
         let (tiles, nodes) = ground(t);
-        World {
+        let mut world = World {
             players: BTreeMap::new(),
             monsters: Vec::new(),
             towers: BTreeMap::new(),
@@ -85,7 +86,9 @@ impl World {
             next_monster: 1,
             next_tower: 1,
             next_pile: 1,
-        }
+        };
+        world.place_start_towers(t);
+        world
     }
 
     /// 새 원정을 위해 몬스터, 감시탑, 마차, 보관함, 채집 지점, 떨어진 자원, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
@@ -98,6 +101,15 @@ impl World {
         self.stash = t.wagon.start_stash;
         (self.tiles, self.nodes) = ground(t);
         self.layout_revision += 1;
+        self.place_start_towers(t);
+    }
+
+    /// 원정이 시작될 때 이미 서 있는 감시탑을 최대 HP로 놓습니다.
+    fn place_start_towers(&mut self, t: &Tuning) {
+        let kind = StructureKind::Watchtower;
+        for tile in &t.village.start_towers {
+            self.add_tower(kind, *tile, Tower::standing_state(kind, t));
+        }
     }
 
     pub fn layout_revision(&self) -> u64 {

@@ -6,8 +6,9 @@
 //! - `--stats`: 1초에 한 줄씩 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 출력합니다. 부하를 시험할 때 씁니다.
 //! - `--waves 8,12/20,30,40/60,90,150`: 밤마다 무리의 몬스터 수를 바꿉니다. 밤은 `/`로, 무리는 `,`로 나누고, 밤의 수가 원정의 날 수입니다.
 //!   부하를 시험할 때 씁니다.
-//! - `--stress`: 마차와 플레이어를 죽지 않게 하고, 첫날의 낮을 한 Tick으로 줄이고, 몬스터를 Tick마다 한 마리씩 등장시킵니다.
-//!   기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로, 몬스터 수백 마리의 부하는 이 옵션으로 만듭니다.
+//! - `--stress`: 마차, 감시탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
+//!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
+//!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다.
 //!
 //! 기본 출력은 일어난 일뿐입니다. 접속을 받는 주소, 플레이어의 입장과 퇴장, 방의 생성과 제거, 한도 때문에 닫은 접속과 그 이유, 시작 오류를 한 줄씩 출력합니다.
 
@@ -113,6 +114,8 @@ fn tuning_from(options: &Options) -> Tuning {
     if options.stress {
         tuning.wagon.max_hp = u32::MAX;
         tuning.player.max_hp = u32::MAX;
+        tuning.structures.watchtower.max_hp = u32::MAX;
+        tuning.village.start_towers = tuning.spread_tower_sites(tuning.village.tower_limit);
         tuning.cycle.day_secs = tuning.dt();
         tuning.nights.spawn_interval_secs = tuning.dt();
     }
@@ -312,6 +315,7 @@ mod tests {
         );
         assert_eq!(tuning.wagon.max_hp, u32::MAX);
         assert_eq!(tuning.player.max_hp, u32::MAX);
+        assert_eq!(tuning.structures.watchtower.max_hp, u32::MAX);
         assert_eq!(tuning.ticks(tuning.nights.spawn_interval_secs), 1);
         assert_eq!(
             tuning.ticks(tuning.cycle.day_secs),
@@ -322,6 +326,25 @@ mod tests {
             tuning.nights.plans,
             Tuning::default().nights.plans,
             "wave sizes stay"
+        );
+    }
+
+    #[test]
+    fn stress_starts_with_the_tower_cap_already_standing() {
+        let tuning = tuning_from(&parse_args(&args(&["--stress"])).unwrap());
+        assert_eq!(
+            tuning.village.start_towers.len(),
+            tuning.village.tower_limit as usize
+        );
+        let sim = caravan_rules::Sim::new(tuning.clone());
+        assert_eq!(sim.towers().count(), tuning.village.tower_limit as usize);
+        assert!(sim.towers().all(|tower| tower.is_standing()));
+        assert!(
+            tuning_from(&parse_args(&[]).unwrap())
+                .village
+                .start_towers
+                .is_empty(),
+            "a normal server starts with no towers"
         );
     }
 

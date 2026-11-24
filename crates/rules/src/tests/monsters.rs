@@ -292,6 +292,7 @@ fn tick_time_with(count: u32) -> (std::time::Duration, std::time::Duration) {
         t.nights.plans = nights(&[&[count]]);
         t.nights.first_wave_delay_secs = 0.05;
         t.nights.spawn_interval_secs = 0.05;
+        t.nights.max_alive = count;
         t.wagon.max_hp = u32::MAX;
         t.structures.watchtower.max_hp = u32::MAX;
         t.structures.watchtower.damage = 0;

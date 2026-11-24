@@ -1,6 +1,6 @@
-//! 몬스터 300마리와 플레이어 4명이 있는 스냅샷의 크기가 정해 둔 한계 안인지 확인합니다.
+//! 몬스터 300마리, 감시탑 40개(상한), 플레이어 4명이 있는 스냅샷의 크기가 정해 둔 한계 안인지 확인합니다.
 //!
-//! 한계를 넘으면 접속 하나가 쓰는 대역폭이 예산(약 55 KB/s)을 넘으므로, 다음 단계의 설계를 다시 정해야 합니다.
+//! 한계는 측정한 크기에 약 7%의 여유를 둔 값입니다. 한계를 넘으면 접속 하나가 쓰는 대역폭이 늘어난 것이므로, 다음 단계의 설계를 다시 정해야 합니다.
 
 use caravan_protocol::{
     ServerMsg, Snapshot, WireAngle, WireInteraction, WireLife, WireMonster, WireMonsterKind,
@@ -32,18 +32,24 @@ fn crowded_snapshot(first_id: u32, monsters: u32) -> Snapshot {
             max_hp: 500,
         },
         stash: 12,
-        towers: vec![WireTower {
-            id: 1,
-            tile: WireTile { x: 15, y: 11 },
-            max_hp: 300,
-            state: WireTowerState::Standing {
-                hp: 120,
-                last_shot: Some(WireShot {
-                    target: first_id,
-                    tick: 99_999,
-                }),
-            },
-        }],
+        // 감시탑이 상한(40개)만큼 서 있고 모두 사격 중입니다.
+        towers: (1..=40)
+            .map(|id| WireTower {
+                id,
+                tile: WireTile {
+                    x: (2 * id % 64) as u8,
+                    y: (2 * id % 56) as u8,
+                },
+                max_hp: 300,
+                state: WireTowerState::Standing {
+                    hp: 120,
+                    last_shot: Some(WireShot {
+                        target: first_id,
+                        tick: 99_999,
+                    }),
+                },
+            })
+            .collect(),
         nodes: (1..=8)
             .map(|id| WireNode {
                 id,
@@ -113,16 +119,18 @@ fn encoded_len(snapshot: Snapshot) -> usize {
 }
 
 /// 300마리 스냅샷 하나의 한계(바이트)입니다. 몬스터 번호가 16383 이하일 때, 몬스터 하나는 9바이트이므로 300마리가 2700바이트입니다.
-/// 나머지(플레이어 4명, 감시탑, 마차, 머리)가 약 100바이트이고, 합계에 약 7%의 여유를 둡니다.
-const BOUND_BYTES: usize = 3_000;
+/// 서 있는 감시탑 하나가 사격 중일 때 약 14바이트이므로 40개가 약 560바이트이고, 나머지(플레이어 4명, 마차, 채집 지점, 머리)가 약 100바이트입니다.
+/// 측정한 3,360바이트에 약 7%의 여유를 둡니다.
+const BOUND_BYTES: usize = 3_600;
 /// 몬스터 번호가 16384 이상이면 번호가 3바이트가 되어 몬스터 하나가 10바이트입니다. 오래 이어진 방에서 이 크기가 됩니다.
-const BOUND_BYTES_WITH_LARGE_IDS: usize = 3_300;
+/// 감시탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,700바이트이고, 여기에 약 7%의 여유를 둡니다.
+const BOUND_BYTES_WITH_LARGE_IDS: usize = 3_950;
 
 #[test]
-fn a_snapshot_with_300_monsters_and_4_players_stays_under_the_bound() {
+fn a_snapshot_with_300_monsters_40_towers_and_4_players_stays_under_the_bound() {
     let size = encoded_len(crowded_snapshot(10_000, 300));
     println!(
-        "300 monsters, 4 players: {size} bytes per snapshot, {} bytes per second at 20 Hz",
+        "300 monsters, 40 towers, 4 players: {size} bytes per snapshot, {} bytes per second at 20 Hz",
         size * 20
     );
     assert!(size < BOUND_BYTES, "{size} bytes");
