@@ -172,6 +172,7 @@ fn run(options: &Options) -> Result<(), String> {
                     aim: WireVec2::new(angle.cos(), angle.sin()),
                     attack: !options.passive,
                     interact: false,
+                    build: false,
                 }),
             )?;
             next_input += tick_period;

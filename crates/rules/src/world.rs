@@ -8,8 +8,9 @@
 //! 먼저 `&World`를 읽기만 하면서 모든 결정을 `Vec`에 모으고 그 뒤에 `&mut World`로 적용합니다.
 //! 그래서 한 맵을 읽으면서 같은 맵을 고치려는 대여 충돌이 생기지 않습니다.
 //!
-//! 막힌 곳을 아는 것은 `World::tiles` 하나입니다. 감시탑을 놓는 일은 `add_tower`가 타일 지도와 감시탑 목록을 함께 고치고
-//! `layout_revision`을 올립니다. 몬스터의 이동 경로(`Paths`, `TileFields`)는 이 번호가 바뀌면 다시 만듭니다.
+//! 막힌 곳을 아는 것은 `World::tiles` 하나입니다. 감시탑을 놓고 지우는 일은 `add_tower`, `finish_tower`, `remove_tower` 세 함수만 하고,
+//! 세 함수가 타일 지도와 감시탑 목록을 함께 고치면서 `layout_revision`을 올립니다.
+//! 몬스터의 이동 경로(`Paths`, `TileFields`)는 이 번호가 바뀌면 다시 만듭니다.
 //! `towers`에 직접 넣거나 빼면 타일 지도와 어긋나므로 하지 않습니다.
 
 mod tiles;
@@ -22,7 +23,6 @@ use crate::input::PlayerInputs;
 use crate::kind::{MonsterKind, StructureKind};
 use crate::math::Vec2;
 use crate::monster::Monster;
-use crate::nav::Paths;
 use crate::player::Player;
 use crate::spatial::MonsterGrid;
 use crate::structures::{Tower, TowerState, Wagon};
@@ -38,12 +38,14 @@ pub(crate) struct World {
     /// 번호가 작은 몬스터가 앞에 옵니다. 몬스터는 번호 순서로 추가되고 순서를 바꾸지 않고 제거하므로 이 순서가 유지됩니다.
     /// 수백 마리를 차례로 처리하기에 가장 단순하고 빠른 연속 배열입니다.
     pub monsters: Vec<Monster>,
-    /// 시설은 번호를 키로 하는 모음입니다. 넣는 일은 `add_tower`만 합니다.
+    /// 서 있는 감시탑과 짓는 중인 감시탑입니다. 번호를 키로 하고, 넣고 빼는 일은 `add_tower`, `finish_tower`, `remove_tower`만 합니다.
     pub towers: BTreeMap<TowerId, Tower>,
     pub wagon: Wagon,
+    /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
+    pub stash: u32,
     /// 읽기만 할 수 있습니다. `TileMap::set`은 이 모듈 밖에서 부를 수 없습니다.
     pub tiles: TileMap,
-    /// 감시탑이 생기거나 몬스터의 목표에서 빠질 때마다 올라가고 줄어들지 않습니다.
+    /// 감시탑이 생기거나, 서거나, 사라질 때마다 올라가고 줄어들지 않습니다.
     /// 이동 경로는 이 번호가 마지막으로 만들 때와 다르면 낡은 것으로 보고 다시 만듭니다.
     layout_revision: u64,
     next_monster: u32,
@@ -51,45 +53,38 @@ pub(crate) struct World {
 }
 
 impl World {
-    /// 원정이 시작될 때의 세계입니다. 플레이어와 몬스터는 없고, 맵에 미리 놓인 감시탑은 최대 HP로 서 있습니다.
+    /// 원정이 시작될 때의 세계입니다. 플레이어, 몬스터, 감시탑은 없고, 보관함에는 시작 자원이 있습니다.
     pub fn new(t: &Tuning) -> World {
-        let mut world = World {
+        World {
             players: BTreeMap::new(),
             monsters: Vec::new(),
             towers: BTreeMap::new(),
             wagon: Wagon::new(t),
+            stash: t.wagon.start_stash,
             tiles: TileMap::from_map(&t.map),
             layout_revision: 0,
             next_monster: 1,
             next_tower: 1,
-        };
-        world.place_starting_towers(t);
-        world
+        }
     }
 
-    /// 새 원정을 위해 몬스터, 마차, 타일 지도, 감시탑을 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
+    /// 새 원정을 위해 몬스터, 감시탑, 마차, 보관함, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
     /// 번호를 세는 값은 되돌리지 않으므로 이전 원정의 번호가 다시 쓰이지 않습니다.
     pub fn restart(&mut self, t: &Tuning) {
         self.monsters.clear();
         self.towers.clear();
         self.wagon = Wagon::new(t);
+        self.stash = t.wagon.start_stash;
         self.tiles = TileMap::from_map(&t.map);
-        self.place_starting_towers(t);
         self.layout_revision += 1;
-    }
-
-    fn place_starting_towers(&mut self, t: &Tuning) {
-        for placement in &t.map.structures {
-            let state = Tower::standing_state(placement.kind, t);
-            self.add_tower(placement.kind, placement.tile, state);
-        }
     }
 
     pub fn layout_revision(&self) -> u64 {
         self.layout_revision
     }
 
-    /// 타일 `tile`에 감시탑을 하나 놓습니다. 타일은 비어 있어야 합니다.
+    /// 타일 `tile`에 감시탑을 하나 놓습니다. 타일은 비어 있어야 합니다(호출하는 쪽이 `build::check_site`로 확인합니다).
+    /// 짓는 중인 감시탑(`TowerState::Building`)과 서 있는 감시탑을 같은 함수로 놓습니다.
     pub fn add_tower(&mut self, kind: StructureKind, tile: Tile, state: TowerState) -> TowerId {
         let id = TowerId(self.next_tower);
         self.next_tower += 1;
@@ -108,6 +103,23 @@ impl World {
         id
     }
 
+    /// 짓는 중인 감시탑을 최대 HP의 서 있는 감시탑으로 바꿉니다. 타일 지도는 그대로이고 몬스터의 목표가 늘어납니다.
+    pub fn finish_tower(&mut self, id: TowerId, t: &Tuning) {
+        if let Some(tower) = self.towers.get_mut(&id) {
+            tower.state = Tower::standing_state(tower.kind, t);
+            self.layout_revision += 1;
+        }
+    }
+
+    /// 감시탑을 지우고 타일을 비웁니다. 파괴된 감시탑과 취소된 건설이 모두 이 함수로 사라집니다.
+    /// 짓던 감시탑이면 낸 자원이 `paid`에 들어 있으므로 부르는 쪽이 보관함에 돌려줍니다.
+    pub fn remove_tower(&mut self, id: TowerId) -> Option<Tower> {
+        let tower = self.towers.remove(&id)?;
+        self.tiles.set(tower.tile, TileUse::Free);
+        self.layout_revision += 1;
+        Some(tower)
+    }
+
     /// 새 몬스터를 만들어 몬스터 목록의 끝에 추가합니다. 번호는 새로 받고 다시 사용하지 않습니다.
     pub fn spawn_monster(&mut self, kind: MonsterKind, pos: Vec2, t: &Tuning) -> MonsterId {
         let id = MonsterId(self.next_monster);
@@ -123,7 +135,6 @@ pub(crate) struct Ctx<'a> {
     pub t: &'a Tuning,
     pub inputs: &'a PlayerInputs,
     pub grid: &'a MonsterGrid,
-    pub paths: &'a Paths,
     pub tick: u64,
 }
 
@@ -146,7 +157,6 @@ pub(crate) struct Hit {
 impl World {
     /// 모든 피해를 적용하는 유일한 곳입니다.
     pub fn apply_hits(&mut self, hits: &[Hit], t: &Tuning) {
-        let mut tower_destroyed = false;
         for hit in hits {
             match hit.target {
                 Target::Player(id) => {
@@ -162,7 +172,7 @@ impl World {
                 }
                 Target::Tower(id) => {
                     if let Some(tower) = self.towers.get_mut(&id) {
-                        tower_destroyed |= tower.take_damage(hit.amount);
+                        tower.take_damage(hit.amount);
                     }
                 }
                 Target::Wagon => {
@@ -170,9 +180,15 @@ impl World {
                 }
             }
         }
-        // 감시탑이 파괴되면 몬스터의 목표가 달라지므로 이동 경로를 다시 만들게 합니다.
-        if tower_destroyed {
-            self.layout_revision += 1;
+        // HP가 0이 된 감시탑은 같은 Tick에 사라지고, 그 타일은 다시 지나갈 수 있고 건설할 수 있는 빈 타일이 됩니다.
+        let destroyed: Vec<TowerId> = self
+            .towers
+            .values()
+            .filter(|tower| tower.is_standing() && tower.hp() == 0)
+            .map(|tower| tower.id)
+            .collect();
+        for id in destroyed {
+            self.remove_tower(id);
         }
         // 몬스터는 모든 피해를 받은 뒤에 한꺼번에 제거합니다. 중간에 제거하면 뒤따르는 피해가 엉뚱한 몬스터에 닿을 수 있습니다.
         self.monsters.retain(|monster| monster.hp > 0);

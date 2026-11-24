@@ -3,8 +3,6 @@
 //! 서버의 개체 번호에서 Bevy 개체로 가는 표(`Registry`)를 두고, 새 번호만 만들고 사라진 번호만 지웁니다.
 //! 프레임마다 모든 개체를 다시 만들지 않으므로 몬스터가 수백 마리여도 매 프레임 하는 일은 위치와 막대를 맞추는 것뿐입니다.
 
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 use caravan_client_core::{MonsterView, PlayerView, bar_fraction};
 use caravan_protocol::WireLife;
@@ -15,54 +13,8 @@ use crate::convert;
 use crate::net::CurrentFrame;
 use crate::palette::Palette;
 use crate::parts::{self, PartQuery, Parts};
+use crate::registry::Registry;
 use crate::view::{Footprint, Scene};
-
-/// 번호에서 개체로 가는 표입니다. 한 프레임에 한 번 보인 번호를 기억해서, 보이지 않은 번호의 개체를 지웁니다.
-#[derive(Default)]
-struct Registry {
-    entities: HashMap<u32, Tracked>,
-    frame: u64,
-}
-
-struct Tracked {
-    entity: Entity,
-    seen_in_frame: u64,
-}
-
-impl Registry {
-    fn begin_frame(&mut self) {
-        self.frame += 1;
-    }
-
-    /// 번호의 개체가 이미 있으면 이번 프레임에도 보였다고 표시하고 돌려줍니다.
-    fn find(&mut self, id: u32) -> Option<Entity> {
-        let tracked = self.entities.get_mut(&id)?;
-        tracked.seen_in_frame = self.frame;
-        Some(tracked.entity)
-    }
-
-    fn insert(&mut self, id: u32, entity: Entity) {
-        self.entities.insert(
-            id,
-            Tracked {
-                entity,
-                seen_in_frame: self.frame,
-            },
-        );
-    }
-
-    /// 이번 프레임에 보이지 않은 번호의 개체를 지웁니다. 몬스터가 죽거나 플레이어가 나갔을 때입니다.
-    fn despawn_unseen(&mut self, commands: &mut Commands) {
-        let frame = self.frame;
-        self.entities.retain(|_, tracked| {
-            let seen = tracked.seen_in_frame == frame;
-            if !seen {
-                commands.entity(tracked.entity).despawn();
-            }
-            seen
-        });
-    }
-}
 
 #[derive(Resource, Default)]
 pub struct Spawned {
@@ -292,8 +244,7 @@ mod tests {
     use crate::view;
     use caravan_client_core::{DEFAULT_SERVER, Frame, Session};
     use caravan_protocol::{
-        ClientEvent, RoomCode, ServerMsg, Welcome, WireMonsterKind, WirePhase, WireTower,
-        WireTowerState, WireWagon,
+        ClientEvent, RoomCode, ServerMsg, Welcome, WireMonsterKind, WirePhase, WireWagon,
     };
     use caravan_rules::{Sim, Team, Tuning};
 
@@ -322,7 +273,6 @@ mod tests {
                 Update,
                 (
                     view::spawn_world.run_if(not(resource_exists::<Scene>)),
-                    view::sync_structures.run_if(resource_exists::<Scene>),
                     sync_characters.run_if(resource_exists::<Scene>),
                 )
                     .chain(),
@@ -336,6 +286,7 @@ mod tests {
             hp,
             max_hp: 100,
             interaction: None,
+            build_refusal: None,
         }
     }
 
@@ -370,14 +321,8 @@ mod tests {
                 hp: 500,
                 max_hp: 500,
             },
-            towers: vec![WireTower {
-                id: 1,
-                max_hp: 300,
-                state: WireTowerState::Standing {
-                    hp: 300,
-                    last_shot: None,
-                },
-            }],
+            stash: 0,
+            towers: Vec::new(),
             players,
             monsters,
         }
@@ -395,7 +340,11 @@ mod tests {
     }
 
     fn monster_entity(app: &App, id: u32) -> Entity {
-        app.world().resource::<Spawned>().monsters.entities[&id].entity
+        app.world()
+            .resource::<Spawned>()
+            .monsters
+            .entity_of(id)
+            .unwrap()
     }
 
     #[test]
@@ -516,7 +465,12 @@ mod tests {
             (4, palette.dead.clone()),
         ];
         for (id, material) in expected {
-            let root = app.world().resource::<Spawned>().players.entities[&id].entity;
+            let root = app
+                .world()
+                .resource::<Spawned>()
+                .players
+                .entity_of(id)
+                .unwrap();
             let parts = app.world().get::<Parts>(root).unwrap();
             let body = app
                 .world()
@@ -533,13 +487,19 @@ mod tests {
             hp: 0,
             max_hp: 0,
             interaction: None,
+            build_refusal: None,
         };
         show(
             &mut app,
             frame(vec![player(YOU, 12.0, 9.0, broken)], vec![]),
         );
 
-        let root = app.world().resource::<Spawned>().players.entities[&YOU].entity;
+        let root = app
+            .world()
+            .resource::<Spawned>()
+            .players
+            .entity_of(YOU)
+            .unwrap();
         let parts = *app.world().get::<Parts>(root).unwrap();
         let [_, fill] = parts.bar.entities();
         let transform = app.world().get::<Transform>(fill).unwrap();
@@ -572,7 +532,12 @@ mod tests {
             (3, palette.hostile_player.clone()),
         ];
         for (id, material) in expected {
-            let root = app.world().resource::<Spawned>().players.entities[&id].entity;
+            let root = app
+                .world()
+                .resource::<Spawned>()
+                .players
+                .entity_of(id)
+                .unwrap();
             let parts = app.world().get::<Parts>(root).unwrap();
             let body = app
                 .world()
@@ -580,30 +545,5 @@ mod tests {
                 .unwrap();
             assert_eq!(body.0, material, "player {id}");
         }
-    }
-
-    #[test]
-    fn a_destroyed_tower_changes_shape_and_colour() {
-        let mut app = app();
-        show(&mut app, frame(vec![], vec![]));
-        let standing = tower_look(&mut app);
-
-        let mut destroyed = frame(vec![], vec![]);
-        destroyed.towers[0].state = WireTowerState::Destroyed;
-        show(&mut app, destroyed);
-
-        let after = tower_look(&mut app);
-        assert_ne!(standing.0, after.0, "a different shape");
-        assert_ne!(standing.1, after.1, "a different colour");
-        let palette = app.world().resource::<Palette>();
-        assert_eq!(after.0, palette.rubble_block);
-    }
-
-    fn tower_look(app: &mut App) -> (Handle<Mesh>, Handle<ColorMaterial>) {
-        let world = app.world_mut();
-        let mut query =
-            world.query::<(&view::TowerView, &Mesh2d, &MeshMaterial2d<ColorMaterial>)>();
-        let (_, mesh, material) = query.single(world).expect("one tower");
-        (mesh.0.clone(), material.0.clone())
     }
 }

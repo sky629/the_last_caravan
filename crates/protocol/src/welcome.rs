@@ -31,18 +31,12 @@ pub struct WorldInfo {
     pub size: WirePos,
     pub obstacles: Vec<WireRect>,
     pub wagon: WireRect,
-    pub towers: Vec<TowerSite>,
+    /// 서 있는 감시탑과 짓는 중인 감시탑을 합친 수의 상한입니다. 감시탑의 위치는 스냅샷에 실립니다.
+    pub tower_limit: u32,
     /// 플레이어를 그리는 원의 반지름(타일)입니다.
     pub player_radius: f32,
     /// 몬스터 종류마다 하나씩입니다. 새 종류가 생기면 항목이 늘어납니다.
     pub monster_kinds: Vec<MonsterKindInfo>,
-}
-
-/// 감시탑이 서 있는 자리입니다. 스냅샷의 `WireTower`는 같은 번호로 이 자리와 짝을 이룹니다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TowerSite {
-    pub id: u32,
-    pub rect: WireRect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,13 +65,7 @@ impl Welcome {
                     .map(|r| WireRect::from_rect(*r))
                     .collect(),
                 wagon: WireRect::from_rect(map.wagon),
-                towers: sim
-                    .towers()
-                    .map(|tower| TowerSite {
-                        id: tower.id.0,
-                        rect: WireRect::from_rect(tower.rect()),
-                    })
-                    .collect(),
+                tower_limit: tuning.village.tower_limit,
                 player_radius: tuning.player.radius,
                 monster_kinds: MonsterKind::ALL
                     .iter()

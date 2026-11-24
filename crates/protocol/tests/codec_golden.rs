@@ -12,9 +12,10 @@
 
 use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, PROTOCOL_VERSION, RejectReason, ServerMsg, Snapshot,
-    TowerSite, Welcome, WireAngle, WireInteraction, WireLife, WireMonster, WireMonsterKind,
-    WireOutcome, WirePhase, WirePlayer, WirePos, WireRect, WireShot, WireTower, WireTowerState,
-    WireVec2, WireWagon, WorldInfo, decode_client, decode_server, encode_client, encode_server,
+    Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireMonster,
+    WireMonsterKind, WireOutcome, WirePhase, WirePlayer, WirePos, WireRect, WireShot, WireTile,
+    WireTower, WireTowerState, WireVec2, WireWagon, WorldInfo, decode_client, decode_server,
+    encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -29,22 +30,22 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 2);
+    assert_eq!(PROTOCOL_VERSION, 3);
 }
 
 #[test]
 fn join_is_variant_zero_then_version_then_room_text() {
     assert_client_wire(
         ClientMsg::Join {
-            version: 2,
+            version: 3,
             room: "test".to_string(),
         },
-        &[0x00, 0x02, 0x04, b't', b'e', b's', b't'],
+        &[0x00, 0x03, 0x04, b't', b'e', b's', b't'],
     );
 }
 
 #[test]
-fn input_is_the_sequence_number_two_vectors_and_two_buttons() {
+fn input_is_the_sequence_number_two_vectors_and_three_buttons() {
     assert_client_wire(
         ClientMsg::Input(InputMsg {
             seq: 300,
@@ -52,6 +53,7 @@ fn input_is_the_sequence_number_two_vectors_and_two_buttons() {
             aim: WireVec2::new(0.0, 1.0),
             attack: true,
             interact: false,
+            build: true,
         }),
         &[
             0x01, // Input 변형
@@ -62,6 +64,7 @@ fn input_is_the_sequence_number_two_vectors_and_two_buttons() {
             0x00, 0x00, 0x80, 0x3F, // aim.y 1.0
             0x01, // attack
             0x00, // interact
+            0x01, // build
         ],
     );
 }
@@ -82,10 +85,7 @@ fn welcome_carries_the_fixed_world() {
                 size: WirePos { x: 3072, y: 3072 },
                 obstacles: vec![rect(512, 640, 1024, 768)],
                 wagon: rect(1280, 1408, 1792, 1664),
-                towers: vec![TowerSite {
-                    id: 1,
-                    rect: rect(1920, 1408, 2048, 1536),
-                }],
+                tower_limit: 40,
                 player_radius: 0.5,
                 monster_kinds: vec![MonsterKindInfo {
                     kind: WireMonsterKind::Grunt,
@@ -105,9 +105,7 @@ fn welcome_carries_the_fixed_world() {
             0x01, // obstacles: 길이 1
             0x80, 0x04, 0x80, 0x05, 0x80, 0x08, 0x80, 0x06, // 512, 640 - 1024, 768
             0x80, 0x0A, 0x80, 0x0B, 0x80, 0x0E, 0x80, 0x0D, // wagon 10, 11 - 14, 13 타일
-            0x01, // towers: 길이 1
-            0x01, // tower id
-            0x80, 0x0F, 0x80, 0x0B, 0x80, 0x10, 0x80, 0x0C, // 15, 11 - 16, 12 타일
+            0x28, // tower_limit 40
             0x00, 0x00, 0x00, 0x3F, // player_radius 0.5
             0x01, // monster_kinds: 길이 1
             0x00, // Grunt
@@ -133,9 +131,9 @@ fn join_rejected_reasons_match_golden_bytes() {
     );
     assert_server_wire(
         ServerMsg::JoinRejected {
-            reason: RejectReason::VersionMismatch { server: 2 },
+            reason: RejectReason::VersionMismatch { server: 3 },
         },
-        &[0x01, 0x02, 0x02],
+        &[0x01, 0x02, 0x03],
     );
 }
 
@@ -150,8 +148,10 @@ fn a_busy_snapshot_matches_golden_bytes() {
             hp: 450,
             max_hp: 500,
         },
+        stash: 7,
         towers: vec![WireTower {
             id: 1,
+            tile: WireTile { x: 15, y: 11 },
             max_hp: 300,
             state: WireTowerState::Standing {
                 hp: 120,
@@ -174,6 +174,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
                         target: 2,
                         progress: 0.5,
                     }),
+                    build_refusal: None,
                 },
                 last_input_seq: 300,
                 last_attack_tick: Some(120),
@@ -208,9 +209,10 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x01, 0x02, // phase: Fighting, wave 2
             0x03, // wave_count
             0xC2, 0x03, 0xF4, 0x03, // wagon hp 450, max_hp 500
+            0x07, // stash
             0x01, // towers: 길이 1
-            0x01, 0xAC, 0x02, // id 1, max_hp 300
-            0x00, 0x78, // Standing, hp 120
+            0x01, 0x0F, 0x0B, 0xAC, 0x02, // id 1, tile 15 11, max_hp 300
+            0x01, 0x78, // Standing, hp 120
             0x01, 0xC8, 0x01, 0x7F, // last_shot: 있음, target 200, tick 127
             0x02, // players: 길이 2
             // 플레이어 1: 살아 있고 2번을 부활시키는 중
@@ -220,6 +222,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x00, 0x46, 0x64, // Alive, hp 70, max_hp 100
             0x01, 0x00, 0x02, 0x00, 0x00, 0x00,
             0x3F, // interaction: 있음, Reviving, target 2, progress 0.5
+            0x00, // build_refusal: 없음
             0xAC, 0x02, // last_input_seq 300
             0x01, 0x78, // last_attack_tick: 있음, 120
             // 플레이어 2: 쓰러졌고 25%까지 부활됨
@@ -247,6 +250,7 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
         phase,
         wave_count: 3,
         wagon: WireWagon { hp: 0, max_hp: 0 },
+        stash: 0,
         towers: vec![],
         players: vec![],
         monsters: vec![],
@@ -257,7 +261,7 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
 fn quiet_bytes(phase: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0x02, 0x01, 0x01]; // Snapshot, tick 1, expedition 1
     bytes.extend_from_slice(phase);
-    bytes.extend_from_slice(&[0x03, 0x00, 0x00, 0x00, 0x00, 0x00]); // wave_count 3, wagon 0/0, 빈 목록 세 개
+    bytes.extend_from_slice(&[0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // wave_count 3, wagon 0/0, stash 0, 빈 목록 세 개
     bytes
 }
 
@@ -291,35 +295,42 @@ fn every_phase_matches_golden_bytes() {
 }
 
 #[test]
-fn a_repairing_player_a_dead_player_and_a_destroyed_tower_match_golden_bytes() {
+fn a_site_a_refusal_a_builder_a_repairer_and_a_dead_player_match_golden_bytes() {
     let mut snapshot = quiet_snapshot(WirePhase::Fighting { wave: 1 });
     snapshot.towers = vec![WireTower {
         id: 1,
+        tile: WireTile { x: 2, y: 3 },
         max_hp: 300,
-        state: WireTowerState::Destroyed,
+        state: WireTowerState::Building { progress: 0.5 },
     }];
-    snapshot.players = vec![
-        WirePlayer {
-            id: 3,
-            team: 0,
-            pos: WirePos { x: 0, y: 0 },
-            facing: WireAngle(0),
-            life: WireLife::Alive {
-                hp: 100,
-                max_hp: 100,
-                interaction: Some(WireInteraction::Repairing { tower: 1 }),
-            },
-            last_input_seq: 0,
-            last_attack_tick: None,
+    let alive = |id, interaction, build_refusal| WirePlayer {
+        id,
+        team: 0,
+        pos: WirePos { x: 0, y: 0 },
+        facing: WireAngle(0),
+        life: WireLife::Alive {
+            hp: 100,
+            max_hp: 100,
+            interaction,
+            build_refusal,
         },
+        last_input_seq: 0,
+        last_attack_tick: None,
+    };
+    snapshot.players = vec![
+        alive(3, Some(WireInteraction::Repairing { tower: 1 }), None),
+        alive(
+            4,
+            None,
+            Some(WireBuildRefusal {
+                tile: WireTile { x: 4, y: 5 },
+                why: WireCannotBuild::WouldBlockPath,
+            }),
+        ),
+        alive(5, Some(WireInteraction::Building { tower: 1 }), None),
         WirePlayer {
-            id: 4,
-            team: 0,
-            pos: WirePos { x: 0, y: 0 },
-            facing: WireAngle(0),
             life: WireLife::Dead,
-            last_input_seq: 0,
-            last_attack_tick: None,
+            ..alive(6, None, None)
         },
     ];
     assert_server_wire(
@@ -329,14 +340,27 @@ fn a_repairing_player_a_dead_player_and_a_destroyed_tower_match_golden_bytes() {
             0x01, 0x01, // phase: Fighting, wave 1
             0x03, // wave_count
             0x00, 0x00, // wagon
+            0x00, // stash
             0x01, // towers: 길이 1
-            0x01, 0xAC, 0x02, 0x01, // id 1, max_hp 300, Destroyed
-            0x02, // players: 길이 2
+            0x01, 0x02, 0x03, 0xAC, 0x02, // id 1, tile 2 3, max_hp 300
+            0x00, 0x00, 0x00, 0x00, 0x3F, // Building, progress 0.5
+            0x04, // players: 길이 4
             0x03, 0x00, 0x00, 0x00, 0x00, // id 3, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, // Alive, hp 100, max_hp 100
             0x01, 0x01, 0x01, // interaction: 있음, Repairing, tower 1
+            0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x04, 0x00, 0x00, 0x00, 0x00, // id 4, team, pos 0 0, facing 0
+            0x00, 0x64, 0x64, // Alive, hp 100, max_hp 100
+            0x00, // interaction: 없음
+            0x01, 0x04, 0x05, 0x04, // build_refusal: 있음, tile 4 5, WouldBlockPath
+            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x05, 0x00, 0x00, 0x00, 0x00, // id 5, team, pos 0 0, facing 0
+            0x00, 0x64, 0x64, // Alive, hp 100, max_hp 100
+            0x01, 0x02, 0x01, // interaction: 있음, Building, tower 1
+            0x00, // build_refusal: 없음
+            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x06, 0x00, 0x00, 0x00, 0x00, // id 6, team, pos 0 0, facing 0
             0x02, // Dead
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x00, // monsters: 길이 0

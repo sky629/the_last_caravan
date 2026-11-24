@@ -77,11 +77,12 @@ fn to_rules(msg: &InputMsg) -> PlayerInput {
         aim: AimDir::new(msg.aim.x, msg.aim.y),
         attack: msg.attack,
         interact: msg.interact,
+        build: msg.build,
     }
 }
 
-/// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동, 조준, `interact`는 더 새로운 입력을 따릅니다.
-/// `interact`는 누르고 있는 동안 이어지는 상태이므로, Tick 안에서 눌렀다 뗐다면 뗀 것으로 봅니다.
+/// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동, 조준, `interact`, `build`는 더 새로운 입력을 따릅니다.
+/// `interact`와 `build`는 누르고 있는 동안 이어지는 상태이므로, Tick 안에서 눌렀다 뗐다면 뗀 것으로 봅니다.
 /// `attack`은 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭이 사라지지 않게 합니다.
 fn merge(older: PlayerInput, newer: PlayerInput) -> PlayerInput {
     PlayerInput {
@@ -125,5 +126,28 @@ mod tests {
 
         assert!(tick.interact);
         assert!(!tick.attack);
+    }
+
+    #[test]
+    fn the_build_key_follows_the_newest_input_like_the_interact_key() {
+        let mut input = MemberInput::new();
+        input.accept(&InputMsg {
+            seq: 1,
+            build: true,
+            ..InputMsg::default()
+        });
+        input.accept(&InputMsg {
+            seq: 2,
+            build: false,
+            ..InputMsg::default()
+        });
+        assert!(!input.for_tick(10).build, "B was already released");
+
+        input.accept(&InputMsg {
+            seq: 3,
+            build: true,
+            ..InputMsg::default()
+        });
+        assert!(input.for_tick(10).build);
     }
 }

@@ -1,13 +1,22 @@
 //! 감시탑의 사격, 피해와 파괴, 수리를 확인합니다.
 //!
-//! 시나리오의 감시탑은 (1, 17)에서 (2, 18)까지의 사각형이고 중심은 (1.5, 17.5)입니다.
+//! 시나리오의 감시탑은 테스트가 놓은 타일 (1, 17)이고, 사각형은 (1, 17)에서 (2, 18)까지, 중심은 (1.5, 17.5)입니다.
 
-use super::support::{Scenario, close};
+use super::support::Scenario;
 use crate::input::PlayerInput;
-use crate::kind::StructureKind;
 use crate::structures::{Shot, TowerState};
-use crate::tuning::StructurePlacement;
-use crate::world::Tile;
+use crate::tuning::Tuning;
+
+/// 타일 (1, 17)에 서 있는 감시탑이 하나 있는 빈 들판입니다.
+fn field_with_tower() -> Scenario {
+    field_with_tower_tuned(|_| {})
+}
+
+fn field_with_tower_tuned(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+    let mut s = Scenario::with_tuning(adjust);
+    s.tower_at(1, 17);
+    s
+}
 
 fn press_f() -> PlayerInput {
     PlayerInput {
@@ -18,7 +27,7 @@ fn press_f() -> PlayerInput {
 
 /// 감시탑 곁에서 F를 누르고 있는 플레이어와, HP가 100인 감시탑입니다.
 fn repairer_at_a_damaged_tower() -> (Scenario, crate::ids::PlayerId) {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let a = s.player_at(2.5, 17.5);
     s.set_tower_hp(100);
     s.hold(a, press_f());
@@ -27,7 +36,7 @@ fn repairer_at_a_damaged_tower() -> (Scenario, crate::ids::PlayerId) {
 
 #[test]
 fn a_tower_shoots_the_nearest_monster_in_range() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.max_hp = 1000);
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.max_hp = 1000);
     let near = s.monster_at(4.0, 17.5);
     let far = s.monster_at(6.0, 17.5);
 
@@ -50,7 +59,7 @@ fn a_tower_shoots_the_nearest_monster_in_range() {
 
 #[test]
 fn a_tower_ignores_monsters_beyond_its_range() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.aggro_range = 0.0);
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.aggro_range = 0.0);
     let monster = s.monster_at(9.0, 17.5);
 
     s.run_ticks(1);
@@ -64,7 +73,7 @@ fn a_tower_ignores_monsters_beyond_its_range() {
 
 #[test]
 fn a_tower_shoots_again_after_its_cooldown() {
-    let mut s = Scenario::with_tuning(|t| {
+    let mut s = field_with_tower_tuned(|t| {
         t.monsters.grunt.max_hp = 1000;
         t.monsters.grunt.aggro_range = 0.0;
         t.monsters.grunt.speed = 0.5;
@@ -84,13 +93,8 @@ fn a_tower_shoots_again_after_its_cooldown() {
 
 #[test]
 fn towers_are_kept_by_id_and_each_one_shoots() {
-    let mut s = Scenario::with_tuning(|t| {
-        t.monsters.grunt.max_hp = 1000;
-        t.map.structures.push(StructurePlacement {
-            kind: StructureKind::Watchtower,
-            tile: Tile::new(1, 14),
-        });
-    });
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.max_hp = 1000);
+    s.tower_at(1, 14);
     let monster = s.monster_at(3.0, 16.0);
 
     s.run_ticks(1);
@@ -107,7 +111,7 @@ fn towers_are_kept_by_id_and_each_one_shoots() {
 
 #[test]
 fn a_monster_in_range_goes_for_the_tower_and_hurts_it() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     s.monster_at(3.0, 17.5);
     let max_hp = s.sim.tuning().structures.watchtower.max_hp;
 
@@ -122,23 +126,22 @@ fn a_monster_in_range_goes_for_the_tower_and_hurts_it() {
 }
 
 #[test]
-fn zero_hp_destroys_the_tower() {
-    let mut s = Scenario::open_field();
+fn zero_hp_removes_the_tower_and_frees_its_tile() {
+    let mut s = field_with_tower();
     s.set_tower_hp(10);
     s.monster_at(3.0, 17.5);
 
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
 
-    assert_eq!(s.tower().state, TowerState::Destroyed);
-    assert_eq!(s.tower().hp(), 0);
+    assert_eq!(s.sim.towers().count(), 0, "no rubble is left");
 }
 
 #[test]
 fn a_destroyed_tower_stops_shooting() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.max_hp = 1000);
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.max_hp = 1000);
     s.set_tower_hp(10);
     let attacker = s.monster_at(3.0, 17.5);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
     let hp_when_destroyed = s.monster(attacker).unwrap().hp;
 
     s.run_ticks(s.ticks(3.0));
@@ -147,11 +150,11 @@ fn a_destroyed_tower_stops_shooting() {
 }
 
 #[test]
-fn monsters_do_not_attack_a_destroyed_tower() {
-    let mut s = Scenario::open_field();
+fn monsters_do_not_attack_a_tower_that_is_gone() {
+    let mut s = field_with_tower();
     s.set_tower_hp(10);
     s.monster_at(3.0, 17.5);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
     s.clear_monsters();
 
     let fresh = s.monster_at(3.0, 17.5);
@@ -165,18 +168,38 @@ fn monsters_do_not_attack_a_destroyed_tower() {
 }
 
 #[test]
-fn a_destroyed_tower_still_blocks_movement() {
-    let mut s = Scenario::open_field();
+fn a_destroyed_tower_leaves_a_tile_that_players_can_walk_through() {
+    let mut s = field_with_tower();
     let a = s.player_at(5.0, 17.5);
     s.set_tower_hp(10);
     s.monster_at(3.0, 17.5);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
     s.clear_monsters();
 
     s.hold_move(a, -1.0, 0.0);
     s.run_ticks(s.ticks(3.0));
 
-    assert!(close(s.player(a).pos.x, 2.0 + s.sim.tuning().player.radius));
+    assert!(
+        s.player(a).pos.x < 1.0,
+        "it walked across the tile where the tower stood, {:?}",
+        s.player(a).pos
+    );
+}
+
+#[test]
+fn a_tower_can_be_built_again_where_one_was_destroyed() {
+    let mut s = field_with_tower_tuned(|t| t.village.build_range = 30.0);
+    let a = s.player_at(0.5, 16.5);
+    s.set_tower_hp(10);
+    s.monster_at(3.0, 17.5);
+    s.run_until(100, |sim| sim.towers().count() == 0);
+    s.clear_monsters();
+
+    s.hold_build(a, 1.0, 1.0);
+    s.run_ticks(s.ticks(3.0));
+
+    let tower = s.sim.towers().next().expect("the new tower stands");
+    assert_eq!(tower.tile, crate::world::Tile::new(1, 17));
 }
 
 #[test]
@@ -249,7 +272,7 @@ fn a_repairer_can_neither_move_nor_attack() {
 
 #[test]
 fn the_repair_stops_when_the_repairer_goes_down() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.attack_damage = 100);
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.attack_damage = 100);
     let a = s.player_at(2.5, 17.5);
     s.player_at(15.0, 3.0);
     s.set_tower_hp(100);
@@ -265,7 +288,7 @@ fn the_repair_stops_when_the_repairer_goes_down() {
     assert!(s.player(a).is_downed());
     assert!(s.player(a).interaction().is_none());
     assert!(
-        s.tower().hp() <= hp,
+        s.sim.towers().next().is_none_or(|tower| tower.hp() <= hp),
         "no more HP is restored once the repairer is down"
     );
 }
@@ -284,7 +307,7 @@ fn several_repairers_add_up() {
 
 #[test]
 fn a_repair_needs_no_resource_and_a_far_player_cannot_repair() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let near = s.player_at(2.5, 17.5);
     let far = s.player_at(6.0, 17.5);
     s.set_tower_hp(100);
@@ -305,23 +328,22 @@ fn a_repair_needs_no_resource_and_a_far_player_cannot_repair() {
 
 #[test]
 fn a_destroyed_tower_cannot_be_repaired() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let a = s.player_at(1.5, 18.4);
     s.set_tower_hp(10);
     s.monster_at(1.5, 16.6);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
     s.clear_monsters();
 
     s.hold(a, press_f());
     s.run_ticks(s.ticks(3.0));
 
-    assert_eq!(s.tower().state, TowerState::Destroyed);
     assert!(s.player(a).interaction().is_none());
 }
 
 #[test]
 fn a_downed_ally_in_range_comes_before_a_damaged_tower() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let reviver = s.player_at(2.5, 17.5);
     let downed = s.player_at(3.5, 17.5);
     s.player_at(15.0, 3.0);
@@ -341,7 +363,7 @@ fn a_downed_ally_in_range_comes_before_a_damaged_tower() {
 
 #[test]
 fn a_repairer_switches_to_reviving_when_an_ally_goes_down_beside_them() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let reviver = s.player_at(2.5, 17.5);
     let ally = s.player_at(3.5, 17.5);
     s.player_at(15.0, 3.0);
@@ -357,17 +379,29 @@ fn a_repairer_switches_to_reviving_when_an_ally_goes_down_beside_them() {
 }
 
 #[test]
-fn a_new_expedition_rebuilds_a_destroyed_tower() {
-    let mut s = Scenario::open_field();
+fn a_new_expedition_removes_the_towers_and_refills_the_stash() {
+    let mut s = field_with_tower();
     s.player_at(15.0, 3.0);
-    s.set_tower_hp(10);
-    s.monster_at(3.0, 17.5);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
-    s.clear_monsters();
+    s.set_stash(3);
     s.set_wagon_hp(0);
 
     s.run_until(400, |sim| sim.expedition_number() == 2);
 
-    assert_eq!(s.tower().hp(), s.sim.tuning().structures.watchtower.max_hp);
-    assert_eq!(s.sim.towers().count(), 1);
+    assert_eq!(s.sim.towers().count(), 0);
+    assert_eq!(s.sim.stash(), s.sim.tuning().wagon.start_stash);
+}
+
+#[test]
+fn a_new_expedition_frees_the_tiles_the_towers_stood_on() {
+    let mut s = field_with_tower();
+    let a = s.player_at(5.0, 17.5);
+    s.set_wagon_hp(0);
+    s.run_until(400, |sim| sim.expedition_number() == 2);
+    // 원정이 시작되면 플레이어는 등장 지점으로 돌아갑니다. 다시 (5, 17.5)로 옮겨서 감시탑이 있던 자리를 지나 걷게 합니다.
+    s.sim.world_mut().players.get_mut(&a).unwrap().pos = crate::math::Vec2::new(5.0, 17.5);
+
+    s.hold_move(a, -1.0, 0.0);
+    s.run_ticks(s.ticks(3.0));
+
+    assert!(s.player(a).pos.x < 1.0);
 }

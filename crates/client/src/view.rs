@@ -1,4 +1,4 @@
-//! 고정된 세계(지면, 장애물, 마차, 감시탑)를 한 번 만들고, 감시탑의 상태를 프레임마다 반영합니다.
+//! 고정된 세계(지면, 장애물, 마차)를 한 번 만듭니다. 감시탑은 건설과 파괴로 바뀌므로 `towers`가 프레임마다 맞춥니다.
 //!
 //! 세계의 모양은 입장할 때 받은 `Welcome`에서 오므로, 서버가 다른 맵으로 실행되어도 클라이언트를 고치지 않습니다.
 //! `Session`이 입장할 때 맵의 크기와 장애물의 수에 상한을 확인했으므로, 여기서는 받은 값만큼 개체를 만들어도 됩니다.
@@ -6,14 +6,13 @@
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 use caravan_client_core as core;
-use caravan_protocol::{MonsterKindInfo, WireMonsterKind, WireTowerState};
+use caravan_protocol::{MonsterKindInfo, WireMonsterKind};
 use caravan_rules::{Team, Vec2 as Ground};
 
 use crate::config;
 use crate::convert;
-use crate::net::{ClientSession, CurrentFrame};
+use crate::net::ClientSession;
 use crate::palette::Palette;
-use crate::parts::{self, Bar, PartQuery};
 
 /// 입장한 뒤에 만든 세계에서 캐릭터를 그릴 때 필요한 값입니다. 세계를 만들면 한 번 들어갑니다.
 #[derive(Resource)]
@@ -23,12 +22,6 @@ pub struct Scene {
     pub team: Team,
     pub player: Footprint,
     monsters: Vec<MonsterLook>,
-    towers: Vec<TowerPlace>,
-}
-
-struct TowerPlace {
-    id: u32,
-    center: Ground,
 }
 
 /// 캐릭터가 지면에 닿는 곳입니다. 규칙의 충돌 원을 지면에 그린 타원이 그림자가 됩니다.
@@ -47,20 +40,6 @@ impl Scene {
     pub fn monster(&self, kind: WireMonsterKind) -> Option<&MonsterLook> {
         self.monsters.iter().find(|look| look.kind == kind)
     }
-
-    /// 감시탑이 서 있는 지면 위치입니다. 파괴되어도 같은 자리에 잔해가 남습니다.
-    pub fn tower_center(&self, id: u32) -> Option<Ground> {
-        self.towers
-            .iter()
-            .find(|place| place.id == id)
-            .map(|place| place.center)
-    }
-}
-
-#[derive(Component)]
-pub struct TowerView {
-    id: u32,
-    bar: Bar,
 }
 
 fn footprint(meshes: &mut Assets<Mesh>, radius: f32) -> Footprint {
@@ -132,28 +111,6 @@ pub fn spawn_world(
     for center in core::tile_centers(world.wagon.to_rect()) {
         spawn_block(&mut commands, &palette.wagon_block, &palette.wagon, center);
     }
-    let mut towers = Vec::new();
-    for site in &world.towers {
-        let center = site.rect.to_rect().center();
-        let bar_y = config::TOWER_HEIGHT + config::BAR_GAP;
-        let bar = parts::spawn_bar(
-            &mut commands,
-            &palette,
-            &palette.bar_tower,
-            bar_y,
-            Some(1.0),
-        );
-        let tower = spawn_block(&mut commands, &palette.tower_block, &palette.tower, center);
-        commands
-            .entity(tower)
-            .insert(TowerView { id: site.id, bar })
-            .add_children(&bar.entities());
-        towers.push(TowerPlace {
-            id: site.id,
-            center,
-        });
-    }
-
     let monsters = world
         .monster_kinds
         .iter()
@@ -168,7 +125,6 @@ pub fn spawn_world(
         team: Team(welcome.team),
         player: footprint(&mut meshes, world.player_radius),
         monsters,
-        towers,
     });
 
     // 카메라는 맵 전체가 들어오는 자리에 고정합니다. 모든 클라이언트가 같은 화면을 보므로 동기화를 눈으로 비교하기 쉽습니다.
@@ -183,40 +139,4 @@ pub fn spawn_world(
         },
         ..OrthographicProjection::default_2d()
     });
-}
-
-/// 감시탑이 서 있는지 파괴되었는지에 따라 모양과 색을 바꾸고, HP 막대를 맞춥니다.
-pub fn sync_structures(
-    frame: Res<CurrentFrame>,
-    palette: Res<Palette>,
-    mut towers: Query<(&TowerView, &mut Mesh2d, &mut MeshMaterial2d<ColorMaterial>)>,
-    mut part_query: PartQuery,
-) {
-    let Some(frame) = &frame.0 else {
-        return;
-    };
-    for (view, mut mesh, mut material) in &mut towers {
-        let Some(tower) = frame.towers.iter().find(|tower| tower.id == view.id) else {
-            continue;
-        };
-        let (block, paint, hp_fraction) = match tower.state {
-            WireTowerState::Standing { hp, .. } => (
-                &palette.tower_block,
-                &palette.tower,
-                Some(core::bar_fraction(hp, tower.max_hp)),
-            ),
-            WireTowerState::Destroyed => (&palette.rubble_block, &palette.rubble, None),
-        };
-        if mesh.0 != *block {
-            mesh.0 = block.clone();
-        }
-        if material.0 != *paint {
-            material.0 = paint.clone();
-        }
-        view.bar.place(
-            &mut part_query,
-            config::TOWER_HEIGHT + config::BAR_GAP,
-            hp_fraction,
-        );
-    }
 }

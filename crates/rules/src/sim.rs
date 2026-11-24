@@ -104,15 +104,22 @@ impl Sim {
             t: &self.tuning,
             inputs,
             grid: &self.monster_grid,
-            paths: &self.paths,
             tick: self.tick,
         };
         let mut hits = Vec::new();
         player::update_interactions(&mut self.world, &ctx);
+        structures::advance_construction(&mut self.world, &ctx);
+        self.paths.sync(&self.world, &self.tuning);
         player::move_players(&mut self.world, &ctx);
         player::player_attacks(&mut self.world, &ctx, &mut hits);
         structures::towers_fire(&mut self.world, &ctx, &mut hits);
-        monster::monsters_act(&mut self.world, &ctx, &mut self.tile_fields, &mut hits);
+        monster::monsters_act(
+            &mut self.world,
+            &ctx,
+            &self.paths,
+            &mut self.tile_fields,
+            &mut hits,
+        );
         self.world.apply_hits(&hits, &self.tuning);
         player::advance_life_timers(&mut self.world, &self.tuning);
         expedition::settle_outcome(&mut self.phase, &self.world, &self.tuning);
@@ -179,13 +186,18 @@ impl Sim {
         self.world.monsters.iter()
     }
 
-    /// 번호가 작은 시설부터 차례로 돌려줍니다.
+    /// 번호가 작은 시설부터 차례로 돌려줍니다. 짓는 중인 감시탑도 포함합니다.
     pub fn towers(&self) -> impl Iterator<Item = &Tower> {
         self.world.towers.values()
     }
 
     pub fn wagon(&self) -> &Wagon {
         &self.world.wagon
+    }
+
+    /// 마차의 보관함에 있는 자원입니다. 모든 플레이어가 함께 씁니다.
+    pub fn stash(&self) -> u32 {
+        self.world.stash
     }
 
     /// `downed`를 부활시키는 플레이어가 있으면 부활의 진행도(0.0 이상 1.0 이하)를 돌려줍니다.

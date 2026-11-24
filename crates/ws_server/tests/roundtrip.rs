@@ -26,6 +26,7 @@ fn snapshot_of(monsters: u32) -> Snapshot {
         phase: WirePhase::Fighting { wave: 1 },
         wave_count: 3,
         wagon: WireWagon { hp: 1, max_hp: 1 },
+        stash: 0,
         towers: vec![],
         players: vec![],
         monsters: (1..=monsters)

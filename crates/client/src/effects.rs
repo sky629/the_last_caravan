@@ -1,11 +1,11 @@
-//! 짧게 보이는 효과입니다. 플레이어의 근접 공격과 감시탑의 사격을 선으로 그립니다.
+//! 짧게 보이는 효과입니다. 플레이어의 근접 공격, 감시탑의 사격, 건설이 거절된 타일을 선으로 그립니다.
 //!
 //! 효과는 이벤트가 아니라 상태에서 그립니다. 스냅샷에 마지막 공격 Tick과 마지막 사격이 들어 있으므로,
 //! 화면에 그리는 Tick이 그 직후이면 효과를 그립니다. 그래서 모든 클라이언트가 같은 효과를 같은 때에 봅니다.
 
 use bevy::prelude::*;
 use caravan_client_core::{Frame, PlayerView, effect_progress};
-use caravan_protocol::WireTowerState;
+use caravan_protocol::{WireBuildRefusal, WireLife, WireTowerState};
 use caravan_rules::Vec2 as Ground;
 
 use crate::config;
@@ -19,7 +19,7 @@ pub fn configure_gizmos(mut store: ResMut<GizmoConfigStore>) {
     config.line.width = config::EFFECT_LINE_WIDTH;
 }
 
-/// 공격과 사격 효과를 그립니다.
+/// 공격과 사격 효과, 내 건설이 거절된 타일을 그립니다.
 pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Gizmos) {
     let Some(frame) = &frame.0 else {
         return;
@@ -32,7 +32,27 @@ pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Giz
             draw_swing(&mut gizmos, player, progress);
         }
     }
-    draw_tower_shots(&mut gizmos, frame, &scene);
+    draw_tower_shots(&mut gizmos, frame);
+    let refusal = frame.player(scene.you).and_then(|me| match me.life {
+        WireLife::Alive { build_refusal, .. } => build_refusal,
+        _ => None,
+    });
+    if let Some(refusal) = refusal {
+        draw_refusal(&mut gizmos, refusal);
+    }
+}
+
+/// 건설이 거절된 타일의 테두리를 지면에 그립니다. 거절의 이유는 HUD가 글로 알립니다.
+fn draw_refusal(gizmos: &mut Gizmos, refusal: WireBuildRefusal) {
+    let rect = refusal.tile.to_tile().rect();
+    let corners = [
+        Ground::new(rect.min.x, rect.min.y),
+        Ground::new(rect.max.x, rect.min.y),
+        Ground::new(rect.max.x, rect.max.y),
+        Ground::new(rect.min.x, rect.max.y),
+        Ground::new(rect.min.x, rect.min.y),
+    ];
+    gizmos.linestrip_2d(corners.map(convert::screen_pos), config::REFUSAL);
 }
 
 /// 플레이어가 바라보는 방향의 부채꼴을 가슴 높이에 그립니다. 시간이 갈수록 옅어집니다.
@@ -60,7 +80,7 @@ fn draw_swing(gizmos: &mut Gizmos, player: &PlayerView, progress: f32) {
 }
 
 /// 서 있는 감시탑이 마지막으로 쏜 몬스터까지 선을 긋습니다. 그 몬스터가 이미 사라졌으면 그리지 않습니다.
-fn draw_tower_shots(gizmos: &mut Gizmos, frame: &Frame, scene: &Scene) {
+fn draw_tower_shots(gizmos: &mut Gizmos, frame: &Frame) {
     for tower in &frame.towers {
         let WireTowerState::Standing {
             last_shot: Some(shot),
@@ -76,9 +96,10 @@ fn draw_tower_shots(gizmos: &mut Gizmos, frame: &Frame, scene: &Scene) {
             .monsters
             .iter()
             .find(|monster| monster.id == shot.target);
-        let (Some(center), Some(target)) = (scene.tower_center(tower.id), target) else {
+        let Some(target) = target else {
             continue;
         };
+        let center = tower.tile.to_tile().center();
         let from = convert::screen_pos(center) + Vec2::new(0.0, config::TOWER_HEIGHT);
         let to = convert::screen_pos(target.pos) + Vec2::new(0.0, config::MONSTER_BODY.y * 0.5);
         gizmos.line_2d(from, to, config::SHOT.with_alpha(1.0 - progress));

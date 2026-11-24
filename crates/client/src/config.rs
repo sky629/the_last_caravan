@@ -15,8 +15,8 @@ pub const PART_Z_STEP: f32 = 0.001;
 pub const OBSTACLE_HEIGHT: f32 = 28.0;
 pub const WAGON_HEIGHT: f32 = 20.0;
 pub const TOWER_HEIGHT: f32 = 64.0;
-/// 파괴된 감시탑이 남기는 잔해입니다.
-pub const RUBBLE_HEIGHT: f32 = 6.0;
+/// 짓는 중인 감시탑(공사터)입니다.
+pub const SITE_HEIGHT: f32 = 24.0;
 
 // 캐릭터의 몸통입니다. 발 위치에서 위로 서 있는 직사각형이고, 그림자는 규칙이 쓰는 충돌 원을 지면에 그린 타원입니다.
 pub const PLAYER_BODY: Vec2 = Vec2::new(14.0, 30.0);
@@ -47,7 +47,7 @@ pub const GROUND_B: Color = Color::srgb(0.23, 0.31, 0.21);
 pub const OBSTACLE: Color = Color::srgb(0.58, 0.58, 0.62);
 pub const WAGON: Color = Color::srgb(0.68, 0.44, 0.22);
 pub const TOWER: Color = Color::srgb(0.38, 0.58, 0.90);
-pub const RUBBLE: Color = Color::srgb(0.30, 0.27, 0.25);
+pub const SITE: Color = Color::srgb(0.62, 0.55, 0.38);
 pub const SHADOW: Color = Color::srgb(0.07, 0.09, 0.07);
 pub const YOU: Color = Color::srgb(1.00, 0.84, 0.25);
 pub const ALLY: Color = Color::srgb(0.35, 0.65, 1.00);
@@ -62,7 +62,10 @@ pub const BAR_BACK: Color = Color::srgb(0.06, 0.06, 0.06);
 pub const BAR_PLAYER: Color = Color::srgb(0.30, 0.85, 0.35);
 pub const BAR_MONSTER: Color = Color::srgb(0.95, 0.35, 0.30);
 pub const BAR_TOWER: Color = Color::srgb(0.45, 0.70, 1.00);
+pub const BAR_SITE: Color = Color::srgb(0.95, 0.80, 0.25);
 pub const SWING: Color = Color::srgb(1.00, 1.00, 0.80);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
+/// 건설이 거절된 타일의 테두리입니다.
+pub const REFUSAL: Color = Color::srgb(1.00, 0.35, 0.30);
 /// 효과 선의 굵기(픽셀)입니다.
 pub const EFFECT_LINE_WIDTH: f32 = 3.0;

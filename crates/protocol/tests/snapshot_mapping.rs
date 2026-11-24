@@ -2,10 +2,10 @@
 //! 규칙은 공개 함수(`add_player`, `step`)로만 움직이고, 기대하는 값은 규칙의 약속(수치표의 값)에서 구합니다.
 
 use caravan_protocol::{
-    Snapshot, Welcome, WireInteraction, WireLife, WireMonsterKind, WireOutcome, WirePhase, WirePos,
-    WireTowerState,
+    Snapshot, Welcome, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
+    WireMonsterKind, WireOutcome, WirePhase, WirePos, WireTile, WireTowerState,
 };
-use caravan_rules::{PlayerInput, PlayerInputs, Sim, Tuning, Vec2};
+use caravan_rules::{AimDir, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2};
 
 fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
     for _ in 0..ticks {
@@ -41,17 +41,8 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
     assert_eq!((snapshot.wagon.hp, snapshot.wagon.max_hp), (500, 500));
     assert!(snapshot.monsters.is_empty());
 
-    let [tower] = snapshot.towers[..] else {
-        panic!("one tower expected, got {:?}", snapshot.towers);
-    };
-    assert_eq!((tower.id, tower.max_hp), (1, 300));
-    assert_eq!(
-        tower.state,
-        WireTowerState::Standing {
-            hp: 300,
-            last_shot: None
-        }
-    );
+    assert_eq!(snapshot.stash, 10, "the starting stash");
+    assert!(snapshot.towers.is_empty(), "the village starts empty");
 
     let [player] = snapshot.players[..] else {
         panic!("one player expected, got {:?}", snapshot.players);
@@ -67,7 +58,8 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
         WireLife::Alive {
             hp: 100,
             max_hp: 100,
-            interaction: None
+            interaction: None,
+            build_refusal: None
         }
     );
     assert_eq!((player.last_input_seq, player.last_attack_tick), (0, None));
@@ -87,12 +79,7 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
     assert_eq!(world.size.to_tiles(), Vec2::new(24.0, 24.0));
     assert_eq!(world.obstacles.len(), 5);
     assert_eq!(world.wagon.to_rect(), Tuning::default().map.wagon);
-    assert_eq!(world.towers.len(), 1);
-    assert_eq!(world.towers[0].id, 1);
-    assert_eq!(
-        world.towers[0].rect.to_rect(),
-        Tuning::default().map.structures[0].tile.rect()
-    );
+    assert_eq!(world.tower_limit, 40);
     assert_eq!(world.player_radius, 0.35);
     let [grunt] = world.monster_kinds[..] else {
         panic!("one monster kind expected");
@@ -103,9 +90,26 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
 
 #[test]
 fn monsters_and_the_tower_shots_at_them_appear_once_the_first_wave_comes() {
+    // 마차 옆에 감시탑이 하나 서 있습니다. 시설을 세우는 입력은 따로 시험하므로 여기서는 규칙의 공개 함수로 건설을 마칩니다.
     let mut sim = Sim::new(Tuning::default());
+    let builder = sim.add_player().unwrap();
     let none = PlayerInputs::new();
-    step(&mut sim, &none, 60);
+    let building = PlayerInputs::from([(
+        builder,
+        PlayerInput {
+            build: true,
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &building, 60);
+    assert!(
+        Snapshot::from_sim(&sim)
+            .towers
+            .iter()
+            .all(|tower| matches!(tower.state, WireTowerState::Standing { .. })),
+        "the tower stands after the build time"
+    );
     let snapshot = Snapshot::from_sim(&sim);
     assert_eq!(snapshot.phase, WirePhase::Fighting { wave: 1 });
     assert_eq!(snapshot.tick, 60);
@@ -124,10 +128,10 @@ fn monsters_and_the_tower_shots_at_them_appear_once_the_first_wave_comes() {
             assert!((back.x - rule.pos.x).abs() <= WirePos::MAX_ERROR_TILES);
             assert!((back.y - rule.pos.y).abs() <= WirePos::MAX_ERROR_TILES);
         }
-        if let WireTowerState::Standing {
+        if let Some(WireTowerState::Standing {
             last_shot: Some(last),
             ..
-        } = snapshot.towers[0].state
+        }) = snapshot.towers.first().map(|tower| tower.state)
         {
             shot = Some((last, snapshot.tick));
             break;
@@ -138,20 +142,110 @@ fn monsters_and_the_tower_shots_at_them_appear_once_the_first_wave_comes() {
 }
 
 #[test]
-fn a_destroyed_tower_has_no_hp_on_the_wire() {
+fn a_site_under_construction_and_a_destroyed_tower_show_on_the_wire() {
+    // 마차 옆에서 건설을 시작하고 3초 가운데 절반쯤 지났을 때의 모습입니다.
+    let mut sim = sim_with(|t| t.map.player_spawns = vec![Vec2::new(14.5, 10.5)]);
+    let builder = sim.add_player().unwrap();
+    let building = PlayerInputs::from([(
+        builder,
+        PlayerInput {
+            build: true,
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &building, 30);
+    let snapshot = Snapshot::from_sim(&sim);
+
+    let [site] = snapshot.towers[..] else {
+        panic!("one site expected, got {:?}", snapshot.towers);
+    };
+    assert_eq!(site.tile, WireTile::from_tile(Tile::new(15, 10)));
+    let WireTowerState::Building { progress } = site.state else {
+        panic!("the site is under construction, got {:?}", site.state);
+    };
+    assert!((0.45..=0.55).contains(&progress), "about half: {progress}");
+    assert_eq!(snapshot.stash, 0, "the cost was paid");
+    let WireLife::Alive {
+        interaction: Some(WireInteraction::Building { tower }),
+        ..
+    } = snapshot.players[0].life
+    else {
+        panic!(
+            "the builder is building, got {:?}",
+            snapshot.players[0].life
+        );
+    };
+    assert_eq!(tower, site.id);
+}
+
+#[test]
+fn a_refused_build_shows_the_reason_and_the_tile_on_the_wire() {
+    let mut sim = sim_with(|t| t.map.player_spawns = vec![Vec2::new(14.5, 10.5)]);
+    let builder = sim.add_player().unwrap();
+    let building = PlayerInputs::from([(
+        builder,
+        PlayerInput {
+            build: true,
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &building, 200);
+    // 보관함이 비었으므로 같은 자리에서 한 번 더 시도하면 거절됩니다.
+    let builder_two = sim.add_player().unwrap();
+    let again = PlayerInputs::from([(
+        builder_two,
+        PlayerInput {
+            build: true,
+            aim: AimDir::new(0.0, 1.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &again, 3);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let WireLife::Alive { build_refusal, .. } = snapshot.players[1].life else {
+        panic!("alive");
+    };
+    assert_eq!(
+        build_refusal,
+        Some(WireBuildRefusal {
+            tile: WireTile { x: 14, y: 11 },
+            why: WireCannotBuild::NotEnoughStash
+        })
+    );
+}
+
+#[test]
+fn a_destroyed_tower_is_gone_from_the_wire() {
     // 몬스터가 감시탑 바로 옆에서 나타나서 한 번에 부숩니다.
     let mut sim = sim_with(|t| {
         t.structures.watchtower.max_hp = 10;
-        t.map.monster_spawns = vec![Vec2::new(15.5, 10.5)];
+        t.structures.watchtower.build_secs = 0.1;
+        t.map.player_spawns = vec![Vec2::new(14.5, 10.5)];
+        t.map.monster_spawns = vec![Vec2::new(16.5, 10.5)];
         t.waves.sizes = vec![1];
         t.waves.spawn_lanes = 1;
-        t.waves.first_delay_secs = 0.1;
+        t.waves.first_delay_secs = 3.0;
+        t.monsters.grunt.attack_damage = 10;
+        t.monsters.grunt.aggro_range = 0.0;
     });
-    step(&mut sim, &PlayerInputs::new(), 10);
-    assert_eq!(
-        Snapshot::from_sim(&sim).towers[0].state,
-        WireTowerState::Destroyed
-    );
+    let builder = sim.add_player().unwrap();
+    let building = PlayerInputs::from([(
+        builder,
+        PlayerInput {
+            build: true,
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &building, 5);
+    assert_eq!(Snapshot::from_sim(&sim).towers.len(), 1);
+
+    step(&mut sim, &PlayerInputs::new(), 100);
+
+    assert!(Snapshot::from_sim(&sim).towers.is_empty());
 }
 
 #[test]
@@ -232,7 +326,8 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
         WireLife::Alive {
             hp: 30,
             max_hp: 100,
-            interaction: None
+            interaction: None,
+            build_refusal: None
         },
         "revived with 30 percent of the maximum"
     );

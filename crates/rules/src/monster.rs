@@ -6,7 +6,7 @@ use crate::collision::{Body, move_circle};
 use crate::ids::{MonsterId, PlayerId, Team};
 use crate::kind::MonsterKind;
 use crate::math::Vec2;
-use crate::nav::FlowField;
+use crate::nav::{FlowField, Paths};
 use crate::stats::UnitStats;
 use crate::tuning::Tuning;
 use crate::world::{Ctx, Hit, Target, Tile, World};
@@ -128,6 +128,7 @@ struct Action {
 pub(crate) fn monsters_act(
     world: &mut World,
     ctx: &Ctx,
+    paths: &Paths,
     fields: &mut TileFields,
     hits: &mut Vec<Hit>,
 ) {
@@ -135,14 +136,22 @@ pub(crate) fn monsters_act(
     let goals: Vec<Goal> = world
         .monsters
         .iter()
-        .map(|monster| choose_goal(world, monster, ctx))
+        .map(|monster| choose_goal(world, monster, ctx, paths))
         .collect();
     fields.refresh(&goals, world);
 
     let mut neighbours = Vec::new();
     let mut actions = Vec::with_capacity(goals.len());
     for (index, goal) in goals.iter().enumerate() {
-        actions.push(plan(index, *goal, world, ctx, fields, &mut neighbours));
+        actions.push(plan(
+            index,
+            *goal,
+            world,
+            ctx,
+            paths,
+            fields,
+            &mut neighbours,
+        ));
     }
 
     let mut scratch = Vec::new();
@@ -182,7 +191,7 @@ pub(crate) fn monsters_act(
 /// 플레이어까지의 거리는 직선으로 재고, 감시탑까지의 거리는 감시탑 흐름장의 걸음 수로 잽니다.
 /// 그래서 벽 너머에 있는 감시탑을 쫓아서 돌아가지 않습니다.
 /// 후보 가운데 가장 가까운 대상을 고르고, 후보가 없으면 마차를 고릅니다.
-fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx) -> Goal {
+fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
     let t = ctx.t;
     let aggro_range = t.monsters.get(monster.kind).aggro_range;
     let mut best: Option<(f32, Goal)> = None;
@@ -199,7 +208,7 @@ fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx) -> Goal {
         }
     }
     let here = world.tiles.tile_at(monster.pos);
-    if let Some(steps) = ctx.paths.towers().steps_at(&world.tiles, here) {
+    if let Some(steps) = paths.towers().steps_at(&world.tiles, here) {
         consider(Goal::Tower, f32::from(steps));
     }
     match best {
@@ -216,6 +225,7 @@ fn plan(
     goal: Goal,
     world: &World,
     ctx: &Ctx,
+    paths: &Paths,
     fields: &TileFields,
     neighbours: &mut Vec<usize>,
 ) -> Action {
@@ -236,8 +246,8 @@ fn plan(
         (toward_target.normalize_or_zero(), Vec2::ZERO)
     } else {
         let field = match goal {
-            Goal::Wagon => Some(ctx.paths.wagon()),
-            Goal::Tower => Some(ctx.paths.towers()),
+            Goal::Wagon => Some(paths.wagon()),
+            Goal::Tower => Some(paths.towers()),
             Goal::Player(id) => chase_tile(world, id).and_then(|tile| fields.get(tile)),
         };
         // 흐름장이 알려 주는 다음 타일이 없으면(도착 타일 안이거나 길이 없으면) 목표의 가장 가까운 점으로 곧바로 걸어갑니다.

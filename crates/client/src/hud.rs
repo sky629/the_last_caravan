@@ -1,6 +1,7 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
-//! 왼쪽 위에 내 HP, 마차, 감시탑, 동료의 막대가 있고, 오른쪽 위에 무리 번호가 있고, 아래 가운데에 부활이나 수리의 진행 막대가 있고,
+//! 왼쪽 위에 내 HP, 마차, 동료의 막대가 있고, 오른쪽 위에 무리 번호와 보관함의 자원이 있고,
+//! 아래 가운데에 건설의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 방 코드가 있고, 화면 가운데에 원정의 결과나 접속 문제가 크게 나옵니다.
 
 use bevy::prelude::*;
@@ -22,7 +23,6 @@ fn tone_color(tone: Tone) -> Color {
     match tone {
         Tone::Health => Color::srgb(0.30, 0.78, 0.35),
         Tone::Wagon => Color::srgb(0.80, 0.52, 0.24),
-        Tone::Tower => Color::srgb(0.38, 0.58, 0.90),
         Tone::Progress => Color::srgb(0.95, 0.80, 0.25),
         Tone::Downed => Color::srgb(0.90, 0.40, 0.15),
         Tone::Gone => Color::srgb(0.38, 0.38, 0.40),
@@ -47,22 +47,22 @@ pub struct MeterSlot {
 #[derive(Component)]
 pub struct MeterFill;
 
-/// 갱신할 노드들의 목록입니다. 시작할 때 만든 것은 처음부터 있고, 감시탑과 동료의 막대는 입장한 뒤에 정해집니다.
+/// 갱신할 노드들의 목록입니다. 시작할 때 만든 것은 처음부터 있고, 동료의 막대는 입장한 뒤에 정해집니다.
 #[derive(Resource)]
 pub struct HudNodes {
     connection: Entity,
     room: Entity,
     expedition: Entity,
     wave: Entity,
+    stash: Entity,
     banner_title: Entity,
     banner_detail: Entity,
     bleed: Entity,
+    refusal: Entity,
     me: Entity,
     wagon: Entity,
     action: Entity,
-    towers_panel: Entity,
     allies_panel: Entity,
-    towers: Vec<Entity>,
     allies: Vec<Entity>,
     roster_built: bool,
 }
@@ -128,15 +128,9 @@ fn column(position: Node) -> Node {
 
 /// 시작할 때 한 번 실행해서 HUD의 노드를 만듭니다.
 pub fn setup(mut commands: Commands) {
-    // 왼쪽 위: 내 HP, 마차, 감시탑들, 동료들.
+    // 왼쪽 위: 내 HP, 마차, 동료들.
     let me = meter_node(&mut commands, METER_WIDTH);
     let wagon = meter_node(&mut commands, METER_WIDTH);
-    let towers_panel = commands
-        .spawn(column(Node {
-            row_gap: px(4),
-            ..default()
-        }))
-        .id();
     let allies_panel = commands
         .spawn(column(Node {
             row_gap: px(4),
@@ -151,11 +145,12 @@ pub fn setup(mut commands: Commands) {
             row_gap: px(4),
             ..default()
         }))
-        .add_children(&[me, wagon, towers_panel, allies_panel]);
+        .add_children(&[me, wagon, allies_panel]);
 
-    // 오른쪽 위: 무리 번호와 원정 번호.
+    // 오른쪽 위: 무리 번호, 원정 번호, 보관함.
     let wave = text_node(&mut commands, 30.0, TEXT);
     let expedition = text_node(&mut commands, 16.0, TEXT_DIM);
+    let stash = text_node(&mut commands, 22.0, TEXT);
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
@@ -165,10 +160,11 @@ pub fn setup(mut commands: Commands) {
             align_items: AlignItems::FlexEnd,
             ..default()
         })
-        .add_children(&[wave, expedition]);
+        .add_children(&[wave, expedition, stash]);
 
-    // 아래 가운데: 출혈 시간과 부활이나 수리의 진행 막대.
+    // 아래 가운데: 출혈 시간, 건설의 거절 이유, 부활이나 수리나 건설의 진행 막대.
     let bleed = text_node(&mut commands, 24.0, BLEED);
+    let refusal = text_node(&mut commands, 24.0, BLEED);
     let action = meter_node(&mut commands, ACTION_WIDTH);
     commands
         .spawn(Node {
@@ -180,7 +176,7 @@ pub fn setup(mut commands: Commands) {
             row_gap: px(6),
             ..default()
         })
-        .add_children(&[bleed, action]);
+        .add_children(&[bleed, refusal, action]);
 
     // 아래: 접속 상태와 방 코드.
     let connection = text_node(&mut commands, 14.0, TEXT_DIM);
@@ -223,22 +219,22 @@ pub fn setup(mut commands: Commands) {
         room,
         expedition,
         wave,
+        stash,
         banner_title,
         banner_detail,
         bleed,
+        refusal,
         me,
         wagon,
         action,
-        towers_panel,
         allies_panel,
-        towers: Vec::new(),
         allies: Vec::new(),
         roster_built: false,
     });
 }
 
-/// 입장한 직후 한 번, 감시탑과 동료의 막대를 만듭니다.
-/// 막대의 수는 `Welcome`이 알려 준 세계의 감시탑 수와 방의 정원에서 정합니다. `Session`이 입장할 때 이 값들의 상한을 확인했으므로 그대로 믿습니다.
+/// 입장한 직후 한 번, 동료의 막대를 만듭니다.
+/// 막대의 수는 `Welcome`이 알려 준 방의 정원에서 정합니다. `Session`이 입장할 때 정원의 상한을 확인했으므로 그대로 믿습니다.
 pub fn build_roster(
     mut commands: Commands,
     session: Res<ClientSession>,
@@ -250,14 +246,8 @@ pub fn build_roster(
     let Some(joined) = session.0.joined() else {
         return;
     };
-    let tower_rows = joined.welcome.world.towers.len();
     // 내 막대는 따로 있으므로 동료 막대는 정원보다 하나 적습니다.
     let ally_rows = (joined.welcome.capacity as usize).saturating_sub(1);
-    for _ in 0..tower_rows {
-        let row = meter_node(&mut commands, METER_WIDTH);
-        commands.entity(nodes.towers_panel).add_child(row);
-        nodes.towers.push(row);
-    }
     for _ in 0..ally_rows {
         let row = meter_node(&mut commands, METER_WIDTH);
         commands.entity(nodes.allies_panel).add_child(row);
@@ -335,7 +325,13 @@ pub fn update(
         hud.expedition.as_deref().unwrap_or(""),
     );
     set_text(&mut texts, nodes.wave, hud.wave.as_deref().unwrap_or(""));
+    set_text(&mut texts, nodes.stash, hud.stash.as_deref().unwrap_or(""));
     set_text(&mut texts, nodes.bleed, hud.bleed.as_deref().unwrap_or(""));
+    set_text(
+        &mut texts,
+        nodes.refusal,
+        hud.refusal.as_deref().unwrap_or(""),
+    );
     match &hud.banner {
         Some(banner) => {
             set_text(&mut texts, nodes.banner_title, &banner.title);
@@ -361,15 +357,6 @@ pub fn update(
     ];
     for (entity, meter) in rows {
         show_meter(entity, meter, &mut slots, &mut fills, &mut texts);
-    }
-    for (index, entity) in nodes.towers.iter().enumerate() {
-        show_meter(
-            *entity,
-            hud.towers.get(index),
-            &mut slots,
-            &mut fills,
-            &mut texts,
-        );
     }
     for (index, entity) in nodes.allies.iter().enumerate() {
         show_meter(

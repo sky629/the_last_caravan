@@ -33,6 +33,9 @@ pub struct Frame {
     pub phase: WirePhase,
     pub wave_count: u32,
     pub wagon: WireWagon,
+    /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
+    pub stash: u32,
+    /// 서 있는 감시탑과 짓는 중인 감시탑입니다. 위치는 타일이라서 섞지 않습니다.
     pub towers: Vec<WireTower>,
     pub players: Vec<PlayerView>,
     pub monsters: Vec<MonsterView>,
@@ -186,6 +189,7 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
         phase: older.phase,
         wave_count: older.wave_count,
         wagon: older.wagon,
+        stash: older.stash,
         towers: older.towers.clone(),
         players,
         monsters,
@@ -263,6 +267,7 @@ mod tests {
                 hp: 500,
                 max_hp: 500,
             },
+            stash: 0,
             towers: Vec::new(),
             players: Vec::new(),
             monsters: Vec::new(),
@@ -289,6 +294,7 @@ mod tests {
                 hp,
                 max_hp: 100,
                 interaction: None,
+                build_refusal: None,
             },
             last_input_seq: 0,
             last_attack_tick: None,

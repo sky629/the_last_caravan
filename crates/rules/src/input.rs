@@ -24,6 +24,8 @@ pub struct PlayerInput {
     pub attack: bool,
     /// 상호작용 키(F)를 누르고 있습니다.
     pub interact: bool,
+    /// 건설 키(B)를 누르고 있습니다. 어느 타일에 세울지는 서버가 플레이어의 위치와 조준 방향에서 정합니다.
+    pub build: bool,
 }
 
 /// 이동 의도입니다. 길이는 항상 0 이상 1 이하이므로, 어떤 입력도 최고 속도보다 빠르게 움직일 수 없습니다.

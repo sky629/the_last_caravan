@@ -2,7 +2,7 @@
 //! 서버가 하는 것과 같은 방식(누르고 있는 입력과 `step`)으로 게임을 진행합니다.
 
 use crate::expedition::Phase;
-use crate::ids::{MonsterId, PlayerId};
+use crate::ids::{MonsterId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 use crate::kind::StructureKind;
 use crate::math::{Rect, Vec2};
@@ -10,7 +10,7 @@ use crate::monster::Monster;
 use crate::player::{Life, Player};
 use crate::sim::Sim;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::{MapSpec, StructurePlacement, Tuning};
+use crate::tuning::{MapSpec, Tuning};
 use crate::world::Tile;
 
 pub(crate) struct Scenario {
@@ -19,7 +19,7 @@ pub(crate) struct Scenario {
 }
 
 impl Scenario {
-    /// 장애물이 없는 20 x 20 맵입니다. 마차와 감시탑은 구석에 있어서 테스트하는 동작과 겹치지 않습니다.
+    /// 장애물이 없는 20 x 20 맵입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
     /// 무리가 저절로 나타나지 않으므로, 몬스터는 테스트가 `monster_at`으로 놓은 것뿐입니다.
     pub fn open_field() -> Scenario {
         Scenario::with_tuning(|_| {})
@@ -42,10 +42,6 @@ impl Scenario {
                 width: 20.0,
                 height: 20.0,
                 wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
-                structures: vec![StructurePlacement {
-                    kind: StructureKind::Watchtower,
-                    tile: Tile::new(1, 17),
-                }],
                 obstacles: vec![],
                 player_spawns: vec![Vec2::new(10.0, 10.0)],
                 monster_spawns: vec![Vec2::new(10.0, 0.6)],
@@ -80,12 +76,24 @@ impl Scenario {
         self.sim.world_mut().monsters.clear();
     }
 
-    /// 맵에 처음 놓인 감시탑입니다.
+    /// 테스트가 `tower_at`으로 처음 놓은 감시탑입니다.
     pub fn tower(&self) -> &Tower {
-        self.sim.towers().next().expect("the map has a tower")
+        self.sim.towers().next().expect("the test placed a tower")
     }
 
-    /// 감시탑의 HP를 바꿉니다. 쏘는 동안의 쿨다운과 마지막 사격은 그대로 둡니다.
+    /// 타일 (`x`, `y`)에 서 있는 감시탑을 하나 놓습니다. 건설의 조건은 거치지 않으므로, 다른 규칙을 시험할 상황을 만들 때만 씁니다.
+    pub fn tower_at(&mut self, x: u16, y: u16) -> TowerId {
+        let kind = StructureKind::Watchtower;
+        let state = Tower::standing_state(kind, self.sim.tuning());
+        self.sim.world_mut().add_tower(kind, Tile::new(x, y), state)
+    }
+
+    /// 보관함의 자원을 `amount`로 맞춥니다.
+    pub fn set_stash(&mut self, amount: u32) {
+        self.sim.world_mut().stash = amount;
+    }
+
+    /// 처음 놓은 감시탑의 HP를 바꿉니다. 쏘는 동안의 쿨다운과 마지막 사격은 그대로 둡니다.
     pub fn set_tower_hp(&mut self, hp: u32) {
         let tower = self
             .sim
@@ -93,7 +101,7 @@ impl Scenario {
             .towers
             .values_mut()
             .next()
-            .expect("the map has a tower");
+            .expect("the test placed a tower");
         if let TowerState::Standing { hp: current, .. } = &mut tower.state {
             *current = hp;
         }
@@ -126,6 +134,18 @@ impl Scenario {
     /// 이 입력을 바꿀 때까지 매 Tick 적용합니다. 키를 계속 누르고 있는 것과 같습니다.
     pub fn hold(&mut self, id: PlayerId, input: PlayerInput) {
         self.held.insert(id, input);
+    }
+
+    /// 건설 키를 누른 채로 `(x, y)` 방향을 조준합니다. 건설할 타일은 서 있는 타일에서 그 방향으로 이웃한 타일입니다.
+    pub fn hold_build(&mut self, id: PlayerId, x: f32, y: f32) {
+        self.hold(
+            id,
+            PlayerInput {
+                build: true,
+                aim: AimDir::new(x, y),
+                ..PlayerInput::default()
+            },
+        );
     }
 
     /// `(x, y)` 방향으로 이동하면서 그 방향을 조준합니다.

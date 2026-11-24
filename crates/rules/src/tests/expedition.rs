@@ -524,7 +524,7 @@ fn the_default_game_has_three_waves_and_each_one_is_larger() {
     assert!(waves.windows(2).all(|pair| pair[0] < pair[1]));
 }
 
-/// 두 플레이어가 움직이고, 싸우고, 부활과 수리를 하는 원정을 800 Tick 진행하고 모든 상태를 글자로 돌려줍니다.
+/// 두 플레이어가 움직이고, 싸우고, 부활과 수리와 건설을 하는 원정을 800 Tick 진행하고 모든 상태를 글자로 돌려줍니다.
 fn play_a_scripted_expedition() -> String {
     let mut s = Scenario::with_waves(|t| t.map = crate::tuning::MapSpec::stage1());
     let a = s.sim.add_player().unwrap();
@@ -543,6 +543,7 @@ fn play_a_scripted_expedition() -> String {
                     aim: crate::input::AimDir::new((tick as f32 * 0.1 + offset).cos(), 0.5),
                     attack: tick % 3 != 0,
                     interact: phase % 2 == 1,
+                    build: phase % 4 == 3,
                 },
             );
         }

@@ -1,7 +1,7 @@
 # THE LAST CARAVAN
 
 THE LAST CARAVAN은 2~4명이 이동식 마을(마차)을 함께 지키는 협동 액션 로그라이크 게임입니다.
-이 저장소에는 1단계인 밤의 방어 프로토타입이 있습니다. 플레이어들은 맵 한가운데의 마차와 감시탑을 세 무리의 몬스터로부터 지키고 쓰러진 동료를 부활시키며, 전용 서버가 이동, 전투, 부활의 결과를 모두 판정합니다.
+이 저장소에는 1단계인 밤의 방어 프로토타입이 있습니다. 플레이어들은 맵 한가운데의 마차를 세 무리의 몬스터로부터 지키고, 마차 가까이에 감시탑을 세우고, 쓰러진 동료를 부활시키며, 전용 서버가 이동, 전투, 부활의 결과를 모두 판정합니다.
 
 ## 설치하기
 
@@ -66,7 +66,7 @@ room test removed
 | `--debug-net` | 주고받는 모든 메시지를 읽을 수 있는 형태로 출력합니다. 스냅샷은 몬스터 목록을 수로 줄여서 출력합니다. |
 | `--stats` | 1초마다 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 한 줄씩 출력합니다. 예를 들면 `stats rooms=1 members=2 monsters=87 ticks=20 tick_avg_ms=0.31 tick_max_ms=1.20`입니다. |
 | `--waves SIZE,SIZE,...` | 무리의 수와 무리마다 몬스터의 수를 바꿉니다. `--waves 100,200,300`은 무리 세 개를 100마리, 200마리, 300마리로 정합니다. |
-| `--stress` | 마차, 감시탑, 플레이어가 죽지 않게 하고 몬스터를 Tick마다 한 마리씩 등장시킵니다. |
+| `--stress` | 마차와 플레이어가 죽지 않게 하고 몬스터를 Tick마다 한 마리씩 등장시킵니다. |
 
 `--waves`와 `--stress`는 몬스터가 수백 마리일 때 서버의 Tick 시간과 스냅샷의 크기를 재기 위한 부하 시험용 옵션입니다. Tick 시간은 `--stats`를 붙여야 출력됩니다.
 부하 시험용 클라이언트(`crates/dedicated/examples/load_client.rs`)는 Bevy 없이 한 방에 접속해서 Tick마다 입력을 보내고, 받은 스냅샷의 크기와 몬스터 수를 1초마다 출력합니다.
@@ -126,6 +126,7 @@ trunk serve
 | `W` `A` `S` `D` | 화면을 기준으로 위, 왼쪽, 아래, 오른쪽으로 이동합니다. |
 | 마우스 | 커서가 가리키는 지면 위치로 조준합니다. |
 | 왼쪽 클릭 | 조준한 방향의 부채꼴 안에 있는 모든 몬스터를 근접 공격합니다. |
+| `B`를 누르고 있기 | 바라보는 쪽의 이웃한 타일에 감시탑을 짓습니다(비용 10, 3초). 마차에서 10타일 안이어야 하고, 마차로 가는 길을 막을 수 없습니다. 세울 수 없으면 그 타일을 빨간 테두리로 표시하고 이유를 화면 아래에 알립니다. 짓는 동안 이동과 공격을 할 수 없고, 짓는 중에 `B`를 떼거나 쓰러지면 건설이 취소되고 비용을 돌려받습니다. |
 | `F`를 누르고 있기 | 가까이 쓰러진 동료가 있으면 부활시키고(8초), 없으면 가까이 있는 손상된 감시탑을 수리합니다. 그동안 이동과 공격을 할 수 없습니다. |
 
 ## 검사하기
@@ -202,7 +203,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 1. `crates/rules/src/tuning.rs`에서는 게임의 모든 수치가 한 구조체에 모인 모습과, `Default` 트레이트 구현, 그리고 초를 정수 Tick으로 바꾸는 `Tuning::ticks`를 봅니다.
 2. `crates/rules/src/sim.rs`의 `Sim::step`은 Tick 하나의 처리 순서를 나열하며, `world`만 가변 참조로 넘기고 `tuning`과 `paths` 같은 다른 필드는 `Ctx`에 공유 참조로 빌려 주는 방식이 구조체 필드를 따로 빌리는 소유권 규칙의 첫 예입니다.
 3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다.
-4. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
+4. `crates/rules/src/world/tiles.rs`의 `TileMap`은 어디가 막혔는지 아는 유일한 곳이고, `crates/rules/src/build.rs`는 감시탑을 놓을 수 있는 조건을 한 함수(`check_site`)로 판정합니다. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
 5. `crates/rules/src/tests/support.rs`와 같은 폴더의 테스트는 화면과 네트워크 없이 개체를 원하는 자리에 놓고 `step`을 반복해서 규칙을 시험하는 방법을 보여 줍니다.
 6. `crates/protocol/src/messages.rs`의 `ClientMsg`와 `ServerMsg`는 serde의 derive로 직렬화하는 열거형이며, 클라이언트가 보낼 수 있는 게임 정보가 입력뿐이라는 서버 권위 방식이 이 타입에 드러납니다.
 7. `crates/protocol/src/snapshot.rs`의 `Snapshot::from_sim`은 게임 상태를 전송 형식으로 바꾸는 유일한 함수이며, 규칙의 상태 타입과 전송용 타입을 분리한 모습을 보여 줍니다.
@@ -223,7 +224,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭을 잃지 않도록 기억합니다.
 23. `crates/client/src/main.rs`에서는 Bevy의 `App`, 플러그인, `.chain()`으로 순서를 고정한 시스템 목록, 그리고 `#[cfg(target_arch = "wasm32")]`로 PC와 웹의 코드를 나누는 조건부 컴파일을 봅니다.
 24. `crates/client/src/net.rs`는 Bevy의 리소스와 시스템 매개변수(`Res`, `ResMut`, `NonSendMut`)의 예이고, 다른 스레드로 옮길 수 없는 웹의 WebSocket을 non-send 리소스로 보관합니다.
-25. `crates/client/src/view.rs`와 `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
+25. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
 26. `crates/client/src/hud.rs`는 `caravan_client_core::Hud`가 정한 내용을 Bevy UI 노드에 옮깁니다.
 
 ## 1단계의 한계
@@ -236,6 +237,6 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 - 서버의 기본 주소와 `trunk serve`의 주소(`crates/client/Trunk.toml`)는 `127.0.0.1`이므로, 기본 설정에서는 같은 컴퓨터에서만 접속할 수 있습니다.
 - 한 방의 최대 인원은 4명입니다(`crates/rules/src/tuning.rs`의 `max_players`). 가득 찬 방에 접속한 클라이언트는 거절되고 화면에 이유가 표시됩니다.
 - 로비 화면이 없으므로 방 코드는 실행할 때 지정합니다.
-- 맵은 24 x 24 타일 하나이고, 몬스터는 한 종류, 시설은 감시탑 하나뿐입니다. 낮의 탐험, 자원, 건설은 없습니다.
+- 맵은 24 x 24 타일 하나이고, 몬스터는 한 종류, 시설은 감시탑 하나뿐입니다. 건설 비용은 보관함의 시작 값(10)뿐이고, 낮의 탐험과 채집은 없습니다.
 - 화면의 문구는 영어입니다. Bevy의 기본 글꼴이 한글을 표시하지 못하기 때문입니다.
 - `trunk serve`와 `trunk build`는 최적화하지 않은 디버그 빌드를 만들므로 wasm 파일이 약 110MB입니다.

@@ -2,7 +2,7 @@
 //!
 //! 이 값들은 터무니없는 값을 보내는 서버(고장 났거나 악의가 있는 서버)가 클라이언트의 메모리와 시간을 끝없이 쓰지 못하게 막는 점검용 상한이고,
 //! 게임 수치가 아닙니다. 실제 정원, Tick 속도, 맵의 크기는 언제나 서버의 `Tuning`이 정하며 클라이언트에는 어떤 값도 고정되어 있지 않습니다.
-//! 상한은 지금의 값(정원 4, 20Hz, 24 x 24 맵)보다 훨씬 크게 잡았으므로, 정상적인 서버가 수치를 바꿔도 걸리지 않습니다.
+//! 상한은 지금의 값(정원 4, 20Hz, 24 x 24 맵, 감시탑 40개)보다 훨씬 크게 잡았으므로, 정상적인 서버가 수치를 바꿔도 걸리지 않습니다.
 //!
 //! 클라이언트는 `Welcome`을 받아서 처음 믿기 전에 한 번 확인합니다. 서버는 시작할 때 자기 설정으로 보낼 `Welcome`에 같은 확인을 해 보므로,
 //! 모든 클라이언트가 거절할 설정으로는 서버가 시작되지 않습니다.
@@ -20,10 +20,13 @@ const MAX_TICK_HZ: u32 = 240;
 const MAX_MAP_SIDE_TILES: f32 = 128.0;
 // 서버는 이 상한으로 맵 좌표가 전송 범위(`WirePos`)를 넘어 잘리는 설정까지 거절합니다. 그러려면 상한이 전송 범위 안에 있어야 합니다.
 const _: () = assert!(MAX_MAP_SIDE_TILES <= WirePos::MAX_TILES);
+// 타일의 좌표(`WireTile`)는 한 축이 `u8`이므로, 상한이 `u8`의 범위 안에 있어야 합니다.
+const _: () = assert!(MAX_MAP_SIDE_TILES <= 256.0);
 const MAX_OBSTACLES: usize = 256;
-const MAX_TOWERS: usize = 32;
+/// 감시탑의 수의 상한입니다. 스냅샷이 감시탑 하나당 10바이트 안팎이므로 이 값이 스냅샷 크기의 상한이기도 합니다.
+const MAX_TOWER_LIMIT: u32 = 256;
 const MAX_MONSTER_KINDS: usize = 16;
-/// 장애물, 마차, 감시탑이 차지하는 타일의 합입니다. 상자를 타일마다 하나씩 만듭니다.
+/// 장애물과 마차가 차지하는 타일의 합입니다. 상자를 타일마다 하나씩 만듭니다.
 const MAX_SOLID_TILES: usize = 4096;
 /// 캐릭터를 그리는 원의 반지름(타일)입니다.
 const MAX_RADIUS_TILES: f32 = 8.0;
@@ -35,7 +38,7 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
     check_range("capacity", welcome.capacity, 1, MAX_CAPACITY)?;
     check_range("tick rate", welcome.tick_hz, 1, MAX_TICK_HZ)?;
     check_count("obstacles", world.obstacles.len(), MAX_OBSTACLES)?;
-    check_count("towers", world.towers.len(), MAX_TOWERS)?;
+    check_range("tower limit", world.tower_limit, 1, MAX_TOWER_LIMIT)?;
     check_count(
         "monster kinds",
         world.monster_kinds.len(),
@@ -67,17 +70,12 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
     }
 
     let map = Rect::new(0.0, 0.0, size.x, size.y);
-    let solids = world
-        .obstacles
-        .iter()
-        .copied()
-        .chain([world.wagon])
-        .chain(world.towers.iter().map(|site| site.rect));
+    let solids = world.obstacles.iter().copied().chain([world.wagon]);
     let mut solid_tiles = 0;
     for solid in solids {
         let rect = solid.to_rect();
         if !is_inside(rect, map) {
-            return Err("an obstacle, the wagon, or a tower lies outside the map".to_string());
+            return Err("an obstacle or the wagon lies outside the map".to_string());
         }
         solid_tiles += rect.tile_count();
     }
@@ -110,7 +108,7 @@ fn check_count(name: &str, value: usize, max: usize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MonsterKindInfo, TowerSite, WireRect};
+    use crate::{MonsterKindInfo, WireRect};
     use caravan_rules::{Sim, Tuning};
 
     /// 기본 수치에서 서버가 보내는 입장 안내입니다.
@@ -174,6 +172,17 @@ mod tests {
     }
 
     #[test]
+    fn a_tower_limit_that_is_zero_or_too_big_is_refused() {
+        let mut welcome = normal();
+        welcome.world.tower_limit = 0;
+        assert!(refused(&welcome).contains("tower limit"), "zero");
+        welcome.world.tower_limit = MAX_TOWER_LIMIT + 1;
+        assert!(refused(&welcome).contains("tower limit"), "too big");
+        welcome.world.tower_limit = MAX_TOWER_LIMIT;
+        assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
+    }
+
+    #[test]
     fn a_map_that_is_empty_or_too_big_is_refused() {
         let mut welcome = normal();
         welcome.world.size = WirePos {
@@ -191,18 +200,10 @@ mod tests {
     }
 
     #[test]
-    fn too_many_obstacles_towers_or_monster_kinds_are_refused() {
+    fn too_many_obstacles_or_monster_kinds_are_refused() {
         let mut welcome = normal();
         welcome.world.obstacles = vec![rect(1, 1, tiles(2), tiles(2)); MAX_OBSTACLES + 1];
         assert!(refused(&welcome).contains("obstacles"));
-
-        let mut welcome = normal();
-        let site = TowerSite {
-            id: 1,
-            rect: rect(tiles(15), tiles(11), tiles(16), tiles(12)),
-        };
-        welcome.world.towers = vec![site; MAX_TOWERS + 1];
-        assert!(refused(&welcome).contains("towers"));
 
         let mut welcome = normal();
         let kind = welcome.world.monster_kinds[0];

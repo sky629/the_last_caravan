@@ -9,11 +9,12 @@
 //! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    Interaction, Life, Monster, MonsterKind, Outcome, Phase, Player, Sim, Tower, TowerState, Tuning,
+    BuildRefusal, CannotBuild, Interaction, Life, Monster, MonsterKind, Outcome, Phase, Player,
+    Sim, Tower, TowerState, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::units::{WireAngle, WirePos};
+use crate::units::{WireAngle, WirePos, WireTile};
 
 /// Tick 하나가 끝난 뒤의 방 전체 상태입니다.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -26,7 +27,9 @@ pub struct Snapshot {
     /// 한 원정의 무리 수입니다. 「무리 2 / 3」 같은 표시에 씁니다.
     pub wave_count: u32,
     pub wagon: WireWagon,
-    /// 번호가 작은 시설부터입니다.
+    /// 마차의 보관함에 있는 자원입니다. 모든 플레이어가 함께 씁니다.
+    pub stash: u32,
+    /// 짓는 중인 감시탑을 포함하고, 번호가 작은 감시탑부터입니다. 파괴된 감시탑은 없습니다.
     pub towers: Vec<WireTower>,
     /// 번호가 작은 플레이어부터입니다.
     pub players: Vec<WirePlayer>,
@@ -63,18 +66,22 @@ pub struct WireWagon {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WireTower {
     pub id: u32,
+    pub tile: WireTile,
     pub max_hp: u32,
     pub state: WireTowerState,
 }
 
-/// 파괴된 감시탑에는 HP와 사격 대상이 없습니다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// 짓는 중인 감시탑에는 HP와 사격 대상이 없고, 서 있는 감시탑에는 건설의 진행도가 없습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WireTowerState {
+    Building {
+        /// 건설의 진행도(0.0에서 1.0)입니다.
+        progress: f32,
+    },
     Standing {
         hp: u32,
         last_shot: Option<WireShot>,
     },
-    Destroyed,
 }
 
 /// 감시탑의 마지막 사격입니다. 클라이언트는 `tick`이 최근일 때만 `target`을 향한 사격 선을 그립니다.
@@ -103,8 +110,10 @@ pub enum WireLife {
     Alive {
         hp: u32,
         max_hp: u32,
-        /// 상호작용 키가 지금 하고 있는 일입니다.
+        /// 상호작용 키나 건설 키가 지금 하고 있는 일입니다.
         interaction: Option<WireInteraction>,
+        /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
+        build_refusal: Option<WireBuildRefusal>,
     },
     Downed {
         /// 남은 출혈 시간(초)입니다. 부활이 진행되는 동안에는 줄지 않습니다.
@@ -127,6 +136,48 @@ pub enum WireInteraction {
         /// 수리하는 감시탑의 번호입니다.
         tower: u32,
     },
+    Building {
+        /// 짓고 있는 감시탑의 번호입니다. 진행도는 스냅샷의 그 감시탑에 있습니다.
+        tower: u32,
+    },
+}
+
+/// 건설이 거절된 이유와 놓으려던 타일입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireBuildRefusal {
+    pub tile: WireTile,
+    pub why: WireCannotBuild,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireCannotBuild {
+    NotEnoughStash,
+    TowerLimit,
+    OutsideVillage,
+    TileTaken,
+    WouldBlockPath,
+}
+
+impl WireCannotBuild {
+    /// `match`가 모든 이유를 다루므로, 규칙에 거절의 이유를 추가하면 여기서 컴파일 오류가 납니다.
+    pub fn of(why: CannotBuild) -> WireCannotBuild {
+        match why {
+            CannotBuild::NotEnoughStash => WireCannotBuild::NotEnoughStash,
+            CannotBuild::TowerLimit => WireCannotBuild::TowerLimit,
+            CannotBuild::OutsideVillage => WireCannotBuild::OutsideVillage,
+            CannotBuild::TileTaken => WireCannotBuild::TileTaken,
+            CannotBuild::WouldBlockPath => WireCannotBuild::WouldBlockPath,
+        }
+    }
+}
+
+impl WireBuildRefusal {
+    fn of(refusal: &BuildRefusal) -> WireBuildRefusal {
+        WireBuildRefusal {
+            tile: WireTile::from_tile(refusal.tile),
+            why: WireCannotBuild::of(refusal.why),
+        }
+    }
 }
 
 /// 몬스터 하나입니다. 몬스터는 수백 마리일 수 있으므로 필드를 이 여섯 개로 한정합니다.
@@ -166,6 +217,7 @@ impl Snapshot {
                 hp: sim.wagon().hp,
                 max_hp: tuning.wagon.max_hp,
             },
+            stash: sim.stash(),
             towers: sim
                 .towers()
                 .map(|tower| wire_tower(tower, tuning))
@@ -209,6 +261,9 @@ fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
 
 fn wire_tower(tower: &Tower, tuning: &Tuning) -> WireTower {
     let state = match &tower.state {
+        TowerState::Building { .. } => WireTowerState::Building {
+            progress: clamp_progress(tower.build_progress(tuning).unwrap_or(0.0)),
+        },
         TowerState::Standing { hp, last_shot, .. } => WireTowerState::Standing {
             hp: *hp,
             last_shot: last_shot.map(|shot| WireShot {
@@ -216,10 +271,10 @@ fn wire_tower(tower: &Tower, tuning: &Tuning) -> WireTower {
                 tick: shot.tick,
             }),
         },
-        TowerState::Destroyed => WireTowerState::Destroyed,
     };
     WireTower {
         id: tower.id.0,
+        tile: WireTile::from_tile(tower.tile),
         max_hp: tuning.structures.get(tower.kind).max_hp,
         state,
     }
@@ -229,13 +284,17 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
     let tuning = sim.tuning();
     let life = match &player.life {
         Life::Alive {
-            hp, interaction, ..
+            hp,
+            interaction,
+            build_refusal,
+            ..
         } => WireLife::Alive {
             hp: *hp,
             max_hp: tuning.player.max_hp,
             interaction: interaction
                 .as_ref()
                 .map(|interaction| wire_interaction(sim, interaction)),
+            build_refusal: build_refusal.as_ref().map(WireBuildRefusal::of),
         },
         Life::Downed { bleed_left_ticks } => WireLife::Downed {
             bleed_secs_left: secs(*bleed_left_ticks, tuning),
@@ -263,6 +322,7 @@ fn wire_interaction(sim: &Sim, interaction: &Interaction) -> WireInteraction {
             progress: sim.revive_progress(*target).map_or(0.0, clamp_progress),
         },
         Interaction::Repairing { tower, .. } => WireInteraction::Repairing { tower: tower.0 },
+        Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },
     }
 }
 

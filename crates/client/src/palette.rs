@@ -21,14 +21,14 @@ pub struct Palette {
     pub obstacle_block: Handle<Mesh>,
     pub wagon_block: Handle<Mesh>,
     pub tower_block: Handle<Mesh>,
-    pub rubble_block: Handle<Mesh>,
+    pub site_block: Handle<Mesh>,
 
     pub ground_a: Handle<ColorMaterial>,
     pub ground_b: Handle<ColorMaterial>,
     pub obstacle: Handle<ColorMaterial>,
     pub wagon: Handle<ColorMaterial>,
     pub tower: Handle<ColorMaterial>,
-    pub rubble: Handle<ColorMaterial>,
+    pub site: Handle<ColorMaterial>,
     pub shadow: Handle<ColorMaterial>,
     pub you: Handle<ColorMaterial>,
     pub ally: Handle<ColorMaterial>,
@@ -42,6 +42,7 @@ pub struct Palette {
     pub bar_player: Handle<ColorMaterial>,
     pub bar_monster: Handle<ColorMaterial>,
     pub bar_tower: Handle<ColorMaterial>,
+    pub bar_site: Handle<ColorMaterial>,
 }
 
 /// 시작할 때 한 번 실행해서 `Palette`를 넣습니다.
@@ -57,7 +58,7 @@ pub fn setup_palette(
         obstacle: paint(config::OBSTACLE),
         wagon: paint(config::WAGON),
         tower: paint(config::TOWER),
-        rubble: paint(config::RUBBLE),
+        site: paint(config::SITE),
         shadow: paint(config::SHADOW),
         you: paint(config::YOU),
         ally: paint(config::ALLY),
@@ -71,6 +72,7 @@ pub fn setup_palette(
         bar_player: paint(config::BAR_PLAYER),
         bar_monster: paint(config::BAR_MONSTER),
         bar_tower: paint(config::BAR_TOWER),
+        bar_site: paint(config::BAR_SITE),
 
         circle: meshes.add(Circle::new(1.0)),
         square: meshes.add(Rectangle::new(1.0, 1.0)),
@@ -78,7 +80,7 @@ pub fn setup_palette(
         obstacle_block: meshes.add(block_mesh(config::OBSTACLE_HEIGHT)),
         wagon_block: meshes.add(block_mesh(config::WAGON_HEIGHT)),
         tower_block: meshes.add(block_mesh(config::TOWER_HEIGHT)),
-        rubble_block: meshes.add(block_mesh(config::RUBBLE_HEIGHT)),
+        site_block: meshes.add(block_mesh(config::SITE_HEIGHT)),
     };
     commands.insert_resource(palette);
 }
@@ -86,7 +88,7 @@ pub fn setup_palette(
 /// 타일 하나 위에 서 있는 높이 `height`의 상자입니다. 원점은 바닥 마름모의 중심입니다.
 ///
 /// 보이는 세 면(윗면, 왼쪽 앞면, 오른쪽 앞면)을 한 메시에 담고, 면마다 꼭짓점 색의 밝기를 달리해서 입체로 보이게 합니다.
-/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑의 색을 모두 냅니다.
+/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑, 공사터의 색을 모두 냅니다.
 fn block_mesh(height: f32) -> Mesh {
     let half_w = TILE_WIDTH_PX / 2.0;
     let half_h = TILE_HEIGHT_PX / 2.0;

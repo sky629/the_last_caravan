@@ -162,6 +162,7 @@ fn a_player_cannot_leave_the_map() {
 #[test]
 fn the_wagon_and_a_tower_block_players() {
     let mut s = Scenario::open_field();
+    s.tower_at(1, 17);
     let radius = s.sim.tuning().player.radius;
 
     let toward_wagon = s.player_at(15.0, 18.0);

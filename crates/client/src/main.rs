@@ -3,7 +3,7 @@
 //! PC: `cargo run -p caravan_client -- --room test --server ws://127.0.0.1:7777`
 //! 웹: `cd crates/client && trunk serve` 뒤에 `http://127.0.0.1:8080/?room=test` 열기
 //!
-//! 서버가 Tick마다 보내는 방 전체의 상태를 받아서 쿼터뷰로 그립니다. 읽는 순서는 `main`(한 프레임의 순서), `net`, `view`, `characters`입니다.
+//! 서버가 Tick마다 보내는 방 전체의 상태를 받아서 쿼터뷰로 그립니다. 읽는 순서는 `main`(한 프레임의 순서), `net`, `view`, `towers`, `characters`입니다.
 
 // Bevy 시스템은 매개변수가 많고 쿼리 타입이 길어지는 것이 정상입니다.
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -18,6 +18,8 @@ mod input;
 mod net;
 mod palette;
 mod parts;
+mod registry;
+mod towers;
 mod view;
 
 use bevy::prelude::*;
@@ -41,6 +43,7 @@ fn main() {
     app.insert_resource(ClearColor(config::BACKGROUND))
         .init_resource::<input::HeldControls>()
         .init_resource::<characters::Spawned>()
+        .init_resource::<towers::TowerRegistry>()
         .add_systems(
             Startup,
             (
@@ -57,7 +60,7 @@ fn main() {
                 net::pump_network,
                 net::advance_playback,
                 view::spawn_world.run_if(not(resource_exists::<view::Scene>)),
-                view::sync_structures.run_if(resource_exists::<view::Scene>),
+                towers::sync_towers.run_if(resource_exists::<view::Scene>),
                 characters::sync_characters.run_if(resource_exists::<view::Scene>),
                 effects::draw_effects.run_if(resource_exists::<view::Scene>),
                 hud::build_roster,

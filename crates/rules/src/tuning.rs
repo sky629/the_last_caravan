@@ -9,7 +9,7 @@
 
 use crate::kind::{MonsterKind, StructureKind};
 use crate::math::{Rect, Vec2};
-use crate::world::{Tile, TileMap, World};
+use crate::world::{TileMap, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tuning {
@@ -22,6 +22,7 @@ pub struct Tuning {
     pub monsters: MonsterTable,
     pub wagon: WagonTuning,
     pub structures: StructureTable,
+    pub village: VillageTuning,
     pub waves: WaveTuning,
     pub map: MapSpec,
 }
@@ -113,6 +114,17 @@ impl MonsterTable {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WagonTuning {
     pub max_hp: u32,
+    /// 원정이 시작될 때 마차의 보관함에 있는 자원의 양입니다.
+    pub start_stash: u32,
+}
+
+/// 마차와 그 둘레에 세우는 시설, 곧 마을의 수치입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VillageTuning {
+    /// 마차의 가장자리에서 건설할 타일의 중심까지 잰, 건설할 수 있는 거리입니다.
+    pub build_range: f32,
+    /// 서 있는 감시탑과 짓는 중인 감시탑을 합친 수의 상한입니다.
+    pub tower_limit: u32,
 }
 
 /// 시설 한 종류의 수치입니다.
@@ -128,6 +140,10 @@ pub struct StructureTuning {
     pub repair_pulse_secs: f32,
     /// 플레이어의 가장자리에서 시설의 가장자리까지 잰 수리 거리입니다.
     pub repair_range: f32,
+    /// 건설을 시작할 때 보관함에서 내는 자원의 양입니다.
+    pub build_cost: u32,
+    /// 건설 키를 끊지 않고 눌러야 하는 시간입니다.
+    pub build_secs: f32,
 }
 
 /// 시설 종류별 수치표입니다.
@@ -176,13 +192,6 @@ impl WaveTuning {
     }
 }
 
-/// 시설을 놓는 위치입니다.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StructurePlacement {
-    pub kind: StructureKind,
-    pub tile: Tile,
-}
-
 /// 고정된 맵 하나입니다. 좌표는 타일 단위입니다.
 /// 맵의 크기, 장애물, 마차는 정수 좌표에 놓아서 타일에 꼭 맞습니다(`Tuning::validate`가 검사합니다).
 #[derive(Clone, Debug, PartialEq)]
@@ -190,8 +199,6 @@ pub struct MapSpec {
     pub width: f32,
     pub height: f32,
     pub wagon: Rect,
-    /// 원정이 시작될 때 놓여 있는 시설입니다. 번호는 이 목록의 순서대로 붙습니다.
-    pub structures: Vec<StructurePlacement>,
     pub obstacles: Vec<Rect>,
     /// 플레이어가 나타나는 위치입니다. 플레이어마다 자기 등장 순서의 지점을 쓰고, 입장할 때는 방에 있는 플레이어가 쓰지 않는 가장 앞의 순서를 받습니다.
     pub player_spawns: Vec<Vec2>,
@@ -250,12 +257,12 @@ impl Tuning {
         }
 
         // 음수 속도는 개체를 목표의 반대쪽으로 걷게 하고, NaN은 아래의 모든 비교를 거짓으로 만들어 검사를 통과하므로 먼저 거절합니다.
-        check_speed("player speed", self.player.speed)?;
-        check_speed("player crawl_speed", self.player.crawl_speed)?;
+        check_not_negative("player speed", self.player.speed)?;
+        check_not_negative("player crawl_speed", self.player.crawl_speed)?;
         for kind in MonsterKind::ALL {
             let monster = self.monsters.get(kind);
-            check_speed(&format!("{kind:?} speed"), monster.speed)?;
-            check_speed(
+            check_not_negative(&format!("{kind:?} speed"), monster.speed)?;
+            check_not_negative(
                 &format!("{kind:?} separation_speed"),
                 monster.separation_speed,
             )?;
@@ -280,6 +287,15 @@ impl Tuning {
                     monster.radius
                 ));
             }
+        }
+
+        if self.village.tower_limit == 0 {
+            return Err("tower_limit must be at least 1".to_string());
+        }
+        check_not_negative("village build_range", self.village.build_range)?;
+        for kind in StructureKind::ALL {
+            let build_secs = self.structures.get(kind).build_secs;
+            check_not_negative(&format!("{kind:?} build_secs"), build_secs)?;
         }
 
         // 몸의 반지름이 0.5보다 작아야 비어 있는 타일의 중심을 따라 걷는 몸이 이웃한 막힌 타일에 걸리지 않습니다.
@@ -311,13 +327,8 @@ impl Tuning {
                 return Err(format!("solid {solid:?} is outside the map"));
             }
         }
-        for placement in &map.structures {
-            if !bounds.contains(placement.tile.rect().max) {
-                return Err(format!("structure {placement:?} is outside the map"));
-            }
-        }
 
-        // 아래 검사는 규칙이 실제로 쓰는 타일 지도를 읽습니다. 장애물, 마차, 미리 놓인 시설이 모두 들어 있습니다.
+        // 아래 검사는 규칙이 실제로 쓰는 타일 지도를 읽습니다.
         let tiles = World::new(self).tiles;
         check_spawns(
             "player_spawns",
@@ -342,12 +353,12 @@ impl Tuning {
 }
 
 /// 속도는 유한하고 0 이상이어야 합니다.
-fn check_speed(name: &str, speed: f32) -> Result<(), String> {
-    if speed.is_finite() && speed >= 0.0 {
+fn check_not_negative(name: &str, value: f32) -> Result<(), String> {
+    if value.is_finite() && value >= 0.0 {
         Ok(())
     } else {
         Err(format!(
-            "{name} must be a finite number that is not negative, but it is {speed}"
+            "{name} must be a finite number that is not negative, but it is {value}"
         ))
     }
 }
@@ -411,7 +422,10 @@ impl Default for Tuning {
                     separation_speed: 1.0,
                 },
             },
-            wagon: WagonTuning { max_hp: 500 },
+            wagon: WagonTuning {
+                max_hp: 500,
+                start_stash: 10,
+            },
             structures: StructureTable {
                 watchtower: StructureTuning {
                     max_hp: 300,
@@ -421,7 +435,13 @@ impl Default for Tuning {
                     repair_hp_per_pulse: 10,
                     repair_pulse_secs: 0.5,
                     repair_range: 1.0,
+                    build_cost: 10,
+                    build_secs: 3.0,
                 },
+            },
+            village: VillageTuning {
+                build_range: 10.0,
+                tower_limit: 40,
             },
             waves: WaveTuning {
                 kind: MonsterKind::Grunt,
@@ -439,16 +459,12 @@ impl Default for Tuning {
 }
 
 impl MapSpec {
-    /// 24 x 24 타일입니다. 한가운데에 마차가 있고, 마차 옆에 감시탑이 하나 있고, 장애물이 다섯 개 있습니다.
+    /// 24 x 24 타일입니다. 한가운데에 마차가 있고, 장애물이 다섯 개 있습니다.
     pub fn stage1() -> MapSpec {
         MapSpec {
             width: 24.0,
             height: 24.0,
             wagon: Rect::new(10.0, 11.0, 14.0, 13.0),
-            structures: vec![StructurePlacement {
-                kind: StructureKind::Watchtower,
-                tile: Tile::new(15, 11),
-            }],
             obstacles: vec![
                 Rect::new(4.0, 4.0, 8.0, 5.0),
                 Rect::new(17.0, 3.0, 18.0, 8.0),

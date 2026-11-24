@@ -1,7 +1,8 @@
-//! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 근접 공격, 상호작용(부활과 수리)을 다룹니다.
+//! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 근접 공격, 상호작용(부활, 수리, 건설)을 다룹니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
 use crate::ids::{PlayerId, Team, TowerId};
 use crate::math::Vec2;
@@ -45,8 +46,10 @@ pub enum Life {
         hp: u32,
         /// 다음 근접 공격까지 남은 Tick입니다.
         cooldown_ticks: u32,
-        /// 상호작용 키(F)가 지금 하고 있는 일입니다. 값이 있으면 이동과 공격을 할 수 없습니다.
+        /// 상호작용 키(F)나 건설 키(B)가 지금 하고 있는 일입니다. 값이 있으면 이동과 공격을 할 수 없습니다.
         interaction: Option<Interaction>,
+        /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 이벤트가 아니라 상태이고, 키를 누르고 있는 동안 Tick마다 다시 정해집니다.
+        build_refusal: Option<BuildRefusal>,
     },
     Downed {
         /// 남은 출혈 시간입니다. 아무도 부활시키지 않는 동안에만 줄어듭니다.
@@ -56,9 +59,9 @@ pub enum Life {
     Dead,
 }
 
-/// 상호작용 키(F)를 누르고 있는 동안의 행동입니다. 그 행동을 하는 플레이어가 가지고 있습니다.
+/// 상호작용 키(F)나 건설 키(B)를 누르고 있는 동안의 행동입니다. 그 행동을 하는 플레이어가 가지고 있습니다.
 ///
-/// 부활의 진행도는 부활시키는 플레이어의 `Interaction`에만 있습니다.
+/// 부활의 진행도는 부활시키는 플레이어의 `Interaction`에만 있고, 건설의 진행도는 짓는 중인 감시탑(`TowerState::Building`)에만 있습니다.
 /// 「플레이어 X가 부활되고 있는가」는 `Reviving { target: X }`를 가진 플레이어를 찾아서 알아냅니다.
 /// 쓰러진 플레이어에게는 아무것도 저장하지 않으므로, 두 곳의 값이 서로 어긋날 수 없습니다.
 #[derive(Clone, Debug, PartialEq)]
@@ -74,6 +77,8 @@ pub enum Interaction {
         /// 마지막 수리 이후의 Tick 수입니다. 수리를 멈춰도 이미 회복한 HP는 유지됩니다.
         since_pulse_ticks: u32,
     },
+    /// `tower`는 이 플레이어가 짓고 있는 감시탑입니다.
+    Building { tower: TowerId },
 }
 
 impl Player {
@@ -95,6 +100,7 @@ impl Player {
                 hp: t.player.max_hp,
                 cooldown_ticks: 0,
                 interaction: None,
+                build_refusal: None,
             },
             last_input_seq: 0,
             last_attack_tick: None,
@@ -128,6 +134,14 @@ impl Player {
     pub fn interaction(&self) -> Option<&Interaction> {
         match &self.life {
             Life::Alive { interaction, .. } => interaction.as_ref(),
+            Life::Downed { .. } | Life::Dead => None,
+        }
+    }
+
+    /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다.
+    pub fn build_refusal(&self) -> Option<&BuildRefusal> {
+        match &self.life {
+            Life::Alive { build_refusal, .. } => build_refusal.as_ref(),
             Life::Downed { .. } | Life::Dead => None,
         }
     }
@@ -167,7 +181,7 @@ impl Player {
     }
 }
 
-/// 상호작용 키(F)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활이나 수리를 계속하거나, 새로 시작하거나, 취소합니다.
+/// 상호작용 키(F)와 건설 키(B)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활, 수리, 건설을 계속하거나, 새로 시작하거나, 취소합니다.
 ///
 /// 진행 중인 부활은 키를 누르고 있고, 대상이 여전히 쓰러진 동료이고, 거리가 범위 안인 동안만 이어집니다.
 /// 공격받는 것은 조건이 아닙니다. 조건이 하나라도 깨지면 `Interaction` 값을 버리므로 진행도가 처음으로 돌아갑니다.
@@ -177,14 +191,20 @@ impl Player {
 /// 수리는 중단해도 잃는 것이 없으므로(이미 회복한 HP는 그대로입니다) Tick마다 대상을 다시 고릅니다.
 /// 그래서 수리하던 플레이어 곁의 동료가 쓰러지면 곧바로 부활로 바뀝니다.
 /// 수리는 정해진 간격마다 감시탑의 HP를 회복시키고, 여러 명이 수리하면 회복량이 더해집니다.
+///
+/// F로 할 일이 있으면 B보다 먼저입니다. 이미 짓고 있는 건설은 B를 누르고 있는 한 이어지고, F를 눌러도 바뀌지 않습니다.
+/// F로 할 일이 없고 B를 누르고 있으면 건설 요청으로 모아서 `build::start_builds`가 번호 순서로 하나씩 판정합니다.
+/// 건설의 진행과 완료와 취소는 `structures::advance_construction`이 정합니다.
 pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     let holding = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.interact);
+    let holding_build = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.build);
 
     // 읽기: 이번 Tick에 플레이어마다 가지게 될 상호작용을 정합니다.
     let mut next: BTreeMap<PlayerId, Option<Interaction>> = BTreeMap::new();
     let mut claimed: BTreeSet<PlayerId> = BTreeSet::new();
     let mut repairs: Vec<(TowerId, u32)> = Vec::new();
+    let mut build_requests: Vec<PlayerId> = Vec::new();
     for player in world.players.values() {
         if let Some(Interaction::Reviving {
             target,
@@ -207,6 +227,13 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
         if !player.is_alive() || next.contains_key(&player.id) {
             continue;
         }
+        if let Some(Interaction::Building { tower }) = player.interaction()
+            && holding_build(player.id)
+            && build::is_building(world, *tower, player.id)
+        {
+            next.insert(player.id, Some(Interaction::Building { tower: *tower }));
+            continue;
+        }
         let mut chosen = if holding(player.id) {
             choose_interaction(world, player, &claimed, t)
         } else {
@@ -222,19 +249,26 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
             }
             chosen = Some(interaction);
         }
+        if chosen.is_none() && holding_build(player.id) {
+            build_requests.push(player.id);
+        }
         next.insert(player.id, chosen);
     }
 
     // 적용
     for (id, interaction) in next {
         if let Some(Player {
-            life: Life::Alive {
-                interaction: slot, ..
-            },
+            life:
+                Life::Alive {
+                    interaction: slot,
+                    build_refusal,
+                    ..
+                },
             ..
         }) = world.players.get_mut(&id)
         {
             *slot = interaction;
+            *build_refusal = None;
         }
     }
     for (id, amount) in repairs {
@@ -243,6 +277,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
             tower.repair(amount, max_hp);
         }
     }
+    build::start_builds(world, ctx, &build_requests);
 }
 
 /// 새로 시작할 상호작용을 고릅니다. 범위 안의 쓰러진 동료가 있으면 가장 가까운 동료를 부활시키고,
@@ -372,6 +407,7 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
                 hp,
                 cooldown_ticks: 0,
                 interaction: None,
+                build_refusal: None,
             };
         }
     }

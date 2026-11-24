@@ -6,6 +6,7 @@
 
 mod support;
 
+mod build; // 건설: 시작과 완료, 취소와 환불, 다섯 가지 거절, 동시 건설
 mod combat; // 근접 공격의 범위, 부채꼴, 쿨다운
 mod expedition; // 무리, 성공과 실패, 새 원정, 입장과 퇴장
 mod monsters; // 몬스터의 목표 선택, 이동 경로, 공격

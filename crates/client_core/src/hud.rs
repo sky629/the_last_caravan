@@ -3,7 +3,10 @@
 //! 문구는 영어입니다. Bevy의 기본 글꼴이 영문만 표시하고, 1단계에는 글꼴 파일을 넣지 않기 때문입니다.
 //! 모든 값은 지금 그리는 `Frame`에서 오므로, 막대는 그 피해를 일으킨 공격이 화면에 나타난 뒤에 줄어듭니다.
 
-use caravan_protocol::{WireInteraction, WireLife, WireOutcome, WirePhase, WireTowerState};
+use caravan_protocol::{
+    WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireOutcome, WirePhase,
+    WireTowerState,
+};
 use caravan_rules::Team;
 
 use crate::interp::{Frame, PlayerView};
@@ -17,16 +20,19 @@ pub struct Hud {
     pub room: Option<String>,
     pub expedition: Option<String>,
     pub wave: Option<String>,
+    /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
+    pub stash: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
     pub banner: Option<Banner>,
     pub me: Option<Meter>,
     pub wagon: Option<Meter>,
-    pub towers: Vec<Meter>,
     pub allies: Vec<Meter>,
-    /// 부활이나 수리가 진행되는 동안 화면 아래에 띄우는 진행 막대입니다.
+    /// 부활, 수리, 건설이 진행되는 동안 화면 아래에 띄우는 진행 막대입니다.
     pub action: Option<Meter>,
     /// 쓰러진 동안의 출혈 시간 안내입니다.
     pub bleed: Option<String>,
+    /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다.
+    pub refusal: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -49,10 +55,9 @@ pub struct Banner {
 pub enum Tone {
     Health,
     Wagon,
-    Tower,
     Progress,
     Downed,
-    /// 사망했거나 파괴되어 더 이상 채울 것이 없는 상태입니다.
+    /// 사망해서 더 이상 채울 것이 없는 상태입니다.
     Gone,
 }
 
@@ -71,13 +76,14 @@ impl Hud {
             room: None,
             expedition: None,
             wave: None,
+            stash: None,
             banner: None,
             me: None,
             wagon: None,
-            towers: Vec::new(),
             allies: Vec::new(),
             action: None,
             bleed: None,
+            refusal: None,
         };
         if let Some(joined) = session.joined() {
             hud.room = Some(format!("ROOM {}", joined.room));
@@ -91,6 +97,7 @@ impl Hud {
         let my_team = Team(joined.welcome.team);
         hud.expedition = Some(format!("EXPEDITION {}", frame.expedition));
         hud.wave = wave_text(frame);
+        hud.stash = Some(format!("STASH  {}", frame.stash));
         if let WirePhase::Over {
             outcome, secs_left, ..
         } = frame.phase
@@ -102,12 +109,6 @@ impl Hud {
             fraction: bar_fraction(frame.wagon.hp, frame.wagon.max_hp),
             tone: Tone::Wagon,
         });
-        let numbered = frame.towers.len() > 1;
-        hud.towers = frame
-            .towers
-            .iter()
-            .map(|tower| tower_meter(tower.id, tower.max_hp, tower.state, numbered))
-            .collect();
         hud.allies = frame
             .players
             .iter()
@@ -118,6 +119,13 @@ impl Hud {
         if let Some(me) = frame.player(you) {
             hud.me = Some(my_meter(me));
             hud.action = action_meter(me, frame);
+            if let WireLife::Alive {
+                build_refusal: Some(refusal),
+                ..
+            } = me.life
+            {
+                hud.refusal = Some(refusal_text(refusal));
+            }
             if let WireLife::Downed {
                 bleed_secs_left,
                 revive_progress,
@@ -234,27 +242,7 @@ fn ally_meter(ally: &PlayerView) -> Meter {
     }
 }
 
-fn tower_meter(id: u32, max_hp: u32, state: WireTowerState, numbered: bool) -> Meter {
-    let name = if numbered {
-        format!("TOWER {id}")
-    } else {
-        "TOWER".to_string()
-    };
-    match state {
-        WireTowerState::Standing { hp, .. } => Meter {
-            label: format!("{name}  {hp} / {max_hp}"),
-            fraction: bar_fraction(hp, max_hp),
-            tone: Tone::Tower,
-        },
-        WireTowerState::Destroyed => Meter {
-            label: format!("{name}  DESTROYED"),
-            fraction: 0.0,
-            tone: Tone::Gone,
-        },
-    }
-}
-
-/// 내가 부활이나 수리를 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
+/// 내가 부활, 수리, 건설을 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
 /// 수리에는 진행도가 따로 없으므로, 수리하는 감시탑의 HP가 차오르는 모습을 진행도로 보여 줍니다.
 fn action_meter(me: &PlayerView, frame: &Frame) -> Option<Meter> {
     match me.life {
@@ -283,6 +271,23 @@ fn action_meter(me: &PlayerView, frame: &Frame) -> Option<Meter> {
                 tone: Tone::Progress,
             })
         }
+        WireLife::Alive {
+            interaction: Some(WireInteraction::Building { tower }),
+            ..
+        } => {
+            let tower = frame
+                .towers
+                .iter()
+                .find(|candidate| candidate.id == tower)?;
+            let WireTowerState::Building { progress } = tower.state else {
+                return None;
+            };
+            Some(Meter {
+                label: "BUILDING TOWER".to_string(),
+                fraction: progress,
+                tone: Tone::Progress,
+            })
+        }
         WireLife::Downed {
             revive_progress: Some(progress),
             ..
@@ -293,6 +298,18 @@ fn action_meter(me: &PlayerView, frame: &Frame) -> Option<Meter> {
         }),
         _ => None,
     }
+}
+
+/// 건설이 거절된 이유를 알리는 문구입니다.
+fn refusal_text(refusal: WireBuildRefusal) -> String {
+    let why = match refusal.why {
+        WireCannotBuild::NotEnoughStash => "NOT ENOUGH IN THE STASH",
+        WireCannotBuild::TowerLimit => "TOWER LIMIT REACHED",
+        WireCannotBuild::OutsideVillage => "TOO FAR FROM THE WAGON",
+        WireCannotBuild::TileTaken => "THE TILE IS TAKEN",
+        WireCannotBuild::WouldBlockPath => "IT WOULD BLOCK THE WAY TO THE WAGON",
+    };
+    format!("CANNOT BUILD: {why}")
 }
 
 /// 막대의 채움 비율입니다. 화면에 막대를 그리는 곳은 모두 이 함수로 비율을 구합니다.
@@ -318,7 +335,8 @@ fn whole_secs(secs: f32) -> u32 {
 mod tests {
     use super::*;
     use caravan_protocol::{
-        ClientEvent, RejectReason, RoomCode, ServerMsg, Welcome, WireShot, WireTower, WireWagon,
+        ClientEvent, RejectReason, RoomCode, ServerMsg, Welcome, WireShot, WireTile, WireTower,
+        WireWagon,
     };
     use caravan_rules::{Sim, Team, Tuning, Vec2};
 
@@ -344,6 +362,7 @@ mod tests {
             hp,
             max_hp: 100,
             interaction: None,
+            build_refusal: None,
         }
     }
 
@@ -368,8 +387,10 @@ mod tests {
                 hp: 400,
                 max_hp: 500,
             },
+            stash: 7,
             towers: vec![WireTower {
                 id: 1,
+                tile: WireTile { x: 15, y: 11 },
                 max_hp: 300,
                 state: WireTowerState::Standing {
                     hp: 250,
@@ -382,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn the_wave_wagon_tower_and_room_are_shown() {
+    fn the_wave_wagon_stash_and_room_are_shown() {
         let session = session_in_room();
         let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72))])));
 
@@ -393,7 +414,7 @@ mod tests {
         let wagon = hud.wagon.unwrap();
         assert_eq!(wagon.label, "WAGON  400 / 500");
         assert!((wagon.fraction - 0.8).abs() < 1e-6);
-        assert_eq!(hud.towers[0].label, "TOWER  250 / 300");
+        assert_eq!(hud.stash.as_deref(), Some("STASH  7"));
         assert_eq!(hud.banner, None);
     }
 
@@ -528,6 +549,7 @@ mod tests {
                     target: 2,
                     progress: 0.5,
                 }),
+                build_refusal: None,
             },
         );
         let action = Hud::of(&session, Some(&frame(vec![reviver])))
@@ -546,6 +568,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 interaction: Some(WireInteraction::Repairing { tower: 1 }),
+                build_refusal: None,
             },
         );
         let action = Hud::of(&session, Some(&frame(vec![repairer])))
@@ -556,14 +579,88 @@ mod tests {
     }
 
     #[test]
-    fn a_destroyed_tower_is_marked_and_its_bar_is_empty() {
+    fn building_a_tower_shows_the_progress_of_the_site() {
         let session = session_in_room();
-        let mut frame = frame(vec![player(YOU, alive(100))]);
-        frame.towers[0].state = WireTowerState::Destroyed;
+        let builder = player(
+            YOU,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                interaction: Some(WireInteraction::Building { tower: 2 }),
+                build_refusal: None,
+            },
+        );
+        let mut frame = frame(vec![builder]);
+        frame.towers.push(WireTower {
+            id: 2,
+            tile: WireTile { x: 16, y: 11 },
+            max_hp: 300,
+            state: WireTowerState::Building { progress: 0.4 },
+        });
         let hud = Hud::of(&session, Some(&frame));
-        assert_eq!(hud.towers[0].label, "TOWER  DESTROYED");
-        assert_eq!(hud.towers[0].fraction, 0.0);
-        assert_eq!(hud.towers[0].tone, Tone::Gone);
+        let action = hud.action.unwrap();
+        assert_eq!(action.label, "BUILDING TOWER");
+        assert_eq!(action.fraction, 0.4);
+        assert_eq!(hud.refusal, None);
+    }
+
+    #[test]
+    fn every_reason_a_build_is_refused_has_its_own_text() {
+        let session = session_in_room();
+        let reasons = [
+            (WireCannotBuild::NotEnoughStash, "NOT ENOUGH IN THE STASH"),
+            (WireCannotBuild::TowerLimit, "TOWER LIMIT REACHED"),
+            (WireCannotBuild::OutsideVillage, "TOO FAR FROM THE WAGON"),
+            (WireCannotBuild::TileTaken, "THE TILE IS TAKEN"),
+            (
+                WireCannotBuild::WouldBlockPath,
+                "IT WOULD BLOCK THE WAY TO THE WAGON",
+            ),
+        ];
+        let mut texts = Vec::new();
+        for (why, expected) in reasons {
+            let refused = player(
+                YOU,
+                WireLife::Alive {
+                    hp: 100,
+                    max_hp: 100,
+                    interaction: None,
+                    build_refusal: Some(WireBuildRefusal {
+                        tile: WireTile { x: 3, y: 4 },
+                        why,
+                    }),
+                },
+            );
+            let hud = Hud::of(&session, Some(&frame(vec![refused])));
+            let text = hud.refusal.expect("the reason is shown");
+            assert_eq!(text, format!("CANNOT BUILD: {expected}"));
+            texts.push(text);
+        }
+        texts.sort();
+        texts.dedup();
+        assert_eq!(texts.len(), reasons.len(), "no two reasons share a text");
+    }
+
+    #[test]
+    fn a_refusal_of_another_player_is_not_shown_to_me() {
+        let session = session_in_room();
+        let refused = player(
+            2,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                interaction: None,
+                build_refusal: Some(WireBuildRefusal {
+                    tile: WireTile { x: 3, y: 4 },
+                    why: WireCannotBuild::TileTaken,
+                }),
+            },
+        );
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), refused])),
+        );
+        assert_eq!(hud.refusal, None);
     }
 
     #[test]

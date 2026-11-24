@@ -323,10 +323,7 @@ mod tests {
             joined.welcome.world.obstacles.len(),
             tuning.map.obstacles.len()
         );
-        assert_eq!(
-            joined.welcome.world.towers.len(),
-            tuning.map.structures.len()
-        );
+        assert_eq!(joined.welcome.world.tower_limit, tuning.village.tower_limit);
     }
 
     #[test]

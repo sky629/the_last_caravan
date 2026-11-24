@@ -423,7 +423,10 @@ fn the_welcome_reports_the_players_id_the_capacity_and_the_tick_rate_from_the_tu
         panic!("expected Welcome, got {answer:?}");
     };
     assert_eq!((welcome.you, welcome.capacity, welcome.tick_hz), (2, 3, 30));
-    assert_eq!(welcome.world.towers.len(), 1);
+    assert_eq!(
+        welcome.world.tower_limit,
+        Tuning::default().village.tower_limit
+    );
 }
 
 #[test]
@@ -449,7 +452,8 @@ fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
         WireLife::Alive {
             hp: 100,
             max_hp: 100,
-            interaction: None
+            interaction: None,
+            build_refusal: None
         }
     );
 }

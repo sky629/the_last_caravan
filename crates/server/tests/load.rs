@@ -1,7 +1,7 @@
 //! 몬스터가 300마리 있는 방에서 서버가 실제로 보내는 스냅샷의 크기를 확인합니다.
 //!
 //! 프로토콜 크레이트의 크기 테스트는 손으로 만든 스냅샷을 쓰고, 이 테스트는 실제 규칙이 만든 상태를 씁니다.
-//! 규칙의 수치를 바꿔서 마차, 감시탑, 플레이어가 죽지 않게 하고 몬스터가 Tick마다 한 마리씩 나타나게 하면,
+//! 규칙의 수치를 바꿔서 마차와 플레이어가 죽지 않게 하고 몬스터가 Tick마다 한 마리씩 나타나게 하면,
 //! 아무도 막지 않는 300마리가 마차 둘레에 쌓입니다.
 
 mod common;
@@ -22,8 +22,6 @@ fn crowd_tuning() -> Tuning {
     tuning.waves.first_delay_secs = 0.1;
     tuning.waves.spawn_interval_secs = 0.05;
     tuning.wagon.max_hp = u32::MAX;
-    tuning.structures.watchtower.max_hp = u32::MAX;
-    tuning.structures.watchtower.damage = 0;
     tuning.player.max_hp = u32::MAX;
     tuning
 }

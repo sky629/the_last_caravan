@@ -99,6 +99,19 @@ impl Bar {
         [self.back, self.fill]
     }
 
+    /// 막대 채움의 색을 정합니다. 값이 같으면 바꾸지 않습니다.
+    pub fn paint(
+        self,
+        materials: &mut Query<&mut MeshMaterial2d<ColorMaterial>>,
+        material: &Handle<ColorMaterial>,
+    ) {
+        if let Ok(mut current) = materials.get_mut(self.fill)
+            && current.0 != *material
+        {
+            current.0 = material.clone();
+        }
+    }
+
     pub fn place(self, parts: &mut PartQuery, y: f32, fraction: Option<f32>) {
         let layout = bar_layout(y, fraction);
         set_part(parts, self.back, layout.back, layout.visible);

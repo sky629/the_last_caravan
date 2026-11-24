@@ -22,6 +22,8 @@ pub struct Controls {
     pub attack: bool,
     /// F 키입니다. 누르고 있는 동안 부활과 수리를 진행합니다.
     pub interact: bool,
+    /// B 키입니다. 누르고 있는 동안 바라보는 쪽 타일에 감시탑을 짓습니다.
+    pub build: bool,
 }
 
 impl Controls {
@@ -40,6 +42,7 @@ impl Controls {
             aim: WireVec2::new(aim.x, aim.y),
             attack: self.attack,
             interact: self.interact,
+            build: self.build,
         }
     }
 }
@@ -161,10 +164,11 @@ mod tests {
         let controls = Controls {
             attack: true,
             interact: true,
+            build: true,
             ..Controls::default()
         };
         let input = controls.to_input(1, None);
-        assert!(input.attack && input.interact);
+        assert!(input.attack && input.interact && input.build);
     }
 
     #[test]

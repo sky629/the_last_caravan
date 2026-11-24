@@ -141,15 +141,17 @@ fn a_monster_walks_around_a_wall_to_reach_the_wagon() {
 fn monsters_never_enter_obstacles_or_leave_the_map() {
     // 기본 맵에서 실제 무리가 나타나서 마차를 공격하는 동안 모든 Tick의 모든 몬스터 위치를 검사합니다.
     let mut s = Scenario::with_waves(|t| t.map = crate::tuning::MapSpec::stage1());
+    s.tower_at(15, 11);
     let t = s.sim.tuning().clone();
     let radius = t.monsters.grunt.radius;
-    let mut solids = t.map.obstacles.clone();
-    solids.push(t.map.wagon);
-    solids.extend(t.map.structures.iter().map(|placed| placed.tile.rect()));
 
     let mut seen = 0;
     for _ in 0..s.ticks(40.0) {
         s.run_ticks(1);
+        // 감시탑은 파괴되면 사라지므로 Tick마다 지금 서 있는 감시탑을 가져옵니다.
+        let mut solids = t.map.obstacles.clone();
+        solids.push(t.map.wagon);
+        solids.extend(s.sim.towers().map(|tower| tower.rect()));
         for monster in s.sim.monsters() {
             seen += 1;
             let p = monster.pos;
@@ -239,7 +241,7 @@ fn a_crowd_queues_behind_the_front_line_instead_of_piling_onto_one_spot() {
 /// 몬스터 300마리가 1 Tick 간격으로 나타나는 한 무리입니다.
 /// 마차와 감시탑은 버티고, 맵 전체를 덮는 감시탑이 2 Tick마다 한 마리씩 처치합니다.
 fn crowd_of_300() -> Scenario {
-    Scenario::with_waves(|t| {
+    let mut s = Scenario::with_waves(|t| {
         t.map = crate::tuning::MapSpec::stage1();
         t.waves.sizes = vec![300];
         t.waves.first_delay_secs = 0.05;
@@ -250,7 +252,9 @@ fn crowd_of_300() -> Scenario {
         tower.range = 40.0;
         tower.damage = t.monsters.grunt.max_hp;
         tower.cooldown_secs = 0.1;
-    })
+    });
+    s.tower_at(15, 11);
+    s
 }
 
 #[test]
@@ -292,6 +296,7 @@ fn tick_time_with(count: u32) -> (std::time::Duration, std::time::Duration) {
         t.structures.watchtower.max_hp = u32::MAX;
         t.structures.watchtower.damage = 0;
     });
+    s.tower_at(15, 11);
     s.run_until(count + 100, |sim| sim.monsters().count() == count as usize);
     s.run_ticks(600);
     assert_eq!(s.sim.monsters().count(), count as usize, "nobody died");

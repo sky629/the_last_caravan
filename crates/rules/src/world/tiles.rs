@@ -42,7 +42,7 @@ impl Tile {
     }
 
     /// `dx`, `dy`만큼 옮긴 타일입니다. `u16`의 범위를 벗어나면 `None`입니다. 맵 안인지는 `TileMap::contains`가 따로 확인합니다.
-    fn step(self, dx: i32, dy: i32) -> Option<Tile> {
+    pub fn step(self, dx: i32, dy: i32) -> Option<Tile> {
         let x = u16::try_from(i32::from(self.x) + dx).ok()?;
         let y = u16::try_from(i32::from(self.y) + dy).ok()?;
         Some(Tile { x, y })

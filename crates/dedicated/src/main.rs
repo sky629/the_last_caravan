@@ -96,7 +96,6 @@ fn tuning_from(options: &Options) -> Tuning {
     }
     if options.stress {
         tuning.wagon.max_hp = u32::MAX;
-        tuning.structures.watchtower.max_hp = u32::MAX;
         tuning.player.max_hp = u32::MAX;
         tuning.waves.spawn_interval_secs = tuning.dt();
     }
@@ -132,11 +131,12 @@ impl ServerTransport for DebugTransport {
 fn describe(msg: &ServerMsg) -> String {
     match msg {
         ServerMsg::Snapshot(snapshot) => format!(
-            "Snapshot {{ tick: {}, expedition: {}, phase: {:?}, wagon: {:?}, towers: {:?}, players: {:?}, monsters: {} }}",
+            "Snapshot {{ tick: {}, expedition: {}, phase: {:?}, wagon: {:?}, stash: {}, towers: {:?}, players: {:?}, monsters: {} }}",
             snapshot.tick,
             snapshot.expedition,
             snapshot.phase,
             snapshot.wagon,
+            snapshot.stash,
             snapshot.towers,
             snapshot.players,
             snapshot.monsters.len()
