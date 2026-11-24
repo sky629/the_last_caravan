@@ -285,7 +285,7 @@ mod tests {
             pos: Ground::new(x, y),
             facing: Ground::new(1.0, 0.0),
             life,
-            last_attack_tick: None,
+            last_attack: None,
             weapon: WireWeaponKind::Sword,
         }
     }

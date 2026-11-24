@@ -2,9 +2,9 @@
 //! 규칙은 공개 함수(`add_player`, `step`)로만 움직이고, 기대하는 값은 규칙의 약속(수치표의 값)에서 구합니다.
 
 use caravan_protocol::{
-    Snapshot, WeaponInfo, Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireDelivery,
-    WireInteraction, WireLife, WireMonsterKind, WireOutcome, WirePhase, WirePos, WireRepairTarget,
-    WireTile, WireTowerState, WireWeaponKind,
+    Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
+    WireDelivery, WireInteraction, WireLife, WireMonsterKind, WireOutcome, WirePhase, WirePos,
+    WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
     AimDir, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2,
@@ -93,7 +93,7 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
             build_refusal: None
         }
     );
-    assert_eq!((player.last_input_seq, player.last_attack_tick), (0, None));
+    assert_eq!((player.last_input_seq, player.last_attack), (0, None));
     assert_eq!(
         player.weapon,
         WireWeaponKind::Sword,
@@ -602,6 +602,43 @@ fn the_weapon_a_player_holds_is_on_the_wire() {
         weapon_of(other.0),
         Some(WireWeaponKind::Sword),
         "only the player who pressed Q switched"
+    );
+}
+
+#[test]
+fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_held_now() {
+    let mut sim = sim_with(|_| {});
+    let fighter = sim.add_player().unwrap();
+    let swing = PlayerInputs::from([(
+        fighter,
+        PlayerInput {
+            aim: AimDir::new(1.0, 0.0),
+            attack: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    let press_q = PlayerInputs::from([(
+        fighter,
+        PlayerInput {
+            switch_weapon: true,
+            ..PlayerInput::default()
+        },
+    )]);
+
+    step(&mut sim, &swing, 1);
+    let swung_at = Snapshot::from_sim(&sim).tick;
+    step(&mut sim, &press_q, 1);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let player = snapshot.players.iter().find(|p| p.id == fighter.0).unwrap();
+    assert_eq!(player.weapon, WireWeaponKind::Bow);
+    assert_eq!(
+        player.last_attack,
+        Some(WireAttack {
+            tick: swung_at,
+            weapon: WireWeaponKind::Sword
+        }),
+        "the effect to draw is the sword swing"
     );
 }
 

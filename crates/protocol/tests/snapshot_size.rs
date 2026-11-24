@@ -3,9 +3,10 @@
 //! 한계는 측정한 크기에 약 7%의 여유를 둔 값입니다. 한계를 넘으면 접속 하나가 쓰는 대역폭이 늘어난 것이므로, 다음 단계의 설계를 다시 정해야 합니다.
 
 use caravan_protocol::{
-    ServerMsg, Snapshot, WireAngle, WireInteraction, WireLife, WireMonster, WireMonsterKind,
-    WireNightStep, WireNode, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WireShot,
-    WireTile, WireTower, WireTowerState, WireWagon, WireWeaponKind, encode_server,
+    ServerMsg, Snapshot, WireAngle, WireAttack, WireInteraction, WireLife, WireMonster,
+    WireMonsterKind, WireNightStep, WireNode, WirePhase, WirePile, WirePlayer, WirePos,
+    WireProjectile, WireShot, WireTile, WireTower, WireTowerState, WireWagon, WireWeaponKind,
+    encode_server,
 };
 
 /// 몬스터와 탄환의 번호가 `first_id`부터 이어지는 스냅샷입니다. 모든 좌표 값은 2바이트로 기록되는 크기(128 이상)입니다.
@@ -17,7 +18,10 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
         facing: WireAngle(200),
         life,
         last_input_seq: 100_000,
-        last_attack_tick: Some(100_000),
+        last_attack: Some(WireAttack {
+            tick: 100_000,
+            weapon: WireWeaponKind::Bow,
+        }),
         weapon: WireWeaponKind::Bow,
     };
     Snapshot {

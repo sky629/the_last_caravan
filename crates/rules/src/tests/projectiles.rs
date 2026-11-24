@@ -103,7 +103,7 @@ fn a_shot_makes_a_projectile_that_flies_in_the_aimed_direction_at_the_table_spee
     assert!(shot.is_flying());
     assert!(close(shot.pos.x, 3.0 + step) && close(shot.pos.y, 10.0));
     assert_eq!(shot.dir, Vec2::new(1.0, 0.0));
-    assert_eq!(s.player(a).last_attack_tick, Some(1));
+    assert_eq!(s.player(a).last_attack.map(|attack| attack.tick), Some(1));
 
     s.run_ticks(4);
     let shot = only_projectile(&s);
@@ -436,7 +436,7 @@ fn a_downed_player_does_not_shoot() {
     s.run_ticks(20);
 
     assert_eq!(s.sim.projectiles().count(), 0);
-    assert_eq!(s.player(a).last_attack_tick, None);
+    assert_eq!(s.player(a).last_attack.map(|attack| attack.tick), None);
 }
 
 #[test]

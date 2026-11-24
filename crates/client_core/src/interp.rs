@@ -11,8 +11,8 @@ use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 use caravan_protocol::{
-    Snapshot, WireAngle, WireLife, WireMonster, WireMonsterKind, WireNode, WirePhase, WirePile,
-    WirePlayer, WireProjectile, WireTower, WireWagon, WireWeaponKind,
+    Snapshot, WireAngle, WireAttack, WireLife, WireMonster, WireMonsterKind, WireNode, WirePhase,
+    WirePile, WirePlayer, WireProjectile, WireTower, WireWagon, WireWeaponKind,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -56,7 +56,8 @@ pub struct PlayerView {
     /// 길이가 1인 지면 방향입니다.
     pub facing: Vec2,
     pub life: WireLife,
-    pub last_attack_tick: Option<u64>,
+    /// 마지막으로 한 공격과 공격한 무기입니다.
+    pub last_attack: Option<WireAttack>,
     /// 들고 있는 무기입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
     pub weapon: WireWeaponKind,
 }
@@ -245,7 +246,7 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
         pos,
         facing,
         life: a.life,
-        last_attack_tick: a.last_attack_tick,
+        last_attack: a.last_attack,
         weapon: a.weapon,
     }
 }
@@ -352,7 +353,7 @@ mod tests {
                 build_refusal: None,
             },
             last_input_seq: 0,
-            last_attack_tick: None,
+            last_attack: None,
             weapon: WireWeaponKind::Sword,
         }
     }

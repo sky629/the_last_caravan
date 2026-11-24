@@ -26,10 +26,11 @@ pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Giz
         return;
     };
     for player in &frame.players {
-        let progress = player
-            .last_attack_tick
-            .and_then(|tick| effect_progress(frame.tick, tick, config::SWING_TICKS));
-        let arc = swing_arc(&scene, player.weapon);
+        let Some(attack) = player.last_attack else {
+            continue;
+        };
+        let progress = effect_progress(frame.tick, attack.tick, config::SWING_TICKS);
+        let arc = swing_arc(&scene, attack.weapon);
         if let (Some(progress), Some((radius, half_angle))) = (progress, arc) {
             draw_swing(&mut gizmos, player, progress, radius, half_angle);
         }
@@ -67,7 +68,7 @@ fn draw_tile_outline(gizmos: &mut Gizmos, tile: Tile, color: Color) {
     gizmos.linestrip_2d(corners.map(convert::screen_pos), color);
 }
 
-/// 든 무기가 부채꼴로 공격하면 부채꼴의 반지름(타일)과 절반 각도(라디안)입니다. 입장 안내의 무기 표에서 구하므로 서버의 수치와 같습니다.
+/// 공격한 무기가 부채꼴로 공격하면 부채꼴의 반지름(타일)과 절반 각도(라디안)입니다. 입장 안내의 무기 표에서 구하므로 서버의 수치와 같습니다.
 /// 탄환으로 쏘는 무기에는 부채꼴이 없습니다. 판정은 서버가 하고, 이 부채꼴은 그림일 뿐입니다.
 fn swing_arc(scene: &Scene, weapon: WireWeaponKind) -> Option<(f32, f32)> {
     match scene.delivery(weapon)? {

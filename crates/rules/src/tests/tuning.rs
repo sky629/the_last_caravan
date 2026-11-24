@@ -506,7 +506,8 @@ fn a_projectile_that_never_moves_or_never_ends_is_rejected() {
 #[test]
 fn a_projectile_as_wide_as_the_player_is_rejected() {
     let player_radius = Tuning::default().player.radius;
-    for bad in [player_radius, 1.0, -0.1, f32::NAN] {
+    // 0.75배는 플레이어보다 가늘지만, 장애물의 모서리에 붙어 서서 쏘면 쏜 자리에서 멈추는 굵기입니다.
+    for bad in [player_radius, player_radius * 0.75, 1.0, -0.1, f32::NAN] {
         let t = with_bow(ProjectileTuning {
             radius: bad,
             ..default_shot()

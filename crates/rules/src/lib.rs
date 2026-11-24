@@ -42,7 +42,7 @@ pub use input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 pub use kind::{MonsterKind, StructureKind, WeaponKind};
 pub use math::{Rect, Vec2};
 pub use monster::{Monster, Order};
-pub use player::{Interaction, Life, Player, RepairTarget};
+pub use player::{Interaction, LastAttack, Life, Player, RepairTarget};
 pub use projectile::{Flight, Projectile};
 pub use resources::{GatherNode, Pile};
 pub use sim::{JoinError, Sim};

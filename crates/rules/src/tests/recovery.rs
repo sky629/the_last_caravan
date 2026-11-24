@@ -268,7 +268,7 @@ fn a_wagon_repairer_can_neither_move_nor_attack() {
     s.run_ticks(20);
 
     assert_eq!(s.player(a).pos, start);
-    assert_eq!(s.player(a).last_attack_tick, None);
+    assert_eq!(s.player(a).last_attack.map(|attack| attack.tick), None);
     assert!(s.monster(monster).is_some_and(|m| m.hp > 0));
 }
 

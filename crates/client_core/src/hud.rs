@@ -490,7 +490,7 @@ mod tests {
             pos: Vec2::new(5.0, 5.0),
             facing: Vec2::new(1.0, 0.0),
             life,
-            last_attack_tick: None,
+            last_attack: None,
             weapon: WireWeaponKind::Sword,
         }
     }

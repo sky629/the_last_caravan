@@ -127,6 +127,14 @@ pub struct WireShot {
     pub tick: u64,
 }
 
+/// 플레이어가 마지막으로 한 공격입니다. `weapon`은 공격한 무기이고, 지금 든 무기와 다를 수 있습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireAttack {
+    /// 공격한 서버 Tick입니다.
+    pub tick: u64,
+    pub weapon: WireWeaponKind,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WirePlayer {
     pub id: u32,
@@ -136,8 +144,8 @@ pub struct WirePlayer {
     pub life: WireLife,
     /// 서버가 마지막으로 처리한 입력의 순서 번호입니다. 클라이언트 예측이 어디까지 확인되었는지 알려 줍니다.
     pub last_input_seq: u32,
-    /// 마지막으로 공격한 서버 Tick입니다. 클라이언트는 스냅샷의 `tick`과 비교해서 공격 효과를 그립니다.
-    pub last_attack_tick: Option<u64>,
+    /// 마지막으로 한 공격입니다. 클라이언트는 공격한 Tick을 스냅샷의 `tick`과 비교해서, 공격한 무기의 효과를 그립니다.
+    pub last_attack: Option<WireAttack>,
     /// 들고 있는 무기입니다. 쓰러졌거나 사망한 플레이어도 무기를 들고 있습니다.
     pub weapon: WireWeaponKind,
 }
@@ -428,7 +436,10 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
         facing: WireAngle::from_direction(player.facing),
         life,
         last_input_seq: player.last_input_seq,
-        last_attack_tick: player.last_attack_tick,
+        last_attack: player.last_attack.map(|attack| WireAttack {
+            tick: attack.tick,
+            weapon: WireWeaponKind::of(attack.weapon),
+        }),
         weapon: WireWeaponKind::of(player.weapon),
     }
 }

@@ -41,7 +41,7 @@ impl WeaponKind {
     pub const STARTING: WeaponKind = WeaponKind::Sword;
 
     /// `Q`를 누르면 바뀌는 다음 무기입니다. `ALL`의 순서대로 돌고 마지막 다음은 처음입니다.
-    /// 무기 장착 기능이 생기면 이 함수가 장착한 무기 가운데 다음 것을 고르는 일로 바뀝니다. 부르는 곳은 `weapon::decide` 하나입니다.
+    /// 부르는 곳은 `weapon::decide` 하나입니다.
     pub fn next(self) -> WeaponKind {
         let next = WeaponKind::ALL
             .iter()

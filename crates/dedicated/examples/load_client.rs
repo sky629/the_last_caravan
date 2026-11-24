@@ -4,7 +4,7 @@
 //! 실행: `cargo run --release -p caravan_dedicated --example load_client -- --addr 127.0.0.1:7777 --room load --secs 60`
 //!
 //! 이 클라이언트는 제자리에서 공격 버튼을 누른 채 조준 방향을 돌립니다. `--passive`를 붙이면 공격하지 않아서 몬스터가 가장 많이 쌓입니다.
-//! `--bow`를 붙이면 첫 입력에서 무기 전환 키를 한 번 눌러서 활로 바꾸고, 탄환을 쏩니다.
+//! `--bow`를 붙이면 원정마다 첫 스냅샷을 받은 뒤에 무기 전환 키를 한 번 눌러서 활로 바꾸고, 탄환을 쏩니다.
 //! 여러 개를 동시에 실행하면 한 방에 여러 접속을 만들 수 있습니다.
 //! 기록하는 크기는 WebSocket 프레임의 내용(스냅샷을 이진 형식으로 바꾼 바이트)이며, 프레임 머리(2~4바이트)와 TCP 머리는 포함하지 않습니다.
 
@@ -127,6 +127,8 @@ fn run(options: &Options) -> Result<(), String> {
     let mut peak = Peak::default();
     let mut total_bytes = 0usize;
     let mut latest: Option<Snapshot> = None;
+    // 활로 바꾼 원정의 번호입니다. 새 원정은 무기를 검으로 돌려놓으므로, 원정마다 한 번씩 다시 바꿉니다.
+    let mut bow_expedition: Option<u32> = None;
 
     while started.elapsed() < run_for {
         let wait = next_input.saturating_duration_since(Instant::now());
@@ -175,6 +177,11 @@ fn run(options: &Options) -> Result<(), String> {
         if now >= next_input {
             seq += 1;
             let angle = started.elapsed().as_secs_f32();
+            let expedition = latest.as_ref().map(|snapshot| snapshot.expedition);
+            let switch_weapon = options.bow && expedition.is_some() && bow_expedition != expedition;
+            if switch_weapon {
+                bow_expedition = expedition;
+            }
             send(
                 &mut socket,
                 &ClientMsg::Input(InputMsg {
@@ -185,7 +192,7 @@ fn run(options: &Options) -> Result<(), String> {
                     interact: false,
                     build: false,
                     sprint: false,
-                    switch_weapon: options.bow && seq == 1,
+                    switch_weapon,
                 }),
             )?;
             next_input += tick_period;

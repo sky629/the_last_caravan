@@ -128,7 +128,9 @@ fn inputs_between_two_ticks_merge_so_a_short_click_is_not_lost() {
     a.send(&input_with(2, (0.0, 1.0), false));
     rig.run_ticks(1);
     let snapshot = last_snapshot(&mut a);
-    let swing = player(&snapshot, a_id).last_attack_tick;
+    let swing = player(&snapshot, a_id)
+        .last_attack
+        .map(|attack| attack.tick);
     assert_eq!(swing, Some(snapshot.tick), "the click swung the weapon");
     assert_near(
         position(&snapshot, a_id).x,
@@ -145,7 +147,9 @@ fn inputs_between_two_ticks_merge_so_a_short_click_is_not_lost() {
     // 뗀 상태가 이어지므로, 쿨다운(0.5초)이 끝난 뒤에도 다시 휘두르지 않습니다.
     rig.run_ticks(15);
     assert_eq!(
-        player(&last_snapshot(&mut a), a_id).last_attack_tick,
+        player(&last_snapshot(&mut a), a_id)
+            .last_attack
+            .map(|attack| attack.tick),
         swing,
         "the click is not repeated on the ticks that follow"
     );
@@ -157,7 +161,12 @@ fn a_player_who_never_clicked_has_not_swung() {
     let (mut a, a_id) = rig.join_ok("test");
     a.send(&input_with(1, (1.0, 0.0), false));
     rig.run_ticks(1);
-    assert_eq!(player(&last_snapshot(&mut a), a_id).last_attack_tick, None);
+    assert_eq!(
+        player(&last_snapshot(&mut a), a_id)
+            .last_attack
+            .map(|attack| attack.tick),
+        None
+    );
 }
 
 #[test]

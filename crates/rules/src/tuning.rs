@@ -83,6 +83,7 @@ pub struct ProjectileTuning {
     /// 날아갈 수 있는 거리(타일)입니다. 이 거리를 다 날면 사라집니다.
     pub range: f32,
     /// 탄환의 반지름(타일)입니다. 몬스터의 반지름과 더한 거리 안으로 지나가면 닿은 것입니다.
+    /// 플레이어의 반지름을 1.41로 나눈 값보다 짧아야 합니다. 그래야 장애물의 모서리에 붙어 서서 쏜 탄환이 쏜 자리에서 멈추지 않습니다.
     pub radius: f32,
 }
 
@@ -716,9 +717,11 @@ impl Tuning {
                     check_positive(&format!("{kind:?} projectile speed"), shot.speed)?;
                     check_positive(&format!("{kind:?} projectile range"), shot.range)?;
                     check_not_negative(&format!("{kind:?} projectile radius"), shot.radius)?;
-                    if shot.radius >= self.player.radius {
+                    // 탄환은 막힌 타일을 반지름만큼 키운 각진 사각형에 닿으면 멈춥니다. 그 사각형의 모서리는 타일의 모서리에서
+                    // 반지름의 1.41배까지 나와 있으므로, 타일의 모서리에 대각선으로 붙어 선 플레이어의 중심이 그 안에 들어가지 않아야 합니다.
+                    if shot.radius * std::f32::consts::SQRT_2 >= self.player.radius {
                         return Err(format!(
-                            "{kind:?} projectile radius {} must be shorter than the player radius {}",
+                            "{kind:?} projectile radius {} times 1.41 must be shorter than the player radius {}",
                             shot.radius, self.player.radius
                         ));
                     }

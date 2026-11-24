@@ -8,7 +8,7 @@ use crate::collision::Body;
 use crate::ids::Team;
 use crate::math::Vec2;
 use crate::monster::Monster;
-use crate::player::Life;
+use crate::player::{LastAttack, Life};
 use crate::projectile::Launch;
 use crate::tuning::{ArcTuning, Delivery, arc_cos};
 use crate::world::{Ctx, Hit, Target, World};
@@ -59,7 +59,10 @@ fn decide(world: &mut World, ctx: &Ctx) -> Vec<Attack> {
         }
 
         *cooldown_ticks = stats.attack_cooldown_ticks;
-        player.last_attack_tick = Some(ctx.tick);
+        player.last_attack = Some(LastAttack {
+            tick: ctx.tick,
+            weapon: player.weapon,
+        });
         attacks.push(Attack {
             team: player.team,
             origin: player.pos,

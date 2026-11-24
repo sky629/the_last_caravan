@@ -30,8 +30,15 @@ pub struct Player {
     pub weapon: WeaponKind,
     /// 마지막으로 처리한 입력의 순서 번호입니다.
     pub last_input_seq: u32,
-    /// 마지막으로 공격한 Tick입니다. 이벤트가 아니라 상태이므로, 스냅샷을 한 번 놓친 클라이언트도 공격 효과를 그릴 수 있습니다.
-    pub last_attack_tick: Option<u64>,
+    /// 마지막으로 한 공격입니다. 이벤트가 아니라 상태이므로, 스냅샷을 한 번 놓친 클라이언트도 공격 효과를 그릴 수 있습니다.
+    pub last_attack: Option<LastAttack>,
+}
+
+/// 플레이어가 마지막으로 한 공격입니다. 공격한 무기를 함께 기억하므로, 공격한 직후에 무기를 바꿔도 화면은 공격한 무기의 효과를 그립니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LastAttack {
+    pub tick: u64,
+    pub weapon: WeaponKind,
 }
 
 /// 플레이어의 생명 상태입니다. 상태마다 그 상태에서 의미가 있는 값만 가집니다.
@@ -140,7 +147,7 @@ impl Player {
             life: Life::alive(t.player.max_hp, t),
             weapon: WeaponKind::STARTING,
             last_input_seq: 0,
-            last_attack_tick: None,
+            last_attack: None,
         }
     }
 

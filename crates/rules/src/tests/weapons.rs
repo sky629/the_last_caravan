@@ -6,7 +6,7 @@ use crate::expedition::{Outcome, Phase};
 use crate::ids::PlayerId;
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::WeaponKind;
-use crate::player::Interaction;
+use crate::player::{Interaction, LastAttack};
 use crate::world::Tile;
 
 fn attack_east() -> PlayerInput {
@@ -91,12 +91,37 @@ fn the_new_weapon_attacks_in_the_tick_of_the_switch() {
 }
 
 #[test]
+fn the_last_attack_remembers_the_weapon_that_attacked_after_a_switch() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(10.0, 10.0);
+    s.hold(a, attack_east());
+    s.run_ticks(1);
+    s.hold(a, PlayerInput::default());
+
+    s.tap_switch_key(a);
+
+    assert_eq!(s.player(a).weapon, WeaponKind::Bow);
+    assert_eq!(
+        s.player(a).last_attack,
+        Some(LastAttack {
+            tick: 1,
+            weapon: WeaponKind::Sword
+        }),
+        "the swing of tick 1 was a sword swing"
+    );
+}
+
+#[test]
 fn the_cooldown_carries_over_to_the_other_weapon() {
     let mut s = Scenario::open_field();
     let a = s.player_at(10.0, 10.0);
     s.hold(a, attack_east());
     s.run_ticks(1);
-    assert_eq!(s.player(a).last_attack_tick, Some(1), "the sword swung");
+    assert_eq!(
+        s.player(a).last_attack.map(|attack| attack.tick),
+        Some(1),
+        "the sword swung"
+    );
 
     s.tap_switch_key(a);
     s.run_ticks(8);
@@ -108,7 +133,7 @@ fn the_cooldown_carries_over_to_the_other_weapon() {
 
     s.run_ticks(1);
     assert_eq!(
-        s.player(a).last_attack_tick,
+        s.player(a).last_attack.map(|attack| attack.tick),
         Some(11),
         "the bow shoots at tick 11"
     );

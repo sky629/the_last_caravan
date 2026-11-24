@@ -28,9 +28,9 @@ pub use loopback::{LoopbackClient, LoopbackConnector, LoopbackServer, loopback};
 pub use messages::{ClientMsg, InputMsg, PROTOCOL_VERSION, RejectReason, ServerMsg, WireVec2};
 pub use room_code::{RoomCode, RoomCodeError};
 pub use snapshot::{
-    Snapshot, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireMonster,
-    WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
-    WireProjectile, WireRepairTarget, WireShot, WireTower, WireTowerState, WireWagon,
+    Snapshot, WireAttack, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
+    WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile,
+    WirePlayer, WireProjectile, WireRepairTarget, WireShot, WireTower, WireTowerState, WireWagon,
     WireWeaponKind,
 };
 pub use transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};

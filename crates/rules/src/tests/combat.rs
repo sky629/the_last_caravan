@@ -38,7 +38,7 @@ fn a_swing_damages_a_monster_in_front_of_the_player() {
     s.run_ticks(1);
 
     assert_eq!(hp_of(&s, monster), hp_after(&s, 1));
-    assert_eq!(s.player(a).last_attack_tick, Some(1));
+    assert_eq!(s.player(a).last_attack.map(|attack| attack.tick), Some(1));
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn a_player_who_is_not_holding_attack_does_not_swing() {
     s.run_ticks(20);
 
     assert_eq!(hp_of(&s, monster), 1000);
-    assert_eq!(s.player(a).last_attack_tick, None);
+    assert_eq!(s.player(a).last_attack.map(|attack| attack.tick), None);
 }
 
 #[test]

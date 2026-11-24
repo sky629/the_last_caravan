@@ -12,11 +12,11 @@
 
 use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RejectReason, ServerMsg,
-    Snapshot, WeaponInfo, Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireDelivery,
-    WireInteraction, WireLife, WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome,
-    WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WireRect, WireRepairTarget, WireShot,
-    WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo,
-    decode_client, decode_server, encode_client, encode_server,
+    Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
+    WireDelivery, WireInteraction, WireLife, WireMonster, WireMonsterKind, WireNightStep, WireNode,
+    WireOutcome, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WireRect,
+    WireRepairTarget, WireShot, WireTile, WireTower, WireTowerState, WireVec2, WireWagon,
+    WireWeaponKind, WorldInfo, decode_client, decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -226,7 +226,10 @@ fn a_busy_snapshot_matches_golden_bytes() {
                     build_refusal: None,
                 },
                 last_input_seq: 300,
-                last_attack_tick: Some(120),
+                last_attack: Some(WireAttack {
+                    tick: 120,
+                    weapon: WireWeaponKind::Sword,
+                }),
                 weapon: WireWeaponKind::Bow,
             },
             WirePlayer {
@@ -239,7 +242,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
                     revive_progress: Some(0.25),
                 },
                 last_input_seq: 7,
-                last_attack_tick: None,
+                last_attack: None,
                 weapon: WireWeaponKind::Sword,
             },
         ],
@@ -284,7 +287,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x3F, // interaction: 있음, Reviving, target 2, progress 0.5
             0x00, // build_refusal: 없음
             0xAC, 0x02, // last_input_seq 300
-            0x01, 0x78, // last_attack_tick: 있음, 120
+            0x01, 0x78, 0x00, // last_attack: 있음, tick 120, 공격한 무기 Sword
             0x01, // weapon: Bow
             // 플레이어 2: 쓰러졌고 25%까지 부활됨
             0x02, 0x00, // id, team
@@ -293,7 +296,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x01, 0x00, 0x00, 0x20, 0x40, // Downed, bleed_secs_left 2.5
             0x01, 0x00, 0x00, 0x80, 0x3E, // revive_progress: 있음, 0.25
             0x07, // last_input_seq
-            0x00, // last_attack_tick: 없음
+            0x00, // last_attack: 없음
             0x00, // weapon: Sword
             0x01, // monsters: 길이 1
             0x05, 0x00, // id 5, Grunt
@@ -410,7 +413,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             build_refusal,
         },
         last_input_seq: 0,
-        last_attack_tick: None,
+        last_attack: None,
         weapon: WireWeaponKind::Sword,
     };
     snapshot.players = vec![
@@ -464,35 +467,35 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x01, 0x01, 0x00, 0x01,
             0x00, // interaction: 있음, Repairing, Tower, tower 1, stash_short 거짓
             0x00, // build_refusal: 없음
-            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, // weapon: Sword
             0x04, 0x00, 0x00, 0x00, 0x00, // id 4, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x00, // interaction: 없음
             0x01, 0x04, 0x05, 0x04, // build_refusal: 있음, tile 4 5, WouldBlockPath
-            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, // weapon: Sword
             0x05, 0x00, 0x00, 0x00, 0x00, // id 5, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x02, 0x01, // interaction: 있음, Building, tower 1
             0x00, // build_refusal: 없음
-            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, // weapon: Sword
             0x07, 0x00, 0x00, 0x00, 0x00, // id 7, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x03, 0x02, // interaction: 있음, Gathering, node 2
             0x00, // build_refusal: 없음
-            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, // weapon: Sword
             0x08, 0x00, 0x00, 0x00, 0x00, // id 8, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x01, 0x01, 0x01, // interaction: 있음, Repairing, Wagon, stash_short 참
             0x00, // build_refusal: 없음
-            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, // weapon: Sword
             0x06, 0x00, 0x00, 0x00, 0x00, // id 6, team, pos 0 0, facing 0
             0x02, // Dead
-            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x01, // weapon: Bow (쓰러지거나 죽어도 무기를 듭니다)
             0x00, // monsters: 길이 0
             0x00, // projectiles: 길이 0
