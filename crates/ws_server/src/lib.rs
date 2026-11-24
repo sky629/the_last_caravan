@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use caravan_protocol::{
@@ -19,7 +20,7 @@ use caravan_protocol::{
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -34,6 +35,10 @@ pub struct WsServer {
     inbound: mpsc::Receiver<Inbound>,
     outboxes: HashMap<LinkId, mpsc::Sender<Vec<u8>>>,
     local_addr: SocketAddr,
+    /// 네트워크 스레드에 끝내라고 알리는 신호입니다. `Drop`이 보냅니다.
+    shutdown: Option<oneshot::Sender<()>>,
+    /// `Drop`이 이 스레드가 끝나기를 기다립니다. 그래서 `WsServer`가 사라지면 포트도 이미 풀려 있습니다.
+    network_thread: Option<JoinHandle<()>>,
 }
 
 /// 네트워크 스레드가 게임 스레드에 보내는 알림입니다.
@@ -62,19 +67,37 @@ impl WsServer {
             TcpListener::from_std(std_listener)?
         };
         let (inbound_tx, inbound) = mpsc::channel(limits.inbound_capacity);
-        std::thread::Builder::new()
+        let (shutdown, shutdown_signal) = oneshot::channel();
+        // 실행기는 이 스레드가 끝날 때 함께 버려지고, 그때 접속 작업도 모두 끝납니다.
+        let network_thread = std::thread::Builder::new()
             .name("caravan-ws".to_string())
-            .spawn(move || runtime.block_on(accept_loop(listener, inbound_tx, limits)))?;
+            .spawn(move || {
+                runtime.block_on(accept_loop(listener, inbound_tx, limits, shutdown_signal));
+            })?;
 
         Ok(WsServer {
             inbound,
             outboxes: HashMap::new(),
             local_addr,
+            shutdown: Some(shutdown),
+            network_thread: Some(network_thread),
         })
     }
 
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
+    }
+}
+
+impl Drop for WsServer {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(thread) = self.network_thread.take() {
+            // 스레드가 패닉으로 끝났어도 이미 끝난 것이므로 결과는 확인하지 않습니다.
+            let _ = thread.join();
+        }
     }
 }
 
@@ -109,15 +132,28 @@ impl ServerTransport for WsServer {
     }
 }
 
-async fn accept_loop(listener: TcpListener, inbound: mpsc::Sender<Inbound>, limits: ServerLimits) {
+/// 접속을 받는 반복입니다. `shutdown`이 오면 끝나면서 리스너를 닫습니다.
+async fn accept_loop(
+    listener: TcpListener,
+    inbound: mpsc::Sender<Inbound>,
+    limits: ServerLimits,
+    mut shutdown: oneshot::Receiver<()>,
+) {
     let mut seats = Seats::new(limits);
     let (release, mut released) = mpsc::unbounded_channel();
     let mut next_link = 1;
     loop {
-        let (stream, peer) = match listener.accept().await {
+        let accepted = tokio::select! {
+            accepted = listener.accept() => accepted,
+            _ = &mut shutdown => return,
+        };
+        let (stream, peer) = match accepted {
             Ok(accepted) => accepted,
             Err(_) => {
-                tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
+                tokio::select! {
+                    () = tokio::time::sleep(ACCEPT_RETRY_DELAY) => {}
+                    _ = &mut shutdown => return,
+                }
                 continue;
             }
         };

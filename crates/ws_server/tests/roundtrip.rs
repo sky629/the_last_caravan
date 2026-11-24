@@ -235,3 +235,15 @@ async fn one_ip_cannot_open_more_links_than_its_cap_and_a_closed_link_frees_its_
     let (_third, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
     connected_link(&mut server).await;
 }
+
+#[test]
+fn dropping_the_server_releases_its_port() {
+    let server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
+    let addr = server.local_addr();
+    drop(server);
+
+    assert!(
+        std::net::TcpListener::bind(addr).is_ok(),
+        "the address can be bound again right after the drop"
+    );
+}
