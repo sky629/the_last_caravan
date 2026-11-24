@@ -3,11 +3,12 @@
 //! 실행: `cargo run -p caravan_dedicated -- --addr 127.0.0.1:7777`
 //!
 //! - `--debug-net`: 주고받는 모든 메시지를 읽을 수 있는 형태로 출력합니다. 스냅샷은 요약해서 출력합니다.
+//! - `--stats`: 1초에 한 줄씩 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 출력합니다. 부하를 시험할 때 씁니다.
 //! - `--waves 100,200,300`: 무리마다 몬스터의 수를 바꿉니다. 부하를 시험할 때 씁니다.
 //! - `--stress`: 마차, 감시탑, 플레이어를 죽지 않게 하고 몬스터를 Tick마다 한 마리씩 등장시킵니다.
 //!   기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로, 몬스터 수백 마리의 부하는 이 옵션으로 만듭니다.
 //!
-//! 1초에 한 줄씩 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 기록합니다.
+//! 기본 출력은 일어난 일뿐입니다. 접속을 받는 주소, 플레이어의 입장과 퇴장, 방의 생성과 제거, 한도 때문에 닫은 접속과 그 이유, 시작 오류를 한 줄씩 출력합니다.
 
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -23,13 +24,14 @@ use report::TickTimer;
 const DEFAULT_ADDR: &str = "127.0.0.1:7777";
 /// Tick 사이에도 이 간격으로 접속 방식을 확인합니다. 입장 요청에 답하는 지연의 상한입니다.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
-const USAGE: &str =
-    "usage: caravan-dedicated [--addr HOST:PORT] [--debug-net] [--waves SIZE,SIZE,...] [--stress]";
+const USAGE: &str = "usage: caravan-dedicated [--addr HOST:PORT] [--debug-net] [--stats] [--waves SIZE,SIZE,...] [--stress]";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
     addr: String,
     debug_net: bool,
+    /// 1초마다 서버의 규모와 Tick 시간을 한 줄로 출력합니다.
+    stats: bool,
     /// 무리마다 몬스터의 수입니다. 없으면 기본 수치를 씁니다.
     waves: Option<Vec<u32>>,
     stress: bool,
@@ -39,6 +41,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut options = Options {
         addr: DEFAULT_ADDR.to_string(),
         debug_net: false,
+        stats: false,
         waves: None,
         stress: false,
     };
@@ -50,6 +53,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                 None => return Err("--addr needs a value such as 127.0.0.1:7777".to_string()),
             },
             "--debug-net" => options.debug_net = true,
+            "--stats" => options.stats = true,
             "--stress" => options.stress = true,
             "--waves" => match rest.next() {
                 Some(value) => options.waves = Some(parse_waves(value)?),
@@ -179,18 +183,20 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut timer = TickTimer::new(started);
+    let mut timer = options.stats.then(|| TickTimer::new(started));
     // 프로세스를 종료하면(Ctrl-C) 반복도 끝납니다.
     loop {
         let now = Instant::now();
-        let ticks_before = server.stats().ticks;
+        let ticks_before = timer.is_some().then(|| server.stats().ticks);
         for notice in server.pump(now) {
             eprintln!("{notice}");
         }
-        let stats = server.stats();
-        timer.record(stats.ticks - ticks_before, now.elapsed());
-        if let Some(line) = timer.line_if_due(Instant::now(), stats) {
-            eprintln!("{line}");
+        if let (Some(timer), Some(ticks_before)) = (&mut timer, ticks_before) {
+            let stats = server.stats();
+            timer.record(stats.ticks - ticks_before, now.elapsed());
+            if let Some(line) = timer.line_if_due(Instant::now(), stats) {
+                eprintln!("{line}");
+            }
         }
         std::thread::sleep(server.time_until_next_tick(now).min(POLL_INTERVAL));
     }
@@ -211,6 +217,7 @@ mod tests {
             Ok(Options {
                 addr: "127.0.0.1:7777".to_string(),
                 debug_net: false,
+                stats: false,
                 waves: None,
                 stress: false
             })
@@ -220,10 +227,24 @@ mod tests {
             Ok(Options {
                 addr: "0.0.0.0:9000".to_string(),
                 debug_net: true,
+                stats: false,
                 waves: None,
                 stress: false
             })
         );
+    }
+
+    #[test]
+    fn the_statistics_line_is_off_unless_stats_is_given() {
+        assert!(!parse_args(&[]).unwrap().stats);
+        assert!(
+            !parse_args(&args(&["--stress", "--waves", "5"]))
+                .unwrap()
+                .stats
+        );
+        let options = parse_args(&args(&["--stats", "--stress"])).unwrap();
+        assert!(options.stats, "--stats turns the line on");
+        assert!(options.stress, "and leaves the other flags alone");
     }
 
     #[test]

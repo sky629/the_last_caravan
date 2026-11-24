@@ -62,11 +62,7 @@ fn a_default_room_takes_four_players_and_refuses_the_fifth() {
         assert!(sim.add_player().is_ok());
     }
 
-    assert_eq!(
-        sim.add_player(),
-        Err(JoinError::RoomFull { capacity: 4 }),
-        "D24"
-    );
+    assert_eq!(sim.add_player(), Err(JoinError::RoomFull { capacity: 4 }));
 }
 
 #[test]
@@ -88,7 +84,7 @@ fn leaving_removes_the_player_at_once() {
 
     s.sim.remove_player(a);
 
-    assert!(s.sim.player(a).is_none(), "D25");
+    assert!(s.sim.player(a).is_none());
     assert_eq!(s.sim.player_count(), 0);
 }
 
@@ -101,9 +97,117 @@ fn a_player_who_joins_in_the_middle_of_an_expedition_is_alive_at_a_spawn_point()
     let late = s.sim.add_player().unwrap();
 
     let spawn = s.sim.tuning().map.player_spawns[0];
-    assert!(s.player(late).is_alive(), "D35");
+    assert!(s.player(late).is_alive());
     assert_eq!(s.player(late).hp(), 100);
     assert_eq!(s.player(late).pos, spawn);
+}
+
+#[test]
+fn a_player_who_joins_after_someone_left_takes_the_spawn_point_nobody_in_the_room_uses() {
+    let spawns = [
+        Vec2::new(10.0, 10.0),
+        Vec2::new(11.0, 10.0),
+        Vec2::new(12.0, 10.0),
+        Vec2::new(13.0, 10.0),
+    ];
+    let mut s = Scenario::with_tuning(|t| t.map.player_spawns = spawns.to_vec());
+    let first = s.sim.add_player().unwrap();
+    let second = s.sim.add_player().unwrap();
+    let third = s.sim.add_player().unwrap();
+
+    s.sim.remove_player(first);
+    let newcomer = s.sim.add_player().unwrap();
+    assert_eq!(
+        s.player(newcomer).pos,
+        spawns[0],
+        "the free point is reused"
+    );
+    assert_eq!(s.player(second).pos, spawns[1]);
+    assert_eq!(s.player(third).pos, spawns[2]);
+
+    s.sim.remove_player(second);
+    s.sim.remove_player(third);
+    let next = s.sim.add_player().unwrap();
+    assert_eq!(
+        s.player(next).pos,
+        spawns[1],
+        "the lowest free point comes first"
+    );
+}
+
+#[test]
+fn a_new_expedition_returns_each_player_to_their_own_spawn_point_after_someone_left() {
+    let spawns = [
+        Vec2::new(10.0, 10.0),
+        Vec2::new(11.0, 10.0),
+        Vec2::new(12.0, 10.0),
+    ];
+    let mut s = Scenario::with_tuning(|t| t.map.player_spawns = spawns.to_vec());
+    let first = s.player_at(3.0, 3.0);
+    let second = s.player_at(4.0, 4.0);
+    let third = s.player_at(5.0, 5.0);
+    s.sim.remove_player(first);
+
+    s.set_wagon_hp(0);
+    s.run_ticks(1);
+    s.run_ticks(s.ticks(s.sim.tuning().waves.restart_secs) + 1);
+
+    assert_eq!(s.sim.expedition_number(), 2);
+    assert_eq!(s.player(second).pos, spawns[1]);
+    assert_eq!(s.player(third).pos, spawns[2]);
+}
+
+/// 등장 지점 네 곳에 플레이어 다섯 명이 들어갔다가 한 명이 나간 방입니다. 남은 네 명 가운데 둘이 같은 지점에 있습니다.
+fn five_players_on_four_points_after_one_left() -> (Scenario, [Vec2; 4], Vec<PlayerId>) {
+    let spawns = [
+        Vec2::new(10.0, 10.0),
+        Vec2::new(11.0, 10.0),
+        Vec2::new(12.0, 10.0),
+        Vec2::new(13.0, 10.0),
+    ];
+    let mut s = Scenario::with_tuning(|t| {
+        t.max_players = 6;
+        t.map.player_spawns = spawns.to_vec();
+    });
+    let ids: Vec<_> = (0..5).map(|_| s.sim.add_player().unwrap()).collect();
+    s.sim.remove_player(ids[2]);
+    let staying = [0, 1, 3, 4].iter().map(|&i| ids[i]).collect();
+    (s, spawns, staying)
+}
+
+#[test]
+fn players_beyond_the_spawn_points_are_spread_evenly_when_they_join() {
+    let (mut s, spawns, staying) = five_players_on_four_points_after_one_left();
+
+    let newcomer = s.sim.add_player().unwrap();
+
+    assert_eq!(
+        s.player(newcomer).pos,
+        spawns[2],
+        "the point nobody uses comes first"
+    );
+    let sixth = s.sim.add_player().unwrap();
+    let mut counts = [0; 4];
+    for id in staying.into_iter().chain([newcomer, sixth]) {
+        let point = spawns.iter().position(|p| *p == s.player(id).pos).unwrap();
+        counts[point] += 1;
+    }
+    assert_eq!(counts.iter().max(), Some(&2));
+    assert_eq!(counts.iter().sum::<i32>(), 6);
+}
+
+#[test]
+fn a_new_expedition_does_not_stack_two_players_on_one_point_while_another_is_free() {
+    let (mut s, spawns, staying) = five_players_on_four_points_after_one_left();
+
+    s.set_wagon_hp(0);
+    s.run_ticks(1);
+    s.run_ticks(s.ticks(s.sim.tuning().waves.restart_secs) + 1);
+
+    assert_eq!(s.sim.expedition_number(), 2);
+    let mut positions: Vec<_> = staying.iter().map(|&id| s.player(id).pos).collect();
+    positions.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(positions, spawns);
 }
 
 #[test]
@@ -116,18 +220,14 @@ fn the_first_wave_appears_after_the_delay_one_monster_at_a_time() {
     assert_eq!(monster_count(&s), 0, "nothing before the delay");
 
     s.run_ticks(1);
-    assert_eq!(
-        monster_count(&s),
-        1,
-        "the stream starts with one monster, C19"
-    );
+    assert_eq!(monster_count(&s), 1, "the stream starts with one monster");
     s.run_ticks(interval - 1);
     assert_eq!(monster_count(&s), 1);
     s.run_ticks(1);
     assert_eq!(monster_count(&s), 2);
 
     s.run_ticks(interval * 10);
-    assert_eq!(monster_count(&s), 6, "the first wave has six monsters, D18");
+    assert_eq!(monster_count(&s), 6, "the first wave has six monsters");
 }
 
 #[test]
@@ -172,17 +272,17 @@ fn the_next_larger_wave_comes_after_a_pause_once_the_wave_is_cleared() {
     defeat_the_current_wave(&mut s);
 
     let pause = s.ticks(s.sim.tuning().waves.between_secs);
-    assert!(
-        matches!(s.sim.phase(), Phase::Intermission { next_wave: 2, .. }),
-        "C19"
-    );
+    assert!(matches!(
+        s.sim.phase(),
+        Phase::Intermission { next_wave: 2, .. }
+    ));
     s.run_ticks(pause - 2);
     assert_eq!(monster_count(&s), 0, "still waiting");
 
     s.run_ticks(2);
     assert!(matches!(s.sim.phase(), Phase::Fighting { wave: 2, .. }));
     run_until_fully_spawned(&mut s);
-    assert_eq!(monster_count(&s), 10, "the second wave is larger, D18");
+    assert_eq!(monster_count(&s), 10, "the second wave is larger");
 }
 
 #[test]
@@ -222,7 +322,7 @@ fn clearing_every_wave_is_a_victory_and_a_new_expedition_follows() {
                 ..
             }
         ),
-        "C10, D19, got {:?}",
+        "got {:?}",
         s.sim.phase()
     );
 
@@ -233,7 +333,7 @@ fn clearing_every_wave_is_a_victory_and_a_new_expedition_follows() {
         "the result is still on the screen"
     );
     s.run_ticks(2);
-    assert_eq!(s.sim.expedition_number(), 2, "D20");
+    assert_eq!(s.sim.expedition_number(), 2);
     assert!(matches!(
         s.sim.phase(),
         Phase::Intermission { next_wave: 1, .. }
@@ -250,16 +350,13 @@ fn a_destroyed_wagon_fails_the_expedition() {
     s.run_ticks(1);
 
     assert_eq!(s.sim.wagon().hp, 0);
-    assert!(
-        matches!(
-            s.sim.phase(),
-            Phase::Over {
-                outcome: Outcome::Defeat,
-                ..
-            }
-        ),
-        "C10, D43"
-    );
+    assert!(matches!(
+        s.sim.phase(),
+        Phase::Over {
+            outcome: Outcome::Defeat,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -287,7 +384,7 @@ fn the_expedition_fails_when_every_player_is_downed_or_dead() {
                 ..
             }
         ),
-        "C10: one downed and one dead"
+        "one downed and one dead"
     );
 }
 
@@ -346,16 +443,13 @@ fn clearing_the_last_wave_in_the_same_tick_the_wagon_falls_is_a_defeat() {
 
     let wagon_falls = last_monster_dies_while_hitting_the_wagon(10);
     assert_eq!(wagon_falls.sim.monsters().count(), 0);
-    assert!(
-        matches!(
-            wagon_falls.sim.phase(),
-            Phase::Over {
-                outcome: Outcome::Defeat,
-                ..
-            }
-        ),
-        "D35"
-    );
+    assert!(matches!(
+        wagon_falls.sim.phase(),
+        Phase::Over {
+            outcome: Outcome::Defeat,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -394,7 +488,7 @@ fn a_new_expedition_restores_the_players_the_wagon_and_the_field() {
     s.run_ticks(restart + 1);
 
     assert_eq!(s.sim.expedition_number(), 2);
-    assert_eq!(s.sim.wagon().hp, 500, "D34");
+    assert_eq!(s.sim.wagon().hp, 500);
     assert_eq!(s.sim.monsters().count(), 0);
     for (id, spawn) in [
         (dead, Vec2::new(10.0, 10.0)),
@@ -426,7 +520,7 @@ fn monster_ids_are_not_reused_in_a_new_expedition() {
 fn the_default_game_has_three_waves_and_each_one_is_larger() {
     let waves = Tuning::default().waves.sizes;
 
-    assert_eq!(waves.len(), 3, "D18");
+    assert_eq!(waves.len(), 3);
     assert!(waves.windows(2).all(|pair| pair[0] < pair[1]));
 }
 

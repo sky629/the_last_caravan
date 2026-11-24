@@ -1,31 +1,34 @@
-//! 서버가 입장할 때 보낸 `Welcome`을 믿고 쓰기 전에 확인하는 상한입니다.
+//! 입장 안내(`Welcome`)가 믿고 쓸 만한 값인지 확인하는 상한입니다. 클라이언트와 서버가 이 파일의 정의 하나를 함께 씁니다.
 //!
 //! 이 값들은 터무니없는 값을 보내는 서버(고장 났거나 악의가 있는 서버)가 클라이언트의 메모리와 시간을 끝없이 쓰지 못하게 막는 점검용 상한이고,
 //! 게임 수치가 아닙니다. 실제 정원, Tick 속도, 맵의 크기는 언제나 서버의 `Tuning`이 정하며 클라이언트에는 어떤 값도 고정되어 있지 않습니다.
 //! 상한은 지금의 값(정원 4, 20Hz, 24 x 24 맵)보다 훨씬 크게 잡았으므로, 정상적인 서버가 수치를 바꿔도 걸리지 않습니다.
 //!
-//! `Welcome`은 `Session`이 입장을 처리하는 곳에서 한 번 확인합니다. 통과한 값은 HUD와 화면 코드가 다시 확인하지 않고 믿습니다.
+//! 클라이언트는 `Welcome`을 받아서 처음 믿기 전에 한 번 확인합니다. 서버는 시작할 때 자기 설정으로 보낼 `Welcome`에 같은 확인을 해 보므로,
+//! 모든 클라이언트가 거절할 설정으로는 서버가 시작되지 않습니다.
 
-use caravan_protocol::Welcome;
 use caravan_rules::Rect;
 
-use crate::iso;
+use crate::units::WirePos;
+use crate::welcome::Welcome;
 
 /// 한 방의 정원입니다. HUD가 동료 막대를 정원만큼 만듭니다.
-pub const MAX_CAPACITY: u32 = 16;
+const MAX_CAPACITY: u32 = 16;
 /// 서버의 초당 Tick 수입니다. 재생 시각과 입력 간격이 이 값으로 계산됩니다.
-pub const MAX_TICK_HZ: u32 = 240;
+const MAX_TICK_HZ: u32 = 240;
 /// 맵 한 변의 타일 수입니다. 지면 타일을 하나씩 만드므로 한 변의 제곱만큼의 개체가 생깁니다.
-pub const MAX_MAP_SIDE_TILES: f32 = 128.0;
-pub const MAX_OBSTACLES: usize = 256;
-pub const MAX_TOWERS: usize = 32;
-pub const MAX_MONSTER_KINDS: usize = 16;
+const MAX_MAP_SIDE_TILES: f32 = 128.0;
+// 서버는 이 상한으로 맵 좌표가 전송 범위(`WirePos`)를 넘어 잘리는 설정까지 거절합니다. 그러려면 상한이 전송 범위 안에 있어야 합니다.
+const _: () = assert!(MAX_MAP_SIDE_TILES <= WirePos::MAX_TILES);
+const MAX_OBSTACLES: usize = 256;
+const MAX_TOWERS: usize = 32;
+const MAX_MONSTER_KINDS: usize = 16;
 /// 장애물, 마차, 감시탑이 차지하는 타일의 합입니다. 상자를 타일마다 하나씩 만듭니다.
-pub const MAX_SOLID_TILES: usize = 4096;
+const MAX_SOLID_TILES: usize = 4096;
 /// 캐릭터를 그리는 원의 반지름(타일)입니다.
-pub const MAX_RADIUS_TILES: f32 = 8.0;
+const MAX_RADIUS_TILES: f32 = 8.0;
 
-/// 상한을 넘거나 말이 되지 않는 값이 있으면 그 이유를 영어 문장으로 돌려줍니다. 화면에 그대로 표시됩니다.
+/// 상한을 넘거나 말이 되지 않는 값이 있으면 그 이유를 영어 문장으로 돌려줍니다. 클라이언트는 이 문장을 화면에 그대로 표시하고, 서버는 시작 오류로 그대로 출력합니다.
 pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
     let world = &welcome.world;
 
@@ -76,7 +79,7 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
         if !is_inside(rect, map) {
             return Err("an obstacle, the wagon, or a tower lies outside the map".to_string());
         }
-        solid_tiles += iso::tile_count(rect);
+        solid_tiles += rect.tile_count();
     }
     check_count("solid tiles", solid_tiles, MAX_SOLID_TILES)
 }
@@ -107,7 +110,7 @@ fn check_count(name: &str, value: usize, max: usize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::{MonsterKindInfo, TowerSite, WirePos, WireRect};
+    use crate::{MonsterKindInfo, TowerSite, WireRect};
     use caravan_rules::{Sim, Tuning};
 
     /// 기본 수치에서 서버가 보내는 입장 안내입니다.

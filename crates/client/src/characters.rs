@@ -290,7 +290,7 @@ mod tests {
     use super::*;
     use crate::net::ClientSession;
     use crate::view;
-    use caravan_client_core::{Frame, Session};
+    use caravan_client_core::{DEFAULT_SERVER, Frame, Session};
     use caravan_protocol::{
         ClientEvent, RoomCode, ServerMsg, Welcome, WireMonsterKind, WirePhase, WireTower,
         WireTowerState, WireWagon,
@@ -305,7 +305,8 @@ mod tests {
         let first = sim.add_player().unwrap();
         let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
         welcome.you = YOU;
-        let mut session = Session::new(RoomCode::parse("test").unwrap());
+        let mut session =
+            Session::new(RoomCode::parse("test").unwrap(), DEFAULT_SERVER.to_string());
         session.on_event(ClientEvent::Connected);
         session.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
 

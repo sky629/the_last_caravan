@@ -16,7 +16,7 @@ fn a_monster_walks_to_the_wagon_and_hits_it() {
         waited > 20,
         "it had to walk about four tiles first, took {waited}"
     );
-    assert_eq!(s.sim.wagon().hp, 500 - damage, "C4");
+    assert_eq!(s.sim.wagon().hp, 500 - damage);
 
     s.run_ticks(s.ticks(1.0));
     assert_eq!(s.sim.wagon().hp, 500 - 2 * damage, "one hit per cooldown");
@@ -31,7 +31,7 @@ fn a_monster_chases_a_player_inside_the_aggro_range_and_hits_them() {
     s.run_until(200, |sim| sim.player(a).is_some_and(|p| p.hp() < 100));
 
     let damage = s.sim.tuning().monsters.grunt.attack_damage;
-    assert_eq!(s.player(a).hp(), 100 - damage, "C4");
+    assert_eq!(s.player(a).hp(), 100 - damage);
     assert!(
         s.monster(monster).unwrap().pos.x < 6.5,
         "it walked to the player"
@@ -73,7 +73,7 @@ fn a_monster_goes_back_to_the_wagon_when_the_player_leaves_the_aggro_range() {
     let distance = wagon.distance_to(s.monster(monster).unwrap().pos);
     assert!(
         distance < 4.0,
-        "D17: it is back on the way to the wagon, {distance} away"
+        "it is back on the way to the wagon, {distance} away"
     );
 }
 
@@ -100,7 +100,7 @@ fn a_monster_does_not_chase_or_hit_a_downed_player() {
 
     s.run_ticks(s.ticks(3.0));
 
-    assert!(s.player(downed).is_downed(), "D33");
+    assert!(s.player(downed).is_downed());
     assert_eq!(s.monster(monster).unwrap().last_attack_tick, None);
     assert!(
         s.monster(monster).unwrap().pos.x > 7.0,
@@ -118,7 +118,7 @@ fn a_monster_does_not_chase_or_hit_a_dead_player() {
 
     s.run_ticks(s.ticks(3.0));
 
-    assert_eq!(s.monster(monster).unwrap().last_attack_tick, None, "D33");
+    assert_eq!(s.monster(monster).unwrap().last_attack_tick, None);
     assert!(s.monster(monster).unwrap().pos.x > 7.0);
 }
 

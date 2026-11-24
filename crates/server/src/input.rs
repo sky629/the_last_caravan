@@ -80,12 +80,50 @@ fn to_rules(msg: &InputMsg) -> PlayerInput {
     }
 }
 
-/// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동과 조준은 더 새로운 입력을 따릅니다.
-/// 버튼은 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭이 사라지지 않게 합니다.
+/// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동, 조준, `interact`는 더 새로운 입력을 따릅니다.
+/// `interact`는 누르고 있는 동안 이어지는 상태이므로, Tick 안에서 눌렀다 뗐다면 뗀 것으로 봅니다.
+/// `attack`은 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭이 사라지지 않게 합니다.
 fn merge(older: PlayerInput, newer: PlayerInput) -> PlayerInput {
     PlayerInput {
         attack: older.attack || newer.attack,
-        interact: older.interact || newer.interact,
         ..newer
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(seq: u32, attack: bool, interact: bool) -> InputMsg {
+        InputMsg {
+            seq,
+            attack,
+            interact,
+            ..InputMsg::default()
+        }
+    }
+
+    #[test]
+    fn a_key_released_within_the_tick_is_released_but_a_short_click_still_counts() {
+        let mut input = MemberInput::new();
+        input.accept(&msg(1, true, true));
+        input.accept(&msg(2, false, false));
+
+        let tick = input.for_tick(10);
+
+        assert!(!tick.interact, "F was already released when the tick came");
+        assert!(tick.attack, "a click shorter than a tick is not lost");
+    }
+
+    #[test]
+    fn a_key_pressed_within_the_tick_is_pressed() {
+        let mut input = MemberInput::new();
+        input.accept(&msg(1, false, false));
+        input.accept(&msg(2, false, true));
+
+        let tick = input.for_tick(10);
+
+        assert!(tick.interact);
+        assert!(!tick.attack);
     }
 }

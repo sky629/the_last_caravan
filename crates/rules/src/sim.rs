@@ -81,6 +81,7 @@ impl Sim {
     }
 
     /// 새 플레이어를 최대 HP의 살아 있는 상태로 등장 지점에 추가하고 번호를 돌려줍니다.
+    /// 등장 지점은 방에 있는 플레이어가 가장 적게 쓰는 지점 중 가장 앞의 것으로 정하므로, 먼저 나간 플레이어의 자리를 새 플레이어가 이어받습니다.
     /// 원정이 진행되는 도중에도 곧바로 참가합니다. 방이 가득 차 있으면 거절합니다.
     pub fn add_player(&mut self) -> Result<PlayerId, JoinError> {
         if self.world.players.len() >= self.tuning.max_players {
@@ -90,9 +91,14 @@ impl Sim {
         }
         let id = PlayerId(self.next_player);
         self.next_player += 1;
-        let spawn = spawn_point(&self.tuning.map, self.world.players.len());
+        let slot = choose_spawn_slot(
+            self.tuning.map.player_spawns.len(),
+            None,
+            self.world.players.values().map(|p| p.spawn_slot),
+        );
+        let spawn = spawn_point(&self.tuning.map, slot);
         let team = self.team_for_new_player();
-        let player = Player::new(id, team, spawn, &self.tuning);
+        let player = Player::new(id, team, slot, spawn, &self.tuning);
         self.world.players.insert(id, player);
         Ok(id)
     }
@@ -145,8 +151,17 @@ impl Sim {
         self.world.monsters.clear();
         self.world.wagon = Wagon::new(&self.tuning);
         self.world.towers = structures::build_towers(&self.tuning);
-        for (slot, player) in self.world.players.values_mut().enumerate() {
-            player.reset(spawn_point(&self.tuning.map, slot), &self.tuning);
+        // 나간 플레이어가 있으면 한 지점에 둘이 몰릴 수 있으므로, 원정을 시작할 때마다 지점을 다시 정합니다.
+        // 겹치지 않는 플레이어는 자기 지점에 그대로 돌아갑니다.
+        let mut assigned: Vec<usize> = Vec::with_capacity(self.world.players.len());
+        for player in self.world.players.values_mut() {
+            let slot = choose_spawn_slot(
+                self.tuning.map.player_spawns.len(),
+                Some(player.spawn_slot),
+                assigned.iter().copied(),
+            );
+            assigned.push(slot);
+            player.reset(slot, spawn_point(&self.tuning.map, slot), &self.tuning);
         }
     }
 
@@ -217,7 +232,27 @@ impl Sim {
     }
 }
 
-/// `slot`번째 플레이어가 나타날 위치입니다. 등장 지점을 돌아가며 씁니다.
+/// 등장 지점 `point_count`개 가운데 `used`가 가장 적게 쓰고 있는 지점의 순서를 고릅니다.
+/// 같은 횟수이면 `preferred`를 먼저, 그다음 앞선 순서를 고릅니다. 그래서 플레이어가 지점보다 많아도 지점마다 고르게 나뉩니다.
+fn choose_spawn_slot(
+    point_count: usize,
+    preferred: Option<usize>,
+    used: impl Iterator<Item = usize>,
+) -> usize {
+    let point_count = point_count.max(1);
+    let mut uses = vec![0usize; point_count];
+    for slot in used {
+        uses[slot % point_count] += 1;
+    }
+    let fewest = uses.iter().copied().min().unwrap_or(0);
+    preferred
+        .map(|slot| slot % point_count)
+        .filter(|slot| uses[*slot] == fewest)
+        .or_else(|| uses.iter().position(|&n| n == fewest))
+        .unwrap_or(0)
+}
+
+/// 등장 순서가 `slot`인 플레이어가 나타날 위치입니다. 순서가 등장 지점의 수를 넘으면 처음부터 다시 돌아가며 씁니다.
 fn spawn_point(map: &MapSpec, slot: usize) -> Vec2 {
     map.player_spawns
         .get(slot % map.player_spawns.len().max(1))

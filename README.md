@@ -44,24 +44,35 @@ sudo apt-get install pkg-config libudev-dev libwayland-dev
 
 ### 전용 서버를 실행합니다
 
-클라이언트보다 서버를 먼저 실행합니다. 서버는 `listening on ws://127.0.0.1:7777`을 출력하고, 그 뒤 1초마다 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 한 줄씩 출력합니다. `Ctrl-C`로 종료합니다.
+클라이언트보다 서버를 먼저 실행합니다. 서버는 `listening on ws://127.0.0.1:7777`을 출력하고, 그 뒤에는 일어난 일만 한 줄씩 출력합니다. 출력하는 일은 플레이어의 입장과 퇴장(방 코드와 인원), 방의 생성과 제거, 한도 때문에 서버가 닫은 접속과 그 이유, 시작 오류입니다. `Ctrl-C`로 종료합니다.
 
 ```sh
 cargo run -p caravan_dedicated
+```
+
+플레이어 한 명이 방 `test`에 들어갔다가 나가면 출력은 다음과 같습니다.
+
+```text
+listening on ws://127.0.0.1:7777
+room test created
+player 1 joined room test (1 members)
+player 1 left room test (0 members)
+room test removed
 ```
 
 | 옵션 | 설명 |
 |---|---|
 | `--addr HOST:PORT` | 접속을 받을 주소입니다. 기본값은 `127.0.0.1:7777`입니다. 다른 컴퓨터에서 접속하려면 `0.0.0.0:7777`을 지정합니다. |
 | `--debug-net` | 주고받는 모든 메시지를 읽을 수 있는 형태로 출력합니다. 스냅샷은 몬스터 목록을 수로 줄여서 출력합니다. |
+| `--stats` | 1초마다 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 한 줄씩 출력합니다. 예를 들면 `stats rooms=1 members=2 monsters=87 ticks=20 tick_avg_ms=0.31 tick_max_ms=1.20`입니다. |
 | `--waves SIZE,SIZE,...` | 무리의 수와 무리마다 몬스터의 수를 바꿉니다. `--waves 100,200,300`은 무리 세 개를 100마리, 200마리, 300마리로 정합니다. |
 | `--stress` | 마차, 감시탑, 플레이어가 죽지 않게 하고 몬스터를 Tick마다 한 마리씩 등장시킵니다. |
 
-`--waves`와 `--stress`는 몬스터가 수백 마리일 때 서버의 Tick 시간과 스냅샷의 크기를 재기 위한 부하 시험용 옵션입니다.
+`--waves`와 `--stress`는 몬스터가 수백 마리일 때 서버의 Tick 시간과 스냅샷의 크기를 재기 위한 부하 시험용 옵션입니다. Tick 시간은 `--stats`를 붙여야 출력됩니다.
 부하 시험용 클라이언트(`crates/dedicated/examples/load_client.rs`)는 Bevy 없이 한 방에 접속해서 Tick마다 입력을 보내고, 받은 스냅샷의 크기와 몬스터 수를 1초마다 출력합니다.
 
 ```sh
-cargo run --release -p caravan_dedicated -- --stress --waves 100,200,300
+cargo run --release -p caravan_dedicated -- --stress --waves 100,200,300 --stats
 cargo run --release -p caravan_dedicated --example load_client -- --addr 127.0.0.1:7777 --room load --secs 60
 ```
 
@@ -87,7 +98,7 @@ cargo run -p caravan_client -- --room other
 | `--server URL` | 서버 주소입니다. 기본값은 `ws://127.0.0.1:7777`입니다. `ws://`나 `wss://`로 시작해야 합니다. |
 | `--debug-net` | 주고받는 메시지를 로그에 출력합니다. |
 
-옵션이 잘못되었거나 서버에 접속하지 못하면 창 가운데에 이유가 표시됩니다. 클라이언트는 1초마다 프레임 속도, 가장 최근에 받은 서버 Tick, 그 스냅샷의 몬스터 수를 로그로 출력합니다.
+옵션이 잘못되었거나 서버에 접속하지 못하면 창 가운데에 이유가 표시됩니다. 접속이 한 번도 열리지 않았을 때는 접속하려 한 서버 주소와 서버가 실행 중인지 확인하라는 안내가 표시됩니다. 클라이언트는 1초마다 프레임 속도, 가장 최근에 받은 서버 Tick, 그 스냅샷의 몬스터 수를 로그로 출력합니다.
 
 ### 웹 클라이언트를 실행합니다
 
@@ -141,7 +152,7 @@ cd crates/client && trunk build
 | 계층 | 크레이트 | 역할 | 의존할 수 있는 것 |
 |---|---|---|---|
 | 도메인 | `caravan_rules` | 게임 규칙 전체입니다. 이동, 충돌, 전투, 몬스터, 무리, 마차와 감시탑, 쓰러짐과 부활, 원정의 성공과 실패를 계산합니다. | 없음 |
-| 계약 | `caravan_protocol` | 메시지, 규칙 상태를 전송 형식으로 바꾸는 변환, 바이트 변환, 접속 방식 인터페이스 두 개, 프로세스 내부 전달입니다. | `caravan_rules`, serde, postcard |
+| 계약 | `caravan_protocol` | 메시지, 규칙 상태를 전송 형식으로 바꾸는 변환, 바이트 변환, 접속 방식 인터페이스 두 개, 프로세스 내부 전달, 입장 안내의 상한 검사입니다. 서버는 시작할 때, 클라이언트는 입장 안내를 받을 때 같은 검사를 합니다. | `caravan_rules`, serde, postcard |
 | 애플리케이션 | `caravan_server` | 방, Tick 일정, 입장과 퇴장, 입력 처리입니다. 소켓, 스레드, 현재 시각을 직접 쓰지 않습니다. | `caravan_rules`, `caravan_protocol` |
 | 애플리케이션 | `caravan_client_core` | 클라이언트에서 Bevy가 필요하지 않은 로직입니다. 접속 상태, 입력 전송, 보간, 쿼터뷰 투영, HUD의 내용, 실행 옵션을 다룹니다. | `caravan_rules`, `caravan_protocol` |
 | 어댑터 | `caravan_ws_server` | WebSocket으로 서버 쪽 접속 방식 인터페이스를 구현합니다 (PC 전용). | `caravan_protocol`, tokio, tokio-tungstenite, futures-util |

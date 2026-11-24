@@ -52,17 +52,10 @@ pub fn depth(foot: Vec2) -> f32 {
     -(foot.x + foot.y)
 }
 
-/// 사각형이 걸치는 타일의 수입니다. `tile_centers`가 돌려주는 중심의 수와 같고, 목록을 만들지 않고 셉니다.
-pub fn tile_count(rect: Rect) -> usize {
-    let columns = (rect.max.x.ceil() - rect.min.x.floor()).max(0.0);
-    let rows = (rect.max.y.ceil() - rect.min.y.floor()).max(0.0);
-    (columns * rows) as usize
-}
-
 /// 사각형을 덮는 타일 하나하나의 중심입니다. 큰 상자를 타일 단위로 나누어 그릴 때 씁니다.
 /// 타일마다 자기 중심으로 순서를 정해야, 캐릭터가 긴 벽의 한쪽 끝 옆에 서도 앞뒤가 맞습니다.
 pub fn tile_centers(rect: Rect) -> Vec<Vec2> {
-    let mut centers = Vec::with_capacity(tile_count(rect));
+    let mut centers = Vec::with_capacity(rect.tile_count());
     let mut y = rect.min.y.floor();
     while y < rect.max.y {
         let mut x = rect.min.x.floor();
@@ -187,7 +180,7 @@ mod tests {
         let wagon = Rect::new(10.0, 11.0, 14.0, 13.0);
         let centers = tile_centers(wagon);
         assert_eq!(centers.len(), 8);
-        assert_eq!(tile_count(wagon), 8);
+        assert_eq!(wagon.tile_count(), 8);
         assert!(centers.contains(&Vec2::new(10.5, 11.5)));
         assert!(centers.contains(&Vec2::new(13.5, 12.5)));
         assert_eq!(

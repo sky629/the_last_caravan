@@ -323,6 +323,7 @@ mod tests {
     use caravan_rules::{Sim, Team, Tuning, Vec2};
 
     use crate::interp::PlayerView;
+    use crate::launch::DEFAULT_SERVER;
 
     const YOU: u32 = 1;
 
@@ -331,7 +332,8 @@ mod tests {
         let first = sim.add_player().unwrap();
         let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
         welcome.you = YOU;
-        let mut session = Session::new(RoomCode::parse("test").unwrap());
+        let mut session =
+            Session::new(RoomCode::parse("test").unwrap(), DEFAULT_SERVER.to_string());
         session.on_event(ClientEvent::Connected);
         session.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
         session
@@ -589,7 +591,8 @@ mod tests {
 
     #[test]
     fn a_refused_join_shows_the_reason() {
-        let mut session = Session::new(RoomCode::parse("test").unwrap());
+        let mut session =
+            Session::new(RoomCode::parse("test").unwrap(), DEFAULT_SERVER.to_string());
         session.on_event(ClientEvent::Connected);
         session.on_event(ClientEvent::Message(ServerMsg::JoinRejected {
             reason: RejectReason::RoomFull { capacity: 4 },
@@ -628,8 +631,32 @@ mod tests {
     }
 
     #[test]
+    fn a_server_that_cannot_be_reached_is_named_with_a_hint() {
+        let mut session = Session::new(
+            RoomCode::parse("test").unwrap(),
+            "ws://192.168.0.7:7777".to_string(),
+        );
+        session.on_event(ClientEvent::Disconnected {
+            reason: "Unknown error".to_string(),
+        });
+
+        let hud = Hud::of(&session, None);
+
+        let banner = hud.banner.unwrap();
+        assert_eq!(banner.title, "CANNOT REACH THE SERVER");
+        assert_eq!(
+            banner.detail.as_deref(),
+            Some(
+                "Could not open ws://192.168.0.7:7777. Check the address and that the server is running."
+            )
+        );
+        assert_eq!(banner.tone, BannerTone::Bad);
+        assert!(!hud.connection.contains("Unknown error"));
+    }
+
+    #[test]
     fn before_the_room_and_before_the_first_snapshot_a_waiting_notice_is_shown() {
-        let connecting = Session::new(RoomCode::parse("test").unwrap());
+        let connecting = Session::new(RoomCode::parse("test").unwrap(), DEFAULT_SERVER.to_string());
         let banner = Hud::of(&connecting, None).banner.unwrap();
         assert_eq!(banner.title, "Connecting... (room test)");
         assert_eq!(banner.tone, BannerTone::Info);

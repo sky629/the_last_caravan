@@ -132,4 +132,11 @@ impl Rect {
             self.max.y - by,
         )
     }
+
+    /// 사각형이 걸치는 타일(정수 좌표의 한 칸)의 수입니다. 타일을 하나씩 나열하지 않고 계산하며, 뒤집힌 사각형은 0입니다.
+    pub fn tile_count(self) -> usize {
+        let columns = (self.max.x.ceil() - self.min.x.floor()).max(0.0);
+        let rows = (self.max.y.ceil() - self.min.y.floor()).max(0.0);
+        (columns * rows) as usize
+    }
 }

@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
-    ServerLimits, ServerMsg, WireLife, WirePhase, WirePos, loopback,
+    ServerLimits, ServerMsg, Welcome, WireLife, WirePhase, check_welcome, loopback,
 };
-use caravan_rules::{PlayerId, Tuning};
+use caravan_rules::{PlayerId, Sim, Tuning};
 use caravan_server::{GameServer, Notice, ServerError, ServerStats};
 use common::{
     assert_near, drain, input, input_with, last_snapshot, player, player_ids, position, rig,
@@ -127,8 +127,8 @@ fn input_before_join_closes_the_link_without_a_welcome() {
     });
     let notices = rig.pump();
     assert!(
-        notices.is_empty(),
-        "the Join after the violation is ignored: {notices:?}"
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("before Join")),
+        "the closing is reported and the Join after the violation is ignored: {notices:?}"
     );
     assert!(matches!(
         drain(&mut client)[..],
@@ -161,7 +161,7 @@ fn the_last_leaver_removes_the_room_and_the_next_joiner_starts_fresh() {
 }
 
 #[test]
-fn pump_reports_joins_and_leaves_with_member_counts() {
+fn pump_reports_rooms_created_and_removed_with_the_joins_and_leaves() {
     let mut rig = rig();
     let mut first = rig.connector.connect();
     let mut second = rig.connector.connect();
@@ -176,6 +176,7 @@ fn pump_reports_joins_and_leaves_with_member_counts() {
     assert_eq!(
         rig.pump(),
         [
+            Notice::RoomCreated { room: room.clone() },
             Notice::Joined {
                 room: room.clone(),
                 player: PlayerId(1),
@@ -186,26 +187,46 @@ fn pump_reports_joins_and_leaves_with_member_counts() {
                 player: PlayerId(2),
                 members: 2
             },
-        ]
+        ],
+        "only the first joiner creates the room"
     );
     drop(first);
     assert_eq!(
         rig.pump(),
         [Notice::Left {
-            room,
+            room: room.clone(),
             player: PlayerId(1),
             members: 1
         }]
+    );
+    drop(second);
+    assert_eq!(
+        rig.pump(),
+        [
+            Notice::Left {
+                room: room.clone(),
+                player: PlayerId(2),
+                members: 0
+            },
+            Notice::RoomRemoved { room }
+        ],
+        "the last leaver removes the room"
     );
 }
 
 #[test]
 fn the_snapshot_rate_follows_tuning_tick_hz() {
+    // 기본 접속 한도는 20 Hz까지만 실을 수 있으므로, 더 빠른 Tick은 한도를 함께 올립니다.
+    let limits = ServerLimits {
+        max_messages_per_sec: 1000,
+        ..ServerLimits::default()
+    };
     for tick_hz in [20, 40] {
-        let mut rig = rig_with(Tuning {
+        let tuning = Tuning {
             tick_hz,
             ..Tuning::default()
-        });
+        };
+        let mut rig = rig_with_limits(tuning, limits);
         let (mut a, _) = rig.join_ok("test");
         for _ in 0..100 {
             rig.now += Duration::from_millis(10);
@@ -257,11 +278,15 @@ fn a_link_that_does_not_join_within_the_deadline_is_closed() {
     );
 
     rig.now += Duration::from_millis(100);
-    rig.pump();
+    let notices = rig.pump();
     assert!(matches!(
         drain(&mut idle)[..],
         [ClientEvent::Disconnected { .. }]
     ));
+    assert!(
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("no Join within 5s")),
+        "the closing is reported with its reason: {notices:?}"
+    );
     assert!(
         !drain(&mut player)
             .iter()
@@ -354,8 +379,12 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
     rig.now += Duration::from_secs(1);
     let notices = rig.pump();
     let room = caravan_protocol::RoomCode::parse("test").unwrap();
+    assert!(
+        matches!(&notices[0], Notice::LinkClosed { reason, .. } if reason.contains("no message for 30s")),
+        "the closing is reported with its reason: {notices:?}"
+    );
     assert_eq!(
-        notices,
+        notices[1..],
         [Notice::Left {
             room,
             player: PlayerId(2),
@@ -378,11 +407,16 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
 
 #[test]
 fn the_welcome_reports_the_players_id_the_capacity_and_the_tick_rate_from_the_tuning() {
-    let mut rig = rig_with(Tuning {
+    let tuning = Tuning {
         max_players: 3,
         tick_hz: 30,
         ..Tuning::default()
-    });
+    };
+    let limits = ServerLimits {
+        max_messages_per_sec: 1000,
+        ..ServerLimits::default()
+    };
+    let mut rig = rig_with_limits(tuning, limits);
     let (_a, _) = rig.join("test");
     let (_b, answer) = rig.join("test");
     let ServerMsg::Welcome(welcome) = answer else {
@@ -436,8 +470,8 @@ fn a_second_join_on_one_link_closes_it_and_removes_its_player() {
         "the link that broke the protocol is closed"
     );
     assert!(
-        matches!(notices[..], [Notice::Left { members: 1, .. }]),
-        "and its player leaves the room: {notices:?}"
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }, Notice::Left { members: 1, .. }] if reason.contains("Join again")),
+        "the closing is reported and its player leaves the room: {notices:?}"
     );
 
     rig.run_ticks(1);
@@ -568,24 +602,77 @@ fn a_server_refuses_a_tick_rate_that_the_link_message_limit_cannot_carry() {
 }
 
 #[test]
-fn a_server_refuses_a_map_larger_than_the_wire_position_can_represent() {
+fn the_default_limits_carry_the_default_tick_rate_and_nothing_faster() {
     let limits = ServerLimits::default();
-    let mut widest = Tuning::default();
-    widest.map.width = WirePos::MAX_TILES;
-    widest.map.height = WirePos::MAX_TILES;
-    assert_eq!(try_start(widest, limits), Ok(()));
-
-    let mut wide = Tuning::default();
-    wide.map.width = WirePos::MAX_TILES + 1.0;
+    let default_hz = Tuning::default().tick_hz;
+    let at = |tick_hz| Tuning {
+        tick_hz,
+        ..Tuning::default()
+    };
+    assert_eq!(try_start(at(default_hz), limits), Ok(()));
     assert!(
-        matches!(try_start(wide, limits), Err(ServerError::InvalidTuning(why)) if why.contains("map")),
-        "a map wider than the wire range"
+        matches!(
+            try_start(at(default_hz + 1), limits),
+            Err(ServerError::InvalidLimits(_))
+        ),
+        "a faster tick leaves too little room for inputs that arrive late"
     );
-    let mut tall = Tuning::default();
-    tall.map.height = WirePos::MAX_TILES + 1.0;
+}
+
+/// 이 수치로 입장한 클라이언트가 입장 안내를 확인한 결과입니다.
+fn client_verdict(tuning: &Tuning) -> Result<(), String> {
+    let mut sim = Sim::new(tuning.clone());
+    let first = sim.add_player().expect("an empty room admits a player");
+    let me = sim.player(first).expect("the player was just added");
+    check_welcome(&Welcome::from_sim(&sim, me))
+}
+
+#[test]
+fn a_server_starts_exactly_when_a_client_would_accept_its_welcome() {
+    let with_map_side = |side: f32| {
+        let mut tuning = Tuning::default();
+        tuning.map.width = side;
+        tuning.map.height = side;
+        tuning
+    };
+    let with_capacity = |max_players: usize| Tuning {
+        max_players,
+        ..Tuning::default()
+    };
+    let cases = [
+        ("the default numbers", Tuning::default()),
+        ("a 128 x 128 map", with_map_side(128.0)),
+        ("a 129 x 129 map", with_map_side(129.0)),
+        ("a 200 x 200 map", with_map_side(200.0)),
+        // 전송할 수 있는 좌표 범위보다 넓은 맵입니다.
+        ("a 600 x 600 map", with_map_side(600.0)),
+        ("a capacity of 16", with_capacity(16)),
+        ("a capacity of 17", with_capacity(17)),
+        ("a capacity of 20", with_capacity(20)),
+    ];
+
+    let (mut accepted, mut refused) = (0, 0);
+    for (name, tuning) in cases {
+        let verdict = client_verdict(&tuning);
+        let started = try_start(tuning, ServerLimits::default());
+        match verdict {
+            Ok(()) => {
+                accepted += 1;
+                assert_eq!(started, Ok(()), "{name}: the clients accept it");
+            }
+            Err(reason) => {
+                refused += 1;
+                assert_eq!(
+                    started,
+                    Err(ServerError::InvalidTuning(reason)),
+                    "{name}: the clients refuse it, so the server says why"
+                );
+            }
+        }
+    }
     assert!(
-        matches!(try_start(tall, limits), Err(ServerError::InvalidTuning(why)) if why.contains("map")),
-        "a map taller than the wire range"
+        accepted > 1 && refused > 1,
+        "the cases cover both answers ({accepted} accepted, {refused} refused)"
     );
 }
 

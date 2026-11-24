@@ -53,7 +53,7 @@ fn open(launch: Result<LaunchOptions, LaunchError>) -> (Session, Option<Net>) {
                 transport: Box::new(client),
                 debug_net: options.debug_net,
             };
-            (Session::new(options.room), Some(net))
+            (Session::new(options.room, options.server_url), Some(net))
         }
         Err(reason) => (Session::Failed { reason }, None),
     }
