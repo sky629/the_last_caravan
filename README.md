@@ -265,7 +265,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 25. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/supplies.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
 26. `crates/client/src/hud.rs`는 `caravan_client_core::Hud`가 정한 내용을 Bevy UI 노드에 옮깁니다.
 
-## 1단계의 한계
+## 현재의 한계
 
 - 클라이언트 예측이 없습니다. 내 캐릭터도 서버의 스냅샷으로만 움직이므로, 키를 누른 뒤 서버까지의 왕복 시간과 보간 지연(100ms)이 지나야 화면에서 움직입니다.
 - 재접속이 없습니다. 접속이 끊기면 화면에 `DISCONNECTED`와 이유가 표시되고, 서버는 그 플레이어의 캐릭터를 즉시 지웁니다. 클라이언트를 다시 실행하면 새 플레이어로 참가합니다.

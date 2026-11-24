@@ -1,6 +1,6 @@
 //! 몬스터의 이동 경로를 확인합니다: 폭이 1타일인 통로, 감시탑 쪽으로 가는 길.
 
-use super::support::Scenario;
+use super::support::{Scenario, nights};
 use crate::input::PlayerInput;
 use crate::math::{Rect, Vec2};
 use crate::world::{Tile, TileUse};
@@ -45,6 +45,34 @@ fn a_monster_chasing_a_tower_walks_to_the_tower_nearest_by_path_not_by_straight_
     let reachable = s.sim.towers().nth(1).unwrap();
     assert_eq!(behind_the_wall.hp(), max_hp, "the wall hides this tower");
     assert!(reachable.hp() < max_hp, "the monster went for this one");
+}
+
+#[test]
+fn a_crowd_breaks_through_a_village_full_of_towers_and_reaches_the_wagon() {
+    // 감시탑이 상한만큼 마차 둘레에 서 있고, 몬스터 60마리가 몰려옵니다. 감시탑이 피해를 주지 않으므로 몬스터는 줄지 않습니다.
+    // 앞줄이 감시탑을 부수면 뒤에 줄을 섰던 몬스터가 다시 걸어가므로, 무리가 감시탑 앞에서 멈춘 채로 남지 않습니다.
+    let mut s = Scenario::default_game(|t| {
+        t.cycle.day_secs = t.dt();
+        t.nights.plans = nights(&[&[60]]);
+        t.nights.first_wave_delay_secs = t.dt();
+        t.nights.spawn_interval_secs = t.dt();
+        t.guards.per_node = 0;
+        t.wagon.max_hp = u32::MAX;
+        t.structures.watchtower.damage = 0;
+        t.village.start_towers = t.spread_tower_sites(t.village.tower_limit);
+    });
+    let towers_at_start = s.sim.towers().count();
+
+    let took = s.run_until(s.ticks(180.0), |sim| sim.wagon().hp < u32::MAX);
+
+    assert!(
+        s.sim.wagon().hp < u32::MAX,
+        "a monster reached the wagon and hit it within {took} ticks"
+    );
+    assert!(
+        s.sim.towers().count() < towers_at_start,
+        "the crowd destroyed towers on its way"
+    );
 }
 
 /// 고정된 시드의 간단한 선형 합동 생성기입니다. 테스트가 매번 같은 순서로 같은 일을 하게 합니다.
