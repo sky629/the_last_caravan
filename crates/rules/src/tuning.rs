@@ -83,7 +83,7 @@ pub struct ProjectileTuning {
     /// 날아갈 수 있는 거리(타일)입니다. 이 거리를 다 날면 사라집니다.
     pub range: f32,
     /// 탄환의 반지름(타일)입니다. 몬스터의 반지름과 더한 거리 안으로 지나가면 닿은 것입니다.
-    /// 플레이어의 반지름을 1.41로 나눈 값보다 짧아야 합니다. 그래야 장애물의 모서리에 붙어 서서 쏜 탄환이 쏜 자리에서 멈추지 않습니다.
+    /// 플레이어의 반지름을 √2로 나눈 값보다 짧아야 합니다. 그래야 장애물의 모서리에 붙어 서서 쏜 탄환이 쏜 자리에서 멈추지 않습니다.
     pub radius: f32,
 }
 
@@ -693,8 +693,8 @@ impl Tuning {
     /// - 쿨다운과 부채꼴의 닿는 거리는 유한하고 0 이상입니다. 쿨다운이 음수나 NaN이면 Tick 수로 바꾸는 계산이 깨집니다.
     /// - 부채꼴의 절반 각도는 0도 이상 180도 이하입니다.
     /// - 탄환의 속도와 사거리는 유한하고 0보다 큽니다. 0이면 탄환이 사라지지 않아서 스냅샷이 끝없이 커집니다.
-    /// - 탄환의 반지름은 유한하고 0 이상이며 플레이어의 반지름보다 짧습니다. 탄환은 플레이어의 중심에서 나가므로,
-    ///   벽에 붙어 선 플레이어가 벽을 따라 쏘는 탄환이 처음부터 벽에 닿으면 안 되기 때문입니다.
+    /// - 탄환의 반지름은 유한하고 0 이상이며, √2를 곱한 값이 플레이어의 반지름보다 짧습니다. 탄환은 플레이어의 중심에서 나가므로,
+    ///   벽이나 장애물의 모서리에 붙어 선 플레이어가 쏘는 탄환이 처음부터 막힌 곳에 닿으면 안 되기 때문입니다.
     ///
     /// 탄환의 속도에는 상한이 없습니다. 이동(`collision`)은 한 Tick의 거리가 반지름보다 짧아야 하지만, 탄환의 명중 판정은 이동하는 선분 전체를 검사합니다.
     ///
@@ -718,10 +718,10 @@ impl Tuning {
                     check_positive(&format!("{kind:?} projectile range"), shot.range)?;
                     check_not_negative(&format!("{kind:?} projectile radius"), shot.radius)?;
                     // 탄환은 막힌 타일을 반지름만큼 키운 각진 사각형에 닿으면 멈춥니다. 그 사각형의 모서리는 타일의 모서리에서
-                    // 반지름의 1.41배까지 나와 있으므로, 타일의 모서리에 대각선으로 붙어 선 플레이어의 중심이 그 안에 들어가지 않아야 합니다.
+                    // 반지름의 √2배까지 나와 있으므로, 타일의 모서리에 대각선으로 붙어 선 플레이어의 중심이 그 안에 들어가지 않아야 합니다.
                     if shot.radius * std::f32::consts::SQRT_2 >= self.player.radius {
                         return Err(format!(
-                            "{kind:?} projectile radius {} times 1.41 must be shorter than the player radius {}",
+                            "{kind:?} projectile radius {} times the square root of 2 must be shorter than the player radius {}",
                             shot.radius, self.player.radius
                         ));
                     }

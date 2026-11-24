@@ -123,7 +123,11 @@ impl Sim {
             &self.spawns,
             &self.tuning,
         ) {
-            Advance::Frozen => return,
+            Advance::Frozen => {
+                // 결과 화면 동안 세계는 멈춥니다. 날던 탄환은 그 자리에 멈추고, 끝난 탄환은 스냅샷에 한 번 실렸으므로 지웁니다.
+                projectile::remove_landed(&mut self.world);
+                return;
+            }
             Advance::StartNewExpedition => {
                 self.reset_expedition();
                 return;

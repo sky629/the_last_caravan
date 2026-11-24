@@ -5,7 +5,7 @@
 //! 플레이어와 탄환은 서로 지나갑니다. 탄환이 피해를 주는 대상은 탄환의 진영과 적대적인 몬스터뿐입니다.
 //!
 //! 끝난 탄환(`Flight::Landed`)은 끝난 자리에 한 Tick 더 남아서 스냅샷에 한 번 실립니다. 그래서 클라이언트가 탄환을 날아간 끝 자리까지 그립니다.
-//! 남은 탄환은 다음 Tick의 처음에 지웁니다.
+//! 남은 탄환은 다음 Tick의 처음에 지웁니다. 세계가 멈춘 결과 화면의 Tick에도 지웁니다.
 
 use crate::ids::{MonsterId, ProjectileId, Team};
 use crate::math::Vec2;
@@ -83,13 +83,17 @@ impl Projectile {
     }
 }
 
+/// 지난 Tick에 끝난 탄환을 지웁니다. 끝난 탄환은 스냅샷에 한 번 실렸습니다.
+pub(crate) fn remove_landed(world: &mut World) {
+    world.projectiles.retain(Projectile::is_flying);
+}
+
 /// 날아가는 탄환을 모두 한 Tick만큼 움직입니다. 이번 Tick에 쏜 탄환도 같은 Tick에 처음 움직입니다.
 ///
 /// 몬스터는 이번 Tick에 아직 움직이지 않았으므로, 몬스터의 격자는 탄환이 닿는 위치와 같습니다.
 /// 같은 Tick에 부채꼴 공격이나 감시탑이 쓰러뜨릴 몬스터도 아직 피해를 적용하기 전이라서 탄환이 맞힐 수 있고, 두 피해가 모두 적용됩니다.
 pub(crate) fn advance_projectiles(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
-    // 지난 Tick에 끝난 탄환은 스냅샷에 한 번 실렸으므로 지웁니다.
-    world.projectiles.retain(Projectile::is_flying);
+    remove_landed(world);
 
     let mut solids = Vec::new();
     let mut nearby = Vec::new();

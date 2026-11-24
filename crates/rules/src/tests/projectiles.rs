@@ -440,6 +440,44 @@ fn a_downed_player_does_not_shoot() {
 }
 
 #[test]
+fn an_arrow_that_ended_does_not_stay_through_the_result_screen() {
+    let (mut s, a) = archer();
+    s.run_ticks(1);
+    stop_shooting(&mut s, a);
+    s.run_until(40, |sim| sim.projectiles().any(|arrow| !arrow.is_flying()));
+    s.sim.set_phase(Phase::Over {
+        outcome: Outcome::Defeat,
+        ticks_left: 10,
+    });
+
+    s.run_ticks(1);
+
+    assert_eq!(
+        s.sim.projectiles().count(),
+        0,
+        "the arrow that ended was on one snapshot and is gone"
+    );
+}
+
+#[test]
+fn an_arrow_in_flight_stops_where_it_is_during_the_result_screen() {
+    let (mut s, a) = archer();
+    s.run_ticks(1);
+    stop_shooting(&mut s, a);
+    let before: Vec<_> = s.sim.projectiles().map(|arrow| arrow.pos).collect();
+    s.sim.set_phase(Phase::Over {
+        outcome: Outcome::Defeat,
+        ticks_left: 10,
+    });
+
+    s.run_ticks(3);
+
+    let after: Vec<_> = s.sim.projectiles().map(|arrow| arrow.pos).collect();
+    assert_eq!(before.len(), 1);
+    assert_eq!(after, before, "the world is frozen");
+}
+
+#[test]
 fn a_new_expedition_clears_the_projectiles() {
     let (mut s, a) = archer();
     s.run_ticks(1);
