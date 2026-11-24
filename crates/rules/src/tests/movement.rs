@@ -115,7 +115,7 @@ fn a_player_cannot_walk_through_an_obstacle() {
     s.run_ticks(s.ticks(5.0));
 
     let radius = s.sim.tuning().player.radius;
-    assert!(close(s.player(a).pos.x, 12.0 - radius), "C11");
+    assert!(close(s.player(a).pos.x, 12.0 - radius));
 }
 
 #[test]

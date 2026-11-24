@@ -132,7 +132,7 @@ fn two_players_hitting_the_same_monster_both_count() {
 
     s.run_ticks(1);
 
-    assert_eq!(hp_of(&s, monster), 1000 - 2 * 25, "C5");
+    assert_eq!(hp_of(&s, monster), 1000 - 2 * 25);
 }
 
 #[test]

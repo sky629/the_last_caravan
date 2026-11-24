@@ -42,8 +42,8 @@ fn holding_f_for_the_revive_time_brings_the_player_back_with_30_percent_hp() {
     assert!(s.player(a).is_downed(), "one tick short of the revive time");
 
     s.run_ticks(1);
-    assert!(s.player(a).is_alive(), "C7");
-    assert_eq!(s.player(a).hp(), 30, "30% of 100 max HP, D21");
+    assert!(s.player(a).is_alive());
+    assert_eq!(s.player(a).hp(), 30, "30% of 100 max HP");
     assert!(
         s.player(b).interaction().is_none(),
         "the reviver is free again"
@@ -95,7 +95,7 @@ fn the_bleed_timer_does_not_run_while_someone_is_reviving() {
 
     s.run_ticks(60);
 
-    assert_eq!(bleed_left(&s, a), before, "D22");
+    assert_eq!(bleed_left(&s, a), before);
 }
 
 #[test]
@@ -107,12 +107,8 @@ fn releasing_f_cancels_the_revive_and_the_bleed_timer_resumes_where_it_stopped()
     s.hold(b, PlayerInput::default());
     s.run_ticks(1);
 
-    assert_eq!(s.sim.revive_progress(a), None, "C8: released");
-    assert_eq!(
-        bleed_left(&s, a),
-        before - 1,
-        "D22: the bleed timer resumed"
-    );
+    assert_eq!(s.sim.revive_progress(a), None, "released");
+    assert_eq!(bleed_left(&s, a), before - 1, "the bleed timer resumed");
 
     s.hold(
         b,
@@ -145,7 +141,7 @@ fn a_cancelled_revive_must_be_held_for_the_whole_time_again() {
         },
     );
     s.run_ticks(needed - 1);
-    assert!(s.player(a).is_downed(), "progress started over, D22");
+    assert!(s.player(a).is_downed(), "progress started over");
     s.run_ticks(1);
     assert!(s.player(a).is_alive());
 }
@@ -173,7 +169,7 @@ fn the_reviver_going_down_cancels_the_revive() {
         s.player(b).is_downed(),
         "the monster's hit took all of b's HP"
     );
-    assert_eq!(s.sim.revive_progress(a), None, "C8");
+    assert_eq!(s.sim.revive_progress(a), None);
 }
 
 #[test]
@@ -188,7 +184,7 @@ fn being_hit_does_not_cancel_the_revive() {
     let progress = s.sim.revive_progress(a).expect("still reviving");
     assert!(
         close(progress, 60.0 / revive_ticks(&s) as f32),
-        "D38, got {progress}"
+        "got {progress}"
     );
 }
 
@@ -200,7 +196,7 @@ fn the_downed_player_crawling_out_of_range_cancels_the_revive() {
     // 기어가는 속도 0.8타일/초로, 거리 1.0에서 범위 1.5를 벗어나는 데 0.7초가 걸립니다.
     s.run_ticks(s.ticks(1.0));
 
-    assert_eq!(s.sim.revive_progress(a), None, "C8");
+    assert_eq!(s.sim.revive_progress(a), None);
     assert!(s.player(a).is_downed());
 }
 
@@ -222,8 +218,8 @@ fn a_reviver_stays_in_place_and_cannot_attack() {
 
     s.run_ticks(20);
 
-    assert_eq!(s.player(b).pos, start, "C18: cannot move");
-    assert_eq!(s.player(b).last_attack_tick, None, "C18: cannot attack");
+    assert_eq!(s.player(b).pos, start, "cannot move");
+    assert_eq!(s.player(b).last_attack_tick, None, "cannot attack");
     assert_eq!(s.monster(monster).unwrap().hp, 60);
     assert!(s.sim.revive_progress(a).is_some());
 }
@@ -268,9 +264,9 @@ fn a_downed_player_crawls_slowly_and_cannot_attack() {
     let crawled = s.player(a).pos.y - 5.0;
     assert!(
         close(crawled, 2.0 * s.sim.tuning().player.crawl_speed),
-        "D37, crawled {crawled}"
+        "crawled {crawled}"
     );
-    assert_eq!(s.player(a).last_attack_tick, None, "C18");
+    assert_eq!(s.player(a).last_attack_tick, None);
     assert_eq!(s.monster(monster).unwrap().hp, 60);
 }
 
@@ -281,13 +277,13 @@ fn bleeding_out_makes_the_player_dead_on_the_last_tick_of_the_timer() {
     s.player_at(15.0, 15.0); // 살아 있는 플레이어가 있어야 원정이 실패하지 않습니다.
     s.knock_down(a);
     let bleed = s.ticks(s.sim.tuning().revive.bleed_secs);
-    assert_eq!(bleed, 600, "30 seconds at 20 Hz, D21");
+    assert_eq!(bleed, 600, "30 seconds at 20 Hz");
 
     s.run_ticks(bleed - 1);
     assert!(s.player(a).is_downed());
 
     s.run_ticks(1);
-    assert_eq!(s.player(a).life, Life::Dead, "C9");
+    assert_eq!(s.player(a).life, Life::Dead);
 }
 
 #[test]
@@ -306,7 +302,7 @@ fn a_dead_player_cannot_be_revived() {
 
     s.run_ticks(revive_ticks(&s) + 10);
 
-    assert_eq!(s.player(a).life, Life::Dead, "D39");
+    assert_eq!(s.player(a).life, Life::Dead);
     assert_eq!(s.sim.revive_progress(a), None);
     assert!(s.player(c).interaction().is_none());
 }
@@ -350,7 +346,7 @@ fn a_revive_stops_when_the_downed_player_leaves_the_room() {
     s.sim.remove_player(a);
     s.run_ticks(1);
 
-    assert!(s.player(b).interaction().is_none(), "D25");
+    assert!(s.player(b).interaction().is_none());
 }
 
 #[test]
