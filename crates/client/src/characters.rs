@@ -164,11 +164,12 @@ fn update_character(
 }
 
 fn player_look(player: &PlayerView, scene: &Scene, palette: &Palette) -> Look {
-    // 협동 모드에서는 내가 아닌 플레이어가 모두 같은 편입니다.
     let alive_color = if player.id == scene.you {
         &palette.you
-    } else {
+    } else if player.team.is_allied_with(scene.team) {
         &palette.ally
+    } else {
+        &palette.hostile_player
     };
     let (body, height, bar) = match player.life {
         WireLife::Alive { hp, max_hp, .. } => (
@@ -294,7 +295,7 @@ mod tests {
         ClientEvent, RoomCode, ServerMsg, Welcome, WireMonsterKind, WirePhase, WireTower,
         WireTowerState, WireWagon,
     };
-    use caravan_rules::{Sim, Tuning};
+    use caravan_rules::{Sim, Team, Tuning};
 
     const YOU: u32 = 1;
 
@@ -340,6 +341,7 @@ mod tests {
     fn player(id: u32, x: f32, y: f32, life: WireLife) -> PlayerView {
         PlayerView {
             id,
+            team: Team::CARAVAN,
             pos: Ground::new(x, y),
             facing: Ground::new(1.0, 0.0),
             life,
@@ -511,6 +513,42 @@ mod tests {
             (2, palette.ally.clone()),
             (3, palette.downed.clone()),
             (4, palette.dead.clone()),
+        ];
+        for (id, material) in expected {
+            let root = app.world().resource::<Spawned>().players.entities[&id].entity;
+            let parts = app.world().get::<Parts>(root).unwrap();
+            let body = app
+                .world()
+                .get::<MeshMaterial2d<ColorMaterial>>(parts.body)
+                .unwrap();
+            assert_eq!(body.0, material, "player {id}");
+        }
+    }
+
+    #[test]
+    fn a_player_on_another_team_is_drawn_differently_from_an_ally() {
+        let mut app = app();
+        let rival = PlayerView {
+            team: Team(2),
+            ..player(3, 9.0, 12.0, alive(100))
+        };
+        show(
+            &mut app,
+            frame(
+                vec![
+                    player(YOU, 12.0, 9.0, alive(100)),
+                    player(2, 8.0, 12.0, alive(100)),
+                    rival,
+                ],
+                vec![],
+            ),
+        );
+
+        let palette = app.world().resource::<Palette>();
+        assert_ne!(palette.hostile_player, palette.ally);
+        let expected = [
+            (2, palette.ally.clone()),
+            (3, palette.hostile_player.clone()),
         ];
         for (id, material) in expected {
             let root = app.world().resource::<Spawned>().players.entities[&id].entity;

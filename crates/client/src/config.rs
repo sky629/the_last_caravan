@@ -51,6 +51,8 @@ pub const RUBBLE: Color = Color::srgb(0.30, 0.27, 0.25);
 pub const SHADOW: Color = Color::srgb(0.07, 0.09, 0.07);
 pub const YOU: Color = Color::srgb(1.00, 0.84, 0.25);
 pub const ALLY: Color = Color::srgb(0.35, 0.65, 1.00);
+/// 다른 편 플레이어의 몸통 색입니다. 같은 편(파랑)과 몬스터(빨강) 어느 쪽과도 구분됩니다.
+pub const HOSTILE_PLAYER: Color = Color::srgb(0.72, 0.38, 0.92);
 pub const DOWNED: Color = Color::srgb(0.95, 0.45, 0.15);
 pub const DEAD: Color = Color::srgb(0.40, 0.40, 0.42);
 pub const MONSTER: Color = Color::srgb(0.85, 0.22, 0.28);

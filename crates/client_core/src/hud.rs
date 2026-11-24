@@ -4,6 +4,7 @@
 //! 모든 값은 지금 그리는 `Frame`에서 오므로, 막대는 그 피해를 일으킨 공격이 화면에 나타난 뒤에 줄어듭니다.
 
 use caravan_protocol::{WireInteraction, WireLife, WireOutcome, WirePhase, WireTowerState};
+use caravan_rules::Team;
 
 use crate::interp::{Frame, PlayerView};
 use crate::session::Session;
@@ -87,6 +88,7 @@ impl Hud {
             return hud;
         };
         let you = joined.welcome.you;
+        let my_team = Team(joined.welcome.team);
         hud.expedition = Some(format!("EXPEDITION {}", frame.expedition));
         hud.wave = wave_text(frame);
         if let WirePhase::Over {
@@ -109,7 +111,7 @@ impl Hud {
         hud.allies = frame
             .players
             .iter()
-            .filter(|player| player.id != you)
+            .filter(|player| player.id != you && player.team.is_allied_with(my_team))
             .map(ally_meter)
             .collect();
 
@@ -316,7 +318,7 @@ mod tests {
     use caravan_protocol::{
         ClientEvent, RejectReason, RoomCode, ServerMsg, Welcome, WireShot, WireTower, WireWagon,
     };
-    use caravan_rules::{Sim, Tuning, Vec2};
+    use caravan_rules::{Sim, Team, Tuning, Vec2};
 
     use crate::interp::PlayerView;
 
@@ -344,6 +346,7 @@ mod tests {
     fn player(id: u32, life: WireLife) -> PlayerView {
         PlayerView {
             id,
+            team: Team::CARAVAN,
             pos: Vec2::new(5.0, 5.0),
             facing: Vec2::new(1.0, 0.0),
             life,
@@ -427,6 +430,32 @@ mod tests {
         let labels: Vec<&str> = hud.allies.iter().map(|a| a.label.as_str()).collect();
         assert_eq!(labels, ["P2  40 / 100", "P3  DOWNED 23s", "P4  DEAD"]);
         assert_eq!(hud.allies[2].tone, Tone::Gone);
+    }
+
+    #[test]
+    fn a_player_on_my_team_is_listed_as_an_ally() {
+        let session = session_in_room();
+        let teammate = PlayerView {
+            team: Team::CARAVAN,
+            ..player(2, alive(40))
+        };
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(72)), teammate])),
+        );
+        let labels: Vec<&str> = hud.allies.iter().map(|a| a.label.as_str()).collect();
+        assert_eq!(labels, ["P2  40 / 100"]);
+    }
+
+    #[test]
+    fn a_player_on_a_hostile_team_is_not_listed_as_an_ally() {
+        let session = session_in_room();
+        let rival = PlayerView {
+            team: Team(2),
+            ..player(2, alive(40))
+        };
+        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72)), rival])));
+        assert_eq!(hud.allies, []);
     }
 
     #[test]

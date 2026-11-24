@@ -7,7 +7,7 @@ use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 use caravan_client_core as core;
 use caravan_protocol::{MonsterKindInfo, WireMonsterKind, WireTowerState};
-use caravan_rules::Vec2 as Ground;
+use caravan_rules::{Team, Vec2 as Ground};
 
 use crate::config;
 use crate::convert;
@@ -19,6 +19,8 @@ use crate::parts::{self, Bar, PartQuery};
 #[derive(Resource)]
 pub struct Scene {
     pub you: u32,
+    /// 내 진영입니다. 같은 진영의 플레이어만 같은 편으로 그립니다.
+    pub team: Team,
     pub player: Footprint,
     monsters: Vec<MonsterLook>,
     towers: Vec<TowerPlace>,
@@ -163,6 +165,7 @@ pub fn spawn_world(
         .collect();
     commands.insert_resource(Scene {
         you: welcome.you,
+        team: Team(welcome.team),
         player: footprint(&mut meshes, world.player_radius),
         monsters,
         towers,

@@ -14,7 +14,7 @@ use caravan_protocol::{
     Snapshot, WireAngle, WireLife, WireMonster, WireMonsterKind, WirePhase, WirePlayer, WireTower,
     WireWagon,
 };
-use caravan_rules::Vec2;
+use caravan_rules::{Team, Vec2};
 
 /// 가장 최근 스냅샷보다 몇 Tick 이전을 그릴지 정합니다. 20Hz에서 2 Tick은 100ms입니다.
 /// 스냅샷 하나가 늦거나 사라져도 그림이 멈추지 않을 만큼의 여유이고, 조작이 화면에 나타나기까지 걸리는 시간이기도 합니다.
@@ -41,6 +41,8 @@ pub struct Frame {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayerView {
     pub id: u32,
+    /// 플레이어가 편들어 싸우는 쪽입니다. 같은 편인지는 `Team::is_allied_with`로 판정합니다.
+    pub team: Team,
     /// 지면 좌표(타일)입니다.
     pub pos: Vec2,
     /// 길이가 1인 지면 방향입니다.
@@ -200,6 +202,7 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
     };
     PlayerView {
         id: a.id,
+        team: Team(a.team),
         pos,
         facing,
         life: a.life,
@@ -316,6 +319,20 @@ mod tests {
 
         assert!(close(frame.monsters[0].pos, Vec2::new(4.5, 5.0)));
         assert!((frame.tick - 10.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_players_team_comes_through_to_the_frame() {
+        let mut rival = player(2, 8.0, 8.0, 100);
+        rival.team = 3;
+        let mut only = snapshot(10);
+        only.players = vec![player(1, 4.0, 4.0, 100), rival];
+        let buffer = buffer_with(vec![only]);
+
+        let frame = buffer.sample_at(10.0).unwrap();
+
+        assert_eq!(frame.players[0].team, Team(0));
+        assert_eq!(frame.players[1].team, Team(3));
     }
 
     #[test]
