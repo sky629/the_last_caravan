@@ -17,6 +17,10 @@ pub struct TowerId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub u32);
 
+/// 날아가는 탄환 하나의 번호입니다. 번호는 `World::launch`가 1씩 늘려서 나누어 주고 다시 사용하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProjectileId(pub u32);
+
 /// 땅에 떨어진 자원 한 더미의 번호입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PileId(pub u32);

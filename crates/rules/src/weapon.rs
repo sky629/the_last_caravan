@@ -9,6 +9,7 @@ use crate::ids::Team;
 use crate::math::Vec2;
 use crate::monster::Monster;
 use crate::player::Life;
+use crate::projectile::Launch;
 use crate::tuning::{ArcTuning, Delivery, arc_cos};
 use crate::world::{Ctx, Hit, Target, World};
 
@@ -23,7 +24,7 @@ struct Attack {
     delivery: Delivery,
 }
 
-/// 플레이어의 공격을 처리합니다. 맞힌 몬스터의 피해는 `hits`에 모읍니다.
+/// 플레이어의 공격을 처리합니다. 맞힌 몬스터의 피해는 `hits`에 모으고, 탄환은 `world`에 새로 생깁니다.
 /// `Sim::step`이 부르는 이 파일의 유일한 함수입니다.
 pub(crate) fn use_weapons(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
     let attacks = decide(world, ctx);
@@ -64,11 +65,20 @@ fn decide(world: &mut World, ctx: &Ctx) -> Vec<Attack> {
 }
 
 /// 모은 공격을 방식에 따라 전달합니다. `match`에 `_` 갈래가 없으므로 방식을 추가하면 여기서 컴파일 오류가 납니다.
-fn deliver(world: &World, ctx: &Ctx, attacks: &[Attack], hits: &mut Vec<Hit>) {
+fn deliver(world: &mut World, ctx: &Ctx, attacks: &[Attack], hits: &mut Vec<Hit>) {
     let mut candidates = Vec::new();
     for attack in attacks {
         match attack.delivery {
             Delivery::Arc(arc) => swing(attack, arc, &world.monsters, ctx, &mut candidates, hits),
+            Delivery::Projectile(spec) => {
+                world.launch(Launch {
+                    team: attack.team,
+                    from: attack.origin,
+                    dir: attack.facing,
+                    damage: attack.damage,
+                    spec,
+                });
+            }
         }
     }
 }

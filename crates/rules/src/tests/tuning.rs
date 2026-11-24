@@ -3,7 +3,7 @@
 use super::support::{Scenario, nights};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
-use crate::tuning::{ArcTuning, Delivery, PLAYTEST_DAMAGE_MULTIPLIER, Tuning};
+use crate::tuning::{ArcTuning, Delivery, PLAYTEST_DAMAGE_MULTIPLIER, ProjectileTuning, Tuning};
 use crate::world::Tile;
 
 #[test]
@@ -471,13 +471,87 @@ fn an_arc_from_a_line_to_a_full_circle_is_valid() {
     }
 }
 
+fn with_bow(shot: ProjectileTuning) -> Tuning {
+    let mut t = Tuning::default();
+    t.weapons.bow.delivery = Delivery::Projectile(shot);
+    t
+}
+
+fn default_shot() -> ProjectileTuning {
+    let Delivery::Projectile(shot) = Tuning::default().weapons.bow.delivery else {
+        panic!("the bow shoots projectiles");
+    };
+    shot
+}
+
 #[test]
-fn the_sword_damage_is_the_normal_damage_times_the_playtest_multiplier() {
+fn a_projectile_that_never_moves_or_never_ends_is_rejected() {
+    for bad in [0.0, -14.0, f32::NAN, f32::INFINITY] {
+        let t = with_bow(ProjectileTuning {
+            speed: bad,
+            ..default_shot()
+        });
+        let why = t.validate().expect_err(&format!("a speed of {bad}"));
+        assert!(why.contains("Bow projectile speed"), "{bad}: {why}");
+
+        let t = with_bow(ProjectileTuning {
+            range: bad,
+            ..default_shot()
+        });
+        let why = t.validate().expect_err(&format!("a range of {bad}"));
+        assert!(why.contains("Bow projectile range"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn a_projectile_as_wide_as_the_player_is_rejected() {
+    let player_radius = Tuning::default().player.radius;
+    for bad in [player_radius, 1.0, -0.1, f32::NAN] {
+        let t = with_bow(ProjectileTuning {
+            radius: bad,
+            ..default_shot()
+        });
+        let why = t.validate().expect_err(&format!("a radius of {bad}"));
+        assert!(why.contains("Bow projectile radius"), "{bad}: {why}");
+    }
+    let t = with_bow(ProjectileTuning {
+        radius: 0.0,
+        ..default_shot()
+    });
+    assert_eq!(t.validate(), Ok(()), "a point of a projectile is valid");
+}
+
+#[test]
+fn a_projectile_fast_enough_to_cross_the_map_in_one_tick_is_still_valid() {
+    // 명중 판정이 이동하는 선분 전체를 검사하므로 속도에 상한이 없습니다. 이동과 달리 한 Tick의 거리가 반지름보다 길어도 됩니다.
+    let t = with_bow(ProjectileTuning {
+        speed: 5000.0,
+        ..default_shot()
+    });
+    assert!(5000.0 * t.dt() > t.map.width);
+    assert_eq!(t.validate(), Ok(()));
+}
+
+#[test]
+fn the_playtest_multiplier_raises_every_weapon_by_the_same_ratio() {
     let t = Tuning::default();
+    let sword = t.weapons.get(WeaponKind::Sword).damage;
+    let bow = t.weapons.get(WeaponKind::Bow).damage;
+
     assert_eq!(
-        t.weapons.get(WeaponKind::Sword).damage,
+        sword,
         25 * PLAYTEST_DAMAGE_MULTIPLIER,
         "the normal sword damage is 25"
+    );
+    assert_eq!(
+        bow,
+        15 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal bow damage is 15"
+    );
+    assert_eq!(
+        sword * 15,
+        bow * 25,
+        "the bow is 60% of the sword at any multiplier"
     );
 }
 
@@ -490,4 +564,5 @@ fn before_a_release_the_damage_is_the_normal_damage() {
     );
     let t = Tuning::default();
     assert_eq!(t.weapons.get(WeaponKind::Sword).damage, 25);
+    assert_eq!(t.weapons.get(WeaponKind::Bow).damage, 15);
 }

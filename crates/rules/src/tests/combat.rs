@@ -194,7 +194,9 @@ fn the_swing_finds_exactly_the_monsters_in_reach_across_many_grid_cells() {
 
     s.run_ticks(1);
 
-    let Delivery::Arc(arc) = s.sim.tuning().weapons.sword.delivery;
+    let Delivery::Arc(arc) = s.sim.tuning().weapons.sword.delivery else {
+        panic!("the sword swings an arc");
+    };
     let reach = arc.reach;
     let radii = s.sim.tuning().player.radius + s.sim.tuning().monsters.grunt.radius;
     let arc_cos = arc_cos(arc.half_angle_deg);

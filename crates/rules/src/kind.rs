@@ -30,10 +30,12 @@ impl StructureKind {
 pub enum WeaponKind {
     /// 조준한 방향의 부채꼴 안에 있는 몬스터를 모두 베는 근접 무기입니다.
     Sword,
+    /// 조준한 방향으로 탄환을 쏘는 원거리 무기입니다.
+    Bow,
 }
 
 impl WeaponKind {
-    pub const ALL: [WeaponKind; 1] = [WeaponKind::Sword];
+    pub const ALL: [WeaponKind; 2] = [WeaponKind::Sword, WeaponKind::Bow];
 
     /// 플레이어가 입장할 때와 새 원정이 시작될 때 드는 무기입니다.
     pub const STARTING: WeaponKind = WeaponKind::Sword;

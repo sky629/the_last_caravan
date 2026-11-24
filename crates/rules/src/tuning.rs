@@ -62,6 +62,8 @@ pub struct WeaponTuning {
 pub enum Delivery {
     /// 공격하는 순간 부채꼴 안에 있는 몬스터를 모두 맞힙니다.
     Arc(ArcTuning),
+    /// 탄환을 쏩니다. 탄환은 직선으로 날아가며 처음 닿는 몬스터 한 마리를 맞힙니다.
+    Projectile(ProjectileTuning),
 }
 
 /// 부채꼴로 공격하는 방식의 수치입니다.
@@ -71,6 +73,17 @@ pub struct ArcTuning {
     pub reach: f32,
     /// 조준 방향을 기준으로 한 부채꼴의 절반 각도입니다(도).
     pub half_angle_deg: f32,
+}
+
+/// 탄환을 쏘는 방식의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProjectileTuning {
+    /// 초당 타일 수입니다.
+    pub speed: f32,
+    /// 날아갈 수 있는 거리(타일)입니다. 이 거리를 다 날면 사라집니다.
+    pub range: f32,
+    /// 탄환의 반지름(타일)입니다. 몬스터의 반지름과 더한 거리 안으로 지나가면 닿은 것입니다.
+    pub radius: f32,
 }
 
 /// 부채꼴의 경계 각도에 대한 코사인입니다. 몬스터 방향과 조준 방향의 내적이 이 값 이상이면 부채꼴 안입니다.
@@ -83,18 +96,21 @@ pub(crate) fn arc_cos(half_angle_deg: f32) -> f32 {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeaponTable {
     pub sword: WeaponTuning,
+    pub bow: WeaponTuning,
 }
 
 impl WeaponTable {
     pub fn get(&self, kind: WeaponKind) -> &WeaponTuning {
         match kind {
             WeaponKind::Sword => &self.sword,
+            WeaponKind::Bow => &self.bow,
         }
     }
 }
 
 /// 정상 피해량입니다. 서비스할 때의 값입니다.
 const SWORD_DAMAGE: u32 = 25;
+const BOW_DAMAGE: u32 = 15;
 
 /// 테스트하는 동안 모든 무기의 피해량에 곱하는 배수입니다. 서비스하기 전에 1로 내립니다.
 /// 무기마다 따로 올리지 않고 이 값 하나로 올리므로, 무기 사이의 피해량 비율은 정상 값과 같습니다.
@@ -675,6 +691,11 @@ impl Tuning {
     ///
     /// - 쿨다운과 부채꼴의 닿는 거리는 유한하고 0 이상입니다. 쿨다운이 음수나 NaN이면 Tick 수로 바꾸는 계산이 깨집니다.
     /// - 부채꼴의 절반 각도는 0도 이상 180도 이하입니다.
+    /// - 탄환의 속도와 사거리는 유한하고 0보다 큽니다. 0이면 탄환이 사라지지 않아서 스냅샷이 끝없이 커집니다.
+    /// - 탄환의 반지름은 유한하고 0 이상이며 플레이어의 반지름보다 짧습니다. 탄환은 플레이어의 중심에서 나가므로,
+    ///   벽에 붙어 선 플레이어가 벽을 따라 쏘는 탄환이 처음부터 벽에 닿으면 안 되기 때문입니다.
+    ///
+    /// 탄환의 속도에는 상한이 없습니다. 이동(`collision`)은 한 Tick의 거리가 반지름보다 짧아야 하지만, 탄환의 명중 판정은 이동하는 선분 전체를 검사합니다.
     ///
     /// `match`에 `_` 갈래가 없으므로 전달 방식을 추가하면 컴파일러가 이 검사를 더하라고 알려 줍니다.
     fn validate_weapons(&self) -> Result<(), String> {
@@ -691,6 +712,17 @@ impl Tuning {
                         ));
                     }
                 }
+                Delivery::Projectile(shot) => {
+                    check_positive(&format!("{kind:?} projectile speed"), shot.speed)?;
+                    check_positive(&format!("{kind:?} projectile range"), shot.range)?;
+                    check_not_negative(&format!("{kind:?} projectile radius"), shot.radius)?;
+                    if shot.radius >= self.player.radius {
+                        return Err(format!(
+                            "{kind:?} projectile radius {} must be shorter than the player radius {}",
+                            shot.radius, self.player.radius
+                        ));
+                    }
+                }
             }
         }
         Ok(())
@@ -704,6 +736,17 @@ fn check_not_negative(name: &str, value: f32) -> Result<(), String> {
     } else {
         Err(format!(
             "{name} must be a finite number that is not negative, but it is {value}"
+        ))
+    }
+}
+
+/// 유한하고 0보다 커야 합니다.
+fn check_positive(name: &str, value: f32) -> Result<(), String> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{name} must be a finite number longer than 0, but it is {value}"
         ))
     }
 }
@@ -777,6 +820,15 @@ impl Default for Tuning {
                     delivery: Delivery::Arc(ArcTuning {
                         reach: 1.0,
                         half_angle_deg: 60.0,
+                    }),
+                },
+                bow: WeaponTuning {
+                    damage: BOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 0.4,
+                    delivery: Delivery::Projectile(ProjectileTuning {
+                        speed: 14.0,
+                        range: 9.0,
+                        radius: 0.15,
                     }),
                 },
             },

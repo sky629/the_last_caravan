@@ -1,7 +1,7 @@
 //! 몬스터 300마리가 있고 감시탑이 상한만큼 서 있을 때 Tick 하나를 계산하는 데 걸리는 시간을 잽니다.
 //!
 //! 시간의 한계는 릴리스 빌드에서만 확인합니다. 최적화하지 않은 빌드의 시간은 한계와 관계가 없기 때문입니다.
-//! 일반 테스트에서는 측정 상황이 말한 대로 만들어졌는지(몬스터 300마리, 감시탑 상한, 건설과 파괴가 실제로 일어남)만 확인합니다.
+//! 일반 테스트에서는 측정 상황이 말한 대로 만들어졌는지(몬스터 300마리, 감시탑 상한, 건설과 파괴가 실제로 일어남, 탄환이 실제로 날아다님)만 확인합니다.
 //! 시간을 보려면 다음 명령을 실행합니다.
 //!
 //! ```text
@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 
 use super::support::{Scenario, nights};
 use crate::ids::TowerId;
+use crate::input::{AimDir, PlayerInput};
+use crate::kind::WeaponKind;
+use crate::math::Vec2;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::Tuning;
 use crate::world::Tile;
@@ -22,6 +25,15 @@ use crate::world::Tile;
 /// 감시탑은 `towers`에 적힌 자리에 서 있고 HP가 `tower_hp`입니다. 감시탑은 사격하지만 피해를 주지 않아서 몬스터가 처치되지 않고,
 /// 그래서 300마리가 계속 남습니다. 사격할 대상을 고르는 계산은 피해를 줄 때와 같고, 달라지는 것은 피해를 적용하는 한 줄뿐입니다.
 fn village_under_siege(towers: Vec<Tile>, tower_hp: u32) -> Scenario {
+    village_under_siege_with(towers, tower_hp, |_| {})
+}
+
+/// `village_under_siege`와 같지만 수치를 `adjust`로 더 바꿉니다.
+fn village_under_siege_with(
+    towers: Vec<Tile>,
+    tower_hp: u32,
+    adjust: impl FnOnce(&mut Tuning),
+) -> Scenario {
     Scenario::default_game(|t| {
         t.cycle.day_secs = t.dt();
         t.nights.plans = nights(&[&[300]]);
@@ -33,6 +45,7 @@ fn village_under_siege(towers: Vec<Tile>, tower_hp: u32) -> Scenario {
         t.village.start_towers = towers;
         t.structures.watchtower.max_hp = tower_hp;
         t.structures.watchtower.damage = 0;
+        adjust(t);
     })
 }
 
@@ -215,5 +228,117 @@ fn perf_a_tick_that_builds_or_destroys_a_tower_fits_inside_one_interval() {
         "tick pair around the destroyed tower",
         destroyed[0],
         interval,
+    );
+}
+
+/// 활을 든 플레이어를 `pos`에 세우고 `aim` 방향으로 쉬지 않고 쏘게 합니다.
+fn add_archer(s: &mut Scenario, pos: Vec2, aim: (f32, f32)) {
+    let id = s.player_at(pos.x, pos.y);
+    s.give_weapon(id, WeaponKind::Bow);
+    s.hold(
+        id,
+        PlayerInput {
+            aim: AimDir::new(aim.0, aim.1),
+            attack: true,
+            ..PlayerInput::default()
+        },
+    );
+}
+
+/// 1000 Tick을 진행하고 Tick 하나의 평균 시간과 가장 느린 시간, 날아다니는 탄환의 평균과 최대 수를 출력한 뒤 평균 시간을 돌려줍니다.
+/// 탄환이 실제로 날아다니는지 알려면 숫자를 보기 전에 탄환의 수를 확인해야 하므로, 탄환의 최대 수도 함께 돌려줍니다.
+fn measure_with_arrows(s: &mut Scenario) -> (Duration, usize) {
+    let mut total = Duration::ZERO;
+    let mut slowest = Duration::ZERO;
+    let mut flying_sum = 0;
+    let mut most_flying = 0;
+    for _ in 0..1000 {
+        let took = timed_tick(s);
+        total += took;
+        slowest = slowest.max(took);
+        flying_sum += s.flying();
+        most_flying = most_flying.max(s.flying());
+    }
+    println!(
+        "slowest of 1000 ticks: {slowest:?}; arrows in the air: average {:.1}, most {most_flying}",
+        flying_sum as f32 / 1000.0
+    );
+    (total / 1000, most_flying)
+}
+
+#[test]
+fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_four_archers_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    assert_eq!(towers.len(), cap, "the village has room for the cap");
+    // 몬스터가 활에 맞아 죽으면 측정 상황이 달라지므로 HP를 가장 크게 합니다.
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| t.monsters.grunt.max_hp = u32::MAX);
+    // 플레이어 넷이 등장 지점에서 동서남북으로 쉬지 않고 쏩니다.
+    let aims = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
+    for (spawn, aim) in defaults.map.player_spawns.iter().zip(aims) {
+        add_archer(&mut s, *spawn, aim);
+    }
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+
+    let (average, most_flying) = measure_with_arrows(&mut s);
+
+    assert_eq!(
+        s.sim.monsters().count(),
+        300,
+        "300 monsters in every sampled tick"
+    );
+    assert!(most_flying >= 1, "arrows flew during the measurement");
+    let interval = Duration::from_secs_f32(defaults.dt());
+    check_limit(
+        "average of 1000 ticks with four archers",
+        average,
+        interval / 10,
+    );
+}
+
+#[test]
+fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_over_a_hundred_arrows_in_the_air_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    // 열두 명이 한 Tick마다 쏘면 탄환 하나가 13 Tick 날아가므로 열린 땅에서 150개쯤이 동시에 날아다닙니다.
+    // 규칙이 허용하는 네 명이 쏘는 것보다 훨씬 많은 탄환입니다.
+    let archers = 12;
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| {
+        t.monsters.grunt.max_hp = u32::MAX;
+        t.max_players = archers;
+        t.weapons.bow.cooldown_secs = t.dt();
+    });
+    // 몬스터가 오지 않는 서쪽 가장자리에서 북쪽으로 쏩니다. 탄환은 사거리를 다 날아갑니다.
+    for i in 0..archers {
+        add_archer(&mut s, Vec2::new(2.5, 3.0 + 4.0 * i as f32), (0.0, 1.0));
+    }
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+
+    let (average, most_flying) = measure_with_arrows(&mut s);
+
+    assert_eq!(
+        s.sim.monsters().count(),
+        300,
+        "300 monsters in every sampled tick"
+    );
+    assert!(
+        most_flying >= 100,
+        "more than a hundred arrows flew at once, but only {most_flying}"
+    );
+    let interval = Duration::from_secs_f32(defaults.dt());
+    check_limit(
+        "average of 1000 ticks with many arrows",
+        average,
+        interval / 10,
     );
 }

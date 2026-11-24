@@ -7,6 +7,7 @@ use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
 use crate::player::{self, Interaction, Player};
+use crate::projectile::{self, Projectile};
 use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
 use crate::spawn::SpawnPlan;
@@ -146,6 +147,7 @@ impl Sim {
         player::move_players(&mut self.world, &ctx);
         resources::deposit_and_pickup(&mut self.world, &ctx);
         weapon::use_weapons(&mut self.world, &ctx, &mut hits);
+        projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
         structures::towers_fire(&mut self.world, &ctx, &mut hits);
         monster::monsters_act(
             &mut self.world,
@@ -220,6 +222,12 @@ impl Sim {
     /// 번호가 작은 몬스터부터 차례로 돌려줍니다.
     pub fn monsters(&self) -> impl Iterator<Item = &Monster> {
         self.world.monsters.iter()
+    }
+
+    /// 번호가 작은 탄환부터 차례로 돌려줍니다. 이번 Tick에 끝난 탄환도 포함합니다(`Projectile::flight`).
+    /// 끝난 탄환을 포함하는 까닭은 클라이언트가 탄환이 끝난 자리까지 그릴 수 있게 하려는 것입니다.
+    pub fn projectiles(&self) -> impl Iterator<Item = &Projectile> {
+        self.world.projectiles.iter()
     }
 
     /// 번호가 작은 시설부터 차례로 돌려줍니다. 짓는 중인 감시탑도 포함합니다.

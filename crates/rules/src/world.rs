@@ -18,12 +18,13 @@ mod tiles;
 use std::collections::BTreeMap;
 
 use crate::collision::Body;
-use crate::ids::{MonsterId, PileId, PlayerId, Team, TowerId};
+use crate::ids::{MonsterId, PileId, PlayerId, ProjectileId, Team, TowerId};
 use crate::input::PlayerInputs;
 use crate::kind::{MonsterKind, StructureKind};
 use crate::math::Vec2;
 use crate::monster::{Monster, Order};
 use crate::player::Player;
+use crate::projectile::{Launch, Projectile};
 use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
 use crate::structures::{Tower, TowerState, Wagon};
@@ -39,6 +40,9 @@ pub(crate) struct World {
     /// 번호가 작은 몬스터가 앞에 옵니다. 몬스터는 번호 순서로 추가되고 순서를 바꾸지 않고 제거하므로 이 순서가 유지됩니다.
     /// 수백 마리를 차례로 처리하기에 가장 단순하고 빠른 연속 배열입니다.
     pub monsters: Vec<Monster>,
+    /// 날아가는 탄환과 이번 Tick에 끝난 탄환입니다. 번호가 작은 탄환이 앞에 옵니다.
+    /// 탄환은 번호 순서로 추가되고 순서를 바꾸지 않고 제거하므로 이 순서가 유지됩니다. 스냅샷과 클라이언트가 번호 순서에 기댑니다.
+    pub projectiles: Vec<Projectile>,
     /// 서 있는 감시탑과 짓는 중인 감시탑입니다. 번호를 키로 하고, 넣고 빼는 일은 `add_tower`, `finish_tower`, `remove_tower`만 합니다.
     pub towers: BTreeMap<TowerId, Tower>,
     pub wagon: Wagon,
@@ -54,6 +58,7 @@ pub(crate) struct World {
     /// 이동 경로는 이 번호가 마지막으로 만들 때와 다르면 낡은 것으로 보고 다시 만듭니다.
     layout_revision: u64,
     next_monster: u32,
+    next_projectile: u32,
     next_tower: u32,
     next_pile: u32,
 }
@@ -76,6 +81,7 @@ impl World {
         let mut world = World {
             players: BTreeMap::new(),
             monsters: Vec::new(),
+            projectiles: Vec::new(),
             towers: BTreeMap::new(),
             wagon: Wagon::new(t),
             nodes,
@@ -84,6 +90,7 @@ impl World {
             tiles,
             layout_revision: 0,
             next_monster: 1,
+            next_projectile: 1,
             next_tower: 1,
             next_pile: 1,
         };
@@ -91,10 +98,11 @@ impl World {
         world
     }
 
-    /// 새 원정을 위해 몬스터, 감시탑, 마차, 보관함, 채집 지점, 떨어진 자원, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
+    /// 새 원정을 위해 몬스터, 탄환, 감시탑, 마차, 보관함, 채집 지점, 떨어진 자원, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
     /// 번호를 세는 값은 되돌리지 않으므로 이전 원정의 번호가 다시 쓰이지 않습니다.
     pub fn restart(&mut self, t: &Tuning) {
         self.monsters.clear();
+        self.projectiles.clear();
         self.towers.clear();
         self.piles.clear();
         self.wagon = Wagon::new(t);
@@ -181,6 +189,14 @@ impl World {
         let id = MonsterId(self.next_monster);
         self.next_monster += 1;
         self.monsters.push(Monster::new(id, kind, order, pos, t));
+        id
+    }
+
+    /// 탄환을 만들어 탄환 목록의 끝에 추가합니다. 번호는 새로 받고 다시 사용하지 않습니다.
+    pub(crate) fn launch(&mut self, launch: Launch) -> ProjectileId {
+        let id = ProjectileId(self.next_projectile);
+        self.next_projectile += 1;
+        self.projectiles.push(Projectile::new(id, launch));
         id
     }
 }
