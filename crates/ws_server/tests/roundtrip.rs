@@ -236,6 +236,33 @@ async fn a_link_that_sends_faster_than_the_rate_limit_is_disconnected() {
 }
 
 #[tokio::test]
+async fn a_link_that_sends_exactly_the_rate_limit_and_closes_is_not_reported_as_over_it() {
+    let limits = ServerLimits {
+        max_messages_per_sec: 10,
+        ..ServerLimits::default()
+    };
+    let mut server = WsServer::bind("127.0.0.1:0", limits).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+    let (mut client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    let link = connected_link(&mut server).await;
+
+    for seq in 1..=10 {
+        client.send(input_frame(seq)).await.unwrap();
+    }
+    client.close(None).await.unwrap();
+
+    let mut delivered = 0;
+    loop {
+        match next_event(&mut server, Duration::from_secs(5)).await {
+            ServerEvent::Message(from, _) if from == link => delivered += 1,
+            ServerEvent::Disconnected(gone) if gone == link => break,
+            other => panic!("unexpected event {other:?}"),
+        }
+    }
+    assert_eq!(delivered, 10);
+}
+
+#[tokio::test]
 async fn a_message_larger_than_the_size_limit_closes_the_link_with_the_reason() {
     let limits = ServerLimits {
         max_message_bytes: 64,

@@ -307,7 +307,12 @@ async fn serve_link(
     loop {
         tokio::select! {
             frame = ws.next() => {
-                if !rate.allow(Instant::now(), limits.max_messages_per_sec) {
+                // 닫기 프레임과 스트림의 끝은 클라이언트가 보낸 메시지가 아니므로 세지 않습니다.
+                let counted = matches!(
+                    frame,
+                    Some(Ok(Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_)))
+                );
+                if counted && !rate.allow(Instant::now(), limits.max_messages_per_sec) {
                     limit_reached = Some(format!(
                         "sent more than {} messages in one second",
                         limits.max_messages_per_sec
@@ -370,7 +375,7 @@ async fn serve_link(
     let _ = inbound.send(Inbound::Closed(link)).await;
 }
 
-/// 접속 하나가 지금의 1초 구간에 보낸 프레임의 수를 셉니다.
+/// 접속 하나가 지금의 1초 구간에 보낸 메시지의 수를 셉니다.
 struct RateWindow {
     started: Instant,
     count: u32,
@@ -384,7 +389,7 @@ impl RateWindow {
         }
     }
 
-    /// 프레임 하나를 세고, 이번 구간의 한도 안이면 `true`를 돌려줍니다.
+    /// 메시지 하나를 세고, 이번 구간의 한도 안이면 `true`를 돌려줍니다.
     fn allow(&mut self, now: Instant, max_per_window: u32) -> bool {
         if now.duration_since(self.started) >= RATE_WINDOW {
             self.started = now;
