@@ -201,11 +201,17 @@ fn pump_reports_joins_and_leaves_with_member_counts() {
 
 #[test]
 fn the_snapshot_rate_follows_tuning_tick_hz() {
+    // 기본 접속 한도는 20 Hz까지만 실을 수 있으므로, 더 빠른 Tick은 한도를 함께 올립니다.
+    let limits = ServerLimits {
+        max_messages_per_sec: 1000,
+        ..ServerLimits::default()
+    };
     for tick_hz in [20, 40] {
-        let mut rig = rig_with(Tuning {
+        let tuning = Tuning {
             tick_hz,
             ..Tuning::default()
-        });
+        };
+        let mut rig = rig_with_limits(tuning, limits);
         let (mut a, _) = rig.join_ok("test");
         for _ in 0..100 {
             rig.now += Duration::from_millis(10);
@@ -378,11 +384,16 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
 
 #[test]
 fn the_welcome_reports_the_players_id_the_capacity_and_the_tick_rate_from_the_tuning() {
-    let mut rig = rig_with(Tuning {
+    let tuning = Tuning {
         max_players: 3,
         tick_hz: 30,
         ..Tuning::default()
-    });
+    };
+    let limits = ServerLimits {
+        max_messages_per_sec: 1000,
+        ..ServerLimits::default()
+    };
+    let mut rig = rig_with_limits(tuning, limits);
     let (_a, _) = rig.join("test");
     let (_b, answer) = rig.join("test");
     let ServerMsg::Welcome(welcome) = answer else {
@@ -565,6 +576,24 @@ fn a_server_refuses_a_tick_rate_that_the_link_message_limit_cannot_carry() {
         ..Tuning::default()
     };
     assert_eq!(try_start(fast, roomy), Ok(()));
+}
+
+#[test]
+fn the_default_limits_carry_the_default_tick_rate_and_nothing_faster() {
+    let limits = ServerLimits::default();
+    let default_hz = Tuning::default().tick_hz;
+    let at = |tick_hz| Tuning {
+        tick_hz,
+        ..Tuning::default()
+    };
+    assert_eq!(try_start(at(default_hz), limits), Ok(()));
+    assert!(
+        matches!(
+            try_start(at(default_hz + 1), limits),
+            Err(ServerError::InvalidLimits(_))
+        ),
+        "a faster tick leaves too little room for inputs that arrive late"
+    );
 }
 
 /// 이 수치로 입장한 클라이언트가 입장 안내를 확인한 결과입니다.

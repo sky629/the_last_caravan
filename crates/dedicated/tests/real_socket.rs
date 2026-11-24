@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use caravan_protocol::{
     ClientMsg, InputMsg, PROTOCOL_VERSION, ServerLimits, ServerMsg, Snapshot, WireVec2,
-    decode_server, encode_client,
+    decode_server, encode_client, loopback,
 };
 use caravan_rules::Tuning;
 use caravan_server::GameServer;
@@ -32,16 +32,15 @@ struct RunningServer {
 }
 
 impl RunningServer {
-    fn start() -> RunningServer {
+    fn start(tuning: Tuning) -> RunningServer {
         let limits = ServerLimits::default();
         let ws = WsServer::bind("127.0.0.1:0", limits).expect("bind a free port");
         let addr = ws.local_addr();
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
         let thread = thread::spawn(move || {
-            let mut server =
-                GameServer::new(Box::new(ws), Tuning::default(), limits, Instant::now())
-                    .expect("the default tuning is valid");
+            let mut server = GameServer::new(Box::new(ws), tuning, limits, Instant::now())
+                .expect("the tuning is valid and fits the limits");
             while !stopped.load(Ordering::Relaxed) {
                 let now = Instant::now();
                 server.pump(now);
@@ -142,7 +141,7 @@ impl TestClient {
 
 #[test]
 fn input_from_one_socket_moves_that_player_in_the_snapshots_of_the_other_socket() {
-    let server = RunningServer::start();
+    let server = RunningServer::start(Tuning::default());
     let mut a = TestClient::connect(server.addr);
     let mut b = TestClient::connect(server.addr);
     let a_id = a.join("real");
@@ -173,4 +172,61 @@ fn input_from_one_socket_moves_that_player_in_the_snapshots_of_the_other_socket(
         before.players[1].pos.to_tiles().x,
         "B, who sent nothing, did not move"
     );
+}
+
+/// 기본 접속 한도에서 서버가 시작을 허락하는 가장 빠른 Tick 속도입니다.
+fn fastest_tick_hz_the_default_limits_carry() -> u32 {
+    (1..=240)
+        .rev()
+        .find(|&tick_hz| {
+            let (transport, _connector) = loopback();
+            let tuning = Tuning {
+                tick_hz,
+                ..Tuning::default()
+            };
+            GameServer::new(
+                Box::new(transport),
+                tuning,
+                ServerLimits::default(),
+                Instant::now(),
+            )
+            .is_ok()
+        })
+        .expect("some tick rate starts")
+}
+
+#[test]
+fn a_client_whose_inputs_arrive_in_a_burst_after_a_three_second_stall_stays_connected() {
+    // 서버가 시작을 허락하는 가장 빠른 Tick 속도가 접속 한도에 가장 가깝습니다.
+    let tick_hz = fastest_tick_hz_the_default_limits_carry();
+    let server = RunningServer::start(Tuning {
+        tick_hz,
+        ..Tuning::default()
+    });
+    let mut client = TestClient::connect(server.addr);
+    client.join("burst");
+
+    let mut seq = 0;
+    let mut send_input = |client: &mut TestClient| {
+        seq += 1;
+        client.send(&ClientMsg::Input(InputMsg {
+            seq,
+            ..InputMsg::default()
+        }));
+        seq
+    };
+    // 3초 동안 멈춰 있던 클라이언트의 입력이 한꺼번에 도착하고, 그 뒤로 Tick마다 하나씩 도착합니다.
+    for _ in 0..3 * tick_hz {
+        send_input(&mut client);
+    }
+    let mut last = 0;
+    for _ in 0..tick_hz {
+        client.next(Duration::from_secs(5));
+        last = send_input(&mut client);
+    }
+
+    let reached = client.snapshot_where(Duration::from_secs(5), |snapshot| {
+        snapshot.players[0].last_input_seq == last
+    });
+    assert_eq!(reached.players[0].last_input_seq, last, "the link survived");
 }

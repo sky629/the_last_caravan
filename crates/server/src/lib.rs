@@ -102,8 +102,11 @@ pub struct ServerStats {
 }
 
 /// 접속 하나가 1초에 보낼 수 있는 메시지 수(`ServerLimits::max_messages_per_sec`)는 `tick_hz`의 이 배수 이상이어야 합니다.
-/// 클라이언트는 Tick마다 입력을 하나씩 보냅니다. 한도가 `tick_hz`와 비슷하면, 브라우저가 지연된 입력을 한꺼번에 보내는 순간 정상적인 클라이언트도 한도를 넘어 접속이 끊깁니다.
-const LINK_RATE_HEADROOM: u32 = 2;
+/// 클라이언트는 Tick마다 입력을 하나씩 보내고, 네트워크가 멈췄다가 풀리면 밀린 입력을 한꺼번에 보냅니다.
+/// 한도가 세는 1초 구간에는 밀린 입력 전부와 그 뒤 1초 분량의 입력이 함께 들어올 수 있습니다.
+/// 그래서 Tick마다 입력을 보내는 클라이언트가 한도에 닿지 않고 멈출 수 있는 시간은, 이 배수에서 1을 뺀 초에서 Tick 한 번의 시간을 뺀 값까지입니다.
+/// 지금의 5배에서는 4초에서 Tick 한 번을 뺀 시간이고, 20 Hz에서는 3.95초입니다. 이보다 오래 멈췄던 클라이언트는 밀린 입력이 몰려오는 순간 한도를 넘어 접속이 끊길 수 있습니다.
+const LINK_RATE_HEADROOM: u32 = 5;
 
 pub struct GameServer {
     transport: Box<dyn ServerTransport>,
@@ -143,7 +146,8 @@ fn first_welcome(tuning: &Tuning, limits: &ServerLimits) -> Welcome {
 
 impl GameServer {
     /// 수치가 규칙의 전제를 지키고, 클라이언트가 받아들이는 입장 안내를 만들고, 접속 한도에 맞는지 한 번 검사하고, 어긋나면 오류를 돌려줍니다.
-    /// 이 검사를 통과한 수치로 만든 방은 개체가 벽을 통과하는 것 같은 오동작을 일으키지 않고, 정상적인 클라이언트의 접속을 한도 때문에 끊지 않습니다.
+    /// 이 검사를 통과한 수치로 만든 방은 개체가 벽을 통과하는 것 같은 오동작을 일으키지 않습니다.
+    /// 또 Tick마다 입력을 보내는 클라이언트는 `LINK_RATE_HEADROOM`에 적힌 시간까지 멈췄다가 입력을 몰아서 보내도 접속 한도에 닿지 않습니다.
     pub fn new(
         transport: Box<dyn ServerTransport>,
         tuning: Tuning,
