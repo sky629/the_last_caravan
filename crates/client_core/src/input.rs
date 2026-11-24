@@ -26,6 +26,8 @@ pub struct Controls {
     pub build: bool,
     /// Shift 키(왼쪽과 오른쪽)입니다. 누르고 움직이는 동안 게이지가 남아 있으면 달립니다.
     pub sprint: bool,
+    /// Q 키를 누르기 시작한 프레임에서만 참입니다. 누르고 있는 상태가 아니라 누른 순간이고, 키를 누르고 있어도 무기가 계속 바뀌지 않습니다.
+    pub switch_weapon: bool,
 }
 
 impl Controls {
@@ -46,6 +48,7 @@ impl Controls {
             interact: self.interact,
             build: self.build,
             sprint: self.sprint,
+            switch_weapon: self.switch_weapon,
         }
     }
 }
@@ -65,6 +68,8 @@ pub struct InputSender {
     next_at: f64,
     /// 공격 버튼이 눌렸다가 입력을 보내기 전에 떼어졌는지 기억합니다.
     attack_latched: bool,
+    /// 무기 전환 키를 누른 프레임이 있었는데 아직 입력에 싣지 않았는지 기억합니다. 입력에 한 번 실으면 지웁니다.
+    switch_latched: bool,
 }
 
 impl InputSender {
@@ -74,12 +79,14 @@ impl InputSender {
             next_seq: 1,
             next_at: 0.0,
             attack_latched: false,
+            switch_latched: false,
         }
     }
 
     /// 프레임마다 부릅니다. 보낼 때가 되었으면 입력 메시지를 돌려줍니다.
     ///
     /// 프레임은 입력보다 자주 돌므로, 두 입력 사이에 눌렸다가 떼어진 클릭도 다음 입력에 공격으로 실어서 잃지 않게 합니다.
+    /// 무기 전환 키를 누른 프레임도 같은 방식으로 기억해서 다음 입력에 한 번만 싣습니다.
     pub fn poll(
         &mut self,
         now_secs: f64,
@@ -87,6 +94,7 @@ impl InputSender {
         me: Option<Vec2>,
     ) -> Option<InputMsg> {
         self.attack_latched |= controls.attack;
+        self.switch_latched |= controls.switch_weapon;
         if now_secs < self.next_at {
             return None;
         }
@@ -98,11 +106,13 @@ impl InputSender {
         };
         let held = Controls {
             attack: self.attack_latched,
+            switch_weapon: self.switch_latched,
             ..*controls
         };
         let input = held.to_input(self.next_seq, me);
         self.next_seq += 1;
         self.attack_latched = false;
+        self.switch_latched = false;
         Some(input)
     }
 }
@@ -169,10 +179,12 @@ mod tests {
             interact: true,
             build: true,
             sprint: true,
+            switch_weapon: true,
             ..Controls::default()
         };
         let input = controls.to_input(1, None);
         assert!(input.attack && input.interact && input.build && input.sprint);
+        assert!(input.switch_weapon);
     }
 
     #[test]
@@ -240,5 +252,45 @@ mod tests {
         assert!(sent.attack, "the click that already ended is not lost");
         let next = sender.poll(1.12, &idle, None).unwrap();
         assert!(!next.attack, "and it is sent only once");
+    }
+
+    #[test]
+    fn a_press_of_q_that_ended_between_two_inputs_is_sent_once() {
+        let mut sender = InputSender::new(20);
+        let idle = Controls::default();
+        let press = Controls {
+            switch_weapon: true,
+            ..Controls::default()
+        };
+        sender.poll(1.00, &idle, None);
+
+        assert_eq!(sender.poll(1.01, &press, None), None);
+        assert_eq!(sender.poll(1.02, &idle, None), None);
+        let sent = sender.poll(1.06, &idle, None).unwrap();
+        assert!(
+            sent.switch_weapon,
+            "the press that already ended is not lost"
+        );
+        let next = sender.poll(1.12, &idle, None).unwrap();
+        assert!(!next.switch_weapon, "and it is sent only once");
+    }
+
+    #[test]
+    fn two_presses_of_q_before_one_input_are_sent_as_one() {
+        let mut sender = InputSender::new(20);
+        let idle = Controls::default();
+        let press = Controls {
+            switch_weapon: true,
+            ..Controls::default()
+        };
+        sender.poll(1.00, &idle, None);
+
+        sender.poll(1.01, &press, None);
+        sender.poll(1.02, &idle, None);
+        sender.poll(1.03, &press, None);
+        let sent = sender.poll(1.06, &idle, None).unwrap();
+
+        assert!(sent.switch_weapon);
+        assert!(!sender.poll(1.12, &idle, None).unwrap().switch_weapon);
     }
 }

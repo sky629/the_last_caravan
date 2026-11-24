@@ -3,7 +3,6 @@
 use super::support::Scenario;
 use crate::expedition::{Outcome, Phase};
 use crate::ids::PlayerId;
-use crate::kind::WeaponKind;
 use crate::math::Vec2;
 use crate::sim::{JoinError, Sim};
 use crate::tuning::Tuning;
@@ -323,12 +322,11 @@ fn monster_ids_are_not_reused_in_a_new_expedition() {
     assert!(new_ids.iter().all(|id| !old_ids.contains(id)));
 }
 
-/// 두 플레이어(한 명은 활을 듭니다)가 움직이고, 달리고, 싸우고, 부활과 수리와 건설을 하는 원정을 800 Tick 진행하고, 50 Tick마다의 몬스터와 탄환, 마지막 상태를 글자로 돌려줍니다.
+/// 두 플레이어가 움직이고, 활과 검을 오가고, 달리고, 싸우고, 부활과 수리와 건설을 하는 원정을 800 Tick 진행하고, 50 Tick마다의 몬스터와 탄환, 마지막 상태를 글자로 돌려줍니다.
 fn play_a_scripted_expedition() -> String {
     let mut s = Scenario::default_game(|t| t.cycle.day_secs = 3.0);
     let a = s.sim.add_player().unwrap();
     let b = s.sim.add_player().unwrap();
-    s.give_weapon(b, WeaponKind::Bow);
     let mut trace = String::new();
     for tick in 0..800 {
         let phase = tick / 100;
@@ -346,6 +344,7 @@ fn play_a_scripted_expedition() -> String {
                     interact: phase % 2 == 1,
                     build: phase % 4 == 3,
                     sprint: phase % 3 != 1,
+                    switch_weapon: tick % 90 == 45,
                 },
             );
         }

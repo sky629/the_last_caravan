@@ -1,4 +1,4 @@
-//! 키보드와 마우스를 읽습니다. WASD로 이동하고, Shift를 누르고 있으면 달리고, 마우스로 조준하고, 왼쪽 버튼으로 공격하고, F를 누르고 있으면 부활이나 수리를 진행하고, B를 누르고 있으면 바라보는 쪽에 감시탑을 짓습니다.
+//! 키보드와 마우스를 읽습니다. WASD로 이동하고, Shift를 누르고 있으면 달리고, 마우스로 조준하고, 왼쪽 버튼으로 들고 있는 무기로 공격하고, Q를 누르면 무기를 바꾸고, F를 누르고 있으면 부활이나 수리를 진행하고, B를 누르고 있으면 바라보는 쪽에 감시탑을 짓습니다.
 //! 읽은 값을 입력 메시지로 바꾸고 보내는 일은 `caravan_client_core`와 `net`이 합니다.
 
 use bevy::prelude::*;
@@ -36,5 +36,7 @@ pub fn read_controls(
         interact: keys.pressed(KeyCode::KeyF),
         build: keys.pressed(KeyCode::KeyB),
         sprint: keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight),
+        // 누르기 시작한 프레임만 참입니다. 키를 누르고 있어도 무기가 계속 바뀌지 않습니다.
+        switch_weapon: keys.just_pressed(KeyCode::KeyQ),
     };
 }

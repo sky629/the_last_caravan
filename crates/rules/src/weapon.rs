@@ -1,7 +1,7 @@
-//! 플레이어의 공격입니다. 공격 버튼을 누르면 들고 있는 무기의 공격을 합니다.
+//! 플레이어가 무기를 바꾸고 공격하는 일입니다. `Q`를 누르면 다음 무기로 바꾸고, 공격 버튼을 누르면 들고 있는 무기의 공격을 합니다.
 //!
 //! 무기마다 다른 것은 수치표(`WeaponTable`)의 한 행이고, 공격이 맞히는 곳까지 전달되는 방식(`Delivery`)도 그 행에 적힌 값입니다.
-//! 이 파일은 한 Tick에 두 단계로 일합니다. `decide`가 플레이어마다 쿨다운을 정하면서 이번 Tick의 공격(`Attack`)을 모으고,
+//! 이 파일은 한 Tick에 두 단계로 일합니다. `decide`가 플레이어마다 무기를 바꾸고 쿨다운을 정하면서 이번 Tick의 공격(`Attack`)을 모으고,
 //! `deliver`가 모은 공격을 `Delivery`에 따라 처리합니다. 새 방식을 추가하면 `deliver`의 `match`에 갈래가 하나 늘고, 다른 갈래와 `decide`는 그대로입니다.
 
 use crate::collision::Body;
@@ -31,23 +31,30 @@ pub(crate) fn use_weapons(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
     deliver(world, ctx, &attacks, hits);
 }
 
-/// 플레이어마다 공격하는지 정합니다.
+/// 플레이어마다 무기를 바꾸고, 공격하는지 정합니다.
 ///
-/// 살아 있고 부활, 수리, 채집, 건설 중이 아닌 플레이어가 공격 버튼을 누르고 쿨다운이 끝났으면 공격합니다.
-/// 맞히는 몬스터가 없어도 쿨다운이 시작됩니다. 쿨다운은 살아 있는 플레이어마다 Tick마다 줄어듭니다.
+/// `Q`를 누르면 다음 무기로 바꿉니다. 바꾸는 조건은 공격하는 조건과 같습니다. 살아 있고 부활, 수리, 채집, 건설 중이 아니어야 하고,
+/// 조건이 맞지 않을 때 누른 `Q`는 사라집니다. 바꾼 무기는 같은 Tick의 공격에 쓰이고, 쿨다운은 무기를 바꿔도 이어집니다.
+/// 그래서 검을 휘두른 직후 활로 바꿔도 쿨다운이 끝나기 전에는 쏠 수 없습니다.
+///
+/// 공격 버튼을 누르고 쿨다운이 끝났으면 공격합니다. 맞히는 몬스터가 없어도 쿨다운이 시작됩니다.
+/// 쿨다운은 살아 있는 플레이어마다 Tick마다 줄어듭니다.
 fn decide(world: &mut World, ctx: &Ctx) -> Vec<Attack> {
     let t = ctx.t;
     let mut attacks = Vec::new();
     for player in world.players.values_mut() {
         let free = player.is_free_to_act();
+        let input = ctx.inputs.get(&player.id).copied().unwrap_or_default();
+        if free && input.switch_weapon {
+            player.weapon = player.weapon.next();
+        }
         let stats = player.stats(t);
         let delivery = t.weapons.get(player.weapon).delivery;
         let Life::Alive { cooldown_ticks, .. } = &mut player.life else {
             continue;
         };
         *cooldown_ticks = cooldown_ticks.saturating_sub(1);
-        let pressed = ctx.inputs.get(&player.id).is_some_and(|input| input.attack);
-        if !free || !pressed || *cooldown_ticks > 0 {
+        if !free || !input.attack || *cooldown_ticks > 0 {
             continue;
         }
 

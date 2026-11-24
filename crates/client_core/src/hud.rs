@@ -5,7 +5,7 @@
 
 use caravan_protocol::{
     WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireNightStep, WireOutcome,
-    WirePhase, WireRepairTarget, WireTowerState,
+    WirePhase, WireRepairTarget, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::Team;
 
@@ -27,6 +27,8 @@ pub struct Hud {
     pub stash: Option<String>,
     /// 내가 들고 있는 자원과 들 수 있는 상한입니다. 살아 있을 때만 있습니다.
     pub carry: Option<String>,
+    /// 내가 들고 있는 무기와 바꾸는 키입니다. 내 캐릭터가 화면에 있으면 항상 있고, 쓰러졌어도 무기는 들고 있습니다.
+    pub weapon: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
     pub banner: Option<Banner>,
     pub me: Option<Meter>,
@@ -87,6 +89,7 @@ impl Hud {
             timer: None,
             stash: None,
             carry: None,
+            weapon: None,
             banner: None,
             me: None,
             stamina: None,
@@ -129,6 +132,7 @@ impl Hud {
 
         if let Some(me) = frame.player(you) {
             hud.me = Some(my_meter(me));
+            hud.weapon = Some(weapon_text(me.weapon));
             hud.stamina = stamina_meter(me);
             hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
@@ -382,6 +386,15 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
 }
 
 /// 든 자원과 상한입니다. 상한까지 들면 더 채집할 수 없으므로, 마차로 가져가라는 안내를 붙입니다.
+/// 들고 있는 무기의 이름과 바꾸는 키입니다. `match`가 모든 무기를 다루므로, 무기를 추가하면 여기서 컴파일 오류가 납니다.
+fn weapon_text(weapon: WireWeaponKind) -> String {
+    let name = match weapon {
+        WireWeaponKind::Sword => "SWORD",
+        WireWeaponKind::Bow => "BOW",
+    };
+    format!("WEAPON  {name}  [Q]")
+}
+
 fn carry_text(carried: u32, capacity: u32) -> String {
     if carried >= capacity {
         format!("CARRY  {carried} / {capacity}  FULL - TAKE IT TO THE WAGON")
@@ -478,6 +491,7 @@ mod tests {
             facing: Vec2::new(1.0, 0.0),
             life,
             last_attack_tick: None,
+            weapon: WireWeaponKind::Sword,
         }
     }
 
@@ -653,6 +667,47 @@ mod tests {
         let dead = player(YOU, WireLife::Dead);
         assert_eq!(Hud::of(&session, Some(&frame(vec![dead]))).stamina, None);
         assert_eq!(Hud::of(&session, None).stamina, None);
+    }
+
+    #[test]
+    fn the_held_weapon_is_shown_with_the_key_that_switches_it() {
+        let session = session_in_room();
+        let sword = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
+        assert_eq!(sword.weapon.as_deref(), Some("WEAPON  SWORD  [Q]"));
+
+        let mut archer = player(YOU, alive(100));
+        archer.weapon = WireWeaponKind::Bow;
+        let bow = Hud::of(&session, Some(&frame(vec![archer])));
+        assert_eq!(bow.weapon.as_deref(), Some("WEAPON  BOW  [Q]"));
+    }
+
+    #[test]
+    fn the_weapon_is_shown_even_while_downed_but_not_before_the_first_snapshot_or_for_an_ally() {
+        let session = session_in_room();
+        let mut downed = player(
+            YOU,
+            WireLife::Downed {
+                bleed_secs_left: 20.0,
+                revive_progress: None,
+            },
+        );
+        downed.weapon = WireWeaponKind::Bow;
+        assert_eq!(
+            Hud::of(&session, Some(&frame(vec![downed])))
+                .weapon
+                .as_deref(),
+            Some("WEAPON  BOW  [Q]")
+        );
+        assert_eq!(Hud::of(&session, None).weapon, None);
+
+        let mut ally = player(2, alive(100));
+        ally.weapon = WireWeaponKind::Bow;
+        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100)), ally])));
+        assert_eq!(
+            hud.weapon.as_deref(),
+            Some("WEAPON  SWORD  [Q]"),
+            "only mine"
+        );
     }
 
     #[test]

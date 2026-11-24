@@ -28,7 +28,9 @@ pub fn build_preview(me: &PlayerView, map_size: (u16, u16)) -> Option<Tile> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::{WireBuildRefusal, WireCannotBuild, WireInteraction, WireTile};
+    use caravan_protocol::{
+        WireBuildRefusal, WireCannotBuild, WireInteraction, WireTile, WireWeaponKind,
+    };
     use caravan_rules::{AimDir, PlayerInput, PlayerInputs, Sim, Team, Tuning, Vec2};
 
     const MAP: (u16, u16) = (64, 64);
@@ -41,6 +43,7 @@ mod tests {
             facing: Vec2::new(1.0, 0.0),
             life,
             last_attack_tick: None,
+            weapon: WireWeaponKind::Sword,
         }
     }
 

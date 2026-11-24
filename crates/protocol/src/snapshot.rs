@@ -10,7 +10,7 @@
 
 use caravan_rules::{
     BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Monster, MonsterKind, NightStep,
-    Outcome, Phase, Pile, Player, RepairTarget, Sim, Tower, TowerState, Tuning,
+    Outcome, Phase, Pile, Player, RepairTarget, Sim, Tower, TowerState, Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -133,8 +133,26 @@ pub struct WirePlayer {
     pub life: WireLife,
     /// 서버가 마지막으로 처리한 입력의 순서 번호입니다. 클라이언트 예측이 어디까지 확인되었는지 알려 줍니다.
     pub last_input_seq: u32,
-    /// 마지막으로 근접 공격을 휘두른 서버 Tick입니다. 클라이언트는 스냅샷의 `tick`과 비교해서 공격 효과를 그립니다.
+    /// 마지막으로 공격한 서버 Tick입니다. 클라이언트는 스냅샷의 `tick`과 비교해서 공격 효과를 그립니다.
     pub last_attack_tick: Option<u64>,
+    /// 들고 있는 무기입니다. 쓰러졌거나 사망한 플레이어도 무기를 들고 있습니다.
+    pub weapon: WireWeaponKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireWeaponKind {
+    Sword,
+    Bow,
+}
+
+impl WireWeaponKind {
+    /// `match`가 모든 종류를 다루므로, 규칙에 무기 종류를 추가하면 여기서 컴파일 오류가 납니다.
+    pub fn of(kind: WeaponKind) -> WireWeaponKind {
+        match kind {
+            WeaponKind::Sword => WireWeaponKind::Sword,
+            WeaponKind::Bow => WireWeaponKind::Bow,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -398,6 +416,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
         life,
         last_input_seq: player.last_input_seq,
         last_attack_tick: player.last_attack_tick,
+        weapon: WireWeaponKind::of(player.weapon),
     }
 }
 

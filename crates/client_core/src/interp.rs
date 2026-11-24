@@ -12,7 +12,7 @@ use std::f32::consts::TAU;
 
 use caravan_protocol::{
     Snapshot, WireAngle, WireLife, WireMonster, WireMonsterKind, WireNode, WirePhase, WirePile,
-    WirePlayer, WireTower, WireWagon,
+    WirePlayer, WireTower, WireWagon, WireWeaponKind,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -55,6 +55,8 @@ pub struct PlayerView {
     pub facing: Vec2,
     pub life: WireLife,
     pub last_attack_tick: Option<u64>,
+    /// 들고 있는 무기입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub weapon: WireWeaponKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,6 +217,7 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
         facing,
         life: a.life,
         last_attack_tick: a.last_attack_tick,
+        weapon: a.weapon,
     }
 }
 
@@ -308,6 +311,7 @@ mod tests {
             },
             last_input_seq: 0,
             last_attack_tick: None,
+            weapon: WireWeaponKind::Sword,
         }
     }
 
@@ -409,6 +413,22 @@ mod tests {
             WireLife::Alive { hp: 100, .. }
         ));
         assert!(close(frame.players[0].pos, Vec2::new(8.9, 8.0)));
+    }
+
+    #[test]
+    fn a_weapon_switch_shows_when_playback_reaches_the_snapshot_that_carries_it() {
+        let mut older = snapshot(10);
+        older.players = vec![player(1, 8.0, 8.0, 100)];
+        let mut newer = snapshot(11);
+        newer.players = vec![player(1, 8.0, 8.0, 100)];
+        newer.players[0].weapon = WireWeaponKind::Bow;
+        let buffer = buffer_with(vec![older, newer]);
+
+        let between = buffer.sample_at(10.9).unwrap();
+        assert_eq!(between.players[0].weapon, WireWeaponKind::Sword);
+
+        let after = buffer.sample_at(11.0).unwrap();
+        assert_eq!(after.players[0].weapon, WireWeaponKind::Bow);
     }
 
     #[test]

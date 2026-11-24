@@ -5,7 +5,7 @@
 use caravan_protocol::{
     ServerMsg, Snapshot, WireAngle, WireInteraction, WireLife, WireMonster, WireMonsterKind,
     WireNightStep, WireNode, WirePhase, WirePile, WirePlayer, WirePos, WireShot, WireTile,
-    WireTower, WireTowerState, WireWagon, encode_server,
+    WireTower, WireTowerState, WireWagon, WireWeaponKind, encode_server,
 };
 
 /// 몬스터 번호가 `first_id`부터 이어지는 스냅샷입니다. 모든 좌표 값은 2바이트로 기록되는 크기(128 이상)입니다.
@@ -18,6 +18,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32) -> Snapshot {
         life,
         last_input_seq: 100_000,
         last_attack_tick: Some(100_000),
+        weapon: WireWeaponKind::Bow,
     };
     Snapshot {
         tick: 100_000,

@@ -4,6 +4,7 @@
 use caravan_protocol::{
     Snapshot, Welcome, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
     WireMonsterKind, WireOutcome, WirePhase, WirePos, WireRepairTarget, WireTile, WireTowerState,
+    WireWeaponKind,
 };
 use caravan_rules::{
     AimDir, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2,
@@ -93,6 +94,11 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
         }
     );
     assert_eq!((player.last_input_seq, player.last_attack_tick), (0, None));
+    assert_eq!(
+        player.weapon,
+        WireWeaponKind::Sword,
+        "a player starts with the sword"
+    );
     assert!(snapshot.piles.is_empty(), "nothing lies on the ground");
     let amounts: Vec<(u32, u32)> = snapshot
         .nodes
@@ -571,5 +577,30 @@ fn a_sprinting_player_runs_farther_and_the_stamina_on_the_wire_drains() {
     assert!(
         (x - (32.0 + 6.4)).abs() <= WirePos::MAX_ERROR_TILES,
         "ran 6.4 tiles from x = 32, got {x}"
+    );
+}
+
+#[test]
+fn the_weapon_a_player_holds_is_on_the_wire() {
+    let mut sim = sim_with(|_| {});
+    let alive = sim.add_player().unwrap();
+    let other = sim.add_player().unwrap();
+    let press_q = PlayerInputs::from([(
+        alive,
+        PlayerInput {
+            switch_weapon: true,
+            ..PlayerInput::default()
+        },
+    )]);
+
+    step(&mut sim, &press_q, 1);
+
+    let players = Snapshot::from_sim(&sim).players;
+    let weapon_of = |id: u32| players.iter().find(|p| p.id == id).map(|p| p.weapon);
+    assert_eq!(weapon_of(alive.0), Some(WireWeaponKind::Bow));
+    assert_eq!(
+        weapon_of(other.0),
+        Some(WireWeaponKind::Sword),
+        "only the player who pressed Q switched"
     );
 }

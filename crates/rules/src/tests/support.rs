@@ -186,6 +186,15 @@ impl Scenario {
         self.player_mut(id).weapon = kind;
     }
 
+    /// 지금 누르고 있는 입력은 그대로 두고, 무기 전환 키(Q)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.
+    ///
+    /// `hold`는 입력을 매 Tick 되풀이하므로 `hold`로는 「한 번 누름」을 만들 수 없습니다. 서버가 하는 일과 같이 이 Tick의 입력에만 참을 넣습니다.
+    pub fn tap_switch_key(&mut self, id: PlayerId) {
+        let mut inputs = self.held.clone();
+        inputs.entry(id).or_default().switch_weapon = true;
+        self.sim.step(&inputs);
+    }
+
     /// 날아가는 중인 탄환의 수입니다. 이번 Tick에 끝난 탄환은 세지 않습니다.
     pub fn flying(&self) -> usize {
         self.sim

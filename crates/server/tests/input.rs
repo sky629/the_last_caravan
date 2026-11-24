@@ -5,7 +5,9 @@
 
 mod common;
 
-use caravan_protocol::{ClientMsg, ClientTransport, InputMsg, ServerLimits, WireLife, WireVec2};
+use caravan_protocol::{
+    ClientMsg, ClientTransport, InputMsg, ServerLimits, WireLife, WireVec2, WireWeaponKind,
+};
 use caravan_rules::Tuning;
 use common::{assert_near, input_with, last_snapshot, player, position, rig, rig_with_limits};
 
@@ -231,6 +233,7 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
         interact: false,
         build: false,
         sprint: false,
+        switch_weapon: false,
     }));
     rig.run_ticks(3);
 
@@ -249,5 +252,74 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
         position(&snapshot, broken_id).y,
         34.5,
         "NaN means standing still",
+    );
+}
+
+fn press_q(seq: u32) -> ClientMsg {
+    ClientMsg::Input(InputMsg {
+        seq,
+        switch_weapon: true,
+        ..InputMsg::default()
+    })
+}
+
+#[test]
+fn one_press_of_q_switches_the_weapon_once_and_the_ticks_without_a_message_do_not_switch_it_again()
+{
+    let mut rig = rig();
+    let (mut a, a_id) = rig.join_ok("test");
+    let (mut b, _) = rig.join_ok("test");
+    a.send(&input_with(1, (0.0, 0.0), false));
+    rig.run_ticks(1);
+    assert_eq!(
+        player(&last_snapshot(&mut b), a_id).weapon,
+        WireWeaponKind::Sword
+    );
+
+    a.send(&press_q(2));
+    rig.run_ticks(1);
+    assert_eq!(
+        player(&last_snapshot(&mut b), a_id).weapon,
+        WireWeaponKind::Bow
+    );
+
+    // 입력이 없는 Tick은 마지막 입력을 다시 쓰지만, 누른 순간은 다시 쓰지 않습니다.
+    rig.run_ticks(5);
+    assert_eq!(
+        player(&last_snapshot(&mut b), a_id).weapon,
+        WireWeaponKind::Bow,
+        "the held input did not press Q again"
+    );
+}
+
+#[test]
+fn a_q_pressed_and_released_between_two_ticks_still_switches_the_weapon() {
+    let mut rig = rig();
+    let (mut a, a_id) = rig.join_ok("test");
+
+    a.send(&press_q(1));
+    a.send(&input_with(2, (0.0, 0.0), false));
+    rig.run_ticks(1);
+
+    assert_eq!(
+        player(&last_snapshot(&mut a), a_id).weapon,
+        WireWeaponKind::Bow
+    );
+}
+
+#[test]
+fn a_late_or_repeated_input_with_q_does_not_switch_the_weapon() {
+    let mut rig = rig();
+    let (mut a, a_id) = rig.join_ok("test");
+    a.send(&input_with(5, (0.0, 0.0), false));
+    rig.run_ticks(1);
+
+    a.send(&press_q(3));
+    a.send(&press_q(5));
+    rig.run_ticks(1);
+
+    assert_eq!(
+        player(&last_snapshot(&mut a), a_id).weapon,
+        WireWeaponKind::Sword
     );
 }

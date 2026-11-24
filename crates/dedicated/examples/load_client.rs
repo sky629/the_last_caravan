@@ -4,6 +4,7 @@
 //! 실행: `cargo run --release -p caravan_dedicated --example load_client -- --addr 127.0.0.1:7777 --room load --secs 60`
 //!
 //! 이 클라이언트는 제자리에서 공격 버튼을 누른 채 조준 방향을 돌립니다. `--passive`를 붙이면 공격하지 않아서 몬스터가 가장 많이 쌓입니다.
+//! `--bow`를 붙이면 첫 입력에서 무기 전환 키를 한 번 눌러서 활로 바꾸고, 탄환을 쏩니다.
 //! 여러 개를 동시에 실행하면 한 방에 여러 접속을 만들 수 있습니다.
 //! 기록하는 크기는 WebSocket 프레임의 내용(스냅샷을 이진 형식으로 바꾼 바이트)이며, 프레임 머리(2~4바이트)와 TCP 머리는 포함하지 않습니다.
 
@@ -20,7 +21,7 @@ use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::{Error, Message, WebSocket, connect};
 
 const USAGE: &str =
-    "usage: load_client [--addr HOST:PORT] [--room CODE] [--secs SECONDS] [--passive]";
+    "usage: load_client [--addr HOST:PORT] [--room CODE] [--secs SECONDS] [--passive] [--bow]";
 
 struct Options {
     addr: String,
@@ -28,6 +29,8 @@ struct Options {
     secs: u64,
     /// 공격 버튼을 누르지 않습니다.
     passive: bool,
+    /// 첫 입력에서 활로 바꿉니다.
+    bow: bool,
 }
 
 fn parse_args(args: &[String]) -> Result<Options, String> {
@@ -36,11 +39,16 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         room: "load".to_string(),
         secs: 60,
         passive: false,
+        bow: false,
     };
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         if arg == "--passive" {
             options.passive = true;
+            continue;
+        }
+        if arg == "--bow" {
+            options.bow = true;
             continue;
         }
         let mut value = || {
@@ -174,6 +182,7 @@ fn run(options: &Options) -> Result<(), String> {
                     interact: false,
                     build: false,
                     sprint: false,
+                    switch_weapon: options.bow && seq == 1,
                 }),
             )?;
             next_input += tick_period;
