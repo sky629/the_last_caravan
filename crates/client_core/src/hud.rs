@@ -646,7 +646,9 @@ mod tests {
         assert_eq!(banner.title, "CANNOT REACH THE SERVER");
         assert_eq!(
             banner.detail.as_deref(),
-            Some("ws://192.168.0.7:7777 did not answer. Is the server running?")
+            Some(
+                "Could not open ws://192.168.0.7:7777. Check the address and that the server is running."
+            )
         );
         assert_eq!(banner.tone, BannerTone::Bad);
         assert!(!hud.connection.contains("Unknown error"));

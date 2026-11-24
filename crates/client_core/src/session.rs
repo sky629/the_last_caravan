@@ -40,10 +40,12 @@ pub enum Session {
     Disconnected {
         reason: String,
     },
-    /// 접속이 한 번도 열리지 않고 끝났습니다. 서버가 꺼져 있거나 주소가 틀린 경우입니다.
-    /// 브라우저는 이 경우 이유를 알려 주지 않고 접속 방식이 일반적인 문구를 채우므로, 이유 대신 시도한 서버 주소를 보여 줍니다.
+    /// 접속이 한 번도 열리지 않고 끝났습니다. 서버가 꺼져 있거나 주소가 틀린 경우도 있고, 서버가 응답했지만 접속을 받지 않은 경우도 있습니다.
+    /// 접속 방식이 알려 준 이유는 `reason`에 보관해서 시도한 서버 주소와 함께 보여 줍니다.
+    /// 브라우저는 이유를 알려 주지 않고 접속 방식이 일반적인 문구를 채우므로, 이 경우 `reason`은 `None`입니다.
     Unreachable {
         server: String,
+        reason: Option<String>,
     },
     /// 실행 인자가 잘못되었거나 접속을 시작하지 못했습니다.
     Failed {
@@ -106,9 +108,10 @@ impl Session {
                 joined.snapshots.push(snapshot);
                 None
             }
-            (Session::Connecting { server, .. }, ClientEvent::Disconnected { .. }) => {
+            (Session::Connecting { server, .. }, ClientEvent::Disconnected { reason }) => {
                 *self = Session::Unreachable {
                     server: server.clone(),
+                    reason: transport_reason(reason),
                 };
                 None
             }
@@ -197,9 +200,16 @@ impl Session {
                 heading: "Disconnected",
                 reason: reason.clone(),
             }),
-            Session::Unreachable { server } => Some(Problem {
+            Session::Unreachable { server, reason } => Some(Problem {
                 heading: "Cannot reach the server",
-                reason: format!("{server} did not answer. Is the server running?"),
+                reason: match reason {
+                    Some(reason) => format!(
+                        "Could not open {server} ({reason}). Check the address and that the server is running."
+                    ),
+                    None => format!(
+                        "Could not open {server}. Check the address and that the server is running."
+                    ),
+                },
             }),
             Session::Failed { reason } => Some(Problem {
                 heading: "Cannot start",
@@ -217,6 +227,17 @@ impl Session {
             (Session::Joining { room }, None) => format!("Joining room {room}..."),
             _ => "Connected".to_string(),
         }
+    }
+}
+
+/// 접속 방식이 알려 준 이유 중 사용자에게 도움이 되는 것만 남깁니다.
+/// 브라우저가 이유를 모를 때 접속 방식이 채우는 `Unknown error`와 빈 문자열은 정보가 없으므로 버립니다.
+fn transport_reason(reason: String) -> Option<String> {
+    let reason = reason.trim();
+    if reason.is_empty() || reason.eq_ignore_ascii_case("Unknown error") {
+        None
+    } else {
+        Some(reason.to_string())
     }
 }
 
@@ -335,17 +356,17 @@ mod tests {
     }
 
     #[test]
-    fn a_link_that_closes_before_it_opens_names_the_server_that_was_tried() {
+    fn a_link_that_closes_before_it_opens_keeps_the_reason_and_names_the_server() {
         let mut session = connecting();
-        // 브라우저가 이유를 알려 주지 않을 때 접속 방식이 채우는 문구입니다.
         session.on_event(ClientEvent::Disconnected {
-            reason: "Unknown error".to_string(),
+            reason: "Handshake not finished".to_string(),
         });
 
         assert_eq!(
             session,
             Session::Unreachable {
-                server: SERVER.to_string()
+                server: SERVER.to_string(),
+                reason: Some("Handshake not finished".to_string()),
             }
         );
         assert!(session.is_over());
@@ -353,19 +374,42 @@ mod tests {
             session.problem(),
             Some(Problem {
                 heading: "Cannot reach the server",
-                reason: "ws://127.0.0.1:7777 did not answer. Is the server running?".to_string(),
+                reason: "Could not open ws://127.0.0.1:7777 (Handshake not finished). Check the address and that the server is running.".to_string(),
             })
         );
-        assert_eq!(
-            session.status_text(),
-            "Cannot reach the server: ws://127.0.0.1:7777 did not answer. Is the server running?"
-        );
 
-        // 이어서 닫힘이 다시 알려져도 안내가 바뀌지 않습니다.
+        // 이어서 닫힘이 다시 알려져도 이유가 바뀌지 않습니다.
         session.on_event(ClientEvent::Disconnected {
             reason: "closed".to_string(),
         });
-        assert!(matches!(session, Session::Unreachable { .. }));
+        assert_eq!(
+            session.status_text(),
+            "Cannot reach the server: Could not open ws://127.0.0.1:7777 (Handshake not finished). Check the address and that the server is running."
+        );
+    }
+
+    #[test]
+    fn a_placeholder_or_empty_reason_is_hidden() {
+        for reason in ["Unknown error", "unknown error", "", "  "] {
+            let mut session = connecting();
+            session.on_event(ClientEvent::Disconnected {
+                reason: reason.to_string(),
+            });
+
+            assert_eq!(
+                session,
+                Session::Unreachable {
+                    server: SERVER.to_string(),
+                    reason: None,
+                },
+                "reason {reason:?}"
+            );
+            assert_eq!(
+                session.status_text(),
+                "Cannot reach the server: Could not open ws://127.0.0.1:7777. Check the address and that the server is running.",
+                "reason {reason:?}"
+            );
+        }
     }
 
     #[test]
