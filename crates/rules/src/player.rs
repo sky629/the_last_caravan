@@ -14,7 +14,7 @@ use crate::world::{Ctx, Hit, Target, World};
 pub struct Player {
     pub id: PlayerId,
     pub team: Team,
-    /// 이 플레이어가 쓰는 등장 지점의 순서입니다. 방에 있는 동안 바뀌지 않고, 새 원정은 이 순서의 등장 지점으로 돌려놓습니다.
+    /// 이 플레이어가 쓰는 등장 지점의 순서입니다. 새 원정은 이 순서의 등장 지점으로 돌려놓고, 한 지점에 둘이 몰리면 원정마다 다시 정합니다.
     pub(crate) spawn_slot: usize,
     pub pos: Vec2,
     /// 마지막으로 조준한 방향입니다. 근접 공격의 부채꼴이 이 방향을 향합니다.
@@ -101,11 +101,11 @@ impl Player {
         }
     }
 
-    /// 새 원정이 시작될 때 최대 HP의 살아 있는 상태로 `pos`에 돌려놓습니다.
+    /// 새 원정이 시작될 때 최대 HP의 살아 있는 상태로 등장 순서가 `spawn_slot`인 `pos`에 돌려놓습니다.
     /// 입력의 순서 번호는 원정이 바뀌어도 이어집니다.
-    pub(crate) fn reset(&mut self, pos: Vec2, t: &Tuning) {
+    pub(crate) fn reset(&mut self, spawn_slot: usize, pos: Vec2, t: &Tuning) {
         let seq = self.last_input_seq;
-        *self = Player::new(self.id, self.team, self.spawn_slot, pos, t);
+        *self = Player::new(self.id, self.team, spawn_slot, pos, t);
         self.last_input_seq = seq;
     }
 

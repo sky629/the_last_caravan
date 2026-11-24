@@ -157,6 +157,59 @@ fn a_new_expedition_returns_each_player_to_their_own_spawn_point_after_someone_l
     assert_eq!(s.player(third).pos, spawns[2]);
 }
 
+/// 등장 지점 네 곳에 플레이어 다섯 명이 들어갔다가 한 명이 나간 방입니다. 남은 네 명 가운데 둘이 같은 지점에 있습니다.
+fn five_players_on_four_points_after_one_left() -> (Scenario, [Vec2; 4], Vec<PlayerId>) {
+    let spawns = [
+        Vec2::new(10.0, 10.0),
+        Vec2::new(11.0, 10.0),
+        Vec2::new(12.0, 10.0),
+        Vec2::new(13.0, 10.0),
+    ];
+    let mut s = Scenario::with_tuning(|t| {
+        t.max_players = 6;
+        t.map.player_spawns = spawns.to_vec();
+    });
+    let ids: Vec<_> = (0..5).map(|_| s.sim.add_player().unwrap()).collect();
+    s.sim.remove_player(ids[2]);
+    let staying = [0, 1, 3, 4].iter().map(|&i| ids[i]).collect();
+    (s, spawns, staying)
+}
+
+#[test]
+fn players_beyond_the_spawn_points_are_spread_evenly_when_they_join() {
+    let (mut s, spawns, staying) = five_players_on_four_points_after_one_left();
+
+    let newcomer = s.sim.add_player().unwrap();
+
+    assert_eq!(
+        s.player(newcomer).pos,
+        spawns[2],
+        "the point nobody uses comes first"
+    );
+    let sixth = s.sim.add_player().unwrap();
+    let mut counts = [0; 4];
+    for id in staying.into_iter().chain([newcomer, sixth]) {
+        let point = spawns.iter().position(|p| *p == s.player(id).pos).unwrap();
+        counts[point] += 1;
+    }
+    assert_eq!(counts.iter().max(), Some(&2));
+    assert_eq!(counts.iter().sum::<i32>(), 6);
+}
+
+#[test]
+fn a_new_expedition_does_not_stack_two_players_on_one_point_while_another_is_free() {
+    let (mut s, spawns, staying) = five_players_on_four_points_after_one_left();
+
+    s.set_wagon_hp(0);
+    s.run_ticks(1);
+    s.run_ticks(s.ticks(s.sim.tuning().waves.restart_secs) + 1);
+
+    assert_eq!(s.sim.expedition_number(), 2);
+    let mut positions: Vec<_> = staying.iter().map(|&id| s.player(id).pos).collect();
+    positions.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(positions, spawns);
+}
+
 #[test]
 fn the_first_wave_appears_after_the_delay_one_monster_at_a_time() {
     let mut s = Scenario::with_waves(|_| {});
