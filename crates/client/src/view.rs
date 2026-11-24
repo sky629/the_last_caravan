@@ -203,7 +203,7 @@ pub fn sync_structures(
             WireTowerState::Standing { hp, .. } => (
                 &palette.tower_block,
                 &palette.tower,
-                Some(hp as f32 / tower.max_hp as f32),
+                Some(core::bar_fraction(hp, tower.max_hp)),
             ),
             WireTowerState::Destroyed => (&palette.rubble_block, &palette.rubble, None),
         };

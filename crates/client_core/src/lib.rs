@@ -19,7 +19,7 @@ mod limits;
 mod session;
 
 pub use fps::FpsMeter;
-pub use hud::{Banner, BannerTone, Hud, Meter, Tone};
+pub use hud::{Banner, BannerTone, Hud, Meter, Tone, bar_fraction};
 pub use input::Controls;
 pub use interp::{Frame, MonsterView, PlayerView, effect_progress};
 pub use iso::{

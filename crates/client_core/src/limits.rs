@@ -39,6 +39,11 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
         MAX_MONSTER_KINDS,
     )?;
 
+    // 최대 HP가 0이면 막대의 비율을 정할 수 없으므로, 몬스터 종류는 최대 HP가 1 이상이어야 합니다.
+    if world.monster_kinds.iter().any(|kind| kind.max_hp == 0) {
+        return Err("a monster kind has a max HP of 0".to_string());
+    }
+
     let size = world.size.to_tiles();
     let side = 1.0..=MAX_MAP_SIDE_TILES;
     if !side.contains(&size.x) || !side.contains(&size.y) {
@@ -219,6 +224,16 @@ mod tests {
         let mut welcome = normal();
         welcome.world.wagon = rect(tiles(14), tiles(13), tiles(10), tiles(11));
         assert!(refused(&welcome).contains("outside the map"), "backwards");
+    }
+
+    #[test]
+    fn a_monster_kind_with_zero_max_hp_is_refused() {
+        let mut welcome = normal();
+        welcome.world.monster_kinds[0] = MonsterKindInfo {
+            max_hp: 0,
+            ..welcome.world.monster_kinds[0]
+        };
+        assert!(refused(&welcome).contains("max HP"));
     }
 
     #[test]

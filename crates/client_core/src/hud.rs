@@ -99,7 +99,7 @@ impl Hud {
         }
         hud.wagon = Some(Meter {
             label: format!("WAGON  {} / {}", frame.wagon.hp, frame.wagon.max_hp),
-            fraction: ratio(frame.wagon.hp, frame.wagon.max_hp),
+            fraction: bar_fraction(frame.wagon.hp, frame.wagon.max_hp),
             tone: Tone::Wagon,
         });
         let numbered = frame.towers.len() > 1;
@@ -191,7 +191,7 @@ fn my_meter(me: &PlayerView) -> Meter {
     match me.life {
         WireLife::Alive { hp, max_hp, .. } => Meter {
             label: format!("YOU  {hp} / {max_hp}"),
-            fraction: ratio(hp, max_hp),
+            fraction: bar_fraction(hp, max_hp),
             tone: Tone::Health,
         },
         WireLife::Downed { .. } => Meter {
@@ -212,7 +212,7 @@ fn ally_meter(ally: &PlayerView) -> Meter {
     match ally.life {
         WireLife::Alive { hp, max_hp, .. } => Meter {
             label: format!("{name}  {hp} / {max_hp}"),
-            fraction: ratio(hp, max_hp),
+            fraction: bar_fraction(hp, max_hp),
             tone: Tone::Health,
         },
         WireLife::Downed {
@@ -243,7 +243,7 @@ fn tower_meter(id: u32, max_hp: u32, state: WireTowerState, numbered: bool) -> M
     match state {
         WireTowerState::Standing { hp, .. } => Meter {
             label: format!("{name}  {hp} / {max_hp}"),
-            fraction: ratio(hp, max_hp),
+            fraction: bar_fraction(hp, max_hp),
             tone: Tone::Tower,
         },
         WireTowerState::Destroyed => Meter {
@@ -279,7 +279,7 @@ fn action_meter(me: &PlayerView, frame: &Frame) -> Option<Meter> {
             };
             Some(Meter {
                 label: format!("REPAIRING TOWER  {hp} / {}", tower.max_hp),
-                fraction: ratio(hp, tower.max_hp),
+                fraction: bar_fraction(hp, tower.max_hp),
                 tone: Tone::Progress,
             })
         }
@@ -295,7 +295,9 @@ fn action_meter(me: &PlayerView, frame: &Frame) -> Option<Meter> {
     }
 }
 
-fn ratio(value: u32, max: u32) -> f32 {
+/// 막대의 채움 비율입니다. 화면에 막대를 그리는 곳은 모두 이 함수로 비율을 구합니다.
+/// 서버가 보낸 최댓값이 0이어도 나누지 않고 빈 막대(0)로 돌려주며, 값이 최댓값을 넘으면 가득 찬 막대(1)입니다.
+pub fn bar_fraction(value: u32, max: u32) -> f32 {
     if max == 0 {
         0.0
     } else {
@@ -430,6 +432,15 @@ mod tests {
         let labels: Vec<&str> = hud.allies.iter().map(|a| a.label.as_str()).collect();
         assert_eq!(labels, ["P2  40 / 100", "P3  DOWNED 23s", "P4  DEAD"]);
         assert_eq!(hud.allies[2].tone, Tone::Gone);
+    }
+
+    #[test]
+    fn a_bar_is_empty_when_the_maximum_is_zero_and_never_leaves_zero_to_one() {
+        assert_eq!(bar_fraction(0, 0), 0.0);
+        assert_eq!(bar_fraction(50, 0), 0.0);
+        assert_eq!(bar_fraction(25, 100), 0.25);
+        assert_eq!(bar_fraction(0, 100), 0.0);
+        assert_eq!(bar_fraction(150, 100), 1.0);
     }
 
     #[test]

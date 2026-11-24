@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use caravan_client_core::{MonsterView, PlayerView};
+use caravan_client_core::{MonsterView, PlayerView, bar_fraction};
 use caravan_protocol::WireLife;
 use caravan_rules::Vec2 as Ground;
 
@@ -175,7 +175,7 @@ fn player_look(player: &PlayerView, scene: &Scene, palette: &Palette) -> Look {
         WireLife::Alive { hp, max_hp, .. } => (
             alive_color,
             config::PLAYER_BODY.y,
-            Some(hp as f32 / max_hp as f32),
+            Some(bar_fraction(hp, max_hp)),
         ),
         WireLife::Downed { .. } => (&palette.downed, config::DOWNED_BODY_HEIGHT, None),
         WireLife::Dead => (&palette.dead, config::DEAD_BODY_HEIGHT, None),
@@ -203,7 +203,7 @@ fn monster_look(
         radius: footprint.radius,
         body: palette.monster.clone(),
         body_size: config::MONSTER_BODY,
-        bar: (monster.hp < max_hp).then(|| monster.hp as f32 / max_hp as f32),
+        bar: (monster.hp < max_hp).then(|| bar_fraction(monster.hp, max_hp)),
     }
 }
 
@@ -523,6 +523,26 @@ mod tests {
                 .unwrap();
             assert_eq!(body.0, material, "player {id}");
         }
+    }
+
+    #[test]
+    fn a_bar_for_a_player_whose_max_hp_is_zero_is_empty_and_has_a_valid_position() {
+        let mut app = app();
+        let broken = WireLife::Alive {
+            hp: 0,
+            max_hp: 0,
+            interaction: None,
+        };
+        show(
+            &mut app,
+            frame(vec![player(YOU, 12.0, 9.0, broken)], vec![]),
+        );
+
+        let root = app.world().resource::<Spawned>().players.entities[&YOU].entity;
+        let parts = *app.world().get::<Parts>(root).unwrap();
+        let [_, fill] = parts.bar.entities();
+        let transform = app.world().get::<Transform>(fill).unwrap();
+        assert!(transform.translation.is_finite() && transform.scale.is_finite());
     }
 
     #[test]
