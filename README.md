@@ -76,7 +76,7 @@ cargo run --release -p caravan_dedicated -- --stress --waves 100,200,300 --stats
 cargo run --release -p caravan_dedicated --example load_client -- --addr 127.0.0.1:7777 --room load --secs 60
 ```
 
-부하 시험용 클라이언트의 옵션은 `--addr HOST:PORT`, `--room CODE`, `--secs SECONDS`, `--passive`, `--bow`입니다. `--passive`를 붙이면 공격하지 않으므로 몬스터가 가장 많이 쌓입니다. `--bow`를 붙이면 첫 입력에서 활로 바꾸고 탄환을 쏩니다.
+부하 시험용 클라이언트의 옵션은 `--addr HOST:PORT`, `--room CODE`, `--secs SECONDS`, `--passive`, `--bow`입니다. `--passive`를 붙이면 공격하지 않으므로 몬스터가 가장 많이 쌓입니다. `--bow`를 붙이면 첫 입력에서 활로 바꾸고 탄환을 쏩니다. 활은 쿨다운이 있으므로 플레이어 넷이 `--bow`로 쏴도 동시에 날아다니는 탄환은 한 자릿수입니다(감시탑 40개가 서 있고 몬스터가 260마리쯤 몰릴 때 측정한 최대는 6개입니다). 탄환이 100개 넘게 날아다니는 부하는 이 시험이 아니라 `cargo test --release -p caravan_rules perf -- --nocapture`의 시험이 만듭니다. 부하 시험용 클라이언트가 출력하는 `projectiles=`와 마지막 줄의 `peak_projectiles`로 날아다니는 탄환의 수를 확인할 수 있습니다.
 
 ### PC 클라이언트를 실행합니다
 
