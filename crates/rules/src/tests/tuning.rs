@@ -192,6 +192,25 @@ fn resource_numbers_that_make_gathering_meaningless_are_rejected() {
 }
 
 #[test]
+fn a_healing_pulse_needs_a_length_and_a_reach() {
+    let mut t = Tuning::default();
+    t.wagon.recovery.pulse_secs = 0.0;
+    assert!(t.validate().is_err(), "a recovery that never happens");
+
+    let mut t = Tuning::default();
+    t.wagon.repair.pulse_secs = f32::NAN;
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.structures.watchtower.repair.pulse_secs = -1.0;
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.wagon.recovery.range = -1.0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
 fn a_body_with_zero_max_hp_is_rejected() {
     let mut t = Tuning::default();
     t.monsters.grunt.max_hp = 0;

@@ -122,6 +122,20 @@ pub struct WagonTuning {
     pub max_hp: u32,
     /// 원정이 시작될 때 마차의 보관함에 있는 자원의 양입니다.
     pub start_stash: u32,
+    /// 마차 곁에 있는 살아 있는 플레이어가 HP를 회복하는 속도입니다. 거리는 플레이어의 가장자리에서 마차의 가장자리까지 잽니다.
+    pub recovery: HealTuning,
+    /// 플레이어가 F를 눌러서 마차의 HP를 수리하는 속도입니다. 자원은 들지 않습니다.
+    pub repair: HealTuning,
+}
+
+/// HP를 회복시키는 규칙의 수치입니다.
+/// 회복은 「일정한 시간마다 HP 일정량」으로 정합니다. 그래서 Tick 속도와 관계없이 HP가 정수로 남습니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HealTuning {
+    pub hp_per_pulse: u32,
+    pub pulse_secs: f32,
+    /// 회복시키는 쪽의 가장자리에서 회복되는 쪽의 가장자리까지 잰, 회복이 닿는 거리입니다.
+    pub range: f32,
 }
 
 /// 마차와 그 둘레에 세우는 시설, 곧 마을의 수치입니다.
@@ -170,11 +184,8 @@ pub struct StructureTuning {
     pub range: f32,
     pub damage: u32,
     pub cooldown_secs: f32,
-    /// 수리는 「일정한 시간마다 HP 일정량」으로 정합니다. 그래서 Tick 속도와 관계없이 HP가 정수로 남습니다.
-    pub repair_hp_per_pulse: u32,
-    pub repair_pulse_secs: f32,
-    /// 플레이어의 가장자리에서 시설의 가장자리까지 잰 수리 거리입니다.
-    pub repair_range: f32,
+    /// 플레이어가 F를 눌러서 시설의 HP를 수리하는 속도입니다. 거리는 플레이어의 가장자리에서 시설의 가장자리까지 잽니다.
+    pub repair: HealTuning,
     /// 건설을 시작할 때 보관함에서 내는 자원의 양입니다.
     pub build_cost: u32,
     /// 건설 키를 끊지 않고 눌러야 하는 시간입니다.
@@ -404,6 +415,14 @@ impl Tuning {
             let build_secs = self.structures.get(kind).build_secs;
             check_not_negative(&format!("{kind:?} build_secs"), build_secs)?;
         }
+        check_heal("wagon recovery", &self.wagon.recovery)?;
+        check_heal("wagon repair", &self.wagon.repair)?;
+        for kind in StructureKind::ALL {
+            check_heal(
+                &format!("{kind:?} repair"),
+                &self.structures.get(kind).repair,
+            )?;
+        }
         let resources = &self.resources;
         if resources.carry_capacity == 0 || resources.gather_per_pulse == 0 {
             return Err("carry_capacity and gather_per_pulse must be at least 1".to_string());
@@ -504,6 +523,18 @@ fn check_not_negative(name: &str, value: f32) -> Result<(), String> {
     }
 }
 
+/// 회복의 간격은 유한하고 0보다 길어야 하고, 거리는 유한하고 0 이상이어야 합니다.
+/// 마차 곁의 회복은 Tick 번호가 간격의 배수일 때 일어나므로, 간격이 0이면 한 번도 일어나지 않습니다.
+fn check_heal(name: &str, heal: &HealTuning) -> Result<(), String> {
+    if !(heal.pulse_secs.is_finite() && heal.pulse_secs > 0.0) {
+        return Err(format!(
+            "{name} pulse_secs must be a finite number longer than 0, but it is {}",
+            heal.pulse_secs
+        ));
+    }
+    check_not_negative(&format!("{name} range"), heal.range)
+}
+
 /// 등장 지점이 있고, 모두 맵 안에서 막힌 타일과 겹치지 않는지 검사합니다.
 fn check_spawns(
     name: &str,
@@ -570,6 +601,16 @@ impl Default for Tuning {
             wagon: WagonTuning {
                 max_hp: 500,
                 start_stash: 10,
+                recovery: HealTuning {
+                    hp_per_pulse: 1,
+                    pulse_secs: 0.2,
+                    range: 3.0,
+                },
+                repair: HealTuning {
+                    hp_per_pulse: 10,
+                    pulse_secs: 0.5,
+                    range: 1.0,
+                },
             },
             structures: StructureTable {
                 watchtower: StructureTuning {
@@ -577,9 +618,11 @@ impl Default for Tuning {
                     range: 6.0,
                     damage: 15,
                     cooldown_secs: 0.8,
-                    repair_hp_per_pulse: 10,
-                    repair_pulse_secs: 0.5,
-                    repair_range: 1.0,
+                    repair: HealTuning {
+                        hp_per_pulse: 10,
+                        pulse_secs: 0.5,
+                        range: 1.0,
+                    },
                     build_cost: 10,
                     build_secs: 3.0,
                 },

@@ -14,8 +14,8 @@ use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RejectReason, ServerMsg,
     Snapshot, Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
     WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile,
-    WirePlayer, WirePos, WireRect, WireShot, WireTile, WireTower, WireTowerState, WireVec2,
-    WireWagon, WorldInfo, decode_client, decode_server, encode_client, encode_server,
+    WirePlayer, WirePos, WireRect, WireRepairTarget, WireShot, WireTile, WireTower, WireTowerState,
+    WireVec2, WireWagon, WorldInfo, decode_client, decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -347,7 +347,7 @@ fn every_phase_matches_golden_bytes() {
 }
 
 #[test]
-fn a_site_a_refusal_a_builder_a_repairer_a_gatherer_and_a_dead_player_match_golden_bytes() {
+fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_golden_bytes() {
     let mut snapshot = quiet_snapshot(WirePhase::Night {
         day: 1,
         wave_count: 3,
@@ -375,7 +375,13 @@ fn a_site_a_refusal_a_builder_a_repairer_a_gatherer_and_a_dead_player_match_gold
         last_attack_tick: None,
     };
     snapshot.players = vec![
-        alive(3, Some(WireInteraction::Repairing { tower: 1 }), None),
+        alive(
+            3,
+            Some(WireInteraction::Repairing {
+                target: WireRepairTarget::Tower { tower: 1 },
+            }),
+            None,
+        ),
         alive(
             4,
             None,
@@ -386,6 +392,13 @@ fn a_site_a_refusal_a_builder_a_repairer_a_gatherer_and_a_dead_player_match_gold
         ),
         alive(5, Some(WireInteraction::Building { tower: 1 }), None),
         alive(7, Some(WireInteraction::Gathering { node: 2 }), None),
+        alive(
+            8,
+            Some(WireInteraction::Repairing {
+                target: WireRepairTarget::Wagon,
+            }),
+            None,
+        ),
         WirePlayer {
             life: WireLife::Dead,
             ..alive(6, None, None)
@@ -403,10 +416,10 @@ fn a_site_a_refusal_a_builder_a_repairer_a_gatherer_and_a_dead_player_match_gold
             0x00, 0x00, 0x00, 0x00, 0x3F, // Building, progress 0.5
             0x00, // nodes: 길이 0
             0x00, // piles: 길이 0
-            0x05, // players: 길이 5
+            0x06, // players: 길이 6
             0x03, 0x00, 0x00, 0x00, 0x00, // id 3, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
-            0x01, 0x01, 0x01, // interaction: 있음, Repairing, tower 1
+            0x01, 0x01, 0x00, 0x01, // interaction: 있음, Repairing, Tower, tower 1
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x04, 0x00, 0x00, 0x00, 0x00, // id 4, team, pos 0 0, facing 0
@@ -422,6 +435,11 @@ fn a_site_a_refusal_a_builder_a_repairer_a_gatherer_and_a_dead_player_match_gold
             0x07, 0x00, 0x00, 0x00, 0x00, // id 7, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
             0x01, 0x03, 0x02, // interaction: 있음, Gathering, node 2
+            0x00, // build_refusal: 없음
+            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x08, 0x00, 0x00, 0x00, 0x00, // id 8, team, pos 0 0, facing 0
+            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
+            0x01, 0x01, 0x01, // interaction: 있음, Repairing, Wagon
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x06, 0x00, 0x00, 0x00, 0x00, // id 6, team, pos 0 0, facing 0

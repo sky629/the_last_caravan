@@ -10,7 +10,7 @@
 
 use caravan_rules::{
     BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Monster, MonsterKind, NightStep,
-    Outcome, Phase, Pile, Player, Sim, Tower, TowerState, Tuning,
+    Outcome, Phase, Pile, Player, RepairTarget, Sim, Tower, TowerState, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
@@ -167,8 +167,7 @@ pub enum WireInteraction {
         progress: f32,
     },
     Repairing {
-        /// 수리하는 감시탑의 번호입니다.
-        tower: u32,
+        target: WireRepairTarget,
     },
     Building {
         /// 짓고 있는 감시탑의 번호입니다. 진행도는 스냅샷의 그 감시탑에 있습니다.
@@ -178,6 +177,16 @@ pub enum WireInteraction {
         /// 채집하는 지점의 번호입니다. 남은 양은 스냅샷의 그 지점에 있습니다.
         node: u32,
     },
+}
+
+/// 수리하는 대상입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireRepairTarget {
+    Tower {
+        /// 수리하는 감시탑의 번호입니다.
+        tower: u32,
+    },
+    Wagon,
 }
 
 /// 건설이 거절된 이유와 놓으려던 타일입니다.
@@ -394,7 +403,12 @@ fn wire_interaction(sim: &Sim, interaction: &Interaction) -> WireInteraction {
             // 대상이 방금 사라진 Tick에는 값이 없으므로 0으로 둡니다. 부활은 다음 Tick에 취소됩니다.
             progress: sim.revive_progress(*target).map_or(0.0, clamp_progress),
         },
-        Interaction::Repairing { tower, .. } => WireInteraction::Repairing { tower: tower.0 },
+        Interaction::Repairing { target, .. } => WireInteraction::Repairing {
+            target: match target {
+                RepairTarget::Tower(tower) => WireRepairTarget::Tower { tower: tower.0 },
+                RepairTarget::Wagon => WireRepairTarget::Wagon,
+            },
+        },
         Interaction::Gathering { node, .. } => WireInteraction::Gathering { node: node.0 },
         Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },
     }

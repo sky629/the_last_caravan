@@ -324,6 +324,8 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
         t.monsters.grunt.attack_damage = 100;
         t.monsters.grunt.attack_cooldown_secs = 100.0;
         t.wagon.max_hp = u32::MAX;
+        // 부활한 직후의 HP를 확인하므로, 마차 곁의 회복이 HP를 더하지 않게 합니다.
+        t.wagon.recovery.hp_per_pulse = 0;
     });
     let downed_id = sim.add_player().unwrap();
     let reviver_id = sim.add_player().unwrap();

@@ -9,7 +9,7 @@ use crate::math::Vec2;
 use crate::resources;
 use crate::stats::UnitStats;
 use crate::structures::TowerState;
-use crate::tuning::Tuning;
+use crate::tuning::{HealTuning, Tuning};
 use crate::world::{Ctx, Hit, Target, World};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,7 +77,7 @@ pub enum Interaction {
         elapsed_ticks: u32,
     },
     Repairing {
-        tower: TowerId,
+        target: RepairTarget,
         /// 마지막 수리 이후의 Tick 수입니다. 수리를 멈춰도 이미 회복한 HP는 유지됩니다.
         since_pulse_ticks: u32,
     },
@@ -88,6 +88,13 @@ pub enum Interaction {
     },
     /// `tower`는 이 플레이어가 짓고 있는 감시탑입니다.
     Building { tower: TowerId },
+}
+
+/// 수리하는 대상입니다. 감시탑은 번호로 가리키고, 마차는 방마다 하나뿐이므로 번호가 없습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepairTarget {
+    Tower(TowerId),
+    Wagon,
 }
 
 impl Player {
@@ -243,7 +250,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     // 읽기: 이번 Tick에 플레이어마다 가지게 될 상호작용을 정합니다.
     let mut next: BTreeMap<PlayerId, Option<Interaction>> = BTreeMap::new();
     let mut claimed: BTreeSet<PlayerId> = BTreeSet::new();
-    let mut repairs: Vec<(TowerId, u32)> = Vec::new();
+    let mut repairs: Vec<(RepairTarget, u32)> = Vec::new();
     let mut gathers: Vec<(PlayerId, NodeId)> = Vec::new();
     let mut build_requests: Vec<PlayerId> = Vec::new();
     for player in world.players.values() {
@@ -284,26 +291,22 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
             Some(Interaction::Reviving { target, .. }) => {
                 claimed.insert(target);
             }
-            Some(Interaction::Repairing { tower, .. }) => {
-                let spec = world
-                    .towers
-                    .get(&tower)
-                    .map(|found| t.structures.get(found.kind));
-                if let Some(spec) = spec {
+            Some(Interaction::Repairing { target, .. }) => {
+                if let Some(heal) = repair_spec(world, target, t) {
                     let previous = match player.interaction() {
                         Some(Interaction::Repairing {
-                            tower: before,
+                            target: before,
                             since_pulse_ticks,
-                        }) if *before == tower => Some(*since_pulse_ticks),
+                        }) if *before == target => Some(*since_pulse_ticks),
                         _ => None,
                     };
                     let (since_pulse_ticks, pulsed) =
-                        count_pulse(previous, t.ticks(spec.repair_pulse_secs));
+                        count_pulse(previous, t.ticks(heal.pulse_secs));
                     if pulsed {
-                        repairs.push((tower, spec.repair_hp_per_pulse));
+                        repairs.push((target, heal.hp_per_pulse));
                     }
                     chosen = Some(Interaction::Repairing {
-                        tower,
+                        target,
                         since_pulse_ticks,
                     });
                 }
@@ -350,10 +353,15 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
             *build_refusal = None;
         }
     }
-    for (id, amount) in repairs {
-        if let Some(tower) = world.towers.get_mut(&id) {
-            let max_hp = t.structures.get(tower.kind).max_hp;
-            tower.repair(amount, max_hp);
+    for (target, amount) in repairs {
+        match target {
+            RepairTarget::Tower(id) => {
+                if let Some(tower) = world.towers.get_mut(&id) {
+                    let max_hp = t.structures.get(tower.kind).max_hp;
+                    tower.repair(amount, max_hp);
+                }
+            }
+            RepairTarget::Wagon => world.wagon.repair(amount, t.wagon.max_hp),
         }
     }
     resources::apply_gathers(world, &gathers, t);
@@ -361,7 +369,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
 }
 
 /// 새로 시작할 상호작용을 고릅니다. 범위 안에 있는 것 가운데 다음 순서로 고르고, 같은 종류 안에서는 가장 가까운 것입니다.
-/// 쓰러진 동료의 부활, 손상된 감시탑의 수리, 채집 지점의 채집.
+/// 쓰러진 동료의 부활, 손상된 감시탑의 수리, 손상된 마차의 수리, 채집 지점의 채집.
 fn choose_interaction(
     world: &World,
     me: &Player,
@@ -370,6 +378,7 @@ fn choose_interaction(
 ) -> Option<Interaction> {
     nearest_downed_ally(world, me, claimed, t)
         .or_else(|| nearest_damaged_tower(world, me, t))
+        .or_else(|| damaged_wagon_in_reach(world, me, t))
         .or_else(|| resources::nearest_gatherable_node(world, me, t))
 }
 
@@ -411,14 +420,38 @@ fn nearest_damaged_tower(world: &World, me: &Player, t: &Tuning) -> Option<Inter
             continue;
         }
         let gap = Body::Box(tower.rect()).gap_from(me.pos, t.player.radius);
-        if gap <= spec.repair_range && nearest_tower.is_none_or(|(best, _)| gap < best) {
+        if gap <= spec.repair.range && nearest_tower.is_none_or(|(best, _)| gap < best) {
             nearest_tower = Some((gap, tower.id));
         }
     }
     nearest_tower.map(|(_, tower)| Interaction::Repairing {
-        tower,
+        target: RepairTarget::Tower(tower),
         since_pulse_ticks: 0,
     })
+}
+
+/// 범위 안에 있는 손상된 마차의 수리입니다. 마차의 HP가 0이면 원정이 곧바로 실패하므로 고르지 않습니다.
+fn damaged_wagon_in_reach(world: &World, me: &Player, t: &Tuning) -> Option<Interaction> {
+    let wagon = &world.wagon;
+    let damaged = wagon.hp > 0 && wagon.hp < t.wagon.max_hp;
+    let gap = Body::Box(wagon.rect).gap_from(me.pos, t.player.radius);
+    (damaged && me.team.is_allied_with(wagon.team) && gap <= t.wagon.repair.range).then_some(
+        Interaction::Repairing {
+            target: RepairTarget::Wagon,
+            since_pulse_ticks: 0,
+        },
+    )
+}
+
+/// 수리 대상의 수리 수치입니다. 대상인 감시탑이 사라졌으면 `None`입니다.
+fn repair_spec<'a>(world: &World, target: RepairTarget, t: &'a Tuning) -> Option<&'a HealTuning> {
+    match target {
+        RepairTarget::Tower(id) => world
+            .towers
+            .get(&id)
+            .map(|tower| &t.structures.get(tower.kind).repair),
+        RepairTarget::Wagon => Some(&t.wagon.repair),
+    }
 }
 
 /// 수리나 채집의 한 Tick을 셉니다. `previous`는 같은 대상을 지난 Tick까지 센 값이고, 새로 시작하면 `None`이어서 1부터 셉니다.
@@ -488,6 +521,30 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
             if *bleed_left_ticks == 0 {
                 player.life = Life::Dead;
             }
+        }
+    }
+}
+
+/// 마차 곁에 있는 살아 있는 플레이어의 HP를 회복합니다. 낮과 밤, 공격받는 중인지와 관계없이 같고,
+/// 쓰러졌거나 사망한 플레이어는 회복하지 않습니다.
+///
+/// 회복하는 때는 방의 Tick 번호가 정하므로 플레이어마다 따로 세는 값이 없고, 모든 플레이어가 같은 Tick에 회복합니다.
+/// 이번 Tick의 피해를 모두 적용한 뒤에 부르므로, 쓰러뜨리는 피해를 같은 Tick의 회복이 되돌리지 않습니다.
+pub(crate) fn recover_near_wagon(world: &mut World, ctx: &Ctx) {
+    let t = ctx.t;
+    let heal = &t.wagon.recovery;
+    if !ctx.tick.is_multiple_of(u64::from(t.ticks(heal.pulse_secs))) {
+        return;
+    }
+    let wagon_body = Body::Box(world.wagon.rect);
+    let wagon_team = world.wagon.team;
+    for player in world.players.values_mut() {
+        let in_reach = wagon_body.gap_from(player.pos, t.player.radius) <= heal.range
+            && player.team.is_allied_with(wagon_team);
+        if let Life::Alive { hp, .. } = &mut player.life
+            && in_reach
+        {
+            *hp = hp.saturating_add(heal.hp_per_pulse).min(t.player.max_hp);
         }
     }
 }

@@ -30,6 +30,11 @@ impl Wagon {
             hp: t.wagon.max_hp,
         }
     }
+
+    /// HP를 `max_hp`까지 회복합니다.
+    pub(crate) fn repair(&mut self, amount: u32, max_hp: u32) {
+        self.hp = self.hp.saturating_add(amount).min(max_hp);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

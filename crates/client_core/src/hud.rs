@@ -5,7 +5,7 @@
 
 use caravan_protocol::{
     WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireNightStep, WireOutcome,
-    WirePhase, WireTowerState,
+    WirePhase, WireRepairTarget, WireTowerState,
 };
 use caravan_rules::Team;
 
@@ -276,7 +276,7 @@ fn ally_meter(ally: &PlayerView) -> Meter {
 }
 
 /// 내가 부활, 수리, 채집, 건설을 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
-/// 수리에는 진행도가 따로 없으므로, 수리하는 감시탑의 HP가 차오르는 모습을 진행도로 보여 줍니다.
+/// 수리에는 진행도가 따로 없으므로, 수리하는 감시탑이나 마차의 HP가 차오르는 모습을 진행도로 보여 줍니다.
 /// 채집도 마찬가지로 채집하는 지점의 남은 자원(`node_amount`가 가득 찬 양)이 줄어드는 모습을 보여 줍니다.
 fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Meter> {
     match me.life {
@@ -289,7 +289,24 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
             tone: Tone::Progress,
         }),
         WireLife::Alive {
-            interaction: Some(WireInteraction::Repairing { tower }),
+            interaction:
+                Some(WireInteraction::Repairing {
+                    target: WireRepairTarget::Wagon,
+                }),
+            ..
+        } => Some(Meter {
+            label: format!(
+                "REPAIRING WAGON  {} / {}",
+                frame.wagon.hp, frame.wagon.max_hp
+            ),
+            fraction: bar_fraction(frame.wagon.hp, frame.wagon.max_hp),
+            tone: Tone::Progress,
+        }),
+        WireLife::Alive {
+            interaction:
+                Some(WireInteraction::Repairing {
+                    target: WireRepairTarget::Tower { tower },
+                }),
             ..
         } => {
             let tower = frame
@@ -654,7 +671,9 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 0,
-                interaction: Some(WireInteraction::Repairing { tower: 1 }),
+                interaction: Some(WireInteraction::Repairing {
+                    target: WireRepairTarget::Tower { tower: 1 },
+                }),
                 build_refusal: None,
             },
         );
@@ -663,6 +682,31 @@ mod tests {
             .unwrap();
         assert_eq!(action.label, "REPAIRING TOWER  250 / 300");
         assert!((action.fraction - 250.0 / 300.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn repairing_the_wagon_shows_its_hp_as_the_progress() {
+        let session = session_in_room();
+        let repairer = player(
+            YOU,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 0,
+                interaction: Some(WireInteraction::Repairing {
+                    target: WireRepairTarget::Wagon,
+                }),
+                build_refusal: None,
+            },
+        );
+        let mut frame = frame(vec![repairer]);
+        frame.wagon = WireWagon {
+            hp: 300,
+            max_hp: 500,
+        };
+        let action = Hud::of(&session, Some(&frame)).action.unwrap();
+        assert_eq!(action.label, "REPAIRING WAGON  300 / 500");
+        assert!((action.fraction - 0.6).abs() < 1e-6);
     }
 
     #[test]

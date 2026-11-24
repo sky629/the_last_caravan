@@ -206,7 +206,7 @@ fn a_tower_can_be_built_again_where_one_was_destroyed() {
 #[test]
 fn holding_f_next_to_a_damaged_tower_repairs_it_in_pulses() {
     let (mut s, a) = repairer_at_a_damaged_tower();
-    let pulse = s.ticks(s.sim.tuning().structures.watchtower.repair_pulse_secs);
+    let pulse = s.ticks(s.sim.tuning().structures.watchtower.repair.pulse_secs);
 
     s.run_ticks(pulse - 1);
     assert_eq!(s.tower().hp(), 100, "no HP before the first pulse");
@@ -299,7 +299,7 @@ fn several_repairers_add_up() {
     let (mut s, _) = repairer_at_a_damaged_tower();
     let b = s.player_at(2.5, 17.0);
     s.hold(b, press_f());
-    let pulse = s.ticks(s.sim.tuning().structures.watchtower.repair_pulse_secs);
+    let pulse = s.ticks(s.sim.tuning().structures.watchtower.repair.pulse_secs);
 
     s.run_ticks(pulse);
 

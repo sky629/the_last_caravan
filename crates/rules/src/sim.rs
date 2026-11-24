@@ -136,6 +136,7 @@ impl Sim {
             &mut hits,
         );
         self.world.apply_hits(&hits, &self.tuning);
+        player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);
         expedition::settle_outcome(&mut self.phase, &self.world, &self.tuning);
     }
