@@ -62,6 +62,19 @@ async fn connected_link(server: &mut WsServer) -> LinkId {
     }
 }
 
+/// 서버가 `link`를 한도 때문에 닫는 과정을 읽습니다. 이유를 알리는 `LimitReached`가 한 번 오고, 그 바로 뒤에 `Disconnected`가 와야 합니다.
+async fn limit_reason_before_disconnect(server: &mut WsServer, link: LinkId) -> String {
+    let reason = match next_event(server, Duration::from_secs(10)).await {
+        ServerEvent::LimitReached(from, reason) if from == link => reason,
+        other => panic!("expected the reason the link was closed, got {other:?}"),
+    };
+    match next_event(server, Duration::from_secs(10)).await {
+        ServerEvent::Disconnected(gone) => assert_eq!(gone, link),
+        other => panic!("expected Disconnected after the reason, got {other:?}"),
+    }
+    reason
+}
+
 #[tokio::test]
 async fn messages_cross_a_real_socket_as_binary_frames_and_close_delivers_the_last_one() {
     let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
@@ -132,10 +145,8 @@ async fn a_client_that_stops_reading_is_disconnected() {
     for _ in 0..500 {
         server.send(link, &big);
     }
-    match next_event(&mut server, Duration::from_secs(10)).await {
-        ServerEvent::Disconnected(gone) => assert_eq!(gone, link),
-        other => panic!("expected the slow link to be dropped, got {other:?}"),
-    }
+    let reason = limit_reason_before_disconnect(&mut server, link).await;
+    assert!(reason.contains("reads too slowly"), "{reason}");
 }
 
 #[tokio::test]
@@ -160,17 +171,54 @@ async fn a_link_that_sends_faster_than_the_rate_limit_is_disconnected() {
     }
 
     let mut delivered = 0;
-    loop {
+    let reason = loop {
         match next_event(&mut server, Duration::from_secs(5)).await {
             ServerEvent::Message(from, _) if from == link => delivered += 1,
-            ServerEvent::Disconnected(gone) if gone == link => break,
+            ServerEvent::LimitReached(from, reason) if from == link => break reason,
             other => panic!("unexpected event {other:?}"),
         }
-    }
+    };
     assert_eq!(
         delivered, 10,
         "only the messages within the limit reach the game"
     );
+    assert_eq!(reason, "sent more than 10 messages in one second");
+    assert!(matches!(
+        next_event(&mut server, Duration::from_secs(5)).await,
+        ServerEvent::Disconnected(gone) if gone == link
+    ));
+}
+
+#[tokio::test]
+async fn a_message_larger_than_the_size_limit_closes_the_link_with_the_reason() {
+    let limits = ServerLimits {
+        max_message_bytes: 64,
+        ..ServerLimits::default()
+    };
+    let mut server = WsServer::bind("127.0.0.1:0", limits).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+    let (mut client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    let link = connected_link(&mut server).await;
+
+    client.send(Message::binary(vec![0; 65])).await.unwrap();
+
+    let reason = limit_reason_before_disconnect(&mut server, link).await;
+    assert_eq!(reason, "sent a message larger than 64 bytes");
+}
+
+#[tokio::test]
+async fn a_link_that_leaves_on_its_own_reports_no_limit() {
+    let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+    let (client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    let link = connected_link(&mut server).await;
+
+    drop(client);
+
+    assert!(matches!(
+        next_event(&mut server, Duration::from_secs(5)).await,
+        ServerEvent::Disconnected(gone) if gone == link
+    ));
 }
 
 #[tokio::test]

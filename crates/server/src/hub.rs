@@ -65,10 +65,11 @@ impl Hub {
                 Vec::new()
             }
             ServerEvent::Message(link, msg) => self.handle_message(link, msg, now),
+            ServerEvent::LimitReached(link, reason) => {
+                vec![Out::Notice(Notice::LinkClosed { link, reason })]
+            }
             ServerEvent::Disconnected(link) => match self.links.remove(&link) {
-                Some(LinkState::InRoom { room, player, .. }) => {
-                    vec![self.remove_player(room, player)]
-                }
+                Some(LinkState::InRoom { room, player, .. }) => self.remove_player(room, player),
                 // 모르는 접속의 퇴장은 무시하므로 같은 퇴장을 두 번 받아도 안전합니다.
                 _ => Vec::new(),
             },
@@ -78,20 +79,23 @@ impl Hub {
     /// `deadline`이 지나도록 메시지를 보내지 않은 접속을 닫습니다.
     /// 입장하지 않은 접속과, 입장한 뒤 멈춘 접속이 여기에 해당합니다.
     pub fn close_silent_links(&mut self, now: Instant) -> Vec<Out> {
-        let silent: Vec<LinkId> = self
+        let silent: Vec<(LinkId, String)> = self
             .links
             .iter()
-            .filter(|(_, state)| match state {
-                LinkState::AwaitingJoin { deadline } | LinkState::InRoom { deadline, .. } => {
-                    now >= *deadline
+            .filter_map(|(&link, state)| match state {
+                LinkState::AwaitingJoin { deadline } if now >= *deadline => Some((
+                    link,
+                    format!("no Join within {:?} of connecting", self.join_deadline),
+                )),
+                LinkState::InRoom { deadline, .. } if now >= *deadline => {
+                    Some((link, format!("no message for {:?}", self.idle_timeout)))
                 }
-                LinkState::Closing => false,
+                _ => None,
             })
-            .map(|(&link, _)| link)
             .collect();
         silent
             .into_iter()
-            .flat_map(|link| self.close_link(link))
+            .flat_map(|(link, reason)| self.close_link(link, reason))
             .collect()
     }
 
@@ -134,8 +138,12 @@ impl Hub {
                 Vec::new()
             }
             // 입장하기 전의 입력과 두 번째 `Join`은 약속 위반입니다.
-            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Input(_))
-            | (Some(LinkState::InRoom { .. }), ClientMsg::Join { .. }) => self.close_link(link),
+            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Input(_)) => {
+                self.close_link(link, "sent an input before Join".to_string())
+            }
+            (Some(LinkState::InRoom { .. }), ClientMsg::Join { .. }) => {
+                self.close_link(link, "sent Join again after joining".to_string())
+            }
             (Some(LinkState::Closing) | None, _) => Vec::new(),
         }
     }
@@ -148,14 +156,19 @@ impl Hub {
         now: Instant,
     ) -> Vec<Out> {
         match self.admit(link, version, raw_room, now) {
-            Ok((code, player, members, welcome)) => vec![
-                Out::Send(link, ServerMsg::Welcome(welcome)),
-                Out::Notice(Notice::Joined {
+            Ok((code, player, members, welcome)) => {
+                let mut outs = vec![Out::Send(link, ServerMsg::Welcome(welcome))];
+                // 방은 플레이어가 있는 동안에만 있으므로, 입장한 뒤 플레이어가 한 명이면 이 입장이 방을 만들었습니다.
+                if members == 1 {
+                    outs.push(Out::Notice(Notice::RoomCreated { room: code.clone() }));
+                }
+                outs.push(Out::Notice(Notice::Joined {
                     room: code,
                     player,
                     members,
-                }),
-            ],
+                }));
+                outs
+            }
             Err(reason) => {
                 self.links.insert(link, LinkState::Closing);
                 vec![
@@ -203,33 +216,39 @@ impl Hub {
         Ok((code, player, members, welcome))
     }
 
-    /// 서버가 접속을 닫습니다. 방에 있던 플레이어는 `Disconnected`를 기다리지 않고 바로 제거하므로,
+    /// 서버가 `reason` 때문에 접속을 닫습니다. 방에 있던 플레이어는 `Disconnected`를 기다리지 않고 바로 제거하므로,
     /// 다음 스냅샷부터 다른 플레이어의 화면에서 사라집니다.
-    fn close_link(&mut self, link: LinkId) -> Vec<Out> {
-        let mut outs = Vec::new();
+    fn close_link(&mut self, link: LinkId, reason: String) -> Vec<Out> {
+        let mut outs = vec![Out::Notice(Notice::LinkClosed { link, reason })];
         if let Some(LinkState::InRoom { room, player, .. }) =
             self.links.insert(link, LinkState::Closing)
         {
-            outs.push(self.remove_player(room, player));
+            outs.extend(self.remove_player(room, player));
         }
         outs.push(Out::Close(link));
         outs
     }
 
     /// 플레이어를 방에서 제거합니다. 마지막 플레이어가 나가면 방도 없앱니다.
-    fn remove_player(&mut self, code: RoomCode, player: PlayerId) -> Out {
+    fn remove_player(&mut self, code: RoomCode, player: PlayerId) -> Vec<Out> {
         let mut members = 0;
+        let mut room_removed = false;
         if let Some(room) = self.rooms.get_mut(&code) {
             room.remove(player);
             members = room.member_count();
             if members == 0 {
                 self.rooms.remove(&code);
+                room_removed = true;
             }
         }
-        Out::Notice(Notice::Left {
-            room: code,
+        let mut outs = vec![Out::Notice(Notice::Left {
+            room: code.clone(),
             player,
             members,
-        })
+        })];
+        if room_removed {
+            outs.push(Out::Notice(Notice::RoomRemoved { room: code }));
+        }
+        outs
     }
 }

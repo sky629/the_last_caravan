@@ -15,6 +15,9 @@ pub enum ServerEvent {
     Connected(LinkId),
     /// 이미 해석한 메시지입니다. 해석할 수 없는 데이터를 보낸 접속은 접속 방식이 닫습니다.
     Message(LinkId, ClientMsg),
+    /// 접속 방식이 한도를 넘은 접속을 직접 닫았습니다. 값은 운영자가 로그로 읽는 이유 문장입니다.
+    /// 이 접속의 `Disconnected`가 이어서 옵니다.
+    LimitReached(LinkId, String),
     Disconnected(LinkId),
 }
 
@@ -22,7 +25,7 @@ pub enum ServerEvent {
 ///
 /// 1. `poll`은 기다리지 않고, 이벤트를 도착한 순서대로 하나씩 돌려줍니다. 이벤트가 없으면 `None`입니다.
 /// 2. 접속 하나에 대해 `Connected`가 먼저 오고, `Message`가 0개 이상 온 뒤, `Disconnected`가 마지막에 한 번 옵니다.
-///    서버가 `close`를 호출한 접속에도 `Disconnected`가 옵니다.
+///    서버가 `close`를 호출한 접속에도 `Disconnected`가 옵니다. 접속 방식이 한도를 넘었다는 이유로 닫은 접속에는 `Disconnected` 바로 앞에 `LimitReached`가 한 번 옵니다.
 /// 3. `send`는 기다리지 않습니다. 모르는 접속이나 닫힌 접속에 보내면 아무 일도 하지 않습니다.
 ///    보낼 메시지를 따라가지 못하는 접속은 접속 방식이 끊고, 서버는 `Disconnected`를 받습니다.
 /// 4. `close`는 이미 보낸 메시지를 먼저 전달한 뒤 접속을 닫습니다. 그래서 거절 사유가 클라이언트에 도착합니다.

@@ -27,6 +27,14 @@ use room::Room;
 /// 서버에서 일어난 일 가운데 운영자에게 알릴 것입니다. 라이브러리는 직접 로그를 쓰지 않고, 이 값을 돌려줍니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Notice {
+    /// 방이 만들어졌습니다. 그 방의 첫 `Joined` 바로 앞에 옵니다.
+    RoomCreated {
+        room: RoomCode,
+    },
+    /// 마지막 플레이어가 나가서 방이 없어졌습니다. 그 `Left` 바로 뒤에 옵니다.
+    RoomRemoved {
+        room: RoomCode,
+    },
     Joined {
         room: RoomCode,
         player: PlayerId,
@@ -39,6 +47,11 @@ pub enum Notice {
     },
     Rejected {
         reason: RejectReason,
+    },
+    /// 서버가 접속을 닫았습니다. `reason`은 한도를 넘었거나 약속을 어긴 이유를 설명하는 문장입니다.
+    LinkClosed {
+        link: LinkId,
+        reason: String,
     },
 }
 
@@ -64,6 +77,9 @@ impl fmt::Display for Notice {
                 player.0
             ),
             Notice::Rejected { reason } => write!(f, "join rejected: {reason:?}"),
+            Notice::RoomCreated { room } => write!(f, "room {room} created"),
+            Notice::RoomRemoved { room } => write!(f, "room {room} removed"),
+            Notice::LinkClosed { link, reason } => write!(f, "link {} closed: {reason}", link.0),
         }
     }
 }

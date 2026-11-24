@@ -9,8 +9,8 @@
 
 use std::io;
 use std::net::{SocketAddr, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -19,7 +19,7 @@ use caravan_protocol::{
     decode_server, encode_client, loopback,
 };
 use caravan_rules::Tuning;
-use caravan_server::GameServer;
+use caravan_server::{GameServer, Notice};
 use caravan_ws_server::WsServer;
 use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::{Error, Message, WebSocket, connect};
@@ -28,6 +28,8 @@ use tokio_tungstenite::tungstenite::{Error, Message, WebSocket, connect};
 struct RunningServer {
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
+    /// 서버가 지금까지 알린 일입니다.
+    notices: Arc<Mutex<Vec<Notice>>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -38,12 +40,18 @@ impl RunningServer {
         let addr = ws.local_addr();
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let reported = Arc::clone(&notices);
         let thread = thread::spawn(move || {
             let mut server = GameServer::new(Box::new(ws), tuning, limits, Instant::now())
                 .expect("the tuning is valid and fits the limits");
             while !stopped.load(Ordering::Relaxed) {
                 let now = Instant::now();
-                server.pump(now);
+                let news = server.pump(now);
+                reported
+                    .lock()
+                    .expect("the test thread is alive")
+                    .extend(news);
                 thread::sleep(
                     server
                         .time_until_next_tick(now)
@@ -54,7 +62,27 @@ impl RunningServer {
         RunningServer {
             addr,
             stop,
+            notices,
             thread: Some(thread),
+        }
+    }
+
+    /// 서버가 `wanted`에 맞는 일을 알릴 때까지 기다리고, 그 일을 돌려줍니다.
+    fn wait_for_notice(&self, wanted: impl Fn(&Notice) -> bool) -> Notice {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let found = self
+                .notices
+                .lock()
+                .expect("the server thread is alive")
+                .iter()
+                .find(|notice| wanted(notice))
+                .cloned();
+            if let Some(notice) = found {
+                return notice;
+            }
+            assert!(Instant::now() < deadline, "the server never reported it");
+            thread::sleep(Duration::from_millis(10));
         }
     }
 }
@@ -229,4 +257,33 @@ fn a_client_whose_inputs_arrive_in_a_burst_after_a_three_second_stall_stays_conn
         snapshot.players[0].last_input_seq == last
     });
     assert_eq!(reached.players[0].last_input_seq, last, "the link survived");
+}
+
+#[test]
+fn a_link_cut_by_the_message_rate_limit_is_reported_with_the_limit_it_broke() {
+    let server = RunningServer::start(Tuning::default());
+    let mut client = TestClient::connect(server.addr);
+    client.join("flood");
+
+    // 한도를 넘으면 서버가 접속을 닫으므로, 그 뒤의 전송 실패는 무시합니다.
+    for seq in 1..=300 {
+        let input = encode_client(&ClientMsg::Input(InputMsg {
+            seq,
+            ..InputMsg::default()
+        }));
+        let _ = client.socket.send(Message::binary(input));
+    }
+
+    let closed = server.wait_for_notice(|notice| matches!(notice, Notice::LinkClosed { .. }));
+    let Notice::LinkClosed { reason, .. } = closed else {
+        unreachable!("the wanted notice is a LinkClosed");
+    };
+    assert_eq!(
+        reason,
+        format!(
+            "sent more than {} messages in one second",
+            ServerLimits::default().max_messages_per_sec
+        )
+    );
+    server.wait_for_notice(|notice| matches!(notice, Notice::Left { members: 0, .. }));
 }

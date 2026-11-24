@@ -127,8 +127,8 @@ fn input_before_join_closes_the_link_without_a_welcome() {
     });
     let notices = rig.pump();
     assert!(
-        notices.is_empty(),
-        "the Join after the violation is ignored: {notices:?}"
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("before Join")),
+        "the closing is reported and the Join after the violation is ignored: {notices:?}"
     );
     assert!(matches!(
         drain(&mut client)[..],
@@ -161,7 +161,7 @@ fn the_last_leaver_removes_the_room_and_the_next_joiner_starts_fresh() {
 }
 
 #[test]
-fn pump_reports_joins_and_leaves_with_member_counts() {
+fn pump_reports_rooms_created_and_removed_with_the_joins_and_leaves() {
     let mut rig = rig();
     let mut first = rig.connector.connect();
     let mut second = rig.connector.connect();
@@ -176,6 +176,7 @@ fn pump_reports_joins_and_leaves_with_member_counts() {
     assert_eq!(
         rig.pump(),
         [
+            Notice::RoomCreated { room: room.clone() },
             Notice::Joined {
                 room: room.clone(),
                 player: PlayerId(1),
@@ -186,16 +187,30 @@ fn pump_reports_joins_and_leaves_with_member_counts() {
                 player: PlayerId(2),
                 members: 2
             },
-        ]
+        ],
+        "only the first joiner creates the room"
     );
     drop(first);
     assert_eq!(
         rig.pump(),
         [Notice::Left {
-            room,
+            room: room.clone(),
             player: PlayerId(1),
             members: 1
         }]
+    );
+    drop(second);
+    assert_eq!(
+        rig.pump(),
+        [
+            Notice::Left {
+                room: room.clone(),
+                player: PlayerId(2),
+                members: 0
+            },
+            Notice::RoomRemoved { room }
+        ],
+        "the last leaver removes the room"
     );
 }
 
@@ -263,11 +278,15 @@ fn a_link_that_does_not_join_within_the_deadline_is_closed() {
     );
 
     rig.now += Duration::from_millis(100);
-    rig.pump();
+    let notices = rig.pump();
     assert!(matches!(
         drain(&mut idle)[..],
         [ClientEvent::Disconnected { .. }]
     ));
+    assert!(
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("no Join within 5s")),
+        "the closing is reported with its reason: {notices:?}"
+    );
     assert!(
         !drain(&mut player)
             .iter()
@@ -360,8 +379,12 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
     rig.now += Duration::from_secs(1);
     let notices = rig.pump();
     let room = caravan_protocol::RoomCode::parse("test").unwrap();
+    assert!(
+        matches!(&notices[0], Notice::LinkClosed { reason, .. } if reason.contains("no message for 30s")),
+        "the closing is reported with its reason: {notices:?}"
+    );
     assert_eq!(
-        notices,
+        notices[1..],
         [Notice::Left {
             room,
             player: PlayerId(2),
@@ -447,8 +470,8 @@ fn a_second_join_on_one_link_closes_it_and_removes_its_player() {
         "the link that broke the protocol is closed"
     );
     assert!(
-        matches!(notices[..], [Notice::Left { members: 1, .. }]),
-        "and its player leaves the room: {notices:?}"
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }, Notice::Left { members: 1, .. }] if reason.contains("Join again")),
+        "the closing is reported and its player leaves the room: {notices:?}"
     );
 
     rig.run_ticks(1);
