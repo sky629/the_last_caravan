@@ -221,6 +221,7 @@ impl Tuning {
 
     /// 수치가 규칙의 전제를 지키는지 검사합니다. 어긋난 첫 번째 항목을 설명하는 문장을 돌려줍니다.
     ///
+    /// 속도는 모두 유한하고 0 이상이어야 합니다.
     /// 가장 중요한 전제는 「한 Tick에 움직일 수 있는 거리가 몸의 반지름보다 짧다」입니다.
     /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 한 Tick에 얇은 벽을 건너뛰는 거리를 움직일 수 있으면 개체가 벽을 통과합니다.
     /// 플레이어는 걷는 거리를, 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값을 이 전제에 맞춰 검사합니다.
@@ -246,6 +247,18 @@ impl Tuning {
             return Err("every max_hp must be at least 1".to_string());
         }
 
+        // 음수 속도는 개체를 목표의 반대쪽으로 걷게 하고, NaN은 아래의 모든 비교를 거짓으로 만들어 검사를 통과하므로 먼저 거절합니다.
+        check_speed("player speed", self.player.speed)?;
+        check_speed("player crawl_speed", self.player.crawl_speed)?;
+        for kind in MonsterKind::ALL {
+            let monster = self.monsters.get(kind);
+            check_speed(&format!("{kind:?} speed"), monster.speed)?;
+            check_speed(
+                &format!("{kind:?} separation_speed"),
+                monster.separation_speed,
+            )?;
+        }
+
         let dt = self.dt();
         let fastest_player = self.player.speed.max(self.player.crawl_speed);
         if fastest_player * dt >= self.player.radius {
@@ -258,7 +271,7 @@ impl Tuning {
         for kind in MonsterKind::ALL {
             let monster = self.monsters.get(kind);
             // 몬스터는 같은 Tick에 걸으면서 밀려날 수 있으므로, 움직일 수 있는 거리의 최댓값은 두 거리의 합입니다.
-            let farthest = (monster.speed + monster.separation_speed.abs()) * dt;
+            let farthest = (monster.speed + monster.separation_speed) * dt;
             if farthest >= monster.radius {
                 return Err(format!(
                     "{kind:?} moves up to {farthest} tiles per tick (walking plus separation), which must be shorter than its radius {}",
@@ -294,6 +307,17 @@ impl Tuning {
             bounds,
             &solids,
         )
+    }
+}
+
+/// 속도는 유한하고 0 이상이어야 합니다.
+fn check_speed(name: &str, speed: f32) -> Result<(), String> {
+    if speed.is_finite() && speed >= 0.0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{name} must be a finite number that is not negative, but it is {speed}"
+        ))
     }
 }
 

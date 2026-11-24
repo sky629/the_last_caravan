@@ -102,3 +102,30 @@ fn walking_plus_the_largest_separation_push_stays_shorter_than_a_body_radius() {
     beyond.monsters.grunt.separation_speed = largest_push * 1.05;
     assert!(beyond.validate().is_err());
 }
+
+/// 수치표에서 속도 하나를 고르는 함수입니다.
+type SpeedField = fn(&mut Tuning) -> &mut f32;
+
+#[test]
+fn a_speed_that_is_negative_or_not_finite_is_rejected_and_the_reason_names_it() {
+    let speeds: [(&str, SpeedField); 4] = [
+        ("player speed", |t| &mut t.player.speed),
+        ("player crawl_speed", |t| &mut t.player.crawl_speed),
+        ("Grunt speed", |t| &mut t.monsters.grunt.speed),
+        ("Grunt separation_speed", |t| {
+            &mut t.monsters.grunt.separation_speed
+        }),
+    ];
+    for (name, field) in speeds {
+        // 음수 걷기 속도는 몬스터를 목표의 반대쪽으로 걷게 하고, 음수 밀어내기 속도는 절댓값으로 검사하면 통과했습니다.
+        for bad in [-0.1, -40.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut t = Tuning::default();
+            *field(&mut t) = bad;
+            let why = t.validate().expect_err(&format!("{name} of {bad}"));
+            assert!(why.contains(name), "{name} of {bad}: {why}");
+        }
+        let mut t = Tuning::default();
+        *field(&mut t) = 0.0;
+        assert_eq!(t.validate(), Ok(()), "{name} of zero is a valid standstill");
+    }
+}
