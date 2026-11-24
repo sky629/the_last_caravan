@@ -44,24 +44,35 @@ sudo apt-get install pkg-config libudev-dev libwayland-dev
 
 ### 전용 서버를 실행합니다
 
-클라이언트보다 서버를 먼저 실행합니다. 서버는 `listening on ws://127.0.0.1:7777`을 출력하고, 그 뒤 1초마다 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 한 줄씩 출력합니다. `Ctrl-C`로 종료합니다.
+클라이언트보다 서버를 먼저 실행합니다. 서버는 `listening on ws://127.0.0.1:7777`을 출력하고, 그 뒤에는 일어난 일만 한 줄씩 출력합니다. 출력하는 일은 플레이어의 입장과 퇴장(방 코드와 인원), 방의 생성과 제거, 한도 때문에 서버가 닫은 접속과 그 이유, 시작 오류입니다. `Ctrl-C`로 종료합니다.
 
 ```sh
 cargo run -p caravan_dedicated
+```
+
+플레이어 한 명이 방 `test`에 들어갔다가 나가면 출력은 다음과 같습니다.
+
+```text
+listening on ws://127.0.0.1:7777
+room test created
+player 1 joined room test (1 members)
+player 1 left room test (0 members)
+room test removed
 ```
 
 | 옵션 | 설명 |
 |---|---|
 | `--addr HOST:PORT` | 접속을 받을 주소입니다. 기본값은 `127.0.0.1:7777`입니다. 다른 컴퓨터에서 접속하려면 `0.0.0.0:7777`을 지정합니다. |
 | `--debug-net` | 주고받는 모든 메시지를 읽을 수 있는 형태로 출력합니다. 스냅샷은 몬스터 목록을 수로 줄여서 출력합니다. |
+| `--stats` | 1초마다 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 한 줄씩 출력합니다. 예를 들면 `stats rooms=1 members=2 monsters=87 ticks=20 tick_avg_ms=0.31 tick_max_ms=1.20`입니다. |
 | `--waves SIZE,SIZE,...` | 무리의 수와 무리마다 몬스터의 수를 바꿉니다. `--waves 100,200,300`은 무리 세 개를 100마리, 200마리, 300마리로 정합니다. |
 | `--stress` | 마차, 감시탑, 플레이어가 죽지 않게 하고 몬스터를 Tick마다 한 마리씩 등장시킵니다. |
 
-`--waves`와 `--stress`는 몬스터가 수백 마리일 때 서버의 Tick 시간과 스냅샷의 크기를 재기 위한 부하 시험용 옵션입니다.
+`--waves`와 `--stress`는 몬스터가 수백 마리일 때 서버의 Tick 시간과 스냅샷의 크기를 재기 위한 부하 시험용 옵션입니다. Tick 시간은 `--stats`를 붙여야 출력됩니다.
 부하 시험용 클라이언트(`crates/dedicated/examples/load_client.rs`)는 Bevy 없이 한 방에 접속해서 Tick마다 입력을 보내고, 받은 스냅샷의 크기와 몬스터 수를 1초마다 출력합니다.
 
 ```sh
-cargo run --release -p caravan_dedicated -- --stress --waves 100,200,300
+cargo run --release -p caravan_dedicated -- --stress --waves 100,200,300 --stats
 cargo run --release -p caravan_dedicated --example load_client -- --addr 127.0.0.1:7777 --room load --secs 60
 ```
 
