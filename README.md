@@ -119,7 +119,7 @@ trunk serve
 
 ## 검사하기
 
-CI(`.github/workflows/ci.yml`)는 푸시와 풀 리퀘스트마다 Ubuntu 24.04에서 다음 명령을 모두 실행합니다. 저장소 폴더에서 같은 명령을 실행해서 로컬에서도 확인할 수 있습니다.
+CI(`.github/workflows/ci.yml`)는 `main`에 푸시할 때와 풀 리퀘스트마다 Ubuntu 24.04에서 다음 명령을 모두 실행합니다. 저장소 폴더에서 같은 명령을 실행해서 로컬에서도 확인할 수 있습니다.
 
 ```sh
 cargo fmt --all -- --check
