@@ -52,6 +52,14 @@ fn a_move_request_longer_than_one_is_clamped_to_full_speed() {
 }
 
 #[test]
+fn a_huge_but_finite_move_request_is_clamped_to_full_speed_not_dropped() {
+    // 제곱하면 `f32`의 범위를 넘는 크기입니다.
+    assert_eq!(MoveDir::new(1e20, 0.0).get(), Vec2::new(1.0, 0.0));
+    assert_eq!(MoveDir::new(0.0, -f32::MAX).get(), Vec2::new(0.0, -1.0));
+    assert!(close(MoveDir::new(3e19, 4e19).get().length(), 1.0));
+}
+
+#[test]
 fn a_move_request_that_is_not_a_number_means_standing_still() {
     assert_eq!(MoveDir::new(f32::NAN, 1.0).get(), Vec2::ZERO);
     assert_eq!(MoveDir::new(f32::INFINITY, 0.0).get(), Vec2::ZERO);
@@ -62,6 +70,7 @@ fn an_aim_request_is_normalized_and_an_empty_one_keeps_the_facing() {
     assert!(close(AimDir::new(0.0, 7.0).get().unwrap().length(), 1.0));
     assert_eq!(AimDir::new(0.0, 0.0).get(), None);
     assert_eq!(AimDir::new(f32::NAN, 1.0).get(), None);
+    assert_eq!(AimDir::new(1e20, 0.0).get(), Some(Vec2::new(1.0, 0.0)));
 
     let mut s = Scenario::open_field();
     let a = s.player_at(5.0, 5.0);

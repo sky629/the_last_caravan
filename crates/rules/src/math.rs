@@ -34,14 +34,24 @@ impl Vec2 {
         self.x * other.x + self.y * other.y
     }
 
-    /// 길이가 1인 같은 방향의 벡터입니다. 길이가 0이거나 유한하지 않은 벡터는 `ZERO`로 바꿉니다.
+    /// 길이가 1인 같은 방향의 벡터입니다. 길이가 0이거나 성분이 유한하지 않은 벡터는 `ZERO`로 바꿉니다.
     pub fn normalize_or_zero(self) -> Vec2 {
         let length = self.length();
-        if length.is_finite() && length > 0.0 {
-            self * (1.0 / length)
-        } else {
-            Vec2::ZERO
+        if length.is_finite() {
+            return if length > 0.0 {
+                self * (1.0 / length)
+            } else {
+                Vec2::ZERO
+            };
         }
+        if !self.is_finite() {
+            return Vec2::ZERO;
+        }
+        // 성분은 유한한데 제곱이 `f32`의 범위를 넘어서 길이만 무한대가 된 경우입니다.
+        // 큰 성분으로 먼저 나누면 길이가 1과 2 사이가 되어 넘치지 않습니다.
+        let largest = self.x.abs().max(self.y.abs());
+        let scaled = Vec2::new(self.x / largest, self.y / largest);
+        scaled * (1.0 / scaled.length())
     }
 
     pub fn is_finite(self) -> bool {

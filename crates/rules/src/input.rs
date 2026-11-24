@@ -37,9 +37,8 @@ impl MoveDir {
         if !raw.is_finite() {
             return MoveDir(Vec2::ZERO);
         }
-        let length = raw.length();
-        if length > 1.0 {
-            MoveDir(raw * (1.0 / length))
+        if raw.length() > 1.0 {
+            MoveDir(raw.normalize_or_zero())
         } else {
             MoveDir(raw)
         }
