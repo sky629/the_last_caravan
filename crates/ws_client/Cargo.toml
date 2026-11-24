@@ -1,0 +1,17 @@
+[package]
+name = "caravan_ws_client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+caravan_protocol.workspace = true
+ewebsock.workspace = true
+
+[dev-dependencies]
+# 테스트에서 서버 역할을 하는 동기 WebSocket입니다. ewebsock이 PC에서 쓰는 것과 같은 버전입니다.
+tungstenite = "0.24"
+
+[lints]
+workspace = true

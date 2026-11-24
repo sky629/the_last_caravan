@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  native:
+    name: Format, lint, test, dependency rules
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned toolchain
+        # Without a name, rustup installs the toolchain, components, and targets that rust-toolchain.toml lists.
+        run: rustup toolchain install
+
+      - name: Install the Linux libraries Bevy links
+        # libudev-sys and wayland-sys find these with pkg-config when the client builds. No audio feature, so no ALSA.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libudev-dev libwayland-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Check dependency rules
+        run: sh scripts/check-deps.sh
+
+  web:
+    name: Web build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install trunk 0.22.2
+        run: curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.22.2/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C "$HOME/.cargo/bin"
+
+      - name: Clippy for wasm32
+        run: cargo clippy -p caravan_client --target wasm32-unknown-unknown --locked -- -D warnings
+
+      - name: Build the web client
+        working-directory: crates/client
+        run: trunk build --locked

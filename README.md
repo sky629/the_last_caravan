@@ -1,5 +1,230 @@
 # THE LAST CARAVAN
 
-2~4명이 이동식 마을(마차)을 함께 지키는 협동 액션 로그라이크 게임입니다.
+THE LAST CARAVAN은 2~4명이 이동식 마을(마차)을 함께 지키는 협동 액션 로그라이크 게임입니다.
+이 저장소에는 1단계인 밤의 방어 프로토타입이 있습니다. 플레이어들은 맵 한가운데의 마차와 감시탑을 세 무리의 몬스터로부터 지키고 쓰러진 동료를 부활시키며, 전용 서버가 이동, 전투, 부활의 결과를 모두 판정합니다.
 
-현재는 1단계(밤의 방어 프로토타입)를 개발하고 있습니다. 설치 방법, 실행 방법, 코드를 읽는 순서는 1단계 구현과 함께 이 문서에 추가합니다.
+## 설치하기
+
+아래 명령은 macOS에서 확인했습니다.
+
+1. rustup을 설치합니다. 설치가 끝나면 새 터미널을 엽니다.
+
+   ```sh
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+2. 저장소를 내려받고 저장소 폴더로 이동합니다.
+
+   ```sh
+   git clone https://github.com/sky629/the_last_caravan.git
+   cd the_last_caravan
+   ```
+
+3. 고정된 툴체인을 설치합니다. `rust-toolchain.toml`이 Rust 1.100.0, rustfmt, clippy, `wasm32-unknown-unknown` 타깃을 지정하므로, 저장소 폴더에서 이 명령 하나로 웹 빌드용 타깃까지 설치됩니다.
+
+   ```sh
+   rustup toolchain install
+   ```
+
+   `rustc --version`이 `rustc 1.100.0`을 출력하고 `rustup target list --installed`에 `wasm32-unknown-unknown`이 있으면 설치가 끝난 것입니다.
+
+4. 웹 빌드 도구인 trunk 0.22.2를 설치합니다. trunk는 처음 웹 빌드를 할 때 `Cargo.lock`에 맞는 버전의 wasm-bindgen을 내려받습니다.
+
+   ```sh
+   cargo install --locked trunk --version 0.22.2
+   ```
+
+Ubuntu에서 클라이언트를 빌드하려면 Bevy가 링크하는 라이브러리를 먼저 설치합니다. CI가 설치하는 목록과 같습니다.
+
+```sh
+sudo apt-get install pkg-config libudev-dev libwayland-dev
+```
+
+## 실행하기
+
+### 전용 서버를 실행합니다
+
+클라이언트보다 서버를 먼저 실행합니다. 서버는 `listening on ws://127.0.0.1:7777`을 출력하고, 그 뒤 1초마다 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 한 줄씩 출력합니다. `Ctrl-C`로 종료합니다.
+
+```sh
+cargo run -p caravan_dedicated
+```
+
+| 옵션 | 설명 |
+|---|---|
+| `--addr HOST:PORT` | 접속을 받을 주소입니다. 기본값은 `127.0.0.1:7777`입니다. 다른 컴퓨터에서 접속하려면 `0.0.0.0:7777`을 지정합니다. |
+| `--debug-net` | 주고받는 모든 메시지를 읽을 수 있는 형태로 출력합니다. 스냅샷은 몬스터 목록을 수로 줄여서 출력합니다. |
+| `--waves SIZE,SIZE,...` | 무리의 수와 무리마다 몬스터의 수를 바꿉니다. `--waves 100,200,300`은 무리 세 개를 100마리, 200마리, 300마리로 정합니다. |
+| `--stress` | 마차, 감시탑, 플레이어가 죽지 않게 하고 몬스터를 Tick마다 한 마리씩 등장시킵니다. |
+
+`--waves`와 `--stress`는 몬스터가 수백 마리일 때 서버의 Tick 시간과 스냅샷의 크기를 재기 위한 부하 시험용 옵션입니다.
+부하 시험용 클라이언트(`crates/dedicated/examples/load_client.rs`)는 Bevy 없이 한 방에 접속해서 Tick마다 입력을 보내고, 받은 스냅샷의 크기와 몬스터 수를 1초마다 출력합니다.
+
+```sh
+cargo run --release -p caravan_dedicated -- --stress --waves 100,200,300
+cargo run --release -p caravan_dedicated --example load_client -- --addr 127.0.0.1:7777 --room load --secs 60
+```
+
+부하 시험용 클라이언트의 옵션은 `--addr HOST:PORT`, `--room CODE`, `--secs SECONDS`, `--passive`입니다. `--passive`를 붙이면 공격하지 않으므로 몬스터가 가장 많이 쌓입니다.
+
+### PC 클라이언트를 실행합니다
+
+두 클라이언트를 같은 방에 넣으려면 터미널 두 개에서 같은 명령을 실행합니다. 두 창에 같은 맵과 두 캐릭터가 나타납니다.
+
+```sh
+cargo run -p caravan_client -- --room test
+```
+
+다른 방 코드로 실행한 클라이언트는 다른 방에 들어가므로, 위의 두 클라이언트와 서로 보이지 않습니다.
+
+```sh
+cargo run -p caravan_client -- --room other
+```
+
+| 옵션 | 설명 |
+|---|---|
+| `--room CODE` | 방 코드입니다. 기본값은 `test`입니다. 1~16자의 `a-z`, `0-9`, `-`, `_`를 쓰고, 대문자는 소문자로 바뀝니다. 처음 들어간 사람이 방을 만들고, 마지막 사람이 나가면 방이 사라집니다. |
+| `--server URL` | 서버 주소입니다. 기본값은 `ws://127.0.0.1:7777`입니다. `ws://`나 `wss://`로 시작해야 합니다. |
+| `--debug-net` | 주고받는 메시지를 로그에 출력합니다. |
+
+옵션이 잘못되었거나 서버에 접속하지 못하면 창 가운데에 이유가 표시됩니다. 클라이언트는 1초마다 프레임 속도, 가장 최근에 받은 서버 Tick, 그 스냅샷의 몬스터 수를 로그로 출력합니다.
+
+### 웹 클라이언트를 실행합니다
+
+`crates/client`에서 `trunk serve`를 실행하면 trunk가 클라이언트를 wasm으로 빌드하고 `http://127.0.0.1:8080/`에서 페이지를 제공합니다.
+
+```sh
+cd crates/client
+trunk serve
+```
+
+브라우저에서 `http://127.0.0.1:8080/?room=test`를 엽니다. 주소의 쿼리는 PC 클라이언트의 옵션과 같은 규칙으로 해석됩니다.
+
+| 쿼리 | 설명 |
+|---|---|
+| `room=CODE` | 방 코드입니다. 기본값은 `test`입니다. |
+| `server=URL` | 서버 주소입니다. 기본값은 `ws://127.0.0.1:7777`입니다. |
+| `debug-net` | 주고받는 메시지를 브라우저 개발자 도구의 콘솔에 출력합니다. |
+
+모든 쿼리를 쓴 주소는 `http://127.0.0.1:8080/?room=test&server=ws://127.0.0.1:7777&debug-net`입니다. 웹 클라이언트와 PC 클라이언트에 같은 방 코드를 주면 같은 방에서 함께 플레이합니다.
+
+### 조작
+
+| 입력 | 동작 |
+|---|---|
+| `W` `A` `S` `D` | 화면을 기준으로 위, 왼쪽, 아래, 오른쪽으로 이동합니다. |
+| 마우스 | 커서가 가리키는 지면 위치로 조준합니다. |
+| 왼쪽 클릭 | 조준한 방향의 부채꼴 안에 있는 모든 몬스터를 근접 공격합니다. |
+| `F`를 누르고 있기 | 가까이 쓰러진 동료가 있으면 부활시키고(8초), 없으면 가까이 있는 손상된 감시탑을 수리합니다. 그동안 이동과 공격을 할 수 없습니다. |
+
+## 검사하기
+
+CI(`.github/workflows/ci.yml`)는 `main`에 푸시할 때와 풀 리퀘스트마다 Ubuntu 24.04에서 다음 명령을 모두 실행합니다. 저장소 폴더에서 같은 명령을 실행해서 로컬에서도 확인할 수 있습니다.
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p caravan_client --target wasm32-unknown-unknown -- -D warnings
+cargo test --workspace
+sh scripts/check-deps.sh
+cd crates/client && trunk build
+```
+
+- `cargo test --workspace`는 게임 규칙, 프로토콜, 서버, 클라이언트 로직을 시험합니다. 대부분의 테스트는 화면과 네트워크 없이 실행되고, `crates/dedicated/tests/real_socket.rs`, `crates/ws_server/tests/roundtrip.rs`, `crates/ws_client/tests/message_limit.rs`만 `127.0.0.1`의 실제 소켓을 씁니다.
+- `sh scripts/check-deps.sh`는 계층 사이의 금지된 의존이 없는지 검사하고, 통과하면 `dependency rules hold`를 출력합니다.
+- `trunk build`는 웹 클라이언트를 `crates/client/dist`에 빌드합니다.
+
+## 구조
+
+워크스페이스는 크레이트 여덟 개로 나뉩니다. 의존은 안쪽 계층(표의 아래쪽)으로만 향합니다.
+
+| 계층 | 크레이트 | 역할 | 의존할 수 있는 것 |
+|---|---|---|---|
+| 도메인 | `caravan_rules` | 게임 규칙 전체입니다. 이동, 충돌, 전투, 몬스터, 무리, 마차와 감시탑, 쓰러짐과 부활, 원정의 성공과 실패를 계산합니다. | 없음 |
+| 계약 | `caravan_protocol` | 메시지, 규칙 상태를 전송 형식으로 바꾸는 변환, 바이트 변환, 접속 방식 인터페이스 두 개, 프로세스 내부 전달입니다. | `caravan_rules`, serde, postcard |
+| 애플리케이션 | `caravan_server` | 방, Tick 일정, 입장과 퇴장, 입력 처리입니다. 소켓, 스레드, 현재 시각을 직접 쓰지 않습니다. | `caravan_rules`, `caravan_protocol` |
+| 애플리케이션 | `caravan_client_core` | 클라이언트에서 Bevy가 필요하지 않은 로직입니다. 접속 상태, 입력 전송, 보간, 쿼터뷰 투영, HUD의 내용, 실행 옵션을 다룹니다. | `caravan_rules`, `caravan_protocol` |
+| 어댑터 | `caravan_ws_server` | WebSocket으로 서버 쪽 접속 방식 인터페이스를 구현합니다 (PC 전용). | `caravan_protocol`, tokio, tokio-tungstenite, futures-util |
+| 어댑터 | `caravan_ws_client` | WebSocket으로 클라이언트 쪽 접속 방식 인터페이스를 구현합니다 (PC와 웹). | `caravan_protocol`, ewebsock |
+| 조립 | `caravan_dedicated` | 전용 서버 실행 파일입니다. 게임 서버에 WebSocket 어댑터를 연결해서 실행합니다. | `caravan_rules`, `caravan_protocol`, `caravan_server`, `caravan_ws_server` |
+| 조립 | `caravan_client` | Bevy 앱입니다. 입력, 화면, HUD를 맡고 클라이언트 코어와 WebSocket 어댑터를 연결합니다. Bevy를 쓰는 크레이트는 이것 하나입니다. | `caravan_rules`, `caravan_protocol`, `caravan_client_core`, `caravan_ws_client`, bevy, web-sys (웹 빌드만) |
+
+아래 그림에서 화살표는 의존하는 방향입니다. 표의 마지막 열이 각 크레이트의 `Cargo.toml`에 적힌 실제 의존 목록이고, 그림은 방향만 보여 줍니다.
+
+```text
+caravan_dedicated                       caravan_client              조립
+   |          |                            |          |
+   v          |                            |          v
+caravan_ws_server                          |    caravan_ws_client   어댑터
+   |          v                            v          |
+   |    caravan_server       caravan_client_core      |             애플리케이션
+   |          |                            |          |
+   v          v                            v          v
+   +-----------------> caravan_protocol <-------------+             계약
+                              |
+                              v
+                        caravan_rules                               도메인
+```
+
+각 크레이트의 `Cargo.toml`이 허용되는 의존을 정하고, `scripts/check-deps.sh`가 `cargo tree`로 다섯 개의 배포 플랫폼에서 금지된 크레이트(예: 규칙과 서버에 Bevy, 계약과 애플리케이션 계층에 소켓 크레이트)가 직접 의존과 간접 의존 어디에도 없는지 검사합니다.
+
+## 키 입력 하나가 다른 플레이어의 화면에 그려지기까지
+
+플레이어 A가 `D`를 누르면, 다음 순서를 거쳐 플레이어 B의 화면에서 A의 캐릭터가 움직입니다.
+
+1. `crates/client/src/input.rs`의 `read_controls`가 이번 프레임의 키보드와 마우스 상태를 `Controls`로 읽습니다. 커서의 화면 위치는 지면 위치로 되돌립니다.
+2. `crates/client/src/net.rs`의 `send_input`이 `Session::input_due`(`crates/client_core/src/session.rs`)를 부릅니다. `InputSender::poll`(`crates/client_core/src/input.rs`)은 서버 Tick 간격(20 Hz에서 50ms)마다 한 번 `Controls::to_input`으로 순서 번호가 붙은 `InputMsg`를 만들고, 이때 화면 기준의 WASD 방향이 지면의 이동 방향으로 바뀝니다.
+3. `WsClient::send`(`crates/ws_client/src/lib.rs`)가 `encode_client`(`crates/protocol/src/codec.rs`)로 메시지를 postcard 바이트로 바꾸고 WebSocket 이진 프레임으로 보냅니다.
+4. 서버의 네트워크 스레드에서 `serve_link`(`crates/ws_server/src/lib.rs`)가 프레임을 `decode_client`로 해석하고, 크기가 정해진 채널로 게임 스레드에 넘깁니다.
+5. `crates/dedicated/src/main.rs`의 반복이 `GameServer::pump`(`crates/server/src/lib.rs`)를 부릅니다. `pump`는 `WsServer::poll`로 꺼낸 메시지를 `Hub::handle_message`(`crates/server/src/hub.rs`)에 넘기고, 입력은 `Room::submit_input`(`crates/server/src/room.rs`)을 거쳐 `MemberInput::accept`(`crates/server/src/input.rs`)에 쌓입니다. 이미 받은 순서 번호보다 크지 않은 입력은 여기서 버립니다.
+6. Tick 시각이 되면(`crates/server/src/clock.rs`의 `TickClock::due`) `Room::tick`이 플레이어마다 `MemberInput::for_tick`으로 이번 Tick의 입력 하나를 정하고 `Sim::step`(`crates/rules/src/sim.rs`)을 한 번 부릅니다.
+7. `Sim::step` 안에서 `move_players`(`crates/rules/src/player.rs`)가 이동 방향에 속도와 Tick 길이를 곱해서 캐릭터를 옮기고, `crates/rules/src/collision.rs`가 장애물과 겹친 만큼 캐릭터를 밀어냅니다.
+8. `Snapshot::from_sim`(`crates/protocol/src/snapshot.rs`)이 방 전체의 상태를 전송 형식으로 바꿉니다. `Room::tick`은 같은 스냅샷을 방의 모든 접속에 보내라는 `Out::Send`를 돌려주고, `GameServer::apply`가 `WsServer::send`를 불러서 `encode_server`로 바꾼 바이트를 보냅니다.
+9. B의 클라이언트에서 `pump_network`(`crates/client/src/net.rs`)가 `WsClient::poll`로 스냅샷을 받고(`decode_server`), `Session::on_event`가 스냅샷을 `SnapshotBuffer`(`crates/client_core/src/interp.rs`)에 넣습니다.
+10. `advance_playback`(`crates/client/src/net.rs`)이 재생 시각을 프레임 시간만큼 앞으로 보냅니다. `SnapshotBuffer`는 가장 최근 스냅샷보다 2 Tick(100ms) 이전 시점의 위치를 그 앞뒤 스냅샷 두 개 사이에서 선형으로 보간해서 `Frame`을 만듭니다.
+11. `sync_characters`(`crates/client/src/characters.rs`)가 `Frame`의 지면 위치를 `convert::placement`(`crates/client/src/convert.rs`)로 화면 위치와 z 값으로 바꿉니다. 이 변환은 `crates/client_core/src/iso.rs`의 `ground_to_screen`과 `depth`를 씁니다. Bevy가 바뀐 `Transform`대로 도형을 그리면 B의 화면에서 A의 캐릭터가 움직입니다.
+
+## 코드를 읽는 순서
+
+Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. 규칙에서 시작해서 프로토콜, 서버, 어댑터, 클라이언트 코어, 클라이언트로 나아갑니다.
+
+1. `crates/rules/src/tuning.rs`에서는 게임의 모든 수치가 한 구조체에 모인 모습과, `Default` 트레이트 구현, 그리고 초를 정수 Tick으로 바꾸는 `Tuning::ticks`를 봅니다.
+2. `crates/rules/src/sim.rs`의 `Sim::step`은 Tick 하나의 처리 순서를 나열하며, `world`만 가변 참조로 넘기고 `tuning`과 `statics` 같은 다른 필드는 `Ctx`에 공유 참조로 빌려 주는 방식이 구조체 필드를 따로 빌리는 소유권 규칙의 첫 예입니다.
+3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다.
+4. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
+5. `crates/rules/src/tests/support.rs`와 같은 폴더의 테스트는 화면과 네트워크 없이 개체를 원하는 자리에 놓고 `step`을 반복해서 규칙을 시험하는 방법을 보여 줍니다.
+6. `crates/protocol/src/messages.rs`의 `ClientMsg`와 `ServerMsg`는 serde의 derive로 직렬화하는 열거형이며, 클라이언트가 보낼 수 있는 게임 정보가 입력뿐이라는 서버 권위 방식이 이 타입에 드러납니다.
+7. `crates/protocol/src/snapshot.rs`의 `Snapshot::from_sim`은 게임 상태를 전송 형식으로 바꾸는 유일한 함수이며, 규칙의 상태 타입과 전송용 타입을 분리한 모습을 보여 줍니다.
+8. `crates/protocol/src/units.rs`는 실수 좌표를 1/128 타일 단위의 정수로 줄이는 양자화(quantization)로 스냅샷의 크기를 줄입니다.
+9. `crates/protocol/src/transport.rs`의 `ServerTransport`와 `ClientTransport`는 접속 방식을 트레이트로 정의한 인터페이스이고, 구현이 지켜야 하는 약속이 문서 주석에 있습니다.
+10. `crates/protocol/src/codec.rs`의 `decode_exact`는 트레이트 경계(`T: DeserializeOwned`)를 가진 제네릭 함수의 예입니다.
+11. `crates/protocol/src/loopback.rs`는 같은 트레이트의 두 번째 구현이며, `std::sync::mpsc` 채널로 같은 프로세스 안에서 메시지를 옮깁니다.
+12. `crates/server/src/input.rs`는 불규칙하게 도착하는 입력을 Tick마다 하나씩 넘기는 입력으로 바꾸고, `Option`으로 「아직 받은 입력이 없음」을 표현합니다.
+13. `crates/server/src/room.rs`와 `crates/server/src/hub.rs`에서는 허브가 접속 방식을 직접 부르지 않고 할 일을 `Out` 목록으로 돌려주는 방식과, 접속 상태를 열거형(`LinkState`)으로 표현하는 방식을 봅니다.
+14. `crates/server/src/clock.rs`는 고정 간격의 Tick 일정과 밀린 Tick의 상한을 다루며, 현재 시각을 인자로 받으므로 테스트가 가짜 시각을 쓸 수 있습니다.
+15. `crates/server/src/lib.rs`의 `GameServer`는 접속 방식을 `Box<dyn ServerTransport>`로 가지는 트레이트 객체의 예입니다.
+16. `crates/ws_server/src/lib.rs`에서는 tokio의 async와 await, `tokio::select!`, 크기가 정해진 채널, 그리고 값이 버려질 때 접속 자리를 돌려주는 `Drop` 구현(`Seat`)을 봅니다.
+17. `crates/ws_client/src/lib.rs`는 외부 라이브러리(ewebsock)를 이 프로젝트의 트레이트 뒤에 감싸는 어댑터이고, PC와 웹에서 같은 코드가 동작합니다.
+18. `crates/dedicated/src/main.rs`는 실행 인자를 해석하고, 다른 트레이트 객체를 감싸서 메시지를 기록하는 `DebugTransport`를 끼운 뒤, `pump`를 부르고 쉬는 서버의 반복을 실행합니다.
+19. `crates/client_core/src/session.rs`의 `Session`은 열거형으로 만든 상태 기계이며, 방에 들어간 뒤에만 필요한 값을 `InRoom(Joined)` 안에만 둡니다.
+20. `crates/client_core/src/interp.rs`에서는 스냅샷을 보관하고 일정한 지연을 두고 두 스냅샷 사이를 보간(interpolation)하는 방법을 배웁니다.
+21. `crates/client_core/src/iso.rs`는 지면 좌표를 쿼터뷰 화면 좌표로 바꾸는 투영과 그 역변환, 그리고 화면에서 아래쪽에 있는 개체를 앞에 그리는 순서(`depth`)를 다룹니다.
+22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭을 잃지 않도록 기억합니다.
+23. `crates/client/src/main.rs`에서는 Bevy의 `App`, 플러그인, `.chain()`으로 순서를 고정한 시스템 목록, 그리고 `#[cfg(target_arch = "wasm32")]`로 PC와 웹의 코드를 나누는 조건부 컴파일을 봅니다.
+24. `crates/client/src/net.rs`는 Bevy의 리소스와 시스템 매개변수(`Res`, `ResMut`, `NonSendMut`)의 예이고, 다른 스레드로 옮길 수 없는 웹의 WebSocket을 non-send 리소스로 보관합니다.
+25. `crates/client/src/view.rs`와 `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
+26. `crates/client/src/hud.rs`는 `caravan_client_core::Hud`가 정한 내용을 Bevy UI 노드에 옮깁니다.
+
+## 1단계의 한계
+
+- 클라이언트 예측이 없습니다. 내 캐릭터도 서버의 스냅샷으로만 움직이므로, 키를 누른 뒤 서버까지의 왕복 시간과 보간 지연(100ms)이 지나야 화면에서 움직입니다.
+- 재접속이 없습니다. 접속이 끊기면 화면에 `DISCONNECTED`와 이유가 표시되고, 서버는 그 플레이어의 캐릭터를 즉시 지웁니다. 클라이언트를 다시 실행하면 새 플레이어로 참가합니다.
+- 서버는 Tick마다 방 전체의 스냅샷(모든 플레이어, 몬스터, 시설)을 방의 모든 접속에 보냅니다. 바뀐 부분만 보내지 않습니다.
+- 브라우저 탭이 백그라운드로 가면 브라우저가 페이지의 실행을 제한해서 입력 전송이 멈춥니다. 서버는 입력 없이 10 Tick(0.5초)보다 오래 지나면 그 캐릭터를 아무것도 누르지 않은 상태로 움직이고, 메시지 없이 30초가 지나면 접속을 닫고 플레이어를 방에서 뺍니다. 탭으로 돌아와도 다시 접속하지 않으므로 페이지를 새로 고쳐야 합니다.
+- 서버는 TLS를 처리하지 않으므로 `ws://` 접속만 받습니다.
+- 서버의 기본 주소와 `trunk serve`의 주소(`crates/client/Trunk.toml`)는 `127.0.0.1`이므로, 기본 설정에서는 같은 컴퓨터에서만 접속할 수 있습니다.
+- 한 방의 최대 인원은 4명입니다(`crates/rules/src/tuning.rs`의 `max_players`). 가득 찬 방에 접속한 클라이언트는 거절되고 화면에 이유가 표시됩니다.
+- 로비 화면이 없으므로 방 코드는 실행할 때 지정합니다.
+- 맵은 24 x 24 타일 하나이고, 몬스터는 한 종류, 시설은 감시탑 하나뿐입니다. 낮의 탐험, 자원, 건설은 없습니다.
+- 화면의 문구는 영어입니다. Bevy의 기본 글꼴이 한글을 표시하지 못하기 때문입니다.
+- `trunk serve`와 `trunk build`는 최적화하지 않은 디버그 빌드를 만들므로 wasm 파일이 약 110MB입니다.

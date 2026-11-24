@@ -1,0 +1,368 @@
+//! WebSocket으로 `ServerTransport`를 구현합니다. tokio와 tokio-tungstenite는 이 크레이트 안에서만 사용합니다.
+//!
+//! 스레드 두 개가 각자 소유한 것만 씁니다. 그래서 잠금이 없습니다.
+//!
+//! - 게임 스레드: `WsServer`를 소유하고 `poll`, `send`, `close`를 호출합니다. 접속마다 송신 대기열의 보내는 끝을 가집니다.
+//! - 네트워크 스레드: tokio 실행기 하나가 소켓을 모두 소유합니다. 접속마다 작업(task) 하나가 읽기와 쓰기를 함께 처리합니다.
+//!
+//! 네트워크 스레드는 열린 접속, 받은 메시지, 닫힌 접속을 크기가 정해진 채널 하나로 게임 스레드에 알립니다.
+//! 접속 수, 메시지 크기, 메시지 빈도, 대기열 크기의 한계는 모두 `ServerLimits`에서 읽습니다.
+
+use std::collections::HashMap;
+use std::io;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::thread::JoinHandle;
+use std::time::Duration;
+
+use caravan_protocol::{
+    ClientMsg, LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport, decode_client,
+    encode_server,
+};
+use futures_util::{SinkExt, StreamExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+
+/// 접속을 받지 못했을 때(예: 열린 파일이 너무 많음) 다시 시도하기 전에 쉬는 시간입니다.
+/// 쉬지 않으면 같은 오류가 반복되는 동안 네트워크 스레드가 CPU를 모두 씁니다.
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
+/// 메시지 빈도를 세는 구간의 길이입니다.
+const RATE_WINDOW: Duration = Duration::from_secs(1);
+
+pub struct WsServer {
+    inbound: mpsc::Receiver<Inbound>,
+    outboxes: HashMap<LinkId, mpsc::Sender<Vec<u8>>>,
+    local_addr: SocketAddr,
+    /// 네트워크 스레드에 끝내라고 알리는 신호입니다. `Drop`이 보냅니다.
+    shutdown: Option<oneshot::Sender<()>>,
+    /// `Drop`이 이 스레드가 끝나기를 기다립니다. 그래서 `WsServer`가 사라지면 포트도 이미 풀려 있습니다.
+    network_thread: Option<JoinHandle<()>>,
+}
+
+/// 네트워크 스레드가 게임 스레드에 보내는 알림입니다.
+enum Inbound {
+    Opened {
+        link: LinkId,
+        outbox: mpsc::Sender<Vec<u8>>,
+    },
+    Message(LinkId, ClientMsg),
+    Closed(LinkId),
+}
+
+impl WsServer {
+    /// 주소를 바로 점유하므로, 이미 사용 중인 주소는 여기서 오류가 됩니다.
+    /// `"127.0.0.1:0"`을 넘기면 운영체제가 빈 포트를 고르고, `local_addr`가 그 포트를 알려 줍니다.
+    pub fn bind(addr: &str, limits: ServerLimits) -> io::Result<WsServer> {
+        let std_listener = std::net::TcpListener::bind(addr)?;
+        std_listener.set_nonblocking(true)?;
+        let local_addr = std_listener.local_addr()?;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let listener = {
+            let _inside_runtime = runtime.enter();
+            TcpListener::from_std(std_listener)?
+        };
+        let (inbound_tx, inbound) = mpsc::channel(limits.inbound_capacity);
+        let (shutdown, shutdown_signal) = oneshot::channel();
+        // 실행기는 이 스레드가 끝날 때 함께 버려지고, 그때 접속 작업도 모두 끝납니다.
+        let network_thread = std::thread::Builder::new()
+            .name("caravan-ws".to_string())
+            .spawn(move || {
+                runtime.block_on(accept_loop(listener, inbound_tx, limits, shutdown_signal));
+            })?;
+
+        Ok(WsServer {
+            inbound,
+            outboxes: HashMap::new(),
+            local_addr,
+            shutdown: Some(shutdown),
+            network_thread: Some(network_thread),
+        })
+    }
+
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+}
+
+impl Drop for WsServer {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(thread) = self.network_thread.take() {
+            // 스레드가 패닉으로 끝났어도 이미 끝난 것이므로 결과는 확인하지 않습니다.
+            let _ = thread.join();
+        }
+    }
+}
+
+impl ServerTransport for WsServer {
+    fn poll(&mut self) -> Option<ServerEvent> {
+        match self.inbound.try_recv().ok()? {
+            Inbound::Opened { link, outbox } => {
+                self.outboxes.insert(link, outbox);
+                Some(ServerEvent::Connected(link))
+            }
+            Inbound::Message(link, msg) => Some(ServerEvent::Message(link, msg)),
+            Inbound::Closed(link) => {
+                self.outboxes.remove(&link);
+                Some(ServerEvent::Disconnected(link))
+            }
+        }
+    }
+
+    fn send(&mut self, link: LinkId, msg: &ServerMsg) {
+        let Some(outbox) = self.outboxes.get(&link) else {
+            return;
+        };
+        // 대기열이 가득 찼거나 작업이 끝났습니다. 보내는 끝을 버리면 작업이 남은 메시지를 보낸 뒤 접속을 닫고,
+        // 게임 스레드는 곧 `Disconnected`를 받습니다.
+        if outbox.try_send(encode_server(msg)).is_err() {
+            self.outboxes.remove(&link);
+        }
+    }
+
+    fn close(&mut self, link: LinkId) {
+        self.outboxes.remove(&link);
+    }
+}
+
+/// 접속을 받는 반복입니다. `shutdown`이 오면 끝나면서 리스너를 닫습니다.
+async fn accept_loop(
+    listener: TcpListener,
+    inbound: mpsc::Sender<Inbound>,
+    limits: ServerLimits,
+    mut shutdown: oneshot::Receiver<()>,
+) {
+    let mut seats = Seats::new(limits);
+    let (release, mut released) = mpsc::unbounded_channel();
+    let mut next_link = 1;
+    loop {
+        let accepted = tokio::select! {
+            accepted = listener.accept() => accepted,
+            _ = &mut shutdown => return,
+        };
+        let (stream, peer) = match accepted {
+            Ok(accepted) => accepted,
+            Err(_) => {
+                tokio::select! {
+                    () = tokio::time::sleep(ACCEPT_RETRY_DELAY) => {}
+                    _ = &mut shutdown => return,
+                }
+                continue;
+            }
+        };
+        while let Ok(key) = released.try_recv() {
+            seats.give_back(key);
+        }
+        // 자리가 없으면 `stream`을 버려서 접속을 바로 닫습니다.
+        let key = seat_key(peer.ip());
+        if !seats.take(key) {
+            continue;
+        }
+        let seat = Seat {
+            key,
+            release: release.clone(),
+        };
+        let link = LinkId(next_link);
+        next_link += 1;
+        tokio::spawn(serve_link(stream, link, inbound.clone(), limits, seat));
+    }
+}
+
+/// 접속 수를 셀 때 상대를 구분하는 열쇠입니다.
+///
+/// IPv6 호스트 하나는 보통 /64 대역(주소의 앞 64비트가 같은 주소 전체)을 받으므로, 주소마다 세면 한 호스트가 주소를 바꿔 가며 한도를 여러 번 채울 수 있습니다.
+/// 그래서 IPv6 주소는 뒤 64비트를 0으로 바꿔서 같은 /64 대역을 하나로 셉니다.
+/// IPv4를 IPv6 형식으로 표현한 주소(`::ffff:a.b.c.d`)는 먼저 IPv4 주소로 바꾸므로, 같은 IPv4 주소와 함께 셉니다.
+fn seat_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => IpAddr::V4(v4),
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            IpAddr::V6(Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+        }
+    }
+}
+
+/// 열려 있는 접속(연결 절차 중인 접속 포함)의 수를 전체와 `seat_key`별로 셉니다. accept 반복만 이 값을 소유합니다.
+struct Seats {
+    total: usize,
+    per_key: HashMap<IpAddr, usize>,
+    max_links: usize,
+    max_links_per_ip: usize,
+}
+
+impl Seats {
+    fn new(limits: ServerLimits) -> Seats {
+        Seats {
+            total: 0,
+            per_key: HashMap::new(),
+            max_links: limits.max_links,
+            max_links_per_ip: limits.max_links_per_ip,
+        }
+    }
+
+    /// 전체 자리와 그 열쇠의 자리가 모두 남아 있으면 하나씩 차지하고 `true`를 돌려줍니다.
+    fn take(&mut self, key: IpAddr) -> bool {
+        let used_by_key = self.per_key.get(&key).copied().unwrap_or(0);
+        if self.total >= self.max_links || used_by_key >= self.max_links_per_ip {
+            return false;
+        }
+        self.total += 1;
+        self.per_key.insert(key, used_by_key + 1);
+        true
+    }
+
+    fn give_back(&mut self, key: IpAddr) {
+        self.total = self.total.saturating_sub(1);
+        if let Some(count) = self.per_key.get_mut(&key) {
+            *count -= 1;
+            if *count == 0 {
+                self.per_key.remove(&key);
+            }
+        }
+    }
+}
+
+/// 접속 하나가 차지한 자리입니다. 접속 작업이 어느 경로로 끝나든(연결 절차의 실패나 시간 초과 포함)
+/// 이 값이 버려지면서 accept 반복에 자리를 돌려줍니다.
+struct Seat {
+    key: IpAddr,
+    release: mpsc::UnboundedSender<IpAddr>,
+}
+
+impl Drop for Seat {
+    fn drop(&mut self) {
+        let _ = self.release.send(self.key);
+    }
+}
+
+/// 접속 하나를 처리합니다. 받은 프레임을 해석해서 게임 스레드에 넘기고, 송신 대기열의 메시지를 소켓에 씁니다.
+/// 게임 스레드가 보내는 끝을 버리면, 대기열에 남은 메시지를 모두 쓴 뒤 닫기 프레임을 보내고 끝납니다.
+async fn serve_link(
+    stream: TcpStream,
+    link: LinkId,
+    inbound: mpsc::Sender<Inbound>,
+    limits: ServerLimits,
+    seat: Seat,
+) {
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(limits.max_message_bytes))
+        .max_frame_size(Some(limits.max_message_bytes));
+    let handshake = tokio_tungstenite::accept_async_with_config(stream, Some(config));
+    let Ok(Ok(mut ws)) = tokio::time::timeout(limits.handshake_timeout, handshake).await else {
+        return;
+    };
+    let (outbox, mut outgoing) = mpsc::channel::<Vec<u8>>(limits.outbox_capacity);
+    if inbound
+        .send(Inbound::Opened { link, outbox })
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    let mut rate = RateWindow::new();
+    loop {
+        tokio::select! {
+            frame = ws.next() => {
+                if !rate.allow(Instant::now(), limits.max_messages_per_sec) {
+                    break;
+                }
+                match frame {
+                    Some(Ok(Message::Binary(bytes))) => match decode_client(&bytes) {
+                        // 게임 스레드의 처리가 밀리면 여기서 기다립니다. 그동안 이 소켓을 읽지 않습니다.
+                        Ok(msg) => {
+                            if inbound.send(Inbound::Message(link, msg)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    },
+                    // tungstenite가 Ping에 직접 답합니다.
+                    Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
+                    // 모든 메시지는 이진 프레임입니다. 문자열 프레임은 약속 위반입니다.
+                    Some(Ok(Message::Text(_) | Message::Close(_)) | Err(_)) | None => break,
+                }
+            }
+            bytes = outgoing.recv() => match bytes {
+                Some(bytes) => {
+                    let write = tokio::time::timeout(limits.write_timeout, ws.send(Message::binary(bytes)));
+                    if !matches!(write.await, Ok(Ok(()))) {
+                        break;
+                    }
+                }
+                None => {
+                    let _ = tokio::time::timeout(limits.write_timeout, ws.close(None)).await;
+                    break;
+                }
+            },
+        }
+    }
+    // 자리를 먼저 돌려준 뒤 닫힘을 알립니다. 게임 스레드가 `Disconnected`를 받았을 때 그 자리는 이미 비어 있습니다.
+    drop(seat);
+    let _ = inbound.send(Inbound::Closed(link)).await;
+}
+
+/// 접속 하나가 지금의 1초 구간에 보낸 프레임의 수를 셉니다.
+struct RateWindow {
+    started: Instant,
+    count: u32,
+}
+
+impl RateWindow {
+    fn new() -> RateWindow {
+        RateWindow {
+            started: Instant::now(),
+            count: 0,
+        }
+    }
+
+    /// 프레임 하나를 세고, 이번 구간의 한도 안이면 `true`를 돌려줍니다.
+    fn allow(&mut self, now: Instant, max_per_window: u32) -> bool {
+        if now.duration_since(self.started) >= RATE_WINDOW {
+            self.started = now;
+            self.count = 0;
+        }
+        self.count += 1;
+        self.count <= max_per_window
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn ip(text: &str) -> IpAddr {
+        text.parse().unwrap()
+    }
+
+    #[test]
+    fn an_ipv4_address_is_its_own_key() {
+        assert_eq!(seat_key(ip("203.0.113.7")), ip("203.0.113.7"));
+        assert_ne!(seat_key(ip("203.0.113.7")), seat_key(ip("203.0.113.8")));
+    }
+
+    #[test]
+    fn an_ipv4_mapped_ipv6_address_counts_as_its_ipv4_address() {
+        let mapped = IpAddr::V6(Ipv4Addr::new(203, 0, 113, 7).to_ipv6_mapped());
+        assert_eq!(seat_key(mapped), ip("203.0.113.7"));
+    }
+
+    #[test]
+    fn ipv6_addresses_share_a_key_exactly_when_they_share_a_64_bit_prefix() {
+        let a = seat_key(ip("2001:db8:1:2::1"));
+        let b = seat_key(ip("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+        let other_prefix = seat_key(ip("2001:db8:1:3::1"));
+        assert_eq!(a, b);
+        assert_eq!(a, ip("2001:db8:1:2::"));
+        assert_ne!(a, other_prefix);
+    }
+}

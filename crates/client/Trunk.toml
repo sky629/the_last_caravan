@@ -1,0 +1,5 @@
+# `trunk serve`가 사용하는 주소입니다. 서버(caravan-dedicated)의 기본 주소는 127.0.0.1:7777입니다.
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080
+open = false

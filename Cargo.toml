@@ -1,0 +1,62 @@
+# 의존은 안쪽 계층으로만 향합니다.
+#
+#   도메인        caravan_rules        (외부 의존성 없음)
+#   계약          caravan_protocol     -> rules
+#   애플리케이션  caravan_server       -> rules, protocol
+#                 caravan_client_core  -> rules, protocol
+#   어댑터        caravan_ws_server    -> protocol (tokio)
+#                 caravan_ws_client    -> protocol (ewebsock)
+#   조립          caravan_dedicated    -> server, ws_server
+#                 caravan_client       -> client_core, ws_client (Bevy를 사용하는 유일한 크레이트)
+#
+# 금지된 의존은 scripts/check-deps.sh가 검사합니다.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/rules",
+    "crates/protocol",
+    "crates/server",
+    "crates/client_core",
+    "crates/ws_server",
+    "crates/ws_client",
+    "crates/dedicated",
+    "crates/client",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+
+[workspace.dependencies]
+caravan_rules = { path = "crates/rules" }
+caravan_protocol = { path = "crates/protocol" }
+caravan_server = { path = "crates/server" }
+caravan_client_core = { path = "crates/client_core" }
+caravan_ws_server = { path = "crates/ws_server" }
+caravan_ws_client = { path = "crates/ws_client" }
+
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1.2", default-features = false, features = ["alloc"] }
+tokio = { version = "1", features = ["rt", "net", "sync", "time", "macros"] }
+tokio-tungstenite = "0.30"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+ewebsock = "0.8"
+bevy = { version = "0.20", default-features = false, features = ["2d", "ui"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+
+# Bevy의 설치 안내가 권하는 개발 빌드 설정입니다. 최적화하지 않은 Bevy는 매우 느리고 실행 파일도 커지므로,
+# 의존 크레이트는 최대로 최적화하고 이 워크스페이스의 코드는 조금만 최적화합니다.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

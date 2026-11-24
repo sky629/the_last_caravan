@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- trunk가 이 파일을 읽어서 caravan-client를 wasm으로 빌드하고, 불러오는 코드를 아래에 넣습니다.
+     실행: crates/client에서 `trunk serve` 뒤에 http://127.0.0.1:8080/?room=test 를 엽니다.
+     선택: &server=ws://HOST:7777 (서버 주소), &debug-net (메시지 로그를 브라우저 콘솔에 출력) -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>THE LAST CARAVAN</title>
+    <link data-trunk rel="rust" data-bin="caravan-client" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #14110f; overflow: hidden; }
+      #bevy { display: block; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <canvas id="bevy"></canvas>
+  </body>
+</html>
