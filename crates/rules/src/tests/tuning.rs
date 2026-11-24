@@ -1,8 +1,9 @@
 //! 기본 수치가 규칙의 전제를 지키는지 확인합니다. 수치를 고치다가 전제가 깨지면 이 테스트가 실패합니다.
 
 use super::support::{Scenario, nights};
+use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
-use crate::tuning::Tuning;
+use crate::tuning::{ArcTuning, Delivery, PLAYTEST_DAMAGE_MULTIPLIER, Tuning};
 use crate::world::Tile;
 
 #[test]
@@ -429,4 +430,64 @@ fn a_speed_that_is_negative_or_not_finite_is_rejected_and_the_reason_names_it() 
         *field(&mut t) = 0.0;
         assert_eq!(t.validate(), Ok(()), "{name} of zero is a valid standstill");
     }
+}
+
+#[test]
+fn a_weapon_with_a_bad_cooldown_or_arc_is_rejected_and_the_reason_names_it() {
+    for bad in [-0.1, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.weapons.sword.cooldown_secs = bad;
+        let why = t.validate().expect_err(&format!("a cooldown of {bad}"));
+        assert!(why.contains("Sword cooldown_secs"), "{bad}: {why}");
+
+        let mut t = Tuning::default();
+        t.weapons.sword.delivery = Delivery::Arc(ArcTuning {
+            reach: bad,
+            half_angle_deg: 60.0,
+        });
+        let why = t.validate().expect_err(&format!("a reach of {bad}"));
+        assert!(why.contains("Sword reach"), "{bad}: {why}");
+    }
+    for bad in [-1.0, 180.5, f32::NAN] {
+        let mut t = Tuning::default();
+        t.weapons.sword.delivery = Delivery::Arc(ArcTuning {
+            reach: 1.0,
+            half_angle_deg: bad,
+        });
+        let why = t.validate().expect_err(&format!("an angle of {bad}"));
+        assert!(why.contains("Sword half_angle_deg"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn an_arc_from_a_line_to_a_full_circle_is_valid() {
+    for angle in [0.0, 180.0] {
+        let mut t = Tuning::default();
+        t.weapons.sword.delivery = Delivery::Arc(ArcTuning {
+            reach: 0.0,
+            half_angle_deg: angle,
+        });
+        assert_eq!(t.validate(), Ok(()), "an angle of {angle}");
+    }
+}
+
+#[test]
+fn the_sword_damage_is_the_normal_damage_times_the_playtest_multiplier() {
+    let t = Tuning::default();
+    assert_eq!(
+        t.weapons.get(WeaponKind::Sword).damage,
+        25 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal sword damage is 25"
+    );
+}
+
+#[test]
+#[ignore = "the playtest damage is on; run `cargo test -p caravan_rules -- --ignored` before a release"]
+fn before_a_release_the_damage_is_the_normal_damage() {
+    assert_eq!(
+        PLAYTEST_DAMAGE_MULTIPLIER, 1,
+        "lower PLAYTEST_DAMAGE_MULTIPLIER to 1"
+    );
+    let t = Tuning::default();
+    assert_eq!(t.weapons.get(WeaponKind::Sword).damage, 25);
 }

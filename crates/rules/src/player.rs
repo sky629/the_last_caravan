@@ -1,17 +1,19 @@
-//! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 근접 공격, 상호작용(부활, 수리, 채집, 건설)을 다룹니다.
+//! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 상호작용(부활, 수리, 채집, 건설)을 다룹니다.
+//! 공격은 `weapon`이 합니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
 use crate::ids::{NodeId, PlayerId, Team, TowerId};
+use crate::kind::WeaponKind;
 use crate::math::Vec2;
 use crate::resources;
 use crate::stamina::Stamina;
 use crate::stats::UnitStats;
 use crate::structures::TowerState;
 use crate::tuning::{RepairTuning, Tuning};
-use crate::world::{Ctx, Hit, Target, World};
+use crate::world::{Ctx, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Player {
@@ -20,12 +22,15 @@ pub struct Player {
     /// 이 플레이어가 쓰는 등장 지점의 순서입니다. 새 원정은 이 순서의 등장 지점으로 돌려놓고, 한 지점에 둘이 몰리면 원정마다 다시 정합니다.
     pub(crate) spawn_slot: usize,
     pub pos: Vec2,
-    /// 마지막으로 조준한 방향입니다. 근접 공격의 부채꼴이 이 방향을 향합니다.
+    /// 마지막으로 조준한 방향입니다. 공격이 이 방향을 향합니다.
     pub facing: Vec2,
     pub life: Life,
+    /// 들고 있는 무기입니다. 생명 상태가 아니라 플레이어에게 있으므로, 쓰러졌다가 부활하거나 낮이 시작되어도 그대로입니다.
+    /// 새 원정이 시작되면 `WeaponKind::STARTING`으로 돌아갑니다.
+    pub weapon: WeaponKind,
     /// 마지막으로 처리한 입력의 순서 번호입니다.
     pub last_input_seq: u32,
-    /// 마지막으로 근접 공격을 휘두른 Tick입니다. 이벤트가 아니라 상태이므로, 스냅샷을 한 번 놓친 클라이언트도 공격 효과를 그릴 수 있습니다.
+    /// 마지막으로 공격한 Tick입니다. 이벤트가 아니라 상태이므로, 스냅샷을 한 번 놓친 클라이언트도 공격 효과를 그릴 수 있습니다.
     pub last_attack_tick: Option<u64>,
 }
 
@@ -46,7 +51,7 @@ pub enum Life {
     Alive {
         /// 항상 1 이상입니다. HP가 0이 되면 `Alive`를 `Downed`로 바꿉니다.
         hp: u32,
-        /// 다음 근접 공격까지 남은 Tick입니다.
+        /// 다음 공격까지 남은 Tick입니다.
         cooldown_ticks: u32,
         /// 상호작용 키(F)나 건설 키(B)가 지금 하고 있는 일입니다. 값이 있으면 이동과 공격을 할 수 없습니다.
         interaction: Option<Interaction>,
@@ -133,6 +138,7 @@ impl Player {
             pos,
             facing: Vec2::new(1.0, 0.0),
             life: Life::alive(t.player.max_hp, t),
+            weapon: WeaponKind::STARTING,
             last_input_seq: 0,
             last_attack_tick: None,
         }
@@ -205,7 +211,7 @@ impl Player {
     }
 
     /// 이동 속도, 공격 피해량, 쿨다운을 읽는 유일한 곳입니다. 상태 효과를 추가하면 여기에서 배율을 곱합니다.
-    /// 달리는 중(`sprinting`)이면 걷는 속도에 달리기 배율을 곱합니다.
+    /// 달리는 중(`sprinting`)이면 걷는 속도에 달리기 배율을 곱합니다. 공격 피해량과 쿨다운은 들고 있는 무기의 행에서 읽습니다.
     pub(crate) fn stats(&self, t: &Tuning) -> UnitStats {
         let move_speed = match &self.life {
             Life::Alive {
@@ -224,11 +230,23 @@ impl Player {
             }
             | Life::Dead => 0.0,
         };
+        let weapon = t.weapons.get(self.weapon);
         UnitStats {
             move_speed,
-            attack_damage: t.player.attack_damage,
-            attack_cooldown_ticks: t.ticks(t.player.attack_cooldown_secs),
+            attack_damage: weapon.damage,
+            attack_cooldown_ticks: t.ticks(weapon.cooldown_secs),
         }
+    }
+
+    /// 공격할 수 있는 상태입니다. 살아 있고, 부활, 수리, 채집, 건설을 하고 있지 않습니다.
+    pub(crate) fn is_free_to_act(&self) -> bool {
+        matches!(
+            self.life,
+            Life::Alive {
+                interaction: None,
+                ..
+            }
+        )
     }
 
     /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고, 이때 하고 있던 상호작용이 함께 사라집니다.
@@ -654,60 +672,4 @@ pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
             );
         }
     }
-}
-
-/// 근접 공격입니다. 상호작용 중이 아닌 살아 있는 플레이어가 공격 버튼을 누르고 쿨다운이 끝났으면 휘두르고,
-/// 부채꼴 안에 있고 공격 거리 안에 있는 적대적인 몬스터를 모두 맞힙니다.
-/// 몬스터를 맞히지 못해도 휘두르면 쿨다운이 시작됩니다.
-pub(crate) fn player_attacks(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
-    let t = ctx.t;
-    let arc_cos = t.player.attack_arc_cos();
-    let search_radius = t.player.radius + t.player.attack_reach + t.monsters.largest_radius();
-    let mut candidates = Vec::new();
-
-    for player in world.players.values_mut() {
-        let stats = player.stats(t);
-        let Life::Alive {
-            cooldown_ticks,
-            interaction,
-            ..
-        } = &mut player.life
-        else {
-            continue;
-        };
-        *cooldown_ticks = cooldown_ticks.saturating_sub(1);
-        let pressed = ctx.inputs.get(&player.id).is_some_and(|input| input.attack);
-        if !pressed || *cooldown_ticks > 0 || interaction.is_some() {
-            continue;
-        }
-
-        *cooldown_ticks = stats.attack_cooldown_ticks;
-        player.last_attack_tick = Some(ctx.tick);
-        ctx.grid.query(player.pos, search_radius, &mut candidates);
-        for &index in &candidates {
-            let monster = &world.monsters[index];
-            if !player.team.is_hostile_to(monster.team) {
-                continue;
-            }
-            let body = Body::Circle {
-                center: monster.pos,
-                radius: t.monsters.get(monster.kind).radius,
-            };
-            let in_reach = body.gap_from(player.pos, t.player.radius) <= t.player.attack_reach;
-            if in_reach && in_arc(player.pos, player.facing, monster.pos, arc_cos) {
-                hits.push(Hit {
-                    target: Target::Monster(monster.id),
-                    amount: stats.attack_damage,
-                });
-            }
-        }
-    }
-}
-
-/// `target`이 `origin`에서 `facing` 방향의 부채꼴 안에 있는지 판정합니다.
-fn in_arc(origin: Vec2, facing: Vec2, target: Vec2, arc_cos: f32) -> bool {
-    let offset = target - origin;
-    let distance = offset.length();
-    // 중심이 거의 겹쳤으면 방향을 알 수 없으므로 부채꼴 안으로 봅니다.
-    distance < 1e-4 || facing.dot(offset * (1.0 / distance)) >= arc_cos
 }

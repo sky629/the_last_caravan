@@ -12,6 +12,7 @@ use crate::spatial::MonsterGrid;
 use crate::spawn::SpawnPlan;
 use crate::structures::{self, Tower, Wagon};
 use crate::tuning::{MapSpec, Tuning};
+use crate::weapon;
 use crate::world::{Ctx, World};
 
 /// 방 하나의 게임입니다. 바깥 코드는 `&Sim`으로 상태를 읽고,
@@ -144,7 +145,7 @@ impl Sim {
         player::update_sprint(&mut self.world, &ctx);
         player::move_players(&mut self.world, &ctx);
         resources::deposit_and_pickup(&mut self.world, &ctx);
-        player::player_attacks(&mut self.world, &ctx, &mut hits);
+        weapon::use_weapons(&mut self.world, &ctx, &mut hits);
         structures::towers_fire(&mut self.world, &ctx, &mut hits);
         monster::monsters_act(
             &mut self.world,

@@ -216,7 +216,7 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 7. `update_sprint`가 플레이어마다 이번 Tick에 달리는지 정하고 달리기 게이지를 줄이거나 채웁니다. 4번과 5번이 정한 하고 있는 일을 읽으므로 그 뒤에 부릅니다.
 8. `move_players`가 플레이어를 움직입니다.
 9. `deposit_and_pickup`이 마차 곁의 플레이어가 든 자원을 보관함에 넣고, 땅에 떨어진 자원을 줍게 합니다.
-10. `player_attacks`가 플레이어의 근접 공격을 결정합니다.
+10. `use_weapons`가 플레이어의 공격을 결정하고, 들고 있는 무기의 전달 방식에 따라 처리합니다. 검은 부채꼴 안의 몬스터를 맞힙니다.
 11. `towers_fire`가 감시탑의 사격을 결정합니다.
 12. `monsters_act`가 몬스터의 이동과 공격을 결정합니다. 낮의 몬스터는 자리를 지키고, 밤의 몬스터는 마차로 향합니다.
 13. `World::apply_hits`가 이번 Tick의 모든 피해를 적용하고, HP가 0이 된 몬스터와 감시탑을 지우고, 쓰러진 플레이어가 든 자원을 그 자리에 떨어뜨립니다.
@@ -246,7 +246,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 
 1. `crates/rules/src/tuning.rs`에서는 게임의 모든 수치가 한 구조체에 모인 모습과, `Default` 트레이트 구현, 그리고 초를 정수 Tick으로 바꾸는 `Tuning::ticks`를 봅니다.
 2. `crates/rules/src/sim.rs`의 `Sim::step`은 Tick 하나의 처리 순서를 나열하며, `world`만 가변 참조로 넘기고 `tuning`과 `paths` 같은 다른 필드는 `Ctx`에 공유 참조로 빌려 주는 방식이 구조체 필드를 따로 빌리는 소유권 규칙의 첫 예입니다.
-3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다. `crates/rules/src/stamina.rs`의 `Stamina`는 정수 하나를 새 타입(newtype)으로 감싸서, 달리기 게이지를 소수 없이 정수 점수로 세는 방법을 한 곳에 모읍니다.
+3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다. `crates/rules/src/weapon.rs`는 공격을 두 단계(`decide`가 공격을 모으고, `deliver`가 `Delivery`의 값에 따라 전달합니다)로 나누고, 무기마다 다른 수치는 `crates/rules/src/tuning.rs`의 무기 표(`WeaponTable`) 한 행에 둡니다. `crates/rules/src/stamina.rs`의 `Stamina`는 정수 하나를 새 타입(newtype)으로 감싸서, 달리기 게이지를 소수 없이 정수 점수로 세는 방법을 한 곳에 모읍니다.
 4. `crates/rules/src/world/tiles.rs`의 `TileMap`은 어디가 막혔는지 아는 유일한 곳이고, `crates/rules/src/build.rs`는 감시탑을 놓을 수 있는 조건을 한 함수(`check_site`)로 판정합니다. `crates/rules/src/expedition.rs`는 낮, 밤, 새벽, 결과 화면의 단계를 열거형(`Phase`)으로 두고 단계를 바꾸는 곳을 두 함수로 모았으며, 낮이 시작될 때 일어나는 일은 `begin_day` 하나에 있습니다. `crates/rules/src/resources.rs`는 자원이 채집 지점, 플레이어의 손, 땅, 보관함 가운데 한 곳에만 있도록 옮기는 규칙입니다. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 명령(`Order`: 낮에는 자리를 지키고 밤에는 마차로 향합니다), 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
 5. `crates/rules/src/tests/support.rs`와 같은 폴더의 테스트는 화면과 네트워크 없이 개체를 원하는 자리에 놓고 `step`을 반복해서 규칙을 시험하는 방법을 보여 줍니다.
 6. `crates/protocol/src/messages.rs`의 `ClientMsg`와 `ServerMsg`는 serde의 derive로 직렬화하는 열거형이며, 클라이언트가 보낼 수 있는 게임 정보가 입력뿐이라는 서버 권위 방식이 이 타입에 드러납니다.
