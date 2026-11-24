@@ -17,11 +17,13 @@ impl Stamina {
         Stamina(full_points(t))
     }
 
-    pub(crate) fn is_empty(self) -> bool {
-        self.0 == 0
+    /// 달리는 Tick 하나의 비용을 낼 수 있는지 봅니다. 비용보다 적게 남은 점수로는 달리지 못하고, 그 점수는 다음에 찰 때까지 남습니다.
+    /// 그래서 달리기 키를 짧게 떼었다가 다시 눌러도, 채운 양보다 많이 달리지 못합니다.
+    pub(crate) fn can_spend(self, t: &Tuning) -> bool {
+        self.0 >= refill_ticks(t)
     }
 
-    /// 달리는 Tick 하나만큼 줄입니다. 남은 점수가 모자라면 0이 됩니다.
+    /// 달리는 Tick 하나만큼 줄입니다. `can_spend`가 참일 때만 부릅니다.
     pub(crate) fn spend(&mut self, t: &Tuning) {
         self.0 = self.0.saturating_sub(refill_ticks(t));
     }

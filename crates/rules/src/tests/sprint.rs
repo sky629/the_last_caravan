@@ -174,6 +174,33 @@ fn holding_sprint_with_an_empty_gauge_walks_every_tick_and_does_not_fill_it() {
 }
 
 #[test]
+fn tapping_the_sprint_key_does_not_sprint_more_than_the_released_ticks_refilled() {
+    let mut s = wide_field();
+    let a = s.player_at(1.0, 5.0);
+    s.drain_stamina(a);
+
+    // 빈 게이지에서 한 Tick은 키를 떼고 걷고, 다음 한 Tick은 키를 누르는 일을 200번 되풀이합니다.
+    // 키를 뗀 200 Tick이 채우는 양은 가득 찬 게이지와 같으므로, 달릴 수 있는 것은 80 Tick까지입니다.
+    let mut sprinted = 0;
+    for _ in 0..REFILL_TICKS {
+        s.hold_move(a, 1.0, 0.0);
+        s.run_ticks(1);
+        s.hold_sprint(a, 1.0, 0.0);
+        let before = s.player(a).pos.x;
+        s.run_ticks(1);
+        if close(s.player(a).pos.x - before, SPRINT_STEP) {
+            sprinted += 1;
+        }
+    }
+
+    assert!(
+        sprinted <= FULL_GAUGE_TICKS,
+        "{sprinted} ticks were sprinted on a refill that pays for {FULL_GAUGE_TICKS}"
+    );
+    assert!(sprinted > 0, "and the refill was used");
+}
+
+#[test]
 fn a_downed_player_crawls_and_a_dead_player_stays_whatever_the_sprint_key_says() {
     let mut s = wide_field();
     let downed = s.player_at(1.0, 5.0);

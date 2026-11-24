@@ -170,7 +170,7 @@ impl Scenario {
     pub fn drain_stamina(&mut self, id: PlayerId) {
         let t = self.sim.tuning().clone();
         if let Life::Alive { stamina, .. } = &mut self.player_mut(id).life {
-            while !stamina.is_empty() {
+            while stamina.can_spend(&t) {
                 stamina.spend(&t);
             }
         }

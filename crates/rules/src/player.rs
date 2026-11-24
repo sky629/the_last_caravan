@@ -602,7 +602,7 @@ pub(crate) fn recover_near_wagon(world: &mut World, ctx: &Ctx) {
 /// 이번 Tick에 플레이어마다 달리는지 정하고 달리기 게이지를 고칩니다. `move_players`가 이동 속도를 읽기 전에 부릅니다.
 ///
 /// 달리는 플레이어는 살아 있고, 하고 있는 일이 없고(부활, 수리, 채집, 건설 중에는 움직일 수 없습니다), 움직이려 하고,
-/// 달리기 키를 누르고 있고, 게이지가 남아 있는 플레이어입니다. 달리면 게이지가 Tick마다 줄고, 달리기 키를 떼고 있으면 Tick마다 찹니다.
+/// 달리기 키를 누르고 있고, 게이지에 한 Tick을 달릴 만큼이 남아 있는 플레이어입니다. 달리면 게이지가 Tick마다 줄고, 달리기 키를 떼고 있으면 Tick마다 찹니다.
 /// 키를 누르고 있지만 달리지 못하는 동안(제자리에 서 있거나 게이지가 빈 상태)에는 게이지가 줄지도 차지도 않으므로,
 /// 빈 게이지에서 키를 누르고 있어도 달리기와 걷기가 번갈아 나오지 않고 걷기만 합니다.
 /// 입력이 없는 플레이어는 키를 떼고 있는 것으로 봅니다.
@@ -621,7 +621,7 @@ pub(crate) fn update_sprint(world: &mut World, ctx: &Ctx) {
         let input = ctx.inputs.get(&player.id);
         let holding = input.is_some_and(|input| input.sprint);
         let moving = input.is_some_and(|input| input.move_dir.get() != Vec2::ZERO);
-        *sprinting = holding && moving && interaction.is_none() && !stamina.is_empty();
+        *sprinting = holding && moving && interaction.is_none() && stamina.can_spend(t);
         if *sprinting {
             stamina.spend(t);
         } else if !holding {
