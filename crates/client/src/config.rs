@@ -3,6 +3,14 @@
 
 use bevy::prelude::*;
 
+// 카메라. 세로로 보이는 범위(월드 픽셀)입니다. 가로는 창의 비율에 따라 달라집니다.
+pub const VIEW_HEIGHT_PX: f32 = 800.0;
+
+// 마차 표시. 화면 가장자리에서 이만큼(월드 픽셀) 안쪽에 놓입니다.
+pub const WAGON_MARKER_INSET_PX: f32 = 90.0;
+pub const WAGON_MARKER_SIZE: f32 = 20.0;
+pub const WAGON_MARKER_WIDTH: f32 = 140.0;
+
 // 깊이. 지면 타일은 맨 뒤에 있고, 그 위의 모든 것은 발 위치로 순서를 정합니다.
 pub const GROUND_Z: f32 = 0.0;
 /// 순서를 가지는 개체의 z는 `SORTED_Z_BASE`에서 발 위치의 `x + y`를 뺀 값입니다.
@@ -64,6 +72,7 @@ pub const BAR_MONSTER: Color = Color::srgb(0.95, 0.35, 0.30);
 pub const BAR_TOWER: Color = Color::srgb(0.45, 0.70, 1.00);
 pub const BAR_SITE: Color = Color::srgb(0.95, 0.80, 0.25);
 pub const SWING: Color = Color::srgb(1.00, 1.00, 0.80);
+pub const WAGON_MARKER: Color = Color::srgb(1.00, 0.72, 0.38);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
 /// 건설이 거절된 타일의 테두리입니다.
 pub const REFUSAL: Color = Color::srgb(1.00, 0.35, 0.30);

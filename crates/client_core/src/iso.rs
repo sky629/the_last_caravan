@@ -11,12 +11,6 @@ pub const TILE_HEIGHT_PX: f32 = 24.0;
 const HALF_TILE_WIDTH: f32 = TILE_WIDTH_PX / 2.0;
 const HALF_TILE_HEIGHT: f32 = TILE_HEIGHT_PX / 2.0;
 
-/// 맵 마름모의 위쪽에 남기는 여백입니다. 키가 큰 감시탑의 윗부분과 화면 위쪽의 HUD가 들어갈 자리입니다.
-const VIEW_MARGIN_TOP_PX: f32 = 130.0;
-/// 맵 마름모의 아래쪽 여백입니다. 화면 아래쪽의 진행 막대와 방 코드가 들어갈 자리입니다.
-const VIEW_MARGIN_BOTTOM_PX: f32 = 80.0;
-const VIEW_MARGIN_SIDE_PX: f32 = 40.0;
-
 /// 지면 좌표(타일)를 화면 좌표(픽셀)로 바꿉니다.
 pub fn ground_to_screen(ground: Vec2) -> Vec2 {
     Vec2::new(
@@ -66,40 +60,6 @@ pub fn tile_centers(rect: Rect) -> Vec<Vec2> {
         y += 1.0;
     }
     centers
-}
-
-/// 카메라가 보여 줄 화면 영역입니다. 중심과 크기는 모두 화면 좌표(픽셀)입니다.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MapView {
-    pub center: Vec2,
-    pub size: Vec2,
-}
-
-/// 맵 전체와 HUD 여백이 들어가는 가장 작은 영역입니다. 창이 이보다 크면 카메라가 비율을 지키며 더 보여 줍니다.
-pub fn map_view(map_size: Vec2) -> MapView {
-    let corners = [
-        Vec2::ZERO,
-        Vec2::new(map_size.x, 0.0),
-        Vec2::new(0.0, map_size.y),
-        map_size,
-    ]
-    .map(ground_to_screen);
-    let left = corners.iter().map(|c| c.x).fold(f32::INFINITY, f32::min) - VIEW_MARGIN_SIDE_PX;
-    let right = corners
-        .iter()
-        .map(|c| c.x)
-        .fold(f32::NEG_INFINITY, f32::max)
-        + VIEW_MARGIN_SIDE_PX;
-    let bottom = corners.iter().map(|c| c.y).fold(f32::INFINITY, f32::min) - VIEW_MARGIN_BOTTOM_PX;
-    let top = corners
-        .iter()
-        .map(|c| c.y)
-        .fold(f32::NEG_INFINITY, f32::max)
-        + VIEW_MARGIN_TOP_PX;
-    MapView {
-        center: Vec2::new((left + right) * 0.5, (bottom + top) * 0.5),
-        size: Vec2::new(right - left, top - bottom),
-    }
 }
 
 #[cfg(test)]
@@ -187,22 +147,5 @@ mod tests {
             tile_centers(Rect::new(15.0, 11.0, 16.0, 12.0)),
             vec![Vec2::new(15.5, 11.5)]
         );
-    }
-
-    #[test]
-    fn the_view_holds_the_whole_map_diamond_with_room_for_the_hud() {
-        let view = map_view(Vec2::new(24.0, 24.0));
-        let half = Vec2::new(view.size.x * 0.5, view.size.y * 0.5);
-        for corner in [
-            Vec2::ZERO,
-            Vec2::new(24.0, 0.0),
-            Vec2::new(0.0, 24.0),
-            Vec2::new(24.0, 24.0),
-        ] {
-            let offset = ground_to_screen(corner) - view.center;
-            assert!(offset.x.abs() <= half.x && offset.y.abs() <= half.y);
-        }
-        let top_of_map = ground_to_screen(Vec2::new(24.0, 24.0)).y;
-        assert!(view.center.y + half.y - top_of_map >= VIEW_MARGIN_TOP_PX - 1e-3);
     }
 }

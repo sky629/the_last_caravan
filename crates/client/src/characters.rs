@@ -240,32 +240,19 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
-    use crate::net::ClientSession;
+    use crate::testing::{YOU, joined_session};
     use crate::view;
-    use caravan_client_core::{DEFAULT_SERVER, Frame, Session};
-    use caravan_protocol::{
-        ClientEvent, RoomCode, ServerMsg, Welcome, WireMonsterKind, WirePhase, WireWagon,
-    };
-    use caravan_rules::{Sim, Team, Tuning};
+    use caravan_client_core::Frame;
+    use caravan_protocol::{WireMonsterKind, WirePhase, WireWagon};
+    use caravan_rules::Team;
 
-    const YOU: u32 = 1;
-
-    /// 화면과 GPU 없이 시스템만 돌리는 앱입니다. 입장을 마친 세션과 카메라 하나를 가집니다.
+    /// 화면과 GPU 없이 시스템만 돌리는 앱입니다. 입장을 마친 세션을 가집니다.
     fn app() -> App {
-        let mut sim = Sim::new(Tuning::default());
-        let first = sim.add_player().unwrap();
-        let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
-        welcome.you = YOU;
-        let mut session =
-            Session::new(RoomCode::parse("test").unwrap(), DEFAULT_SERVER.to_string());
-        session.on_event(ClientEvent::Connected);
-        session.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
-
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<ColorMaterial>()
-            .insert_resource(ClientSession(session))
+            .insert_resource(joined_session())
             .init_resource::<CurrentFrame>()
             .init_resource::<Spawned>()
             .add_systems(Startup, crate::palette::setup_palette)
@@ -277,7 +264,6 @@ mod tests {
                 )
                     .chain(),
             );
-        app.world_mut().spawn(Camera2d);
         app
     }
 

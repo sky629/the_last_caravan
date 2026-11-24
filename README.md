@@ -142,6 +142,8 @@ trunk serve
 | `B`를 누르고 있기 | 바라보는 쪽의 이웃한 타일에 감시탑을 짓습니다(비용 10, 3초). 마차에서 10타일 안이어야 하고, 마차로 가는 길을 막을 수 없습니다. 세울 수 없으면 그 타일을 빨간 테두리로 표시하고 이유를 화면 아래에 알립니다. 짓는 동안 이동과 공격을 할 수 없고, 짓는 중에 `B`를 떼거나 쓰러지면 건설이 취소되고 비용을 돌려받습니다. |
 | `F`를 누르고 있기 | 가까이 쓰러진 동료가 있으면 부활시키고(8초), 없으면 가까이 있는 손상된 감시탑을 수리합니다. 그동안 이동과 공격을 할 수 없습니다. |
 
+카메라는 내 캐릭터를 따라갑니다. 마차가 화면 밖에 있으면 마차가 있는 쪽의 화면 가장자리에 `WAGON 23`처럼 내 캐릭터에서 마차까지의 타일 수가 나옵니다.
+
 ## 검사하기
 
 CI(`.github/workflows/ci.yml`)는 `main`에 푸시할 때와 풀 리퀘스트마다 Ubuntu 24.04에서 다음 명령을 모두 실행합니다. 저장소 폴더에서 같은 명령을 실행해서 로컬에서도 확인할 수 있습니다.
@@ -233,7 +235,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 18. `crates/dedicated/src/main.rs`는 실행 인자를 해석하고, 다른 트레이트 객체를 감싸서 메시지를 기록하는 `DebugTransport`를 끼운 뒤, `pump`를 부르고 쉬는 서버의 반복을 실행합니다.
 19. `crates/client_core/src/session.rs`의 `Session`은 열거형으로 만든 상태 기계이며, 방에 들어간 뒤에만 필요한 값을 `InRoom(Joined)` 안에만 둡니다.
 20. `crates/client_core/src/interp.rs`에서는 스냅샷을 보관하고 일정한 지연을 두고 두 스냅샷 사이를 보간(interpolation)하는 방법을 배웁니다.
-21. `crates/client_core/src/iso.rs`는 지면 좌표를 쿼터뷰 화면 좌표로 바꾸는 투영과 그 역변환, 그리고 화면에서 아래쪽에 있는 개체를 앞에 그리는 순서(`depth`)를 다룹니다.
+21. `crates/client_core/src/iso.rs`는 지면 좌표를 쿼터뷰 화면 좌표로 바꾸는 투영과 그 역변환, 그리고 화면에서 아래쪽에 있는 개체를 앞에 그리는 순서(`depth`)를 다룹니다. `crates/client_core/src/camera.rs`는 카메라가 내 캐릭터를 따라가는 속도와, 화면 밖의 마차를 가리키는 표시의 자리를 Bevy 없이 계산하는 순수 함수(`follow`, `wagon_marker`)입니다.
 22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭을 잃지 않도록 기억합니다.
 23. `crates/client/src/main.rs`에서는 Bevy의 `App`, 플러그인, `.chain()`으로 순서를 고정한 시스템 목록, 그리고 `#[cfg(target_arch = "wasm32")]`로 PC와 웹의 코드를 나누는 조건부 컴파일을 봅니다.
 24. `crates/client/src/net.rs`는 Bevy의 리소스와 시스템 매개변수(`Res`, `ResMut`, `NonSendMut`)의 예이고, 다른 스레드로 옮길 수 없는 웹의 WebSocket을 non-send 리소스로 보관합니다.

@@ -16,15 +16,13 @@ pub struct Palette {
     /// 반지름 1인 원과 한 변이 1인 정사각형입니다. `Transform`의 크기로 늘려서 씁니다.
     pub circle: Handle<Mesh>,
     pub square: Handle<Mesh>,
-    /// 지면 타일 하나의 마름모입니다.
-    pub tile: Handle<Mesh>,
     pub obstacle_block: Handle<Mesh>,
     pub wagon_block: Handle<Mesh>,
     pub tower_block: Handle<Mesh>,
     pub site_block: Handle<Mesh>,
 
-    pub ground_a: Handle<ColorMaterial>,
-    pub ground_b: Handle<ColorMaterial>,
+    /// 지면 메시의 꼭짓점 색이 그대로 보이게 하는 흰색 재질입니다.
+    pub ground: Handle<ColorMaterial>,
     pub obstacle: Handle<ColorMaterial>,
     pub wagon: Handle<ColorMaterial>,
     pub tower: Handle<ColorMaterial>,
@@ -53,8 +51,7 @@ pub fn setup_palette(
 ) {
     let mut paint = |color: Color| materials.add(color);
     let palette = Palette {
-        ground_a: paint(config::GROUND_A),
-        ground_b: paint(config::GROUND_B),
+        ground: paint(Color::WHITE),
         obstacle: paint(config::OBSTACLE),
         wagon: paint(config::WAGON),
         tower: paint(config::TOWER),
@@ -76,7 +73,6 @@ pub fn setup_palette(
 
         circle: meshes.add(Circle::new(1.0)),
         square: meshes.add(Rectangle::new(1.0, 1.0)),
-        tile: meshes.add(Rhombus::new(TILE_WIDTH_PX, TILE_HEIGHT_PX)),
         obstacle_block: meshes.add(block_mesh(config::OBSTACLE_HEIGHT)),
         wagon_block: meshes.add(block_mesh(config::WAGON_HEIGHT)),
         tower_block: meshes.add(block_mesh(config::TOWER_HEIGHT)),
