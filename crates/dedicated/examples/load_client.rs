@@ -173,6 +173,7 @@ fn run(options: &Options) -> Result<(), String> {
                     attack: !options.passive,
                     interact: false,
                     build: false,
+                    sprint: false,
                 }),
             )?;
             next_input += tick_period;

@@ -7,6 +7,7 @@ use crate::collision::{Body, move_circle};
 use crate::ids::{NodeId, PlayerId, Team, TowerId};
 use crate::math::Vec2;
 use crate::resources;
+use crate::stamina::Stamina;
 use crate::stats::UnitStats;
 use crate::structures::TowerState;
 use crate::tuning::{RepairTuning, Tuning};
@@ -30,7 +31,7 @@ pub struct Player {
 
 /// 플레이어의 생명 상태입니다. 상태마다 그 상태에서 의미가 있는 값만 가집니다.
 /// 그래서 다음 상태는 코드로 표현할 수 없습니다.
-/// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용, 든 자원을 가지는 상태 (공격, 부활, 수리, 채집을 할 수 없고 자원을 들 수 없습니다).
+/// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용, 든 자원, 달리기 게이지를 가지는 상태 (공격, 부활, 수리, 채집, 달리기를 할 수 없고 자원을 들 수 없습니다).
 /// - 사망한 플레이어가 출혈 시간을 가지는 상태.
 ///
 /// ```text
@@ -38,7 +39,7 @@ pub struct Player {
 ///     ^                        |
 ///     +----(부활이 끝남)-------+
 ///
-///   새 원정이 시작되거나 낮이 시작되면 모든 플레이어가 최대 HP의 Alive가 됩니다.
+///   새 원정이 시작되거나 낮이 시작되면 모든 플레이어가 최대 HP와 가득 찬 달리기 게이지의 Alive가 됩니다.
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum Life {
@@ -53,6 +54,10 @@ pub enum Life {
         build_refusal: Option<BuildRefusal>,
         /// 들고 있는 자원입니다. 상한은 `ResourceTuning::carry_capacity`입니다. 마차에 가까이 가면 보관함으로 옮겨지고, 쓰러지면 그 자리에 떨어집니다.
         carried: u32,
+        /// 달리기 게이지입니다. 쓰러지면 사라지고, 부활하면 가득 찬 상태로 다시 생깁니다.
+        stamina: Stamina,
+        /// 이번 Tick에 달리고 있는지입니다. `update_sprint`가 Tick마다 정하고, 이동 속도를 읽는 `Player::stats`가 읽습니다.
+        sprinting: bool,
     },
     Downed {
         /// 남은 출혈 시간입니다. 아무도 부활시키지 않는 동안에만 줄어듭니다.
@@ -97,6 +102,21 @@ pub enum RepairTarget {
     Wagon,
 }
 
+impl Life {
+    /// 하고 있는 일이 없고, 쿨다운이 없고, 든 자원이 없고, 달리기 게이지가 가득 찬 `Alive`입니다.
+    pub(crate) fn alive(hp: u32, t: &Tuning) -> Life {
+        Life::Alive {
+            hp,
+            cooldown_ticks: 0,
+            interaction: None,
+            build_refusal: None,
+            carried: 0,
+            stamina: Stamina::full(t),
+            sprinting: false,
+        }
+    }
+}
+
 impl Player {
     /// 최대 HP의 살아 있는 플레이어를 `pos`에 만듭니다.
     pub(crate) fn new(
@@ -112,13 +132,7 @@ impl Player {
             spawn_slot,
             pos,
             facing: Vec2::new(1.0, 0.0),
-            life: Life::Alive {
-                hp: t.player.max_hp,
-                cooldown_ticks: 0,
-                interaction: None,
-                build_refusal: None,
-                carried: 0,
-            },
+            life: Life::alive(t.player.max_hp, t),
             last_input_seq: 0,
             last_attack_tick: None,
         }
@@ -132,19 +146,14 @@ impl Player {
         self.last_input_seq = seq;
     }
 
-    /// 낮이 시작될 때 최대 HP의 살아 있는 상태로 되돌립니다. 위치, 하고 있던 일, 든 자원은 그대로이고,
+    /// 낮이 시작될 때 최대 HP와 가득 찬 달리기 게이지의 살아 있는 상태로 되돌립니다. 위치, 하고 있던 일, 든 자원은 그대로이고,
     /// 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다(쓰러질 때 든 자원은 이미 떨어졌습니다).
     pub(crate) fn restore_for_new_day(&mut self, t: &Tuning) {
-        if let Life::Alive { hp, .. } = &mut self.life {
+        if let Life::Alive { hp, stamina, .. } = &mut self.life {
             *hp = t.player.max_hp;
+            *stamina = Stamina::full(t);
         } else {
-            self.life = Life::Alive {
-                hp: t.player.max_hp,
-                cooldown_ticks: 0,
-                interaction: None,
-                build_refusal: None,
-                carried: 0,
-            };
+            self.life = Life::alive(t.player.max_hp, t);
         }
     }
 
@@ -187,9 +196,23 @@ impl Player {
         }
     }
 
+    /// 달리기 게이지가 가득 찬 값에 대해 몇 퍼센트인지입니다(0에서 100). 쓰러졌거나 사망한 플레이어는 게이지가 없으므로 0입니다.
+    pub fn stamina_percent(&self, t: &Tuning) -> u8 {
+        match &self.life {
+            Life::Alive { stamina, .. } => stamina.percent(t),
+            Life::Downed { .. } | Life::Dead => 0,
+        }
+    }
+
     /// 이동 속도, 공격 피해량, 쿨다운을 읽는 유일한 곳입니다. 상태 효과를 추가하면 여기에서 배율을 곱합니다.
+    /// 달리는 중(`sprinting`)이면 걷는 속도에 달리기 배율을 곱합니다.
     pub(crate) fn stats(&self, t: &Tuning) -> UnitStats {
         let move_speed = match &self.life {
+            Life::Alive {
+                interaction: None,
+                sprinting: true,
+                ..
+            } => t.player.speed * t.sprint.speed_multiplier,
             Life::Alive {
                 interaction: None, ..
             } => t.player.speed,
@@ -523,13 +546,7 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
         }
         if let Some(revived) = world.players.get_mut(&target) {
             let hp = (t.player.max_hp * t.revive.revived_hp_percent / 100).max(1);
-            revived.life = Life::Alive {
-                hp,
-                cooldown_ticks: 0,
-                interaction: None,
-                build_refusal: None,
-                carried: 0,
-            };
+            revived.life = Life::alive(hp, t);
         }
     }
 
@@ -570,7 +587,38 @@ pub(crate) fn recover_near_wagon(world: &mut World, ctx: &Ctx) {
     }
 }
 
-/// 입력대로 플레이어를 움직입니다. 살아 있는 플레이어는 걷고, 쓰러진 플레이어는 기어갑니다.
+/// 이번 Tick에 플레이어마다 달리는지 정하고 달리기 게이지를 고칩니다. `move_players`가 이동 속도를 읽기 전에 부릅니다.
+///
+/// 달리는 플레이어는 살아 있고, 하고 있는 일이 없고(부활, 수리, 채집, 건설 중에는 움직일 수 없습니다), 움직이려 하고,
+/// 달리기 키를 누르고 있고, 게이지가 남아 있는 플레이어입니다. 달리면 게이지가 Tick마다 줄고, 달리기 키를 떼고 있으면 Tick마다 찹니다.
+/// 키를 누르고 있지만 달리지 못하는 동안(제자리에 서 있거나 게이지가 빈 상태)에는 게이지가 줄지도 차지도 않으므로,
+/// 빈 게이지에서 키를 누르고 있어도 달리기와 걷기가 번갈아 나오지 않고 걷기만 합니다.
+/// 입력이 없는 플레이어는 키를 떼고 있는 것으로 봅니다.
+pub(crate) fn update_sprint(world: &mut World, ctx: &Ctx) {
+    let t = ctx.t;
+    for player in world.players.values_mut() {
+        let Life::Alive {
+            stamina,
+            sprinting,
+            interaction,
+            ..
+        } = &mut player.life
+        else {
+            continue;
+        };
+        let input = ctx.inputs.get(&player.id);
+        let holding = input.is_some_and(|input| input.sprint);
+        let moving = input.is_some_and(|input| input.move_dir.get() != Vec2::ZERO);
+        *sprinting = holding && moving && interaction.is_none() && !stamina.is_empty();
+        if *sprinting {
+            stamina.spend(t);
+        } else if !holding {
+            stamina.refill(t);
+        }
+    }
+}
+
+/// 입력대로 플레이어를 움직입니다. 살아 있는 플레이어는 걷거나 달리고, 쓰러진 플레이어는 기어갑니다.
 pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     let mut scratch = Vec::new();

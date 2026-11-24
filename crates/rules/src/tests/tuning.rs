@@ -245,6 +245,62 @@ fn the_default_repairs_heal_20_hp_a_second_and_a_full_repair_costs_10_for_a_towe
 }
 
 #[test]
+fn a_sprint_slower_than_walking_or_not_a_number_is_rejected() {
+    for bad in [0.99, 0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.sprint.speed_multiplier = bad;
+        let why = t.validate().expect_err(&format!("a multiplier of {bad}"));
+        assert!(why.contains("sprint speed_multiplier"), "{bad}: {why}");
+    }
+    let mut t = Tuning::default();
+    t.sprint.speed_multiplier = 1.0;
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "a sprint as fast as walking is allowed"
+    );
+}
+
+#[test]
+fn a_sprint_gauge_without_a_length_is_rejected() {
+    for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.sprint.sprint_secs = bad;
+        let why = t.validate().expect_err(&format!("sprint_secs of {bad}"));
+        assert!(why.contains("sprint_secs"), "{bad}: {why}");
+
+        let mut t = Tuning::default();
+        t.sprint.refill_secs = bad;
+        let why = t.validate().expect_err(&format!("refill_secs of {bad}"));
+        assert!(why.contains("refill_secs"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn a_gauge_too_big_to_count_in_whole_numbers_is_rejected() {
+    let mut t = Tuning::default();
+    t.sprint.sprint_secs = 100_000.0;
+    t.sprint.refill_secs = 100_000.0;
+    let why = t.validate().expect_err("the gauge does not fit in 32 bits");
+    assert!(why.contains("sprint gauge"), "{why}");
+}
+
+#[test]
+fn a_sprint_that_moves_a_player_a_body_radius_or_more_in_one_tick_is_rejected() {
+    // 걷는 속도 4에 배율 1.75를 곱한 속도 7은 한 Tick에 0.35타일이고, 이것이 몸의 반지름입니다.
+    let mut t = Tuning::default();
+    t.sprint.speed_multiplier = 1.74;
+    assert_eq!(t.validate(), Ok(()), "just under the radius");
+
+    t.sprint.speed_multiplier = 1.76;
+    let why = t.validate().expect_err("longer than the radius");
+    assert!(why.contains("a player moves"), "{why}");
+
+    t.sprint.speed_multiplier = 3.0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
 fn start_towers_must_be_free_tiles_of_the_village_within_the_limit() {
     let valid = |sites: Vec<Tile>| {
         let mut t = Tuning::default();

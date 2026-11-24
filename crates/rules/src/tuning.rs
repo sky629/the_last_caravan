@@ -21,6 +21,7 @@ pub struct Tuning {
     /// 한 방에 들어올 수 있는 최대 인원입니다. `Sim::add_player`만 이 값을 읽습니다.
     pub max_players: usize,
     pub player: PlayerTuning,
+    pub sprint: SprintTuning,
     pub revive: ReviveTuning,
     pub monsters: MonsterTable,
     pub wagon: WagonTuning,
@@ -54,6 +55,18 @@ impl PlayerTuning {
     pub fn attack_arc_cos(&self) -> f32 {
         self.attack_half_angle_deg.to_radians().cos()
     }
+}
+
+/// 달리기의 수치입니다. 달리기 키를 누르고 움직이는 살아 있는 플레이어는 걷는 속도에 배율을 곱한 속도로 달리고,
+/// 달리는 동안 게이지가 줄고 키를 떼고 있으면 게이지가 찹니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SprintTuning {
+    /// 달리는 속도는 걷는 속도(`PlayerTuning::speed`)에 이 배율을 곱한 값입니다. 1 이상이어야 합니다.
+    pub speed_multiplier: f32,
+    /// 가득 찬 게이지로 달릴 수 있는 시간입니다.
+    pub sprint_secs: f32,
+    /// 빈 게이지가 가득 차는 데 걸리는 시간입니다. 달리기 키를 떼고 있어야 찹니다.
+    pub refill_secs: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -365,7 +378,7 @@ impl Tuning {
     /// 속도는 모두 유한하고 0 이상이어야 합니다.
     /// 가장 중요한 전제는 「한 Tick에 움직일 수 있는 거리가 몸의 반지름보다 짧다」입니다.
     /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 한 Tick에 얇은 벽을 건너뛰는 거리를 움직일 수 있으면 개체가 벽을 통과합니다.
-    /// 플레이어는 걷는 거리를, 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값을 이 전제에 맞춰 검사합니다.
+    /// 플레이어는 가장 빠른 속도(달리는 속도)로 움직이는 거리를, 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값을 이 전제에 맞춰 검사합니다.
     ///
     /// 맵은 타일에 꼭 맞아야 합니다. 크기, 장애물, 마차가 정수 좌표이고, 몸의 반지름이 타일의 절반보다 짧고,
     /// 채집 지점이 맵 안의 빈 타일이면서 마을의 범위 밖에 있고,
@@ -415,8 +428,37 @@ impl Tuning {
             )?;
         }
 
+        let sprint = &self.sprint;
+        if !(sprint.speed_multiplier.is_finite() && sprint.speed_multiplier >= 1.0) {
+            return Err(format!(
+                "sprint speed_multiplier must be a finite number of at least 1, but it is {}",
+                sprint.speed_multiplier
+            ));
+        }
+        for (name, secs) in [
+            ("sprint_secs", sprint.sprint_secs),
+            ("refill_secs", sprint.refill_secs),
+        ] {
+            if !(secs.is_finite() && secs > 0.0) {
+                return Err(format!(
+                    "sprint {name} must be a finite number longer than 0, but it is {secs}"
+                ));
+            }
+        }
+        if self
+            .ticks(sprint.sprint_secs)
+            .checked_mul(self.ticks(sprint.refill_secs))
+            .is_none()
+        {
+            return Err(format!(
+                "the sprint gauge ({} s times {} s in ticks) is too big to count",
+                sprint.sprint_secs, sprint.refill_secs
+            ));
+        }
+
         let dt = self.dt();
-        let fastest_player = self.player.speed.max(self.player.crawl_speed);
+        let fastest_player =
+            (self.player.speed * sprint.speed_multiplier).max(self.player.crawl_speed);
         if fastest_player * dt >= self.player.radius {
             return Err(format!(
                 "a player moves {} tiles per tick, which must be shorter than its radius {}",
@@ -661,6 +703,11 @@ impl Default for Tuning {
                 attack_reach: 1.0,
                 attack_half_angle_deg: 60.0,
                 attack_cooldown_secs: 0.5,
+            },
+            sprint: SprintTuning {
+                speed_multiplier: 1.6,
+                sprint_secs: 4.0,
+                refill_secs: 10.0,
             },
             revive: ReviveTuning {
                 bleed_secs: 30.0,

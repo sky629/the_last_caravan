@@ -144,6 +144,8 @@ pub enum WireLife {
         max_hp: u32,
         /// 들고 있는 자원입니다. 상한은 `Welcome`의 `carry_capacity`입니다.
         carried: u32,
+        /// 달리기 게이지가 가득 찬 값에 대한 백분율입니다(0에서 100). 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
+        stamina: u8,
         /// 상호작용 키나 건설 키가 지금 하고 있는 일입니다.
         interaction: Option<WireInteraction>,
         /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
@@ -368,6 +370,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
         Life::Alive {
             hp,
             carried,
+            stamina,
             interaction,
             build_refusal,
             ..
@@ -375,6 +378,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
             hp: *hp,
             max_hp: tuning.player.max_hp,
             carried: *carried,
+            stamina: stamina.percent(tuning),
             interaction: interaction
                 .as_ref()
                 .map(|interaction| wire_interaction(sim, player, interaction)),

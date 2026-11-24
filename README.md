@@ -139,12 +139,15 @@ trunk serve
 | 입력 | 동작 |
 |---|---|
 | `W` `A` `S` `D` | 화면을 기준으로 위, 왼쪽, 아래, 오른쪽으로 이동합니다. |
+| `Shift`를 누르고 있기 | 움직이는 동안 걷는 속도의 1.6배로 달립니다. 달리는 동안 화면 왼쪽 위 HP 아래의 `STAMINA` 막대가 줄고, 키를 떼면 막대가 다시 찹니다. 왼쪽과 오른쪽 `Shift`가 같습니다. |
 | 마우스 | 커서가 가리키는 지면 위치로 조준합니다. |
 | 왼쪽 클릭 | 조준한 방향의 부채꼴 안에 있는 모든 몬스터를 근접 공격합니다. |
 | `B`를 누르고 있기 | 바라보는 쪽의 이웃한 타일에 감시탑을 짓습니다(비용 10, 3초). 키를 누르기 전에도 그 타일이 밝은 테두리로 보입니다. 마차에서 10타일 안이어야 하고, 마차로 가는 길을 막을 수 없습니다. 세울 수 없으면 그 타일을 빨간 테두리로 표시하고 이유를 화면 아래에 알립니다. 짓는 동안 이동과 공격을 할 수 없고, 짓는 중에 `B`를 떼거나 쓰러지면 건설이 취소되고 비용을 돌려받습니다. |
 | `F`를 누르고 있기 | 가까이 쓰러진 동료가 있으면 부활시키고(5초), 없으면 가까이 있는 손상된 감시탑을 수리하고(1.5초에 HP 30, 자원 1), 그것도 없으면 가까이 있는 손상된 마차를 수리하고(1.5초에 HP 30, 자원 1), 그것도 없으면 가까이 있는 채집 지점에서 자원을 0.5초에 1씩 채집합니다(최대 10). 그동안 이동과 공격을 할 수 없습니다. 채집한 자원은 마차 곁(1.5타일 안)에 가면 자동으로 보관함에 들어가고, 쓰러지거나 접속을 끊으면 그 자리에 떨어지며, 살아 있는 플레이어가 가까이 가면 자동으로 줍습니다. |
 
-수리는 한 번(1.5초)마다 보관함에서 자원 1을 냅니다. 마지막 한 번이 HP를 30보다 적게 회복시켜도 자원 1을 냅니다. HP가 거의 없는 감시탑을 가득 수리하면 자원 10(건설 비용과 같습니다)이 들고, 마차는 17이 듭니다. 여럿이 같은 Tick에 수리하면 번호가 작은 플레이어부터 내고, 보관함이 모자라면 나중 플레이어의 그 수리는 회복시키지 못합니다. 보관함이 비용을 낼 수 없는 동안에도 플레이어는 그 수리를 계속하고 채집으로 바뀌지 않으며, 화면 아래에 `CANNOT REPAIR: NOT ENOUGH IN THE STASH`가 나옵니다. 자원이 생기면 이 문구가 사라지고 다음 수리부터 회복시킵니다. 마차 곁의 회복은 자원을 쓰지 않습니다.
+수리는 한 번(1.5초)마다 보관함에서 자원 1을 내고, 마지막 한 번이 HP를 30보다 적게 회복시켜도 같습니다. HP가 거의 없는 감시탑을 가득 수리하면 자원 10(건설 비용과 같습니다)이 들고, 마차는 17이 듭니다. 여럿이 같은 Tick에 수리하면 번호가 작은 플레이어부터 내고, 보관함이 모자라면 나중 플레이어의 그 수리는 회복시키지 못합니다. 보관함이 비용을 낼 수 없는 동안에도 플레이어는 그 수리를 계속하고 채집으로 바뀌지 않으며, 화면 아래에 `CANNOT REPAIR: NOT ENOUGH IN THE STASH`가 나옵니다. 자원이 생기면 이 문구가 사라지고 다음 수리부터 회복시킵니다. 마차 곁의 회복은 자원을 쓰지 않습니다.
+
+달리기 게이지는 가득 찬 막대로 4초를 달릴 수 있고, 빈 막대가 가득 차는 데 10초가 걸립니다. 서버는 이 게이지를 정수 점수로 세고 스냅샷에는 0에서 100의 백분율 하나만 싣습니다. 달리는 Tick에는 막대가 줄고, `Shift`를 뗀 Tick에는 움직이든 서 있든 막대가 찹니다. `Shift`를 누르고 있지만 달리지 못하는 동안(막대가 비었거나 제자리에 서 있을 때)에는 막대가 줄지도 차지도 않으므로, 빈 막대에서 `Shift`를 누르고 있으면 달리기와 걷기가 번갈아 나오지 않고 걷기만 합니다. 부활, 수리, 채집, 건설을 하는 동안과 쓰러졌을 때는 달릴 수 없습니다. 막대는 입장할 때, 낮이 시작될 때, 새 원정이 시작될 때, 부활한 직후에 가득 찹니다.
 
 카메라는 내 캐릭터를 따라갑니다. 마차가 화면 밖에 있으면 마차가 있는 쪽의 화면 가장자리에 `WAGON 23`처럼 내 캐릭터에서 마차까지의 타일 수가 나옵니다.
 
@@ -172,7 +175,7 @@ cd crates/client && trunk build
 
 | 계층 | 크레이트 | 역할 | 의존할 수 있는 것 |
 |---|---|---|---|
-| 도메인 | `caravan_rules` | 게임 규칙 전체입니다. 이동, 충돌, 전투, 몬스터와 낮의 몬스터, 낮과 밤과 밤의 무리, 채집과 자원, 마차와 감시탑과 건설과 수리, 마차 곁의 회복, 쓰러짐과 부활, 원정의 성공과 실패를 계산합니다. | 없음 |
+| 도메인 | `caravan_rules` | 게임 규칙 전체입니다. 이동과 달리기, 충돌, 전투, 몬스터와 낮의 몬스터, 낮과 밤과 밤의 무리, 채집과 자원, 마차와 감시탑과 건설과 수리, 마차 곁의 회복, 쓰러짐과 부활, 원정의 성공과 실패를 계산합니다. | 없음 |
 | 계약 | `caravan_protocol` | 메시지, 규칙 상태를 전송 형식으로 바꾸는 변환, 바이트 변환, 접속 방식 인터페이스 두 개, 프로세스 내부 전달, 입장 안내의 상한 검사입니다. 서버는 시작할 때, 클라이언트는 입장 안내를 받을 때 같은 검사를 합니다. | `caravan_rules`, serde, postcard |
 | 애플리케이션 | `caravan_server` | 방, Tick 일정, 입장과 퇴장, 입력 처리입니다. 소켓, 스레드, 현재 시각을 직접 쓰지 않습니다. | `caravan_rules`, `caravan_protocol` |
 | 애플리케이션 | `caravan_client_core` | 클라이언트에서 Bevy가 필요하지 않은 로직입니다. 접속 상태, 입력 전송, 보간, 쿼터뷰 투영, 카메라의 계산, 건설할 타일의 미리보기, HUD의 내용, 실행 옵션을 다룹니다. | `caravan_rules`, `caravan_protocol` |
@@ -202,7 +205,7 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 
 ## Tick 하나의 처리 순서
 
-`Sim::step`(`crates/rules/src/sim.rs`)은 한 Tick에 다음 순서로 상태를 바꿉니다. 모든 공격과 피해는 같은 상태를 읽고 결정한 뒤 12번에서 한꺼번에 적용합니다.
+`Sim::step`(`crates/rules/src/sim.rs`)은 한 Tick에 다음 순서로 상태를 바꿉니다. 모든 공격과 피해는 같은 상태를 읽고 결정한 뒤 13번에서 한꺼번에 적용합니다.
 
 1. `advance_phase`가 낮, 밤, 새벽, 결과 화면의 카운트다운을 줄이고, 때가 되면 밤이나 낮을 시작하거나 몬스터를 한 마리 등장시킵니다. 결과 화면의 동안에는 여기서 Tick이 끝납니다.
 2. `Paths::sync`가 마차와 감시탑으로 가는 이동 경로를 필요하면 다시 만듭니다.
@@ -210,15 +213,16 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 4. `update_interactions`가 `F`와 `B`를 처리합니다. 부활, 감시탑 수리, 마차 수리, 채집의 순서로 대상을 고르고, 수리의 비용을 보관함에서 내고(플레이어 번호 순서), 건설의 시작과 거절을 판정합니다.
 5. `advance_construction`이 건설을 진행하고 끝내거나 취소합니다.
 6. 건설이 이동 경로를 바꿨을 수 있으므로 `Paths::sync`를 한 번 더 부릅니다.
-7. `move_players`가 플레이어를 움직입니다.
-8. `deposit_and_pickup`이 마차 곁의 플레이어가 든 자원을 보관함에 넣고, 땅에 떨어진 자원을 줍게 합니다.
-9. `player_attacks`가 플레이어의 근접 공격을 결정합니다.
-10. `towers_fire`가 감시탑의 사격을 결정합니다.
-11. `monsters_act`가 몬스터의 이동과 공격을 결정합니다. 낮의 몬스터는 자리를 지키고, 밤의 몬스터는 마차로 향합니다.
-12. `World::apply_hits`가 이번 Tick의 모든 피해를 적용하고, HP가 0이 된 몬스터와 감시탑을 지우고, 쓰러진 플레이어가 든 자원을 그 자리에 떨어뜨립니다.
-13. `recover_near_wagon`이 마차 곁의 살아 있는 플레이어의 HP를 회복합니다. 피해를 적용한 뒤에 부르므로, 같은 Tick의 회복이 쓰러뜨리는 피해를 되돌리지 않습니다.
-14. `advance_life_timers`가 부활을 마무리하고 출혈 시간을 줄입니다.
-15. `settle_outcome`이 원정의 성공과 실패, 무리를 모두 처치했는지를 판정합니다.
+7. `update_sprint`가 플레이어마다 이번 Tick에 달리는지 정하고 달리기 게이지를 줄이거나 채웁니다. 4번과 5번이 정한 하고 있는 일을 읽으므로 그 뒤에 부릅니다.
+8. `move_players`가 플레이어를 움직입니다.
+9. `deposit_and_pickup`이 마차 곁의 플레이어가 든 자원을 보관함에 넣고, 땅에 떨어진 자원을 줍게 합니다.
+10. `player_attacks`가 플레이어의 근접 공격을 결정합니다.
+11. `towers_fire`가 감시탑의 사격을 결정합니다.
+12. `monsters_act`가 몬스터의 이동과 공격을 결정합니다. 낮의 몬스터는 자리를 지키고, 밤의 몬스터는 마차로 향합니다.
+13. `World::apply_hits`가 이번 Tick의 모든 피해를 적용하고, HP가 0이 된 몬스터와 감시탑을 지우고, 쓰러진 플레이어가 든 자원을 그 자리에 떨어뜨립니다.
+14. `recover_near_wagon`이 마차 곁의 살아 있는 플레이어의 HP를 회복합니다. 피해를 적용한 뒤에 부르므로, 같은 Tick의 회복이 쓰러뜨리는 피해를 되돌리지 않습니다.
+15. `advance_life_timers`가 부활을 마무리하고 출혈 시간을 줄입니다.
+16. `settle_outcome`이 원정의 성공과 실패, 무리를 모두 처치했는지를 판정합니다.
 
 ## 키 입력 하나가 다른 플레이어의 화면에 그려지기까지
 
@@ -230,7 +234,7 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 4. 서버의 네트워크 스레드에서 `serve_link`(`crates/ws_server/src/lib.rs`)가 프레임을 `decode_client`로 해석하고, 크기가 정해진 채널로 게임 스레드에 넘깁니다.
 5. `crates/dedicated/src/main.rs`의 반복이 `GameServer::pump`(`crates/server/src/lib.rs`)를 부릅니다. `pump`는 `WsServer::poll`로 꺼낸 메시지를 `Hub::handle_message`(`crates/server/src/hub.rs`)에 넘기고, 입력은 `Room::submit_input`(`crates/server/src/room.rs`)을 거쳐 `MemberInput::accept`(`crates/server/src/input.rs`)에 쌓입니다. 이미 받은 순서 번호보다 크지 않은 입력은 여기서 버립니다.
 6. Tick 시각이 되면(`crates/server/src/clock.rs`의 `TickClock::due`) `Room::tick`이 플레이어마다 `MemberInput::for_tick`으로 이번 Tick의 입력 하나를 정하고 `Sim::step`(`crates/rules/src/sim.rs`)을 한 번 부릅니다.
-7. `Sim::step` 안에서 `move_players`(`crates/rules/src/player.rs`)가 이동 방향에 속도와 Tick 길이를 곱해서 캐릭터를 옮기고, `crates/rules/src/collision.rs`가 장애물과 겹친 만큼 캐릭터를 밀어냅니다.
+7. `Sim::step` 안에서 `move_players`(`crates/rules/src/player.rs`)가 이동 방향에 속도(`Player::stats`가 돌려주는 값이고, 달리는 중이면 걷는 속도에 달리기 배율을 곱한 값입니다)와 Tick 길이를 곱해서 캐릭터를 옮기고, `crates/rules/src/collision.rs`가 장애물과 겹친 만큼 캐릭터를 밀어냅니다.
 8. `Snapshot::from_sim`(`crates/protocol/src/snapshot.rs`)이 방 전체의 상태를 전송 형식으로 바꿉니다. `Room::tick`은 같은 스냅샷을 방의 모든 접속에 보내라는 `Out::Send`를 돌려주고, `GameServer::apply`가 `WsServer::send`를 불러서 `encode_server`로 바꾼 바이트를 보냅니다.
 9. B의 클라이언트에서 `pump_network`(`crates/client/src/net.rs`)가 `WsClient::poll`로 스냅샷을 받고(`decode_server`), `Session::on_event`가 스냅샷을 `SnapshotBuffer`(`crates/client_core/src/interp.rs`)에 넣습니다.
 10. `advance_playback`(`crates/client/src/net.rs`)이 재생 시각을 프레임 시간만큼 앞으로 보냅니다. `SnapshotBuffer`는 가장 최근 스냅샷보다 2 Tick(100ms) 이전 시점의 위치를 그 앞뒤 스냅샷 두 개 사이에서 선형으로 보간해서 `Frame`을 만듭니다.
@@ -242,7 +246,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 
 1. `crates/rules/src/tuning.rs`에서는 게임의 모든 수치가 한 구조체에 모인 모습과, `Default` 트레이트 구현, 그리고 초를 정수 Tick으로 바꾸는 `Tuning::ticks`를 봅니다.
 2. `crates/rules/src/sim.rs`의 `Sim::step`은 Tick 하나의 처리 순서를 나열하며, `world`만 가변 참조로 넘기고 `tuning`과 `paths` 같은 다른 필드는 `Ctx`에 공유 참조로 빌려 주는 방식이 구조체 필드를 따로 빌리는 소유권 규칙의 첫 예입니다.
-3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다.
+3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다. `crates/rules/src/stamina.rs`의 `Stamina`는 정수 하나를 새 타입(newtype)으로 감싸서, 달리기 게이지를 소수 없이 정수 점수로 세는 방법을 한 곳에 모읍니다.
 4. `crates/rules/src/world/tiles.rs`의 `TileMap`은 어디가 막혔는지 아는 유일한 곳이고, `crates/rules/src/build.rs`는 감시탑을 놓을 수 있는 조건을 한 함수(`check_site`)로 판정합니다. `crates/rules/src/expedition.rs`는 낮, 밤, 새벽, 결과 화면의 단계를 열거형(`Phase`)으로 두고 단계를 바꾸는 곳을 두 함수로 모았으며, 낮이 시작될 때 일어나는 일은 `begin_day` 하나에 있습니다. `crates/rules/src/resources.rs`는 자원이 채집 지점, 플레이어의 손, 땅, 보관함 가운데 한 곳에만 있도록 옮기는 규칙입니다. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 명령(`Order`: 낮에는 자리를 지키고 밤에는 마차로 향합니다), 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
 5. `crates/rules/src/tests/support.rs`와 같은 폴더의 테스트는 화면과 네트워크 없이 개체를 원하는 자리에 놓고 `step`을 반복해서 규칙을 시험하는 방법을 보여 줍니다.
 6. `crates/protocol/src/messages.rs`의 `ClientMsg`와 `ServerMsg`는 serde의 derive로 직렬화하는 열거형이며, 클라이언트가 보낼 수 있는 게임 정보가 입력뿐이라는 서버 권위 방식이 이 타입에 드러납니다.

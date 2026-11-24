@@ -5,7 +5,7 @@
 
 mod common;
 
-use caravan_protocol::{ClientMsg, ClientTransport, InputMsg, ServerLimits, WireVec2};
+use caravan_protocol::{ClientMsg, ClientTransport, InputMsg, ServerLimits, WireLife, WireVec2};
 use caravan_rules::Tuning;
 use common::{assert_near, input_with, last_snapshot, player, position, rig, rig_with_limits};
 
@@ -54,6 +54,35 @@ fn a_held_input_keeps_moving_the_player_on_ticks_without_a_new_message() {
         START_X + 5.0 * STEP,
         "five ticks of one input",
     );
+}
+
+#[test]
+fn holding_sprint_makes_a_player_run_1_6_times_as_far_and_spends_stamina_in_every_snapshot() {
+    let mut rig = rig();
+    let (mut a, a_id) = rig.join_ok("test");
+    let (mut b, _) = rig.join_ok("test");
+    let sprint = ClientMsg::Input(InputMsg {
+        seq: 1,
+        move_dir: WireVec2::new(1.0, 0.0),
+        sprint: true,
+        ..InputMsg::default()
+    });
+
+    a.send(&sprint);
+    rig.run_ticks(5);
+
+    let seen_by_b = last_snapshot(&mut b);
+    assert_near(
+        position(&seen_by_b, a_id).x,
+        START_X + 5.0 * STEP * 1.6,
+        "five ticks at the sprint speed",
+    );
+    let WireLife::Alive { stamina, .. } = player(&seen_by_b, a_id).life else {
+        panic!("alive");
+    };
+    // 가득 찬 게이지로 80 Tick을 달리므로, 5 Tick을 달리면 6.25퍼센트가 줄어서 93.75퍼센트이고, 스냅샷은 내림해서 93을 보냅니다.
+    assert_eq!(stamina, 93);
+    assert_eq!(last_snapshot(&mut a), seen_by_b, "both members see it");
 }
 
 #[test]
@@ -201,6 +230,7 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
         attack: false,
         interact: false,
         build: false,
+        sprint: false,
     }));
     rig.run_ticks(3);
 

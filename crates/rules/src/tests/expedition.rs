@@ -322,7 +322,7 @@ fn monster_ids_are_not_reused_in_a_new_expedition() {
     assert!(new_ids.iter().all(|id| !old_ids.contains(id)));
 }
 
-/// 두 플레이어가 움직이고, 싸우고, 부활과 수리와 건설을 하는 원정을 800 Tick 진행하고, 50 Tick마다의 몬스터와 마지막 상태를 글자로 돌려줍니다.
+/// 두 플레이어가 움직이고, 달리고, 싸우고, 부활과 수리와 건설을 하는 원정을 800 Tick 진행하고, 50 Tick마다의 몬스터와 마지막 상태를 글자로 돌려줍니다.
 fn play_a_scripted_expedition() -> String {
     let mut s = Scenario::default_game(|t| t.cycle.day_secs = 3.0);
     let a = s.sim.add_player().unwrap();
@@ -343,6 +343,7 @@ fn play_a_scripted_expedition() -> String {
                     attack: tick % 3 != 0,
                     interact: phase % 2 == 1,
                     build: phase % 4 == 3,
+                    sprint: phase % 3 != 1,
                 },
             );
         }

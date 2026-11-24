@@ -166,6 +166,16 @@ impl Scenario {
         };
     }
 
+    /// 플레이어의 달리기 게이지를 모두 비웁니다. 쓰러졌거나 사망한 플레이어에게는 아무 일도 하지 않습니다.
+    pub fn drain_stamina(&mut self, id: PlayerId) {
+        let t = self.sim.tuning().clone();
+        if let Life::Alive { stamina, .. } = &mut self.player_mut(id).life {
+            while !stamina.is_empty() {
+                stamina.spend(&t);
+            }
+        }
+    }
+
     pub fn kill(&mut self, id: PlayerId) {
         self.player_mut(id).life = Life::Dead;
     }
@@ -201,6 +211,19 @@ impl Scenario {
             PlayerInput {
                 build: true,
                 aim: AimDir::new(x, y),
+                ..PlayerInput::default()
+            },
+        );
+    }
+
+    /// `(x, y)` 방향으로 이동하면서 그 방향을 조준하고, 달리기 키(Shift)를 누르고 있습니다.
+    pub fn hold_sprint(&mut self, id: PlayerId, x: f32, y: f32) {
+        self.hold(
+            id,
+            PlayerInput {
+                move_dir: MoveDir::new(x, y),
+                aim: AimDir::new(x, y),
+                sprint: true,
                 ..PlayerInput::default()
             },
         );

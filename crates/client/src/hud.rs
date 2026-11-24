@@ -1,6 +1,6 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
-//! 왼쪽 위에 내 HP, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원이 있고,
+//! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원이 있고,
 //! 아래 가운데에 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 방 코드가 있고, 화면 가운데에 원정의 결과나 접속 문제가 크게 나옵니다.
 
@@ -24,6 +24,7 @@ fn tone_color(tone: Tone) -> Color {
         Tone::Health => Color::srgb(0.30, 0.78, 0.35),
         Tone::Wagon => Color::srgb(0.80, 0.52, 0.24),
         Tone::Progress => Color::srgb(0.95, 0.80, 0.25),
+        Tone::Stamina => Color::srgb(0.30, 0.62, 0.92),
         Tone::Downed => Color::srgb(0.90, 0.40, 0.15),
         Tone::Gone => Color::srgb(0.38, 0.38, 0.40),
     }
@@ -62,6 +63,7 @@ pub struct HudNodes {
     bleed: Entity,
     refusal: Entity,
     me: Entity,
+    stamina: Entity,
     wagon: Entity,
     action: Entity,
     allies_panel: Entity,
@@ -130,8 +132,9 @@ fn column(position: Node) -> Node {
 
 /// 시작할 때 한 번 실행해서 HUD의 노드를 만듭니다.
 pub fn setup(mut commands: Commands) {
-    // 왼쪽 위: 내 HP, 마차, 동료들.
+    // 왼쪽 위: 내 HP와 달리기 게이지, 마차, 동료들.
     let me = meter_node(&mut commands, METER_WIDTH);
+    let stamina = meter_node(&mut commands, METER_WIDTH);
     let wagon = meter_node(&mut commands, METER_WIDTH);
     let allies_panel = commands
         .spawn(column(Node {
@@ -147,7 +150,7 @@ pub fn setup(mut commands: Commands) {
             row_gap: px(4),
             ..default()
         }))
-        .add_children(&[me, wagon, allies_panel]);
+        .add_children(&[me, stamina, wagon, allies_panel]);
 
     // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함, 내가 든 자원.
     let day = text_node(&mut commands, 30.0, TEXT);
@@ -231,6 +234,7 @@ pub fn setup(mut commands: Commands) {
         bleed,
         refusal,
         me,
+        stamina,
         wagon,
         action,
         allies_panel,
@@ -360,6 +364,7 @@ pub fn update(
 
     let rows = [
         (nodes.me, hud.me.as_ref()),
+        (nodes.stamina, hud.stamina.as_ref()),
         (nodes.wagon, hud.wagon.as_ref()),
         (nodes.action, hud.action.as_ref()),
     ];

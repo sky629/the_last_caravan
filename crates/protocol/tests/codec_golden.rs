@@ -45,7 +45,7 @@ fn join_is_variant_zero_then_version_then_room_text() {
 }
 
 #[test]
-fn input_is_the_sequence_number_two_vectors_and_three_buttons() {
+fn input_is_the_sequence_number_two_vectors_and_four_buttons() {
     assert_client_wire(
         ClientMsg::Input(InputMsg {
             seq: 300,
@@ -54,6 +54,7 @@ fn input_is_the_sequence_number_two_vectors_and_three_buttons() {
             attack: true,
             interact: false,
             build: true,
+            sprint: true,
         }),
         &[
             0x01, // Input 변형
@@ -65,6 +66,7 @@ fn input_is_the_sequence_number_two_vectors_and_three_buttons() {
             0x01, // attack
             0x00, // interact
             0x01, // build
+            0x01, // sprint
         ],
     );
 }
@@ -195,6 +197,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
                     hp: 70,
                     max_hp: 100,
                     carried: 4,
+                    stamina: 60,
                     interaction: Some(WireInteraction::Reviving {
                         target: 2,
                         progress: 0.5,
@@ -248,7 +251,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x01, 0x00, // id, team
             0x80, 0x0C, 0xC0, 0x09, // pos 1536, 1216
             0x40, // facing 64
-            0x00, 0x46, 0x64, 0x04, // Alive, hp 70, max_hp 100, carried 4
+            0x00, 0x46, 0x64, 0x04, 0x3C, // Alive, hp 70, max_hp 100, carried 4, stamina 60
             0x01, 0x00, 0x02, 0x00, 0x00, 0x00,
             0x3F, // interaction: 있음, Reviving, target 2, progress 0.5
             0x00, // build_refusal: 없음
@@ -368,6 +371,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             hp: 100,
             max_hp: 100,
             carried: 3,
+            stamina: 100,
             interaction,
             build_refusal,
         },
@@ -420,28 +424,28 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x00, // piles: 길이 0
             0x06, // players: 길이 6
             0x03, 0x00, 0x00, 0x00, 0x00, // id 3, team, pos 0 0, facing 0
-            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
+            0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x01, 0x00, 0x01,
             0x00, // interaction: 있음, Repairing, Tower, tower 1, stash_short 거짓
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x04, 0x00, 0x00, 0x00, 0x00, // id 4, team, pos 0 0, facing 0
-            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
+            0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x00, // interaction: 없음
             0x01, 0x04, 0x05, 0x04, // build_refusal: 있음, tile 4 5, WouldBlockPath
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x05, 0x00, 0x00, 0x00, 0x00, // id 5, team, pos 0 0, facing 0
-            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
+            0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x02, 0x01, // interaction: 있음, Building, tower 1
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x07, 0x00, 0x00, 0x00, 0x00, // id 7, team, pos 0 0, facing 0
-            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
+            0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x03, 0x02, // interaction: 있음, Gathering, node 2
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x08, 0x00, 0x00, 0x00, 0x00, // id 8, team, pos 0 0, facing 0
-            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
+            0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x01, 0x01, 0x01, // interaction: 있음, Repairing, Wagon, stash_short 참
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음

@@ -174,13 +174,8 @@ fn the_next_day_keeps_the_village_and_restores_every_player() {
     let hurt = s.player_at(3.0, 3.0);
     let downed = s.player_at(4.0, 4.0);
     let dead = s.player_at(5.0, 5.0);
-    s.sim.world_mut().players.get_mut(&hurt).unwrap().life = crate::player::Life::Alive {
-        hp: 40,
-        cooldown_ticks: 0,
-        interaction: None,
-        build_refusal: None,
-        carried: 0,
-    };
+    let hurt_life = crate::player::Life::alive(40, s.sim.tuning());
+    s.sim.world_mut().players.get_mut(&hurt).unwrap().life = hurt_life;
     s.knock_down(downed);
     s.kill(dead);
     let tower = s.tower_at(8, 8);

@@ -78,11 +78,12 @@ fn to_rules(msg: &InputMsg) -> PlayerInput {
         attack: msg.attack,
         interact: msg.interact,
         build: msg.build,
+        sprint: msg.sprint,
     }
 }
 
-/// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동, 조준, `interact`, `build`는 더 새로운 입력을 따릅니다.
-/// `interact`와 `build`는 누르고 있는 동안 이어지는 상태이므로, Tick 안에서 눌렀다 뗐다면 뗀 것으로 봅니다.
+/// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동, 조준, `interact`, `build`, `sprint`는 더 새로운 입력을 따릅니다.
+/// `interact`와 `build`와 `sprint`는 누르고 있는 동안 이어지는 상태이므로, Tick 안에서 눌렀다 뗐다면 뗀 것으로 봅니다.
 /// `attack`은 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭이 사라지지 않게 합니다.
 fn merge(older: PlayerInput, newer: PlayerInput) -> PlayerInput {
     PlayerInput {
@@ -126,6 +127,40 @@ mod tests {
 
         assert!(tick.interact);
         assert!(!tick.attack);
+    }
+
+    #[test]
+    fn the_sprint_key_follows_the_newest_input_like_the_other_held_keys() {
+        let mut input = MemberInput::new();
+        input.accept(&InputMsg {
+            seq: 1,
+            sprint: true,
+            ..InputMsg::default()
+        });
+        assert!(input.for_tick(10).sprint, "the message reaches the rules");
+
+        input.accept(&InputMsg {
+            seq: 2,
+            sprint: true,
+            ..InputMsg::default()
+        });
+        input.accept(&InputMsg {
+            seq: 3,
+            sprint: false,
+            ..InputMsg::default()
+        });
+        assert!(!input.for_tick(10).sprint, "Shift was already released");
+
+        input.accept(&InputMsg {
+            seq: 4,
+            sprint: true,
+            ..InputMsg::default()
+        });
+        input.for_tick(10);
+        assert!(
+            input.for_tick(10).sprint,
+            "held on a tick without a message"
+        );
     }
 
     #[test]

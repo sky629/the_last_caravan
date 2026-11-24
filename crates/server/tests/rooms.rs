@@ -466,6 +466,7 @@ fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
             hp: 100,
             max_hp: 100,
             carried: 0,
+            stamina: 100,
             interaction: None,
             build_refusal: None
         }

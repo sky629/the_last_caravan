@@ -302,6 +302,7 @@ mod tests {
                 hp,
                 max_hp: 100,
                 carried: 0,
+                stamina: 100,
                 interaction: None,
                 build_refusal: None,
             },

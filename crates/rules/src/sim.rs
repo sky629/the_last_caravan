@@ -124,6 +124,7 @@ impl Sim {
         player::update_interactions(&mut self.world, &ctx);
         structures::advance_construction(&mut self.world, &ctx);
         self.paths.sync(&self.world, &self.tuning);
+        player::update_sprint(&mut self.world, &ctx);
         player::move_players(&mut self.world, &ctx);
         resources::deposit_and_pickup(&mut self.world, &ctx);
         player::player_attacks(&mut self.world, &ctx, &mut hits);

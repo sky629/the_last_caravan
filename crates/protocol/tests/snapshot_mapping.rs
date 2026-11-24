@@ -6,7 +6,8 @@ use caravan_protocol::{
     WireMonsterKind, WireOutcome, WirePhase, WirePos, WireRepairTarget, WireTile, WireTowerState,
 };
 use caravan_rules::{
-    AimDir, MonsterKind, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2, WavePlan,
+    AimDir, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2,
+    WavePlan,
 };
 
 fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
@@ -86,6 +87,7 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
             hp: 100,
             max_hp: 100,
             carried: 0,
+            stamina: 100,
             interaction: None,
             build_refusal: None
         }
@@ -392,10 +394,11 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
             hp: 30,
             max_hp: 100,
             carried: 0,
+            stamina: 100,
             interaction: None,
             build_refusal: None
         },
-        "revived with 30 percent of the maximum"
+        "revived with 30 percent of the maximum HP and a full gauge"
     );
 }
 
@@ -466,6 +469,7 @@ fn a_gatherer_the_load_it_carries_and_a_dropped_pile_show_on_the_wire() {
             hp: 100,
             max_hp: 100,
             carried: 1,
+            stamina: 100,
             interaction: Some(WireInteraction::Gathering { node: 1 }),
             build_refusal: None
         }
@@ -538,5 +542,34 @@ fn a_repairer_is_marked_while_the_stash_cannot_pay_the_next_pulse() {
         repairing(&sim),
         Some((WireRepairTarget::Wagon, true)),
         "the next pulse cannot be paid"
+    );
+}
+
+#[test]
+fn a_sprinting_player_runs_farther_and_the_stamina_on_the_wire_drains() {
+    // 20 Tick(1초) 동안 달리면 가득 찬 게이지(4초)의 4분의 1이 줄어서 75퍼센트이고, 걷는 속도 4의 1.6배로 6.4타일을 갑니다.
+    let mut sim = sim_with(|_| {});
+    let runner = sim.add_player().unwrap();
+    let sprinting = PlayerInputs::from([(
+        runner,
+        PlayerInput {
+            move_dir: MoveDir::new(1.0, 0.0),
+            sprint: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    let stamina = |sim: &Sim| match Snapshot::from_sim(sim).players[0].life {
+        WireLife::Alive { stamina, .. } => stamina,
+        other => panic!("alive expected, got {other:?}"),
+    };
+    assert_eq!(stamina(&sim), 100, "full when the player joins");
+
+    step(&mut sim, &sprinting, 20);
+
+    assert_eq!(stamina(&sim), 75);
+    let x = Snapshot::from_sim(&sim).players[0].pos.to_tiles().x;
+    assert!(
+        (x - (32.0 + 6.4)).abs() <= WirePos::MAX_ERROR_TILES,
+        "ran 6.4 tiles from x = 32, got {x}"
     );
 }

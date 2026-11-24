@@ -73,6 +73,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32) -> Snapshot {
                     hp: 70,
                     max_hp: 100,
                     carried: 4,
+                    stamina: 60,
                     interaction: Some(WireInteraction::Reviving {
                         target: 2,
                         progress: 0.5,
@@ -93,6 +94,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32) -> Snapshot {
                     hp: 100,
                     max_hp: 100,
                     carried: 10,
+                    stamina: 100,
                     interaction: None,
                     build_refusal: None,
                 },
@@ -120,10 +122,10 @@ fn encoded_len(snapshot: Snapshot) -> usize {
 
 /// 300마리 스냅샷 하나의 한계(바이트)입니다. 몬스터 번호가 16383 이하일 때, 몬스터 하나는 9바이트이므로 300마리가 2700바이트입니다.
 /// 서 있는 감시탑 하나가 사격 중일 때 약 14바이트이므로 40개가 약 560바이트이고, 나머지(플레이어 4명, 마차, 채집 지점, 머리)가 약 100바이트입니다.
-/// 측정한 3,360바이트에 약 7%의 여유를 둡니다.
+/// 측정한 3,362바이트에 약 7%의 여유를 둡니다.
 const BOUND_BYTES: usize = 3_600;
 /// 몬스터 번호가 16384 이상이면 번호가 3바이트가 되어 몬스터 하나가 10바이트입니다. 오래 이어진 방에서 이 크기가 됩니다.
-/// 감시탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,700바이트이고, 여기에 약 7%의 여유를 둡니다.
+/// 감시탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,702바이트이고, 여기에 약 7%의 여유를 둡니다.
 const BOUND_BYTES_WITH_LARGE_IDS: usize = 3_950;
 
 #[test]

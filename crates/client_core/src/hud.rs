@@ -30,6 +30,8 @@ pub struct Hud {
     /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
     pub banner: Option<Banner>,
     pub me: Option<Meter>,
+    /// 내 달리기 게이지입니다. 살아 있을 때만 있습니다.
+    pub stamina: Option<Meter>,
     pub wagon: Option<Meter>,
     pub allies: Vec<Meter>,
     /// 부활, 수리, 건설이 진행되는 동안 화면 아래에 띄우는 진행 막대입니다.
@@ -61,6 +63,7 @@ pub enum Tone {
     Health,
     Wagon,
     Progress,
+    Stamina,
     Downed,
     /// 사망해서 더 이상 채울 것이 없는 상태입니다.
     Gone,
@@ -86,6 +89,7 @@ impl Hud {
             carry: None,
             banner: None,
             me: None,
+            stamina: None,
             wagon: None,
             allies: Vec::new(),
             action: None,
@@ -125,6 +129,7 @@ impl Hud {
 
         if let Some(me) = frame.player(you) {
             hud.me = Some(my_meter(me));
+            hud.stamina = stamina_meter(me);
             hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
                 carried,
@@ -245,6 +250,18 @@ fn my_meter(me: &PlayerView) -> Meter {
             fraction: 0.0,
             tone: Tone::Gone,
         },
+    }
+}
+
+/// 내 달리기 게이지입니다. 서버가 백분율을 보내므로 100에 대한 비율입니다. 쓰러졌거나 사망했으면 게이지가 없습니다.
+fn stamina_meter(me: &PlayerView) -> Option<Meter> {
+    match me.life {
+        WireLife::Alive { stamina, .. } => Some(Meter {
+            label: "STAMINA".to_string(),
+            fraction: bar_fraction(u32::from(stamina), 100),
+            tone: Tone::Stamina,
+        }),
+        WireLife::Downed { .. } | WireLife::Dead => None,
     }
 }
 
@@ -447,6 +464,7 @@ mod tests {
             hp,
             max_hp: 100,
             carried: 0,
+            stamina: 100,
             interaction: None,
             build_refusal: None,
         }
@@ -582,6 +600,73 @@ mod tests {
         assert_eq!(hud.allies[2].tone, Tone::Gone);
     }
 
+    fn alive_with_stamina(stamina: u8) -> WireLife {
+        WireLife::Alive {
+            hp: 100,
+            max_hp: 100,
+            carried: 0,
+            stamina,
+            interaction: None,
+            build_refusal: None,
+        }
+    }
+
+    #[test]
+    fn my_stamina_is_a_bar_under_my_hp_that_follows_the_percentage_from_the_server() {
+        let session = session_in_room();
+        let full = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72))])));
+        let meter = full.stamina.unwrap();
+        assert_eq!(meter.label, "STAMINA");
+        assert_eq!(meter.fraction, 1.0);
+        assert_eq!(meter.tone, Tone::Stamina);
+
+        for (percent, fraction) in [(40, 0.4), (1, 0.01), (0, 0.0)] {
+            let me = player(YOU, alive_with_stamina(percent));
+            let hud = Hud::of(&session, Some(&frame(vec![me])));
+            let meter = hud.stamina.expect("a living player has a gauge");
+            assert!(
+                (meter.fraction - fraction).abs() < 1e-6,
+                "{percent} percent gave {}",
+                meter.fraction
+            );
+        }
+        let over = player(YOU, alive_with_stamina(250));
+        let hud = Hud::of(&session, Some(&frame(vec![over])));
+        assert_eq!(
+            hud.stamina.unwrap().fraction,
+            1.0,
+            "never more than a full bar"
+        );
+    }
+
+    #[test]
+    fn there_is_no_stamina_bar_while_downed_or_dead_or_before_the_first_snapshot() {
+        let session = session_in_room();
+        let downed = player(
+            YOU,
+            WireLife::Downed {
+                bleed_secs_left: 20.0,
+                revive_progress: None,
+            },
+        );
+        assert_eq!(Hud::of(&session, Some(&frame(vec![downed]))).stamina, None);
+        let dead = player(YOU, WireLife::Dead);
+        assert_eq!(Hud::of(&session, Some(&frame(vec![dead]))).stamina, None);
+        assert_eq!(Hud::of(&session, None).stamina, None);
+    }
+
+    #[test]
+    fn the_stamina_of_another_player_is_not_shown() {
+        let session = session_in_room();
+        let tired_ally = player(2, alive_with_stamina(5));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), tired_ally])),
+        );
+        assert_eq!(hud.stamina.unwrap().fraction, 1.0, "only mine");
+        assert_eq!(hud.allies[0].label, "P2  100 / 100");
+    }
+
     #[test]
     fn a_bar_is_empty_when_the_maximum_is_zero_and_never_leaves_zero_to_one() {
         assert_eq!(bar_fraction(0, 0), 0.0);
@@ -671,6 +756,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 0,
+                stamina: 100,
                 interaction: Some(WireInteraction::Reviving {
                     target: 2,
                     progress: 0.5,
@@ -694,6 +780,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 0,
+                stamina: 100,
                 interaction: Some(WireInteraction::Repairing {
                     target: WireRepairTarget::Tower { tower: 1 },
                     stash_short: false,
@@ -717,6 +804,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 0,
+                stamina: 100,
                 interaction: Some(WireInteraction::Repairing {
                     target: WireRepairTarget::Wagon,
                     stash_short: false,
@@ -741,6 +829,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 0,
+                stamina: 100,
                 interaction: Some(WireInteraction::Repairing {
                     target: WireRepairTarget::Wagon,
                     stash_short,
@@ -793,6 +882,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 3,
+                stamina: 100,
                 interaction: Some(WireInteraction::Gathering { node: 1 }),
                 build_refusal: None,
             },
@@ -822,6 +912,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 7,
+                stamina: 100,
                 interaction: None,
                 build_refusal: None,
             },
@@ -849,6 +940,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 0,
+                stamina: 100,
                 interaction: Some(WireInteraction::Building { tower: 2 }),
                 build_refusal: None,
             },
@@ -888,6 +980,7 @@ mod tests {
                     hp: 100,
                     max_hp: 100,
                     carried: 0,
+                    stamina: 100,
                     interaction: None,
                     build_refusal: Some(WireBuildRefusal {
                         tile: WireTile { x: 3, y: 4 },
@@ -914,6 +1007,7 @@ mod tests {
                 hp: 100,
                 max_hp: 100,
                 carried: 0,
+                stamina: 100,
                 interaction: None,
                 build_refusal: Some(WireBuildRefusal {
                     tile: WireTile { x: 3, y: 4 },

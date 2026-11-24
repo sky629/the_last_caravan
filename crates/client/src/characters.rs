@@ -272,6 +272,7 @@ mod tests {
             hp,
             max_hp: 100,
             carried: 0,
+            stamina: 100,
             interaction: None,
             build_refusal: None,
         }
@@ -478,6 +479,7 @@ mod tests {
             hp: 0,
             max_hp: 0,
             carried: 0,
+            stamina: 100,
             interaction: None,
             build_refusal: None,
         };
