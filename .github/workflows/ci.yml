@@ -54,7 +54,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install trunk 0.22.2
-        run: curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.22.2/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C "$HOME/.cargo/bin"
+        # The SHA-256 is the one of the release asset trunk-x86_64-unknown-linux-gnu.tar.gz of v0.22.2. The archive is unpacked only when it matches.
+        # When trunk is upgraded, download the new asset, compute its SHA-256 yourself, and compare it with the digest the GitHub release page shows.
+        env:
+          TRUNK_SHA256: 26fca8a9952e46cd7d8b8b9a2e2c1786c090fc14b8e10b6678ab4d0f9f1a385f
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/trunk.tar.gz" https://github.com/trunk-rs/trunk/releases/download/v0.22.2/trunk-x86_64-unknown-linux-gnu.tar.gz
+          echo "$TRUNK_SHA256  $RUNNER_TEMP/trunk.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$RUNNER_TEMP/trunk.tar.gz" -C "$HOME/.cargo/bin"
 
       - name: Clippy for wasm32
         run: cargo clippy -p caravan_client --target wasm32-unknown-unknown --locked -- -D warnings
