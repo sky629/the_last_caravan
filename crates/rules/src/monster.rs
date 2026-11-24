@@ -2,14 +2,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::collision::move_circle;
+use crate::collision::{Body, move_circle};
 use crate::ids::{MonsterId, PlayerId, Team};
 use crate::kind::MonsterKind;
 use crate::math::Vec2;
-use crate::nav::{Cell, FlowField, NavGrid};
+use crate::nav::FlowField;
 use crate::stats::UnitStats;
 use crate::tuning::Tuning;
-use crate::world::{Ctx, Hit, Target, World};
+use crate::world::{Ctx, Hit, Target, Tile, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Monster {
@@ -51,57 +51,76 @@ impl Monster {
     }
 }
 
-/// 추적당하는 플레이어마다 만든 흐름장입니다. 플레이어는 움직이므로 흐름장이 필요합니다.
-/// 플레이어가 다른 칸으로 옮겨 갔을 때만 다시 만들고, 추적이 끝난 플레이어의 흐름장은 버립니다.
-pub(crate) struct PlayerFields {
-    entries: BTreeMap<PlayerId, (Cell, FlowField)>,
+/// 쫓기는 플레이어가 서 있는 타일마다 만든 흐름장입니다. 플레이어는 움직이므로 마차와 감시탑처럼 한 번에 만들어 둘 수 없습니다.
+/// 마차와 감시탑을 향하는 흐름장은 모든 몬스터가 공유하는 `Paths`에 있으므로 여기에 없습니다.
+///
+/// 표는 도착 타일을 키로 하므로, 한 타일에 있는 플레이어를 쫓는 몬스터가 여럿이어도 표는 하나입니다.
+/// 세계의 배치(`layout_revision`)가 바뀌면 낡은 것으로 보고 다시 만들고, 이번 Tick에 필요 없는 표는 버립니다.
+pub(crate) struct TileFields {
+    entries: BTreeMap<Tile, (u64, FlowField)>,
 }
 
-impl PlayerFields {
-    pub fn new() -> PlayerFields {
-        PlayerFields {
+impl TileFields {
+    pub fn new() -> TileFields {
+        TileFields {
             entries: BTreeMap::new(),
         }
     }
 
-    fn refresh(&mut self, goals: &[Target], world: &World, nav: &NavGrid) {
-        let chased: BTreeSet<PlayerId> = goals
+    fn refresh(&mut self, goals: &[Goal], world: &World) {
+        let needed: BTreeSet<Tile> = goals
             .iter()
             .filter_map(|goal| match goal {
-                Target::Player(id) => Some(*id),
-                _ => None,
+                Goal::Player(id) => chase_tile(world, *id),
+                Goal::Tower | Goal::Wagon => None,
             })
             .collect();
-        self.entries.retain(|id, _| chased.contains(id));
-        for id in chased {
-            let Some(player) = world.players.get(&id) else {
-                continue;
-            };
-            let Some(cell) = nav.nearest_free(player.pos) else {
-                continue;
-            };
-            let up_to_date = matches!(self.entries.get(&id), Some((known, _)) if *known == cell);
+        self.entries.retain(|tile, _| needed.contains(tile));
+        for tile in needed {
+            let up_to_date = matches!(
+                self.entries.get(&tile),
+                Some((revision, _)) if *revision == world.layout_revision()
+            );
             if !up_to_date {
-                self.entries
-                    .insert(id, (cell, FlowField::toward(nav, &[cell])));
+                self.entries.insert(
+                    tile,
+                    (
+                        world.layout_revision(),
+                        FlowField::toward(&world.tiles, &[tile]),
+                    ),
+                );
             }
         }
     }
 
-    fn get(&self, id: PlayerId) -> Option<&FlowField> {
-        self.entries.get(&id).map(|(_, field)| field)
+    fn get(&self, tile: Tile) -> Option<&FlowField> {
+        self.entries.get(&tile).map(|(_, field)| field)
     }
+}
+
+/// 몬스터가 플레이어를 쫓아갈 때 향하는 타일입니다. 플레이어에게 가장 가까운 비어 있는 타일입니다.
+fn chase_tile(world: &World, player: PlayerId) -> Option<Tile> {
+    let player = world.players.get(&player)?;
+    world.tiles.nearest_free(player.pos)
+}
+
+/// 몬스터가 이번 Tick에 향하는 곳입니다. 몬스터는 목표를 기억하지 않고 Tick마다 새로 고릅니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Goal {
+    Player(PlayerId),
+    /// 걸어서 가장 가까운 서 있는 감시탑입니다. 어느 감시탑을 공격할지는 공격이 닿는 거리에 들어온 뒤에 정합니다.
+    Tower,
+    Wagon,
 }
 
 /// 한 몬스터가 이번 Tick에 하기로 결정한 일입니다.
 struct Action {
-    goal: Target,
+    /// 이번 Tick에 공격할 대상입니다. 공격이 닿는 거리 안에 있을 때만 값이 있습니다.
+    hit: Option<Target>,
     /// 몸을 돌릴 방향입니다. 길이가 1이거나 0입니다.
     heading: Vec2,
     /// 이번 Tick에 옮길 거리입니다. 걸음과 다른 몬스터에게서 밀려나는 거리를 합친 값입니다.
     step: Vec2,
-    /// 목표가 공격 거리 안에 있습니다.
-    in_reach: bool,
 }
 
 /// 모든 몬스터를 한 Tick 진행합니다. 먼저 모든 몬스터의 행동을 읽기만 하며 결정하고, 그 뒤에 적용합니다.
@@ -109,16 +128,16 @@ struct Action {
 pub(crate) fn monsters_act(
     world: &mut World,
     ctx: &Ctx,
-    fields: &mut PlayerFields,
+    fields: &mut TileFields,
     hits: &mut Vec<Hit>,
 ) {
     let t = ctx.t;
-    let goals: Vec<Target> = world
+    let goals: Vec<Goal> = world
         .monsters
         .iter()
-        .map(|monster| choose_goal(world, monster, t))
+        .map(|monster| choose_goal(world, monster, ctx))
         .collect();
-    fields.refresh(&goals, world, &ctx.statics.nav);
+    fields.refresh(&goals, world);
 
     let mut neighbours = Vec::new();
     let mut actions = Vec::with_capacity(goals.len());
@@ -126,6 +145,7 @@ pub(crate) fn monsters_act(
         actions.push(plan(index, *goal, world, ctx, fields, &mut neighbours));
     }
 
+    let mut scratch = Vec::new();
     for (monster, action) in world.monsters.iter_mut().zip(&actions) {
         if action.heading != Vec2::ZERO {
             monster.facing = action.heading;
@@ -135,15 +155,17 @@ pub(crate) fn monsters_act(
                 monster.pos,
                 t.monsters.get(monster.kind).radius,
                 action.step,
-                &ctx.statics.solids,
-                ctx.statics.bounds,
+                &world.tiles,
+                &mut scratch,
             );
         }
         monster.cooldown_ticks = monster.cooldown_ticks.saturating_sub(1);
-        if action.in_reach && monster.cooldown_ticks == 0 {
+        if let Some(target) = action.hit
+            && monster.cooldown_ticks == 0
+        {
             let stats = monster.stats(t);
             hits.push(Hit {
-                target: action.goal,
+                target,
                 amount: stats.attack_damage,
             });
             monster.cooldown_ticks = stats.attack_cooldown_ticks;
@@ -156,52 +178,55 @@ pub(crate) fn monsters_act(
 /// 이 한 함수가 「쫓다가 범위를 벗어나면 다시 마차로」, 「쓰러지거나 사망한 플레이어는 대상이 아님」,
 /// 「파괴된 감시탑은 대상이 아님」을 정합니다.
 ///
-/// 후보는 추적 거리(`aggro_range`) 안에 있고 몬스터와 적대하는 살아 있는 플레이어와 서 있는 감시탑입니다.
+/// 후보는 추적 거리(`aggro_range`) 안에 있고 몬스터와 적대하는 살아 있는 플레이어와, 걸어서 추적 거리 안에 있는 서 있는 감시탑입니다.
+/// 플레이어까지의 거리는 직선으로 재고, 감시탑까지의 거리는 감시탑 흐름장의 걸음 수로 잽니다.
+/// 그래서 벽 너머에 있는 감시탑을 쫓아서 돌아가지 않습니다.
 /// 후보 가운데 가장 가까운 대상을 고르고, 후보가 없으면 마차를 고릅니다.
-fn choose_goal(world: &World, monster: &Monster, t: &Tuning) -> Target {
+fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx) -> Goal {
+    let t = ctx.t;
     let aggro_range = t.monsters.get(monster.kind).aggro_range;
-    let mut best: Option<(f32, Target)> = None;
-    let mut consider = |target: Target, distance: f32| {
+    let mut best: Option<(f32, Goal)> = None;
+    let mut consider = |goal: Goal, distance: f32| {
         let closer = best.is_none_or(|(best_distance, _)| distance < best_distance);
         if distance <= aggro_range && closer {
-            best = Some((distance, target));
+            best = Some((distance, goal));
         }
     };
     for player in world.players.values() {
         if player.is_alive() && monster.team.is_hostile_to(player.team) {
             let distance = (monster.pos.distance(player.pos) - t.player.radius).max(0.0);
-            consider(Target::Player(player.id), distance);
+            consider(Goal::Player(player.id), distance);
         }
     }
-    for tower in world.towers.values() {
-        if tower.is_standing() && monster.team.is_hostile_to(tower.team) {
-            consider(Target::Tower(tower.id), tower.rect.distance_to(monster.pos));
-        }
+    let here = world.tiles.tile_at(monster.pos);
+    if let Some(steps) = ctx.paths.towers().steps_at(&world.tiles, here) {
+        consider(Goal::Tower, f32::from(steps));
     }
     match best {
-        Some((_, target)) => target,
-        None => Target::Wagon,
+        Some((_, goal)) => goal,
+        None => Goal::Wagon,
     }
 }
 
 /// 목표를 향해 걷거나, 가까이 있으면 멈춰서 공격하기로 결정합니다.
+/// 걷는 길은 목표에 따라 `Paths`의 마차 흐름장이나 감시탑 흐름장, 또는 `TileFields`의 표에서 읽고,
+/// 길이 없으면 목표의 가장 가까운 점으로 곧바로 걷습니다.
 fn plan(
     index: usize,
-    goal: Target,
+    goal: Goal,
     world: &World,
     ctx: &Ctx,
-    fields: &PlayerFields,
+    fields: &TileFields,
     neighbours: &mut Vec<usize>,
 ) -> Action {
     let t = ctx.t;
     let monster = &world.monsters[index];
     let kind = t.monsters.get(monster.kind);
-    let Some(body) = world.body_of(goal, t) else {
+    let Some((target, body)) = approached(goal, world, monster, t) else {
         return Action {
-            goal,
+            hit: None,
             heading: Vec2::ZERO,
             step: Vec2::ZERO,
-            in_reach: false,
         };
     };
 
@@ -211,14 +236,13 @@ fn plan(
         (toward_target.normalize_or_zero(), Vec2::ZERO)
     } else {
         let field = match goal {
-            Target::Wagon => Some(&ctx.statics.wagon_field),
-            Target::Tower(id) => ctx.statics.tower_fields.get(&id),
-            Target::Player(id) => fields.get(id),
-            Target::Monster(_) => None,
+            Goal::Wagon => Some(ctx.paths.wagon()),
+            Goal::Tower => Some(ctx.paths.towers()),
+            Goal::Player(id) => chase_tile(world, id).and_then(|tile| fields.get(tile)),
         };
-        // 흐름장이 알려 주는 다음 칸이 없으면(도착 칸 안이거나 길이 없으면) 목표의 가장 가까운 점으로 곧바로 걸어갑니다.
+        // 흐름장이 알려 주는 다음 타일이 없으면(도착 타일 안이거나 길이 없으면) 목표의 가장 가까운 점으로 곧바로 걸어갑니다.
         let aim = field
-            .and_then(|field| field.next_waypoint(&ctx.statics.nav, monster.pos))
+            .and_then(|field| field.next_waypoint(&world.tiles, monster.pos))
             .unwrap_or_else(|| body.closest_point(monster.pos));
         let direction = (aim - monster.pos).normalize_or_zero();
         (
@@ -227,11 +251,35 @@ fn plan(
         )
     };
     Action {
-        goal,
+        hit: in_reach.then_some(target),
         heading,
         step: crowd_step(index, walk, world, ctx, neighbours),
-        in_reach,
     }
+}
+
+/// 몬스터가 공격하려고 다가가는 대상과 그 모양입니다. 대상이 사라졌으면 `None`입니다.
+/// 감시탑을 향하는 몬스터는 직선으로 가장 가까운 서 있는 감시탑을 대상으로 삼습니다.
+/// 걸어서 닿는 감시탑은 흐름장이 안내하고, 공격할 감시탑은 닿는 거리에 들어온 뒤에야 의미가 있기 때문입니다.
+fn approached(goal: Goal, world: &World, monster: &Monster, t: &Tuning) -> Option<(Target, Body)> {
+    let target = match goal {
+        Goal::Player(id) => Target::Player(id),
+        Goal::Wagon => Target::Wagon,
+        Goal::Tower => {
+            let nearest = world
+                .towers
+                .values()
+                .filter(|tower| tower.is_standing() && monster.team.is_hostile_to(tower.team))
+                .min_by(|a, b| {
+                    let (da, db) = (
+                        a.rect().distance_to(monster.pos),
+                        b.rect().distance_to(monster.pos),
+                    );
+                    da.total_cmp(&db)
+                })?;
+            Target::Tower(nearest.id)
+        }
+    };
+    world.body_of(target, t).map(|body| (target, body))
 }
 
 /// 걸음(`walk`)에 주변 몬스터와의 관계를 반영해서, 이번 Tick에 실제로 옮길 거리를 돌려줍니다.

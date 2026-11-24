@@ -75,7 +75,7 @@ impl Welcome {
                     .towers()
                     .map(|tower| TowerSite {
                         id: tower.id.0,
-                        rect: WireRect::from_rect(tower.rect),
+                        rect: WireRect::from_rect(tower.rect()),
                     })
                     .collect(),
                 player_radius: tuning.player.radius,

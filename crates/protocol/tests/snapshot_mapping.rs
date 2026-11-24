@@ -91,7 +91,7 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
     assert_eq!(world.towers[0].id, 1);
     assert_eq!(
         world.towers[0].rect.to_rect(),
-        Tuning::default().map.structures[0].rect
+        Tuning::default().map.structures[0].tile.rect()
     );
     assert_eq!(world.player_radius, 0.35);
     let [grunt] = world.monster_kinds[..] else {

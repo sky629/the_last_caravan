@@ -3,14 +3,14 @@
 use crate::expedition::{self, Advance, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
-use crate::math::{Rect, Vec2};
-use crate::monster::{self, Monster, PlayerFields};
-use crate::nav::{FlowField, NavGrid};
+use crate::math::Vec2;
+use crate::monster::{self, Monster, TileFields};
+use crate::nav::Paths;
 use crate::player::{self, Interaction, Player};
 use crate::spatial::MonsterGrid;
 use crate::structures::{self, Tower, Wagon};
 use crate::tuning::{MapSpec, Tuning};
-use crate::world::{Ctx, Statics, World};
+use crate::world::{Ctx, World};
 
 /// 방 하나의 게임입니다. 바깥 코드는 `&Sim`으로 상태를 읽고,
 /// `add_player`, `remove_player`, `step`으로만 상태를 바꿉니다.
@@ -22,10 +22,12 @@ pub struct Sim {
     expedition: u32,
     phase: Phase,
     world: World,
-    statics: Statics,
+    /// 마차와 감시탑으로 가는 공유 이동 경로입니다. 세계의 배치가 바뀌면 다음 `sync`가 다시 만듭니다.
+    paths: Paths,
     /// 몬스터의 위치를 담은 격자입니다. Tick마다 다시 만듭니다.
     monster_grid: MonsterGrid,
-    player_fields: PlayerFields,
+    /// 쫓기는 플레이어가 서 있는 타일을 향하는 이동 경로입니다.
+    tile_fields: TileFields,
     next_player: u32,
 }
 
@@ -38,42 +40,14 @@ impl Sim {
     /// 플레이어가 없는 방을 만들고 첫 원정을 준비합니다.
     /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만듭니다.
     pub fn new(tuning: Tuning) -> Sim {
-        let map = &tuning.map;
-        let bounds = Rect::new(0.0, 0.0, map.width, map.height);
-        let mut solids = map.obstacles.clone();
-        solids.push(map.wagon);
-        solids.extend(map.structures.iter().map(|placed| placed.rect));
-
-        let nav = NavGrid::build(
-            bounds,
-            &solids,
-            tuning.monsters.largest_radius(),
-            map.nav_cell,
-        );
-        let wagon_goals = nav.cells_near(map.wagon, tuning.monsters.longest_engage_distance());
-        let wagon_field = FlowField::toward(&nav, &wagon_goals);
-        let towers = structures::build_towers(&tuning);
-        let tower_fields = towers
-            .values()
-            .map(|tower| {
-                let goals = nav.cells_near(tower.rect, tuning.monsters.longest_engage_distance());
-                (tower.id, FlowField::toward(&nav, &goals))
-            })
-            .collect();
-
+        let world = World::new(&tuning);
         Sim {
             expedition: 1,
             phase: expedition::opening_phase(&tuning),
-            world: World::new(Wagon::new(&tuning), towers),
-            statics: Statics {
-                bounds,
-                solids,
-                nav,
-                wagon_field,
-                tower_fields,
-            },
-            monster_grid: MonsterGrid::new(bounds, map.spatial_cell),
-            player_fields: PlayerFields::new(),
+            paths: Paths::new(&world, &tuning),
+            monster_grid: MonsterGrid::new(world.tiles.bounds(), tuning.map.spatial_cell),
+            tile_fields: TileFields::new(),
+            world,
             tick: 0,
             next_player: 1,
             tuning,
@@ -124,12 +98,13 @@ impl Sim {
             Advance::Simulate => {}
         }
 
+        self.paths.sync(&self.world, &self.tuning);
         self.monster_grid.rebuild(&self.world.monsters);
         let ctx = Ctx {
             t: &self.tuning,
-            statics: &self.statics,
             inputs,
             grid: &self.monster_grid,
+            paths: &self.paths,
             tick: self.tick,
         };
         let mut hits = Vec::new();
@@ -137,7 +112,7 @@ impl Sim {
         player::move_players(&mut self.world, &ctx);
         player::player_attacks(&mut self.world, &ctx, &mut hits);
         structures::towers_fire(&mut self.world, &ctx, &mut hits);
-        monster::monsters_act(&mut self.world, &ctx, &mut self.player_fields, &mut hits);
+        monster::monsters_act(&mut self.world, &ctx, &mut self.tile_fields, &mut hits);
         self.world.apply_hits(&hits, &self.tuning);
         player::advance_life_timers(&mut self.world, &self.tuning);
         expedition::settle_outcome(&mut self.phase, &self.world, &self.tuning);
@@ -148,9 +123,7 @@ impl Sim {
     fn reset_expedition(&mut self) {
         self.expedition += 1;
         self.phase = expedition::opening_phase(&self.tuning);
-        self.world.monsters.clear();
-        self.world.wagon = Wagon::new(&self.tuning);
-        self.world.towers = structures::build_towers(&self.tuning);
+        self.world.restart(&self.tuning);
         // 나간 플레이어가 있으면 한 지점에 둘이 몰릴 수 있으므로, 원정을 시작할 때마다 지점을 다시 정합니다.
         // 겹치지 않는 플레이어는 자기 지점에 그대로 돌아갑니다.
         let mut assigned: Vec<usize> = Vec::with_capacity(self.world.players.len());

@@ -11,6 +11,7 @@ use crate::player::{Life, Player};
 use crate::sim::Sim;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{MapSpec, StructurePlacement, Tuning};
+use crate::world::Tile;
 
 pub(crate) struct Scenario {
     pub sim: Sim,
@@ -43,12 +44,11 @@ impl Scenario {
                 wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
                 structures: vec![StructurePlacement {
                     kind: StructureKind::Watchtower,
-                    rect: Rect::new(1.0, 17.0, 2.0, 18.0),
+                    tile: Tile::new(1, 17),
                 }],
                 obstacles: vec![],
                 player_spawns: vec![Vec2::new(10.0, 10.0)],
                 monster_spawns: vec![Vec2::new(10.0, 0.6)],
-                nav_cell: 0.5,
                 spatial_cell: 2.0,
             },
             ..Tuning::default()

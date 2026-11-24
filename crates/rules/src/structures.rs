@@ -1,15 +1,12 @@
 //! 마차와 시설(감시탑)입니다. 둘 다 HP를 가진 단단한 사각형입니다.
 //!
-//! 시설은 번호를 키로 하는 모음(`World::towers`)에 저장합니다. 1단계에는 감시탑 하나만 있지만,
-//! 시설을 건설하는 단계에서도 구조를 바꾸지 않도록 처음부터 모음으로 둡니다.
-
-use std::collections::BTreeMap;
+//! 시설은 번호를 키로 하는 모음(`World::towers`)에 저장합니다. 자리는 타일 하나(`tile`)이고 사각형은 거기서 얻습니다.
 
 use crate::ids::{MonsterId, Team, TowerId};
 use crate::kind::StructureKind;
 use crate::math::Rect;
-use crate::tuning::{StructurePlacement, Tuning};
-use crate::world::{Ctx, Hit, Target, World};
+use crate::tuning::Tuning;
+use crate::world::{Ctx, Hit, Target, Tile, World};
 
 /// 마차입니다. HP가 0이 되면 원정이 실패합니다.
 /// 같은 Tick에 원정이 끝나므로 「파괴된 상태」는 따로 없습니다.
@@ -35,7 +32,7 @@ pub struct Tower {
     pub id: TowerId,
     pub kind: StructureKind,
     pub team: Team,
-    pub rect: Rect,
+    pub tile: Tile,
     pub state: TowerState,
 }
 
@@ -62,17 +59,16 @@ pub struct Shot {
 }
 
 impl Tower {
-    fn new(id: TowerId, placement: &StructurePlacement, t: &Tuning) -> Tower {
-        Tower {
-            id,
-            kind: placement.kind,
-            team: Team::CARAVAN,
-            rect: placement.rect,
-            state: TowerState::Standing {
-                hp: t.structures.get(placement.kind).max_hp,
-                cooldown_ticks: 0,
-                last_shot: None,
-            },
+    pub fn rect(&self) -> Rect {
+        self.tile.rect()
+    }
+
+    /// 최대 HP의 서 있는 상태입니다.
+    pub(crate) fn standing_state(kind: StructureKind, t: &Tuning) -> TowerState {
+        TowerState::Standing {
+            hp: t.structures.get(kind).max_hp,
+            cooldown_ticks: 0,
+            last_shot: None,
         }
     }
 
@@ -88,14 +84,16 @@ impl Tower {
         matches!(self.state, TowerState::Standing { .. })
     }
 
-    /// 피해를 받습니다. HP가 0이 되면 파괴됩니다. 이미 파괴된 감시탑은 피해를 받지 않습니다.
-    pub(crate) fn take_damage(&mut self, amount: u32) {
+    /// 피해를 받습니다. HP가 0이 되면 파괴되고, 이때만 참을 돌려줍니다. 이미 파괴된 감시탑은 피해를 받지 않습니다.
+    pub(crate) fn take_damage(&mut self, amount: u32) -> bool {
         if let TowerState::Standing { hp, .. } = &mut self.state {
             *hp = hp.saturating_sub(amount);
             if *hp == 0 {
                 self.state = TowerState::Destroyed;
+                return true;
             }
         }
+        false
     }
 
     /// HP를 `max_hp`까지 회복합니다. 파괴된 감시탑은 회복하지 않습니다.
@@ -104,19 +102,6 @@ impl Tower {
             *hp = (*hp + amount).min(max_hp);
         }
     }
-}
-
-/// 맵에 미리 놓인 시설을 최대 HP의 서 있는 상태로 만듭니다. 번호는 맵에 적은 순서대로 1부터 붙입니다.
-pub(crate) fn build_towers(t: &Tuning) -> BTreeMap<TowerId, Tower> {
-    t.map
-        .structures
-        .iter()
-        .enumerate()
-        .map(|(index, placement)| {
-            let id = TowerId(index as u32 + 1);
-            (id, Tower::new(id, placement, t))
-        })
-        .collect()
 }
 
 /// 서 있는 감시탑이 사정거리 안의 가장 가까운 적대적 몬스터를 쏩니다.
@@ -139,7 +124,7 @@ pub(crate) fn towers_fire(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
         }
 
         let spec = t.structures.get(tower.kind);
-        let center = tower.rect.center();
+        let center = tower.tile.center();
         ctx.grid.query(center, spec.range, &mut candidates);
         let mut nearest: Option<(f32, usize)> = None;
         for &index in &candidates {

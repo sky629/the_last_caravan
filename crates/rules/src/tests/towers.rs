@@ -5,9 +5,9 @@
 use super::support::{Scenario, close};
 use crate::input::PlayerInput;
 use crate::kind::StructureKind;
-use crate::math::Rect;
 use crate::structures::{Shot, TowerState};
 use crate::tuning::StructurePlacement;
+use crate::world::Tile;
 
 fn press_f() -> PlayerInput {
     PlayerInput {
@@ -88,7 +88,7 @@ fn towers_are_kept_by_id_and_each_one_shoots() {
         t.monsters.grunt.max_hp = 1000;
         t.map.structures.push(StructurePlacement {
             kind: StructureKind::Watchtower,
-            rect: Rect::new(1.0, 14.0, 2.0, 15.0),
+            tile: Tile::new(1, 14),
         });
     });
     let monster = s.monster_at(3.0, 16.0);

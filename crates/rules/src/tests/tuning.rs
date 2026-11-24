@@ -34,6 +34,34 @@ fn a_spawn_point_inside_a_wall_is_rejected() {
 }
 
 #[test]
+fn a_map_whose_free_tiles_are_cut_off_from_the_wagon_is_rejected() {
+    let mut t = Tuning::default();
+    t.map.obstacles = vec![Rect::new(0.0, 5.0, 24.0, 6.0)];
+    assert!(t.validate().is_err(), "a wall across the whole map");
+
+    t.map.obstacles = vec![Rect::new(0.0, 5.0, 23.0, 6.0)];
+    assert_eq!(t.validate(), Ok(()), "a gap of one tile keeps it connected");
+}
+
+#[test]
+fn an_obstacle_that_does_not_fit_the_tile_grid_is_rejected() {
+    let mut t = Tuning::default();
+    t.map.obstacles = vec![Rect::new(4.0, 4.0, 8.5, 5.0)];
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn a_body_as_wide_as_a_tile_is_rejected() {
+    let mut t = Tuning::default();
+    t.player.radius = 0.5;
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.monsters.grunt.radius = 0.5;
+    assert!(t.validate().is_err());
+}
+
+#[test]
 fn a_wave_with_no_monsters_is_rejected() {
     let mut t = Tuning::default();
     t.waves.sizes = vec![6, 0];

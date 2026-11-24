@@ -283,7 +283,7 @@ fn choose_interaction(
         if hp >= spec.max_hp || !me.team.is_allied_with(tower.team) {
             continue;
         }
-        let gap = Body::Box(tower.rect).gap_from(me.pos, t.player.radius);
+        let gap = Body::Box(tower.rect()).gap_from(me.pos, t.player.radius);
         if gap <= spec.repair_range && nearest_tower.is_none_or(|(best, _)| gap < best) {
             nearest_tower = Some((gap, tower.id));
         }
@@ -392,6 +392,7 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
 /// 입력대로 플레이어를 움직입니다. 살아 있는 플레이어는 걷고, 쓰러진 플레이어는 기어갑니다.
 pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
+    let mut scratch = Vec::new();
     for player in world.players.values_mut() {
         let Some(input) = ctx.inputs.get(&player.id) else {
             continue;
@@ -407,8 +408,8 @@ pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
                 player.pos,
                 t.player.radius,
                 delta,
-                &ctx.statics.solids,
-                ctx.statics.bounds,
+                &world.tiles,
+                &mut scratch,
             );
         }
     }

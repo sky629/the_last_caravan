@@ -9,6 +9,7 @@
 
 use crate::kind::{MonsterKind, StructureKind};
 use crate::math::{Rect, Vec2};
+use crate::world::{Tile, TileMap, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tuning {
@@ -175,15 +176,15 @@ impl WaveTuning {
     }
 }
 
-/// 마차나 시설을 놓는 위치입니다.
+/// 시설을 놓는 위치입니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StructurePlacement {
     pub kind: StructureKind,
-    pub rect: Rect,
+    pub tile: Tile,
 }
 
 /// 고정된 맵 하나입니다. 좌표는 타일 단위입니다.
-/// 장애물은 정수 좌표에 놓아서, 클라이언트가 타일 단위로 나누어 그릴 수 있습니다.
+/// 맵의 크기, 장애물, 마차는 정수 좌표에 놓아서 타일에 꼭 맞습니다(`Tuning::validate`가 검사합니다).
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapSpec {
     pub width: f32,
@@ -196,8 +197,6 @@ pub struct MapSpec {
     pub player_spawns: Vec<Vec2>,
     /// 맵 가장자리의 등장 지점입니다. 무리 N은 `monster_spawns[(N - 1) % 개수]`에서 등장합니다.
     pub monster_spawns: Vec<Vec2>,
-    /// 몬스터 이동 경로 격자의 칸 크기입니다.
-    pub nav_cell: f32,
     /// 주변 몬스터를 찾는 격자의 칸 크기입니다.
     pub spatial_cell: f32,
 }
@@ -225,6 +224,9 @@ impl Tuning {
     /// 가장 중요한 전제는 「한 Tick에 움직일 수 있는 거리가 몸의 반지름보다 짧다」입니다.
     /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 한 Tick에 얇은 벽을 건너뛰는 거리를 움직일 수 있으면 개체가 벽을 통과합니다.
     /// 플레이어는 걷는 거리를, 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값을 이 전제에 맞춰 검사합니다.
+    ///
+    /// 맵은 타일에 꼭 맞아야 합니다. 크기, 장애물, 마차가 정수 좌표이고, 몸의 반지름이 타일의 절반보다 짧고,
+    /// 비어 있는 타일이 모두 마차에 걸어서 이어져야 합니다. 충돌과 몬스터의 이동 경로가 이 전제 위에서 같은 타일 지도를 읽습니다.
     pub fn validate(&self) -> Result<(), String> {
         if self.tick_hz == 0 {
             return Err("tick_hz must be at least 1".to_string());
@@ -280,33 +282,62 @@ impl Tuning {
             }
         }
 
+        // 몸의 반지름이 0.5보다 작아야 비어 있는 타일의 중심을 따라 걷는 몸이 이웃한 막힌 타일에 걸리지 않습니다.
+        let radii = [self.player.radius]
+            .into_iter()
+            .chain(MonsterKind::ALL.map(|kind| self.monsters.get(kind).radius));
+        if radii
+            .into_iter()
+            .any(|radius| radius.is_nan() || radius >= 0.5)
+        {
+            return Err("every body radius must be shorter than half a tile".to_string());
+        }
+
         let map = &self.map;
-        if map.width <= 0.0 || map.height <= 0.0 || map.nav_cell <= 0.0 || map.spatial_cell <= 0.0 {
-            return Err("map size and cell sizes must be positive".to_string());
+        if map.spatial_cell <= 0.0 {
+            return Err("spatial_cell must be positive".to_string());
+        }
+        let tiled =
+            |value: f32| value >= 1.0 && value <= f32::from(u16::MAX) && value.fract() == 0.0;
+        if !tiled(map.width) || !tiled(map.height) {
+            return Err("the map size must be a whole number of tiles".to_string());
         }
         let bounds = Rect::new(0.0, 0.0, map.width, map.height);
-        let mut solids = map.obstacles.clone();
-        solids.push(map.wagon);
-        solids.extend(map.structures.iter().map(|placed| placed.rect));
-        for solid in &solids {
+        for solid in map.obstacles.iter().chain([&map.wagon]) {
+            if !solid.is_tile_aligned() {
+                return Err(format!("solid {solid:?} does not fit the tile grid"));
+            }
             if !(bounds.contains(solid.min) && bounds.contains(solid.max)) {
                 return Err(format!("solid {solid:?} is outside the map"));
             }
         }
+        for placement in &map.structures {
+            if !bounds.contains(placement.tile.rect().max) {
+                return Err(format!("structure {placement:?} is outside the map"));
+            }
+        }
+
+        // 아래 검사는 규칙이 실제로 쓰는 타일 지도를 읽습니다. 장애물, 마차, 미리 놓인 시설이 모두 들어 있습니다.
+        let tiles = World::new(self).tiles;
         check_spawns(
             "player_spawns",
             &map.player_spawns,
             self.player.radius,
             bounds,
-            &solids,
+            &tiles,
         )?;
         check_spawns(
             "monster_spawns",
             &map.monster_spawns,
             self.monsters.largest_radius(),
             bounds,
-            &solids,
-        )
+            &tiles,
+        )?;
+        let wagon_tiles = tiles.engage_tiles(map.wagon, self.monsters.longest_engage_distance());
+        if !tiles.is_fully_connected(&wagon_tiles, None) {
+            return Err("every free tile must be connected to the wagon".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -321,27 +352,26 @@ fn check_speed(name: &str, speed: f32) -> Result<(), String> {
     }
 }
 
-/// 등장 지점이 있고, 모두 맵 안에서 장애물과 겹치지 않는지 검사합니다.
+/// 등장 지점이 있고, 모두 맵 안에서 막힌 타일과 겹치지 않는지 검사합니다.
 fn check_spawns(
     name: &str,
     spawns: &[Vec2],
     radius: f32,
     bounds: Rect,
-    solids: &[Rect],
+    tiles: &TileMap,
 ) -> Result<(), String> {
     if spawns.is_empty() {
         return Err(format!("{name} must not be empty"));
     }
+    let mut near = Vec::new();
     for spawn in spawns {
         if !bounds.shrink(radius).contains(*spawn) {
             return Err(format!(
                 "{name} point {spawn:?} is too close to the map edge"
             ));
         }
-        if solids
-            .iter()
-            .any(|solid| solid.distance_to(*spawn) < radius)
-        {
+        tiles.blocked_rects_near(*spawn, radius, &mut near);
+        if near.iter().any(|solid| solid.distance_to(*spawn) < radius) {
             return Err(format!("{name} point {spawn:?} overlaps a solid"));
         }
     }
@@ -417,7 +447,7 @@ impl MapSpec {
             wagon: Rect::new(10.0, 11.0, 14.0, 13.0),
             structures: vec![StructurePlacement {
                 kind: StructureKind::Watchtower,
-                rect: Rect::new(15.0, 11.0, 16.0, 12.0),
+                tile: Tile::new(15, 11),
             }],
             obstacles: vec![
                 Rect::new(4.0, 4.0, 8.0, 5.0),
@@ -438,7 +468,6 @@ impl MapSpec {
                 Vec2::new(12.0, 23.4),
                 Vec2::new(0.6, 12.0),
             ],
-            nav_cell: 0.5,
             spatial_cell: 2.0,
         }
     }

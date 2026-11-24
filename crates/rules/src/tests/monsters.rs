@@ -145,7 +145,7 @@ fn monsters_never_enter_obstacles_or_leave_the_map() {
     let radius = t.monsters.grunt.radius;
     let mut solids = t.map.obstacles.clone();
     solids.push(t.map.wagon);
-    solids.extend(t.map.structures.iter().map(|placed| placed.rect));
+    solids.extend(t.map.structures.iter().map(|placed| placed.tile.rect()));
 
     let mut seen = 0;
     for _ in 0..s.ticks(40.0) {

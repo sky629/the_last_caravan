@@ -133,6 +133,13 @@ impl Rect {
         )
     }
 
+    /// 네 변이 모두 정수 좌표이면 참입니다. 타일에 꼭 맞는 사각형인지 확인할 때 씁니다.
+    pub fn is_tile_aligned(self) -> bool {
+        [self.min.x, self.min.y, self.max.x, self.max.y]
+            .into_iter()
+            .all(|edge| edge.fract() == 0.0)
+    }
+
     /// 사각형이 걸치는 타일(정수 좌표의 한 칸)의 수입니다. 타일을 하나씩 나열하지 않고 계산하며, 뒤집힌 사각형은 0입니다.
     pub fn tile_count(self) -> usize {
         let columns = (self.max.x.ceil() - self.min.x.floor()).max(0.0);
