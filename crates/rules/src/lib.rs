@@ -30,7 +30,7 @@ mod world;
 #[cfg(test)]
 mod tests;
 
-pub use build::{BuildRefusal, CannotBuild};
+pub use build::{BuildRefusal, CannotBuild, front_tile};
 pub use expedition::{NightStep, Outcome, Phase};
 pub use ids::{MonsterId, PlayerId, Team, TowerId};
 pub use input::{AimDir, MoveDir, PlayerInput, PlayerInputs};

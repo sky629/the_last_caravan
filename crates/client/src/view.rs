@@ -24,6 +24,8 @@ pub struct Scene {
     pub player: Footprint,
     /// 마차의 중심입니다. 마차가 화면 밖에 있을 때 방향을 알려 주는 표시가 이 위치를 향합니다.
     pub wagon_center: Ground,
+    /// 맵의 가로와 세로 타일 수입니다. 감시탑이 놓일 타일을 미리 보여 줄 때 맵 밖인지 가립니다.
+    pub map_size: (u16, u16),
     monsters: Vec<MonsterLook>,
 }
 
@@ -153,6 +155,7 @@ pub fn spawn_world(
         team: Team(welcome.team),
         player: footprint(&mut meshes, world.player_radius),
         wagon_center: world.wagon.to_rect().center(),
+        map_size: (map_size.x as u16, map_size.y as u16),
         monsters,
     });
 }

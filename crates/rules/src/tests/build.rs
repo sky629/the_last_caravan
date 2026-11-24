@@ -4,9 +4,10 @@
 //! 시나리오는 20 x 20 맵이고 마차는 (17, 17)에서 (19, 19)까지입니다. 마차 둘레의 타일에서 짓습니다.
 
 use super::support::Scenario;
-use crate::build::{BuildRefusal, CannotBuild};
+use crate::build::{BuildRefusal, CannotBuild, front_tile};
 use crate::ids::PlayerId;
 use crate::input::PlayerInput;
+use crate::math::Vec2;
 use crate::structures::TowerState;
 use crate::world::Tile;
 
@@ -538,4 +539,92 @@ fn one_stash_pays_for_one_site_when_two_start_in_the_same_tick() {
         refusal(&s, second).map(|r| r.why),
         Some(CannotBuild::NotEnoughStash)
     );
+}
+
+// 놓일 자리. 서버와 클라이언트의 미리 보기가 같은 함수(`front_tile`)로 정합니다.
+
+/// 서 있는 타일 (5, 5)에서 여덟 방향을 바라볼 때의 앞 타일입니다.
+const AIMED_FROM_5_5: [((f32, f32), (u16, u16)); 8] = [
+    ((1.0, 0.0), (6, 5)),
+    ((0.7, 0.7), (6, 6)),
+    ((0.0, 1.0), (5, 6)),
+    ((-0.7, 0.7), (4, 6)),
+    ((-1.0, 0.0), (4, 5)),
+    ((-0.7, -0.7), (4, 4)),
+    ((0.0, -1.0), (5, 4)),
+    ((0.7, -0.7), (6, 4)),
+];
+
+#[test]
+fn the_front_tile_is_the_neighbour_in_the_aimed_direction() {
+    for ((x, y), (tile_x, tile_y)) in AIMED_FROM_5_5 {
+        let facing = Vec2::new(x, y).normalize_or_zero();
+
+        assert_eq!(
+            front_tile(Vec2::new(5.9, 5.1), facing, (20, 20)),
+            Some(Tile::new(tile_x, tile_y)),
+            "facing ({x}, {y})"
+        );
+    }
+}
+
+#[test]
+fn the_front_tile_does_not_depend_on_where_inside_the_tile_the_player_stands() {
+    let facing = Vec2::new(1.0, 0.0);
+
+    for pos in [(5.01, 5.01), (5.5, 5.5), (5.99, 5.99)] {
+        assert_eq!(
+            front_tile(Vec2::new(pos.0, pos.1), facing, (20, 20)),
+            Some(Tile::new(6, 5))
+        );
+    }
+}
+
+#[test]
+fn there_is_no_front_tile_past_the_edge_of_the_map() {
+    let size = (20, 20);
+
+    assert_eq!(
+        front_tile(Vec2::new(0.5, 5.5), Vec2::new(-1.0, 0.0), size),
+        None
+    );
+    assert_eq!(
+        front_tile(Vec2::new(19.5, 5.5), Vec2::new(1.0, 0.0), size),
+        None
+    );
+    assert_eq!(
+        front_tile(Vec2::new(5.5, 0.5), Vec2::new(0.0, -1.0), size),
+        None
+    );
+    assert_eq!(
+        front_tile(Vec2::new(5.5, 19.5), Vec2::new(0.0, 1.0), size),
+        None
+    );
+    assert_eq!(
+        front_tile(
+            Vec2::new(19.5, 19.5),
+            Vec2::new(-1.0, -1.0).normalize_or_zero(),
+            size
+        ),
+        Some(Tile::new(18, 18))
+    );
+}
+
+#[test]
+fn the_server_builds_on_the_tile_the_front_tile_names() {
+    for ((x, y), _) in AIMED_FROM_5_5 {
+        let mut s = Scenario::open_field();
+        let a = s.player_at(14.9, 14.1);
+        s.hold_build(a, x, y);
+
+        s.run_ticks(1);
+
+        let facing = s.player(a).facing;
+        let site = s.sim.towers().next().expect("the site exists");
+        assert_eq!(
+            Some(site.tile),
+            front_tile(s.player(a).pos, facing, (20, 20)),
+            "aiming ({x}, {y})"
+        );
+    }
 }

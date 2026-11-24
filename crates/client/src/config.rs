@@ -76,5 +76,7 @@ pub const WAGON_MARKER: Color = Color::srgb(1.00, 0.72, 0.38);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
 /// 건설이 거절된 타일의 테두리입니다.
 pub const REFUSAL: Color = Color::srgb(1.00, 0.35, 0.30);
+/// 건설 키를 누르면 감시탑이 놓일 타일의 테두리입니다.
+pub const PREVIEW: Color = Color::srgb(0.80, 0.95, 1.00);
 /// 효과 선의 굵기(픽셀)입니다.
 pub const EFFECT_LINE_WIDTH: f32 = 3.0;

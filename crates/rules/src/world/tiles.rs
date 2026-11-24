@@ -47,6 +47,14 @@ impl Tile {
         let y = u16::try_from(i32::from(self.y) + dy).ok()?;
         Some(Tile { x, y })
     }
+
+    /// 가로 `cols`, 세로 `rows` 타일인 맵에서 `p`가 속한 타일입니다. 맵 밖의 점은 가장 가까운 가장자리 타일로 봅니다.
+    pub(crate) fn containing(p: Vec2, cols: u16, rows: u16) -> Tile {
+        // 음수와 NaN을 `as u16`으로 바꾸면 0이 되고, 너무 큰 값은 최댓값이 됩니다. 뒤에서 맵 안으로 맞춥니다.
+        let x = (p.x as u16).min(cols - 1);
+        let y = (p.y as u16).min(rows - 1);
+        Tile { x, y }
+    }
 }
 
 /// 타일 하나를 차지하고 있는 것입니다. 한 타일에는 하나만 있습니다.
@@ -131,10 +139,12 @@ impl TileMap {
 
     /// `p`가 속한 타일입니다. 맵 밖의 점은 가장 가까운 가장자리 타일로 봅니다.
     pub fn tile_at(&self, p: Vec2) -> Tile {
-        // 음수와 NaN을 `as u16`으로 바꾸면 0이 되고, 너무 큰 값은 최댓값이 됩니다. 뒤에서 맵 안으로 맞춥니다.
-        let x = (p.x as u16).min(self.cols - 1);
-        let y = (p.y as u16).min(self.rows - 1);
-        Tile { x, y }
+        Tile::containing(p, self.cols, self.rows)
+    }
+
+    /// 맵의 가로와 세로 타일 수입니다.
+    pub fn size(&self) -> (u16, u16) {
+        (self.cols, self.rows)
     }
 
     /// 표를 바꾸는 유일한 함수입니다. `world` 모듈 밖에서는 부를 수 없습니다. 맵 밖의 타일은 무시합니다.

@@ -8,6 +8,7 @@
 //! - `iso`: 지면 좌표를 쿼터뷰 화면 좌표로 바꾸는 투영과 그리는 순서입니다.
 //! - `camera`: 카메라가 내 캐릭터를 따라가는 방식과, 화면 밖에 있는 마차를 가리키는 표시의 자리입니다.
 //! - `interp`: 스냅샷을 보관하고 100ms 이전의 방 모습을 보간해서 `Frame`으로 만듭니다.
+//! - `preview`: 건설 키를 누르면 감시탑이 놓일 타일을 서버와 같은 함수로 구합니다.
 
 pub mod camera;
 mod fps;
@@ -16,6 +17,7 @@ mod input;
 mod interp;
 mod iso;
 mod launch;
+mod preview;
 mod session;
 
 pub use fps::FpsMeter;
@@ -27,4 +29,5 @@ pub use iso::{
     screen_dir_to_ground, screen_to_ground, tile_centers,
 };
 pub use launch::{DEFAULT_ROOM, DEFAULT_SERVER, LaunchError, LaunchOptions};
+pub use preview::build_preview;
 pub use session::{Joined, Problem, Session};

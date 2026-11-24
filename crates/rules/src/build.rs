@@ -2,6 +2,7 @@
 //!
 //! 건설을 시작할 때와 완료할 때 같은 함수를 부릅니다. 시작할 때는 거기에 보관함의 자원을 확인하는 일(`start_builds`)이 더해집니다.
 //! 어느 타일에 놓을지는 플레이어의 위치와 조준 방향에서 서버가 정합니다(`front_tile`). 클라이언트는 타일의 좌표를 보내지 않습니다.
+//! 클라이언트는 같은 함수로 놓일 자리를 미리 보여 주므로, 「앞 타일」의 뜻이 서버와 화면에서 어긋나지 않습니다.
 
 use crate::collision::move_circle;
 use crate::ids::{PlayerId, TowerId};
@@ -10,7 +11,7 @@ use crate::math::{Rect, Vec2};
 use crate::player::{Interaction, Life};
 use crate::structures::TowerState;
 use crate::tuning::Tuning;
-use crate::world::{Ctx, Tile, TileMap, TileUse, World};
+use crate::world::{Ctx, Tile, TileUse, World};
 
 /// 건설 키가 세우는 시설입니다.
 const BUILT_KIND: StructureKind = StructureKind::Watchtower;
@@ -39,16 +40,18 @@ pub struct BuildRefusal {
     pub why: CannotBuild,
 }
 
-/// 플레이어가 서 있는 타일에서 바라보는 쪽으로 이웃한 타일입니다. 이웃은 여덟 곳(상하좌우와 대각선)이고,
-/// 조준 방향의 두 성분에 1.2를 곱해서 반올림한 값(-1, 0, 1)이 이웃을 정합니다. 길이 1인 방향은 성분 하나가 항상 0.7 이상이므로 (0, 0)이 나오지 않습니다.
+/// 가로와 세로가 `map_size`(타일 수)인 맵에서, `pos`에 서서 `facing`을 바라보는 플레이어의 앞 타일입니다.
+/// 서 있는 타일에서 바라보는 쪽으로 이웃한 타일이고, 이웃은 여덟 곳(상하좌우와 대각선)입니다.
+/// 바라보는 방향의 두 성분에 1.2를 곱해서 반올림한 값(-1, 0, 1)이 이웃을 정합니다. 길이 1인 방향은 성분 하나가 항상 0.7 이상이므로 (0, 0)이 나오지 않습니다.
 /// 서 있는 위치가 같은 타일 안에서 조금 달라도 같은 타일이 정해지므로, 감시탑을 줄지어 세우기 쉽습니다. 맵 밖이면 `None`입니다.
-pub(crate) fn front_tile(tiles: &TileMap, pos: Vec2, facing: Vec2) -> Option<Tile> {
-    let here = tiles.tile_at(pos);
+pub fn front_tile(pos: Vec2, facing: Vec2, map_size: (u16, u16)) -> Option<Tile> {
+    let (cols, rows) = map_size;
+    let here = Tile::containing(pos, cols, rows);
     let target = here.step(
         (facing.x * 1.2).round() as i32,
         (facing.y * 1.2).round() as i32,
     )?;
-    tiles.contains(target).then_some(target)
+    (target.x < cols && target.y < rows).then_some(target)
 }
 
 /// `tile`에 감시탑을 놓을 수 있는지 판정합니다. 자원은 보지 않습니다.
@@ -130,7 +133,7 @@ pub(crate) fn start_builds(world: &mut World, ctx: &Ctx, requests: &[PlayerId]) 
             .and_then(|input| input.aim.get())
             .unwrap_or(player.facing);
         let here = world.tiles.tile_at(player.pos);
-        let verdict = match front_tile(&world.tiles, player.pos, facing) {
+        let verdict = match front_tile(player.pos, facing, world.tiles.size()) {
             None => Err(BuildRefusal {
                 tile: here,
                 why: CannotBuild::OutsideVillage,
