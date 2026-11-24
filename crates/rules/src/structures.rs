@@ -11,7 +11,7 @@ use crate::math::Rect;
 use crate::tuning::{StructurePlacement, Tuning};
 use crate::world::{Ctx, Hit, Target, World};
 
-/// 마차입니다. HP가 0이 되면 원정이 실패합니다 (D43).
+/// 마차입니다. HP가 0이 되면 원정이 실패합니다.
 /// 같은 Tick에 원정이 끝나므로 「파괴된 상태」는 따로 없습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Wagon {
@@ -40,8 +40,8 @@ pub struct Tower {
 }
 
 /// 감시탑의 상태입니다. 파괴된 감시탑에는 HP, 쿨다운, 사격 대상이 없으므로,
-/// 「파괴된 감시탑이 사격한다」와 「파괴된 감시탑을 수리한다」는 코드로 표현할 수 없습니다 (D49).
-/// 파괴된 감시탑은 잔해로 남아서 계속 길을 막습니다. 새 원정이 시작될 때만 다시 서 있게 됩니다 (D34).
+/// 「파괴된 감시탑이 사격한다」와 「파괴된 감시탑을 수리한다」는 코드로 표현할 수 없습니다.
+/// 파괴된 감시탑은 잔해로 남아서 계속 길을 막습니다. 새 원정이 시작될 때만 다시 서 있게 됩니다.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TowerState {
     Standing {
@@ -54,7 +54,7 @@ pub enum TowerState {
     Destroyed,
 }
 
-/// 감시탑의 마지막 사격입니다. 이벤트가 아니라 상태이므로, 모든 클라이언트가 스냅샷만으로 같은 사격 효과를 그릴 수 있습니다 (C20).
+/// 감시탑의 마지막 사격입니다. 이벤트가 아니라 상태이므로, 모든 클라이언트가 스냅샷만으로 같은 사격 효과를 그릴 수 있습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shot {
     pub target: MonsterId,
@@ -88,7 +88,7 @@ impl Tower {
         matches!(self.state, TowerState::Standing { .. })
     }
 
-    /// 피해를 받습니다. HP가 0이 되면 파괴됩니다 (C21). 이미 파괴된 감시탑은 피해를 받지 않습니다.
+    /// 피해를 받습니다. HP가 0이 되면 파괴됩니다. 이미 파괴된 감시탑은 피해를 받지 않습니다.
     pub(crate) fn take_damage(&mut self, amount: u32) {
         if let TowerState::Standing { hp, .. } = &mut self.state {
             *hp = hp.saturating_sub(amount);
@@ -98,7 +98,7 @@ impl Tower {
         }
     }
 
-    /// HP를 `max_hp`까지 회복합니다. 파괴된 감시탑은 회복하지 않습니다 (D49).
+    /// HP를 `max_hp`까지 회복합니다. 파괴된 감시탑은 회복하지 않습니다.
     pub(crate) fn repair(&mut self, amount: u32, max_hp: u32) {
         if let TowerState::Standing { hp, .. } = &mut self.state {
             *hp = (*hp + amount).min(max_hp);
@@ -119,7 +119,7 @@ pub(crate) fn build_towers(t: &Tuning) -> BTreeMap<TowerId, Tower> {
         .collect()
 }
 
-/// 서 있는 감시탑이 사정거리 안의 가장 가까운 적대적 몬스터를 쏩니다 (C20).
+/// 서 있는 감시탑이 사정거리 안의 가장 가까운 적대적 몬스터를 쏩니다.
 /// 가장 가까운 몬스터가 여럿이면 번호가 작은 몬스터를 고릅니다. 쏘지 못하는 동안에도 쿨다운은 줄어듭니다.
 pub(crate) fn towers_fire(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
     let t = ctx.t;

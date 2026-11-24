@@ -1,4 +1,4 @@
-//! 규칙 테스트입니다 (D32). 화면, 네트워크, 시계 없이 `cargo test -p caravan_rules`로 실행합니다.
+//! 규칙 테스트입니다. 화면, 네트워크, 시계 없이 `cargo test -p caravan_rules`로 실행합니다.
 //!
 //! 영역마다 파일 하나입니다. 테스트는 `support::Scenario`로 상황을 만들고, 입력과 `step`으로만 게임을 진행하고,
 //! `&Sim`이 공개하는 값(위치, HP, 생명 상태, 단계)만 확인합니다.
@@ -6,10 +6,10 @@
 
 mod support;
 
-mod combat; // C5, D16: 근접 공격의 범위, 부채꼴, 쿨다운
-mod expedition; // C10, C19, D18-D20, D24, D25, D35, D43, D45: 무리, 성공과 실패, 새 원정, 입장과 퇴장
-mod monsters; // C4, C11, D17, D33: 몬스터의 목표 선택, 이동 경로, 공격
-mod movement; // C11, C18: 장애물과 맵 경계, 이동 속도, 입력 보정
-mod revive; // C7, C8, C9, C18, D21, D22, D36-D39: 쓰러짐, 부활, 출혈
-mod towers; // C20, C21, D44, D47-D49: 감시탑의 사격, 파괴, 수리
+mod combat; // 근접 공격의 범위, 부채꼴, 쿨다운
+mod expedition; // 무리, 성공과 실패, 새 원정, 입장과 퇴장
+mod monsters; // 몬스터의 목표 선택, 이동 경로, 공격
+mod movement; // 장애물과 맵 경계, 이동 속도, 입력 보정
+mod revive; // 쓰러짐, 부활, 출혈
+mod towers; // 감시탑의 사격, 파괴, 수리
 mod tuning; // 기본 수치가 충돌 처리의 전제를 지키는지

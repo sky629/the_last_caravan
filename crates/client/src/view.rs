@@ -89,7 +89,7 @@ fn spawn_block(
 /// 입장한 직후 한 번만 세계를 만들고 카메라를 맞춥니다.
 ///
 /// 큰 상자(긴 벽, 마차)는 타일마다 상자 하나로 나눕니다. 상자마다 자기 중심으로 그리는 순서를 정해야,
-/// 캐릭터가 긴 벽의 한쪽 끝 옆에 서도 벽의 앞과 뒤가 맞게 가려집니다 (C12).
+/// 캐릭터가 긴 벽의 한쪽 끝 옆에 서도 벽의 앞과 뒤가 맞게 가려집니다.
 pub fn spawn_world(
     mut commands: Commands,
     session: Res<ClientSession>,
@@ -185,7 +185,7 @@ pub fn spawn_world(
     });
 }
 
-/// 감시탑이 서 있는지 파괴되었는지에 따라 모양과 색을 바꾸고, HP 막대를 맞춥니다 (C21).
+/// 감시탑이 서 있는지 파괴되었는지에 따라 모양과 색을 바꾸고, HP 막대를 맞춥니다.
 pub fn sync_structures(
     frame: Res<CurrentFrame>,
     palette: Res<Palette>,

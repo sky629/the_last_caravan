@@ -26,7 +26,7 @@ pub struct Player {
 
 /// 플레이어의 생명 상태입니다. 상태마다 그 상태에서 의미가 있는 값만 가집니다.
 /// 그래서 다음 상태는 코드로 표현할 수 없습니다.
-/// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용을 가지는 상태 (공격, 부활, 수리를 할 수 없습니다: C18, D37).
+/// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용을 가지는 상태 (공격, 부활, 수리를 할 수 없습니다).
 /// - 사망한 플레이어가 출혈 시간을 가지는 상태.
 ///
 /// ```text
@@ -34,7 +34,7 @@ pub struct Player {
 ///     ^                        |
 ///     +----(부활이 끝남)-------+
 ///
-///   새 원정이 시작되면 모든 플레이어가 최대 HP의 Alive가 됩니다 (D34).
+///   새 원정이 시작되면 모든 플레이어가 최대 HP의 Alive가 됩니다.
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum Life {
@@ -43,14 +43,14 @@ pub enum Life {
         hp: u32,
         /// 다음 근접 공격까지 남은 Tick입니다.
         cooldown_ticks: u32,
-        /// 상호작용 키(F)가 지금 하고 있는 일입니다. 값이 있으면 이동과 공격을 할 수 없습니다 (C18, D38, D48).
+        /// 상호작용 키(F)가 지금 하고 있는 일입니다. 값이 있으면 이동과 공격을 할 수 없습니다.
         interaction: Option<Interaction>,
     },
     Downed {
-        /// 남은 출혈 시간입니다. 아무도 부활시키지 않는 동안에만 줄어듭니다 (D22).
+        /// 남은 출혈 시간입니다. 아무도 부활시키지 않는 동안에만 줄어듭니다.
         bleed_left_ticks: u32,
     },
-    /// 이 원정이 끝날 때까지 부활할 수 없습니다 (C9, D39).
+    /// 이 원정이 끝날 때까지 부활할 수 없습니다.
     Dead,
 }
 
@@ -64,12 +64,12 @@ pub enum Interaction {
     Reviving {
         target: PlayerId,
         /// 키를 끊지 않고 누른 Tick 수입니다. 누르기 시작한 Tick을 포함합니다.
-        /// 취소하면 이 값을 통째로 버리므로 진행도가 처음으로 돌아갑니다 (D22).
+        /// 취소하면 이 값을 통째로 버리므로 진행도가 처음으로 돌아갑니다.
         elapsed_ticks: u32,
     },
     Repairing {
         tower: TowerId,
-        /// 마지막 수리 이후의 Tick 수입니다. 수리를 멈춰도 이미 회복한 HP는 유지됩니다 (D48).
+        /// 마지막 수리 이후의 Tick 수입니다. 수리를 멈춰도 이미 회복한 HP는 유지됩니다.
         since_pulse_ticks: u32,
     },
 }
@@ -92,7 +92,7 @@ impl Player {
         }
     }
 
-    /// 새 원정이 시작될 때 최대 HP의 살아 있는 상태로 `pos`에 돌려놓습니다 (D34).
+    /// 새 원정이 시작될 때 최대 HP의 살아 있는 상태로 `pos`에 돌려놓습니다.
     /// 입력의 순서 번호는 원정이 바뀌어도 이어집니다.
     pub(crate) fn reset(&mut self, pos: Vec2, t: &Tuning) {
         let seq = self.last_input_seq;
@@ -144,7 +144,7 @@ impl Player {
         }
     }
 
-    /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고, 이때 하고 있던 상호작용이 함께 사라집니다 (C8, D48).
+    /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고, 이때 하고 있던 상호작용이 함께 사라집니다.
     /// 쓰러졌거나 사망한 플레이어는 피해를 받지 않습니다.
     pub(crate) fn take_damage(&mut self, amount: u32, t: &Tuning) {
         if let Life::Alive { hp, .. } = &mut self.life {
@@ -161,12 +161,12 @@ impl Player {
 /// 상호작용 키(F)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활이나 수리를 계속하거나, 새로 시작하거나, 취소합니다.
 ///
 /// 진행 중인 부활은 키를 누르고 있고, 대상이 여전히 쓰러진 동료이고, 거리가 범위 안인 동안만 이어집니다.
-/// 공격받는 것은 조건이 아닙니다 (D38). 조건이 하나라도 깨지면 `Interaction` 값을 버리므로 진행도가 처음으로 돌아갑니다 (D22).
+/// 공격받는 것은 조건이 아닙니다. 조건이 하나라도 깨지면 `Interaction` 값을 버리므로 진행도가 처음으로 돌아갑니다.
 /// 쓰러진 플레이어 한 명은 한 명만 부활시킬 수 있습니다. 이미 진행 중인 부활이 먼저 대상을 차지하고,
 /// 새로 시작하려는 플레이어는 번호 순서로 남은 대상을 차지합니다.
 ///
 /// 수리는 중단해도 잃는 것이 없으므로(이미 회복한 HP는 그대로입니다) Tick마다 대상을 다시 고릅니다.
-/// 그래서 수리하던 플레이어 곁의 동료가 쓰러지면 곧바로 부활로 바뀝니다 (D48).
+/// 그래서 수리하던 플레이어 곁의 동료가 쓰러지면 곧바로 부활로 바뀝니다.
 /// 수리는 정해진 간격마다 감시탑의 HP를 회복시키고, 여러 명이 수리하면 회복량이 더해집니다.
 pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
@@ -237,8 +237,8 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
 }
 
 /// 새로 시작할 상호작용을 고릅니다. 범위 안의 쓰러진 동료가 있으면 가장 가까운 동료를 부활시키고,
-/// 없으면 범위 안에서 손상된 가장 가까운 감시탑을 수리합니다 (D48).
-/// 이미 다른 플레이어가 부활시키는 동료(`claimed`)와, 파괴된 감시탑(D49)과, HP가 가득 찬 감시탑은 고르지 않습니다.
+/// 없으면 범위 안에서 손상된 가장 가까운 감시탑을 수리합니다.
+/// 이미 다른 플레이어가 부활시키는 동료(`claimed`)와, 파괴된 감시탑과, HP가 가득 찬 감시탑은 고르지 않습니다.
 fn choose_interaction(
     world: &World,
     me: &Player,
@@ -331,7 +331,7 @@ fn revive_still_valid(world: &World, reviver: &Player, target: PlayerId, t: &Tun
 }
 
 /// 부활을 마무리하고 출혈 시간을 줄입니다.
-/// 부활시키는 플레이어가 이번 Tick에 쓰러졌다면 이미 `Alive`가 아니므로 부활이 끝나지 않습니다 (C8).
+/// 부활시키는 플레이어가 이번 Tick에 쓰러졌다면 이미 `Alive`가 아니므로 부활이 끝나지 않습니다.
 pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
     let required = t.ticks(t.revive.revive_secs);
     let mut finished: Vec<(PlayerId, PlayerId)> = Vec::new();
@@ -367,7 +367,7 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
         }
     }
 
-    // 부활이 진행되는 동안에는 출혈 시간이 멈춥니다 (D22).
+    // 부활이 진행되는 동안에는 출혈 시간이 멈춥니다.
     for player in world.players.values_mut() {
         if let Life::Downed { bleed_left_ticks } = &mut player.life
             && !being_revived.contains(&player.id)
@@ -380,7 +380,7 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
     }
 }
 
-/// 입력대로 플레이어를 움직입니다. 살아 있는 플레이어는 걷고, 쓰러진 플레이어는 기어갑니다 (D37).
+/// 입력대로 플레이어를 움직입니다. 살아 있는 플레이어는 걷고, 쓰러진 플레이어는 기어갑니다.
 pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     for player in world.players.values_mut() {
@@ -406,7 +406,7 @@ pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
 }
 
 /// 근접 공격입니다. 상호작용 중이 아닌 살아 있는 플레이어가 공격 버튼을 누르고 쿨다운이 끝났으면 휘두르고,
-/// 부채꼴 안에 있고 공격 거리 안에 있는 적대적인 몬스터를 모두 맞힙니다 (D16, C5).
+/// 부채꼴 안에 있고 공격 거리 안에 있는 적대적인 몬스터를 모두 맞힙니다.
 /// 몬스터를 맞히지 못해도 휘두르면 쿨다운이 시작됩니다.
 pub(crate) fn player_attacks(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
     let t = ctx.t;

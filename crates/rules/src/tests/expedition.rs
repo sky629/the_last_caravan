@@ -1,4 +1,4 @@
-//! 원정의 진행: 무리, 성공과 실패, 새 원정, 입장과 퇴장 (C10, C19, D18, D19, D20, D24, D25, D34, D35, D43, D45).
+//! 원정의 진행(무리, 성공과 실패, 새 원정, 입장과 퇴장)을 확인합니다.
 
 use super::support::Scenario;
 use crate::expedition::{Outcome, Phase};

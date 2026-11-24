@@ -51,7 +51,7 @@ impl Registry {
         );
     }
 
-    /// 이번 프레임에 보이지 않은 번호의 개체를 지웁니다. 몬스터가 죽거나 플레이어가 나갔을 때입니다 (C5, C15).
+    /// 이번 프레임에 보이지 않은 번호의 개체를 지웁니다. 몬스터가 죽거나 플레이어가 나갔을 때입니다.
     fn despawn_unseen(&mut self, commands: &mut Commands) {
         let frame = self.frame;
         self.entities.retain(|_, tracked| {
@@ -207,7 +207,7 @@ fn monster_look(
     }
 }
 
-/// 플레이어와 몬스터의 도형을 이번 프레임의 모습에 맞춥니다 (C2, C5, C12, C15, C18).
+/// 플레이어와 몬스터의 도형을 이번 프레임의 모습에 맞춥니다.
 pub fn sync_characters(
     frame: Res<CurrentFrame>,
     scene: Res<Scene>,

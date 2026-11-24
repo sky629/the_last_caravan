@@ -81,7 +81,7 @@ impl Sim {
     }
 
     /// 새 플레이어를 최대 HP의 살아 있는 상태로 등장 지점에 추가하고 번호를 돌려줍니다.
-    /// 원정이 진행되는 도중에도 곧바로 참가합니다 (D35). 방이 가득 차 있으면 거절합니다.
+    /// 원정이 진행되는 도중에도 곧바로 참가합니다. 방이 가득 차 있으면 거절합니다.
     pub fn add_player(&mut self) -> Result<PlayerId, JoinError> {
         if self.world.players.len() >= self.tuning.max_players {
             return Err(JoinError::RoomFull {
@@ -97,7 +97,7 @@ impl Sim {
         Ok(id)
     }
 
-    /// 플레이어를 즉시 제거합니다 (D25). 없는 번호는 무시하므로 같은 퇴장을 두 번 처리해도 안전합니다.
+    /// 플레이어를 즉시 제거합니다. 없는 번호는 무시하므로 같은 퇴장을 두 번 처리해도 안전합니다.
     /// 이 플레이어를 부활시키던 플레이어는 다음 Tick에 대상이 사라진 것을 보고 부활을 멈춥니다.
     pub fn remove_player(&mut self, id: PlayerId) {
         self.world.players.remove(&id);
@@ -137,7 +137,7 @@ impl Sim {
         expedition::settle_outcome(&mut self.phase, &self.world, &self.tuning);
     }
 
-    /// 새 원정을 시작합니다 (D20, D34). 이전 원정에서 이어받는 것은 방에 있는 플레이어뿐입니다.
+    /// 새 원정을 시작합니다. 이전 원정에서 이어받는 것은 방에 있는 플레이어뿐입니다.
     /// 모든 플레이어는 최대 HP의 살아 있는 상태로 등장 지점에 돌아가고, 사망 상태도 초기화됩니다.
     fn reset_expedition(&mut self) {
         self.expedition += 1;

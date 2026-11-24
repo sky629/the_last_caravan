@@ -1,4 +1,4 @@
-//! 쓰러짐, 부활, 출혈 (C7, C8, C9, C18, D21, D22, D36-D39).
+//! 쓰러짐, 부활, 출혈을 확인합니다.
 
 use super::support::{Scenario, close};
 use crate::ids::PlayerId;

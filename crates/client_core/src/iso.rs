@@ -46,7 +46,7 @@ pub fn screen_dir_to_ground(dir: Vec2) -> Vec2 {
     Vec2::new(dir.x + dir.y, dir.y - dir.x).normalize_or_zero()
 }
 
-/// 그리는 순서를 정하는 값입니다. 클수록 화면에서 아래쪽에 있어서 앞에 그려집니다 (C12).
+/// 그리는 순서를 정하는 값입니다. 클수록 화면에서 아래쪽에 있어서 앞에 그려집니다.
 /// 발 위치를 넘기면 됩니다. 화면의 세로 위치는 `x + y`에 비례하기 때문입니다.
 pub fn depth(foot: Vec2) -> f32 {
     -(foot.x + foot.y)

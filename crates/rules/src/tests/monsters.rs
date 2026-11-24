@@ -1,4 +1,4 @@
-//! 몬스터의 목표 선택, 이동, 공격 (C4, C11, D17, D33).
+//! 몬스터의 목표 선택, 이동, 공격을 확인합니다.
 
 use super::support::Scenario;
 use crate::expedition::{Outcome, Phase};
@@ -139,7 +139,7 @@ fn a_monster_walks_around_a_wall_to_reach_the_wagon() {
 
 #[test]
 fn monsters_never_enter_obstacles_or_leave_the_map() {
-    // 기본 맵에서 실제 무리가 나타나서 마차를 공격하는 동안 모든 Tick의 모든 몬스터 위치를 검사합니다 (C11).
+    // 기본 맵에서 실제 무리가 나타나서 마차를 공격하는 동안 모든 Tick의 모든 몬스터 위치를 검사합니다.
     let mut s = Scenario::with_waves(|t| t.map = crate::tuning::MapSpec::stage1());
     let t = s.sim.tuning().clone();
     let radius = t.monsters.grunt.radius;

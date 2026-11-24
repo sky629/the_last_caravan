@@ -17,7 +17,7 @@ pub fn ground_pos(screen: Vec2) -> rules::Vec2 {
     core::screen_to_ground(rules::Vec2::new(screen.x, screen.y))
 }
 
-/// 발이 지면 위치 `foot`에 있는 개체를 놓을 곳입니다. z는 발이 화면에서 아래쪽일수록 큽니다 (C12).
+/// 발이 지면 위치 `foot`에 있는 개체를 놓을 곳입니다. z는 발이 화면에서 아래쪽일수록 큽니다.
 pub fn placement(foot: rules::Vec2) -> Vec3 {
     screen_pos(foot).extend(config::SORTED_Z_BASE + core::depth(foot))
 }

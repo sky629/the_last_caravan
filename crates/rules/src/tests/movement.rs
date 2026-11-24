@@ -1,4 +1,4 @@
-//! 이동과 충돌 (C11, C18).
+//! 이동과 충돌을 확인합니다.
 
 use super::support::{Scenario, close};
 use crate::input::{AimDir, MoveDir, PlayerInput};

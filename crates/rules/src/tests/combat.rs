@@ -1,4 +1,4 @@
-//! 플레이어의 근접 공격 (D16, C5).
+//! 플레이어의 근접 공격을 확인합니다.
 
 use super::support::Scenario;
 use crate::ids::MonsterId;

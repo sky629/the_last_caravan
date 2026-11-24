@@ -19,7 +19,7 @@ pub enum Phase {
     /// `next_wave`번 무리의 등장을 기다립니다. 플레이어는 움직이고, 싸우고, 부활과 수리를 할 수 있습니다.
     Intermission { next_wave: u32, ticks_left: u32 },
     /// `wave`번 무리가 나타나는 중이거나 싸우는 중입니다.
-    /// 무리는 한꺼번에 나타나지 않고 몬스터가 한 마리씩 나타납니다 (D18).
+    /// 무리는 한꺼번에 나타나지 않고 몬스터가 한 마리씩 나타납니다.
     Fighting {
         wave: u32,
         /// 아직 나타나지 않은 몬스터의 수입니다.
@@ -27,7 +27,7 @@ pub enum Phase {
         /// 다음 몬스터가 나타날 때까지 남은 Tick입니다.
         spawn_in_ticks: u32,
     },
-    /// 결과를 보여 주는 동안 세계가 멈춥니다. 카운트다운이 끝나면 새 원정이 시작됩니다 (D20).
+    /// 결과를 보여 주는 동안 세계가 멈춥니다. 카운트다운이 끝나면 새 원정이 시작됩니다.
     Over { outcome: Outcome, ticks_left: u32 },
 }
 
@@ -142,7 +142,7 @@ fn spawn_position(t: &Tuning, wave: u32, nth: u32) -> Vec2 {
 }
 
 /// Tick의 맨 끝에서 원정이 끝났는지, 무리를 모두 처치했는지 판정합니다.
-/// 실패를 먼저 검사하므로, 마지막 몬스터가 죽은 Tick에 마차도 부서졌다면 실패입니다 (D35).
+/// 실패를 먼저 검사하므로, 마지막 몬스터가 죽은 Tick에 마차도 부서졌다면 실패입니다.
 /// 플레이어가 한 명도 없는 방은 실패하지 않습니다.
 pub(crate) fn settle_outcome(phase: &mut Phase, world: &World, t: &Tuning) {
     if matches!(phase, Phase::Over { .. }) {

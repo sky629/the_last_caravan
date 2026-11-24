@@ -1,4 +1,4 @@
-//! 게임의 모든 수치를 이 파일 한 곳에 둡니다 (D21, D24).
+//! 게임의 모든 수치를 이 파일 한 곳에 둡니다.
 //!
 //! 시간은 초, 속도는 초당 타일 수로 적습니다. 그래서 `tick_hz`를 바꿔도 게임의 속도감이 유지됩니다.
 //! 초를 Tick으로 바꾸는 곳은 `Tuning::ticks` 하나이고, 게임 상태에는 정수 Tick만 저장합니다.
@@ -30,12 +30,12 @@ pub struct PlayerTuning {
     pub max_hp: u32,
     pub radius: f32,
     pub speed: f32,
-    /// 쓰러진 상태에서 기어가는 속도입니다 (D37).
+    /// 쓰러진 상태에서 기어가는 속도입니다.
     pub crawl_speed: f32,
     pub attack_damage: u32,
     /// 플레이어의 가장자리에서 몬스터의 가장자리까지 잰 근접 공격 거리입니다.
     pub attack_reach: f32,
-    /// 조준 방향을 기준으로 한 공격 부채꼴의 절반 각도입니다(도). 부채꼴 안의 적을 모두 공격합니다 (D16).
+    /// 조준 방향을 기준으로 한 공격 부채꼴의 절반 각도입니다(도). 부채꼴 안의 적을 모두 공격합니다.
     pub attack_half_angle_deg: f32,
     pub attack_cooldown_secs: f32,
 }
@@ -70,7 +70,7 @@ pub struct MonsterTuning {
     /// 몬스터의 가장자리에서 대상의 가장자리까지 잰 근접 공격 거리입니다.
     pub attack_reach: f32,
     pub attack_cooldown_secs: f32,
-    /// 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 감시탑을 쫓습니다 (D17).
+    /// 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 감시탑을 쫓습니다.
     /// 몬스터의 중심에서 대상의 가장자리까지 잰 거리입니다.
     pub aggro_range: f32,
     /// 몬스터끼리 겹쳤을 때 서로 밀려나는 최대 속도입니다. 걷는 속도와 더한 값으로 한 Tick에 움직이는 거리가
@@ -122,7 +122,7 @@ pub struct StructureTuning {
     pub range: f32,
     pub damage: u32,
     pub cooldown_secs: f32,
-    /// 수리는 「일정한 시간마다 HP 일정량」으로 정합니다. 그래서 Tick 속도와 관계없이 HP가 정수로 남습니다 (D48).
+    /// 수리는 「일정한 시간마다 HP 일정량」으로 정합니다. 그래서 Tick 속도와 관계없이 HP가 정수로 남습니다.
     pub repair_hp_per_pulse: u32,
     pub repair_pulse_secs: f32,
     /// 플레이어의 가장자리에서 시설의 가장자리까지 잰 수리 거리입니다.
@@ -147,7 +147,7 @@ impl StructureTable {
 pub struct WaveTuning {
     /// 모든 무리가 등장시키는 몬스터의 종류입니다.
     pub kind: MonsterKind,
-    /// 무리마다 몬스터의 수입니다. 길이가 무리의 수입니다 (D18).
+    /// 무리마다 몬스터의 수입니다. 길이가 무리의 수입니다.
     /// 무리는 겹치지 않으므로, 가장 큰 값이 동시에 존재하는 몬스터 수의 상한입니다.
     pub sizes: Vec<u32>,
     /// 원정이 시작된 뒤 첫 무리가 등장하기까지의 시간입니다.
@@ -158,9 +158,9 @@ pub struct WaveTuning {
     pub spawn_lanes: u32,
     /// 줄 사이의 간격입니다.
     pub spawn_lane_spacing: f32,
-    /// 한 무리를 모두 처치한 뒤 다음 무리가 등장하기까지의 시간입니다 (D45).
+    /// 한 무리를 모두 처치한 뒤 다음 무리가 등장하기까지의 시간입니다.
     pub between_secs: f32,
-    /// 원정의 결과를 보여 주는 시간입니다. 이 시간이 지나면 새 원정이 시작됩니다 (D20).
+    /// 원정의 결과를 보여 주는 시간입니다. 이 시간이 지나면 새 원정이 시작됩니다.
     pub restart_secs: f32,
 }
 
@@ -182,8 +182,8 @@ pub struct StructurePlacement {
     pub rect: Rect,
 }
 
-/// 고정된 맵 하나입니다 (D18). 좌표는 타일 단위입니다.
-/// 장애물은 정수 좌표에 놓아서, 클라이언트가 타일 단위로 나누어 그릴 수 있습니다 (C12).
+/// 고정된 맵 하나입니다. 좌표는 타일 단위입니다.
+/// 장애물은 정수 좌표에 놓아서, 클라이언트가 타일 단위로 나누어 그릴 수 있습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapSpec {
     pub width: f32,
