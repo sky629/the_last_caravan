@@ -6,16 +6,17 @@ use caravan_client_core::FpsMeter;
 
 use crate::net::ClientSession;
 
-/// 프레임 속도, 서버가 가장 최근에 보낸 Tick, 그 스냅샷의 몬스터 수를 기록합니다.
+/// 프레임 속도, 서버가 가장 최근에 보낸 Tick, 그 스냅샷의 몬스터와 탄환의 수를 기록합니다.
 pub fn report(time: Res<Time<Real>>, session: Res<ClientSession>, mut meter: Local<FpsMeter>) {
     let Some(fps) = meter.frame(time.elapsed_secs_f64()) else {
         return;
     };
     match session.0.newest_snapshot() {
         Some(snapshot) => info!(
-            "fps {fps:.0} | newest tick {} | monsters {}",
+            "fps {fps:.0} | newest tick {} | monsters {} | projectiles {}",
             snapshot.tick,
-            snapshot.monsters.len()
+            snapshot.monsters.len(),
+            snapshot.projectiles.len()
         ),
         None => info!("fps {fps:.0} | no snapshot yet"),
     }

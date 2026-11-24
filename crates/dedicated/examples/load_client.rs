@@ -1,5 +1,5 @@
 //! 부하 시험용 클라이언트입니다. Bevy 없이 한 방에 접속하고, Tick마다 입력을 보내고,
-//! 받은 스냅샷의 크기와 몬스터 수를 1초마다 기록합니다.
+//! 받은 스냅샷의 크기와 몬스터 수, 날아다니는 탄환의 수를 1초마다 기록합니다.
 //!
 //! 실행: `cargo run --release -p caravan_dedicated --example load_client -- --addr 127.0.0.1:7777 --room load --secs 60`
 //!
@@ -79,12 +79,13 @@ struct Window {
     largest: usize,
 }
 
-/// 실행 전체에서 몬스터가 가장 많았던 순간입니다.
+/// 실행 전체에서 몬스터가 가장 많았던 순간입니다. 탄환은 몬스터와 따로 가장 많았던 수를 셉니다.
 #[derive(Default)]
 struct Peak {
     monsters: usize,
     snapshot_bytes: usize,
     tick: u64,
+    projectiles: usize,
 }
 
 fn main() -> ExitCode {
@@ -147,11 +148,13 @@ fn run(options: &Options) -> Result<(), String> {
                     window.bytes += bytes.len();
                     window.largest = window.largest.max(bytes.len());
                     total_bytes += bytes.len();
+                    peak.projectiles = peak.projectiles.max(snapshot.projectiles.len());
                     if snapshot.monsters.len() > peak.monsters {
                         peak = Peak {
                             monsters: snapshot.monsters.len(),
                             snapshot_bytes: bytes.len(),
                             tick: snapshot.tick,
+                            projectiles: peak.projectiles,
                         };
                     }
                     latest = Some(snapshot);
@@ -199,32 +202,35 @@ fn run(options: &Options) -> Result<(), String> {
 
     let seconds = started.elapsed().as_secs_f64();
     eprintln!(
-        "summary: peak_monsters={} at tick {} snapshot_bytes_at_peak={} bytes_per_sec_at_peak_20hz={} average_bytes_per_sec_over_run={:.0}",
+        "summary: peak_monsters={} at tick {} snapshot_bytes_at_peak={} bytes_per_sec_at_peak_20hz={} average_bytes_per_sec_over_run={:.0} peak_projectiles={}",
         peak.monsters,
         peak.tick,
         peak.snapshot_bytes,
         peak.snapshot_bytes * 20,
-        total_bytes as f64 / seconds
+        total_bytes as f64 / seconds,
+        peak.projectiles
     );
     Ok(())
 }
 
 fn report_line(elapsed: Duration, window: &Window, latest: Option<&Snapshot>) -> String {
-    let (monsters, phase, expedition) = match latest {
+    let (monsters, projectiles, phase, expedition) = match latest {
         Some(snapshot) => (
             snapshot.monsters.len(),
+            snapshot.projectiles.len(),
             phase_name(snapshot),
             snapshot.expedition,
         ),
-        None => (0, "waiting".to_string(), 0),
+        None => (0, 0, "waiting".to_string(), 0),
     };
     format!(
-        "client t={:>5.1}s snapshots={} bytes={} largest={} monsters={} expedition={} phase={}",
+        "client t={:>5.1}s snapshots={} bytes={} largest={} monsters={} projectiles={} expedition={} phase={}",
         elapsed.as_secs_f32(),
         window.snapshots,
         window.bytes,
         window.largest,
         monsters,
+        projectiles,
         expedition,
         phase
     )

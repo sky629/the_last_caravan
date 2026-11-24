@@ -193,6 +193,7 @@ mod tests {
                 weapon: WireWeaponKind::Sword,
             }],
             monsters: Vec::new(),
+            projectiles: Vec::new(),
         });
         app.update();
     }

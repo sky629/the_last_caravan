@@ -1,11 +1,12 @@
-//! 짧게 보이는 효과입니다. 플레이어의 근접 공격, 감시탑의 사격, 감시탑이 놓일 타일과 건설이 거절된 타일을 선으로 그립니다.
+//! 짧게 보이는 효과입니다. 플레이어의 부채꼴 공격, 활의 탄환, 감시탑의 사격, 감시탑이 놓일 타일과 건설이 거절된 타일을 선으로 그립니다.
 //!
 //! 효과는 이벤트가 아니라 상태에서 그립니다. 스냅샷에 마지막 공격 Tick과 마지막 사격이 들어 있으므로,
-//! 화면에 그리는 Tick이 그 직후이면 효과를 그립니다. 그래서 모든 클라이언트가 같은 효과를 같은 때에 봅니다.
+//! 화면에 그리는 Tick이 그 직후이면 효과를 그립니다. 탄환은 스냅샷의 탄환 목록에서 그립니다.
+//! 그래서 모든 클라이언트가 같은 효과를 같은 때에 봅니다.
 
 use bevy::prelude::*;
-use caravan_client_core::{Frame, PlayerView, build_preview, effect_progress};
-use caravan_protocol::{WireLife, WireTowerState};
+use caravan_client_core::{Frame, PlayerView, ProjectileView, build_preview, effect_progress};
+use caravan_protocol::{WireDelivery, WireLife, WireTowerState, WireWeaponKind};
 use caravan_rules::{Tile, Vec2 as Ground};
 
 use crate::config;
@@ -19,7 +20,7 @@ pub fn configure_gizmos(mut store: ResMut<GizmoConfigStore>) {
     config.line.width = config::EFFECT_LINE_WIDTH;
 }
 
-/// 공격과 사격 효과, 감시탑이 놓일 타일, 내 건설이 거절된 타일을 그립니다.
+/// 공격과 탄환과 사격 효과, 감시탑이 놓일 타일, 내 건설이 거절된 타일을 그립니다.
 pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Gizmos) {
     let Some(frame) = &frame.0 else {
         return;
@@ -28,9 +29,13 @@ pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Giz
         let progress = player
             .last_attack_tick
             .and_then(|tick| effect_progress(frame.tick, tick, config::SWING_TICKS));
-        if let Some(progress) = progress {
-            draw_swing(&mut gizmos, player, progress);
+        let arc = swing_arc(&scene, player.weapon);
+        if let (Some(progress), Some((radius, half_angle))) = (progress, arc) {
+            draw_swing(&mut gizmos, player, progress, radius, half_angle);
         }
+    }
+    for projectile in &frame.projectiles {
+        draw_projectile(&mut gizmos, projectile);
     }
     draw_tower_shots(&mut gizmos, frame);
     let Some(me) = frame.player(scene.you) else {
@@ -62,18 +67,36 @@ fn draw_tile_outline(gizmos: &mut Gizmos, tile: Tile, color: Color) {
     gizmos.linestrip_2d(corners.map(convert::screen_pos), color);
 }
 
+/// 든 무기가 부채꼴로 공격하면 부채꼴의 반지름(타일)과 절반 각도(라디안)입니다. 입장 안내의 무기 표에서 구하므로 서버의 수치와 같습니다.
+/// 탄환으로 쏘는 무기에는 부채꼴이 없습니다. 판정은 서버가 하고, 이 부채꼴은 그림일 뿐입니다.
+fn swing_arc(scene: &Scene, weapon: WireWeaponKind) -> Option<(f32, f32)> {
+    match scene.delivery(weapon)? {
+        WireDelivery::Arc {
+            reach,
+            half_angle_deg,
+        } => Some((scene.player.radius + reach, half_angle_deg.to_radians())),
+        WireDelivery::Projectile => None,
+    }
+}
+
 /// 플레이어가 바라보는 방향의 부채꼴을 가슴 높이에 그립니다. 시간이 갈수록 옅어집니다.
-fn draw_swing(gizmos: &mut Gizmos, player: &PlayerView, progress: f32) {
+fn draw_swing(
+    gizmos: &mut Gizmos,
+    player: &PlayerView,
+    progress: f32,
+    radius: f32,
+    half_angle: f32,
+) {
     let lift = Vec2::new(0.0, config::PLAYER_BODY.y * 0.4);
     let color = config::SWING.with_alpha(1.0 - progress);
     let facing = player.facing.y.atan2(player.facing.x);
     let arc: Vec<Vec2> = (0..=config::SWING_ARC_STEPS)
         .map(|step| {
             let fraction = step as f32 / config::SWING_ARC_STEPS as f32;
-            let angle = facing + config::SWING_HALF_ANGLE * (2.0 * fraction - 1.0);
+            let angle = facing + half_angle * (2.0 * fraction - 1.0);
             let on_ground = Ground::new(
-                player.pos.x + config::SWING_REACH_TILES * angle.cos(),
-                player.pos.y + config::SWING_REACH_TILES * angle.sin(),
+                player.pos.x + radius * angle.cos(),
+                player.pos.y + radius * angle.sin(),
             );
             convert::screen_pos(on_ground) + lift
         })
@@ -84,6 +107,25 @@ fn draw_swing(gizmos: &mut Gizmos, player: &PlayerView, progress: f32) {
         gizmos.line_2d(center, last, color);
     }
     gizmos.linestrip_2d(arc, color);
+}
+
+/// 탄환의 선입니다. 머리는 탄환의 위치이고 꼬리는 날아온 쪽으로 `BULLET_TAIL_TILES`만큼 늘어납니다. 둘 다 가슴 높이입니다.
+/// 반환하는 값은 화면 좌표의 (꼬리, 머리)입니다.
+fn tracer(projectile: &ProjectileView) -> (Vec2, Vec2) {
+    let lift = Vec2::new(0.0, config::PLAYER_BODY.y * 0.4);
+    let tail_on_ground = Ground::new(
+        projectile.pos.x - projectile.facing.x * config::BULLET_TAIL_TILES,
+        projectile.pos.y - projectile.facing.y * config::BULLET_TAIL_TILES,
+    );
+    (
+        convert::screen_pos(tail_on_ground) + lift,
+        convert::screen_pos(projectile.pos) + lift,
+    )
+}
+
+fn draw_projectile(gizmos: &mut Gizmos, projectile: &ProjectileView) {
+    let (tail, head) = tracer(projectile);
+    gizmos.line_2d(tail, head, config::BULLET);
 }
 
 /// 서 있는 감시탑이 마지막으로 쏜 몬스터까지 선을 긋습니다. 그 몬스터가 이미 사라졌으면 그리지 않습니다.
@@ -110,5 +152,50 @@ fn draw_tower_shots(gizmos: &mut Gizmos, frame: &Frame) {
         let from = convert::screen_pos(center) + Vec2::new(0.0, config::TOWER_HEIGHT);
         let to = convert::screen_pos(target.pos) + Vec2::new(0.0, config::MONSTER_BODY.y * 0.5);
         gizmos.line_2d(from, to, config::SHOT.with_alpha(1.0 - progress));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn arrow(x: f32, y: f32, facing_x: f32, facing_y: f32) -> ProjectileView {
+        ProjectileView {
+            id: 1,
+            pos: Ground::new(x, y),
+            facing: Ground::new(facing_x, facing_y),
+        }
+    }
+
+    /// 화면 좌표에서 가슴 높이를 빼고 지면 위치로 되돌립니다.
+    fn on_ground(screen: Vec2) -> Ground {
+        convert::ground_pos(screen - Vec2::new(0.0, config::PLAYER_BODY.y * 0.4))
+    }
+
+    #[test]
+    fn the_head_of_the_line_is_at_the_projectile_and_the_tail_is_behind_it_along_its_direction() {
+        let (tail, head) = tracer(&arrow(10.0, 8.0, 0.0, 1.0));
+
+        let head_on_ground = on_ground(head);
+        let tail_on_ground = on_ground(tail);
+        assert!((head_on_ground.x - 10.0).abs() < 1e-3 && (head_on_ground.y - 8.0).abs() < 1e-3);
+        assert!((tail_on_ground.x - 10.0).abs() < 1e-3, "{tail_on_ground:?}");
+        assert!(
+            (tail_on_ground.y - (8.0 - config::BULLET_TAIL_TILES)).abs() < 1e-3,
+            "{tail_on_ground:?}"
+        );
+    }
+
+    #[test]
+    fn a_diagonal_projectile_has_a_tail_of_the_same_length_on_the_ground() {
+        let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+        let (tail, head) = tracer(&arrow(10.0, 8.0, diagonal, diagonal));
+
+        let length = (on_ground(head) - on_ground(tail)).length();
+
+        assert!(
+            (length - config::BULLET_TAIL_TILES).abs() < 1e-3,
+            "{length}"
+        );
     }
 }

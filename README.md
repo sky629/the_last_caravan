@@ -265,24 +265,25 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 17. `crates/ws_client/src/lib.rs`는 외부 라이브러리(ewebsock)를 이 프로젝트의 트레이트 뒤에 감싸는 어댑터이고, PC와 웹에서 같은 코드가 동작합니다.
 18. `crates/dedicated/src/main.rs`는 실행 인자를 해석하고, 다른 트레이트 객체를 감싸서 메시지를 기록하는 `DebugTransport`를 끼운 뒤, `pump`를 부르고 쉬는 서버의 반복을 실행합니다.
 19. `crates/client_core/src/session.rs`의 `Session`은 열거형으로 만든 상태 기계이며, 방에 들어간 뒤에만 필요한 값을 `InRoom(Joined)` 안에만 둡니다.
-20. `crates/client_core/src/interp.rs`에서는 스냅샷을 보관하고 일정한 지연을 두고 두 스냅샷 사이를 보간(interpolation)하는 방법을 배웁니다.
+20. `crates/client_core/src/interp.rs`에서는 스냅샷을 보관하고 일정한 지연을 두고 두 스냅샷 사이를 보간(interpolation)하는 방법을 배웁니다. 탄환은 번호로 앞뒤 스냅샷의 같은 탄환을 찾아서 위치를 섞고, 앞쪽 스냅샷에만 있는 탄환(끝난 탄환)은 끝난 자리에 그립니다.
 21. `crates/client_core/src/iso.rs`는 지면 좌표를 쿼터뷰 화면 좌표로 바꾸는 투영과 그 역변환, 그리고 화면에서 아래쪽에 있는 개체를 앞에 그리는 순서(`depth`)를 다룹니다. `crates/client_core/src/camera.rs`는 카메라가 내 캐릭터를 따라가는 속도와, 화면 밖의 마차를 가리키는 표시의 자리를 Bevy 없이 계산하는 순수 함수(`follow`, `wagon_marker`)이고, `crates/client_core/src/preview.rs`는 건설 키를 누르기 전에 감시탑이 놓일 타일을 서버와 같은 함수(`front_tile`)로 정합니다.
 22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭과 `Q`를 잃지 않도록 기억하고 입력에 한 번만 싣습니다.
 23. `crates/client/src/main.rs`에서는 Bevy의 `App`, 플러그인, `.chain()`으로 순서를 고정한 시스템 목록, 그리고 `#[cfg(target_arch = "wasm32")]`로 PC와 웹의 코드를 나누는 조건부 컴파일을 봅니다.
 24. `crates/client/src/net.rs`는 Bevy의 리소스와 시스템 매개변수(`Res`, `ResMut`, `NonSendMut`)의 예이고, 다른 스레드로 옮길 수 없는 웹의 WebSocket을 non-send 리소스로 보관합니다.
-25. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/supplies.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
+25. `crates/client/src/effects.rs`는 부채꼴 공격과 탄환과 감시탑의 사격을 상태에서 선으로 그리고, 부채꼴의 거리와 각도는 입장 안내의 무기 표에서 읽습니다. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/supplies.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
 26. `crates/client/src/hud.rs`는 `caravan_client_core::Hud`가 정한 내용을 Bevy UI 노드에 옮깁니다.
 
 ## 현재의 한계
 
 - 클라이언트 예측이 없습니다. 내 캐릭터도 서버의 스냅샷으로만 움직이므로, 키를 누른 뒤 서버까지의 왕복 시간과 보간 지연(100ms)이 지나야 화면에서 움직입니다.
 - 재접속이 없습니다. 접속이 끊기면 화면에 `DISCONNECTED`와 이유가 표시되고, 서버는 그 플레이어의 캐릭터를 즉시 지웁니다. 클라이언트를 다시 실행하면 새 플레이어로 참가합니다.
-- 서버는 Tick마다 방 전체의 스냅샷(모든 플레이어, 몬스터, 시설)을 방의 모든 접속에 보냅니다. 바뀐 부분만 보내지 않습니다.
+- 서버는 Tick마다 방 전체의 스냅샷(모든 플레이어, 몬스터, 시설, 날아가는 탄환)을 방의 모든 접속에 보냅니다. 바뀐 부분만 보내지 않습니다.
 - 브라우저 탭이 백그라운드로 가면 브라우저가 페이지의 실행을 제한해서 입력 전송이 멈춥니다. 서버는 입력 없이 10 Tick(0.5초)보다 오래 지나면 그 캐릭터를 아무것도 누르지 않은 상태로 움직이고, 메시지 없이 30초가 지나면 접속을 닫고 플레이어를 방에서 뺍니다. 탭으로 돌아와도 다시 접속하지 않으므로 페이지를 새로 고쳐야 합니다.
 - 서버는 TLS를 처리하지 않으므로 `ws://` 접속만 받습니다.
 - 서버의 기본 주소와 `trunk serve`의 주소(`crates/client/Trunk.toml`)는 `127.0.0.1`이므로, 기본 설정에서는 같은 컴퓨터에서만 접속할 수 있습니다.
 - 한 방의 최대 인원은 4명입니다(`crates/rules/src/tuning.rs`의 `max_players`). 가득 찬 방에 접속한 클라이언트는 거절되고 화면에 이유가 표시됩니다.
 - 로비 화면이 없으므로 방 코드는 실행할 때 지정합니다.
 - 맵은 64 x 64 타일 하나이고, 몬스터는 한 종류, 시설은 감시탑 하나, 자원은 한 종류입니다.
-- 화면의 문구는 영어입니다. Bevy의 기본 글꼴이 한글을 표시하지 못하기 때문입니다.
+- 화면의 문구는 영어입니다. Bevy의 기본 글꼴이 한글을 표시하지 못하기 때문입니다. 무기의 이름도 영어입니다.
+- 탄환과 공격 효과는 선으로 그립니다.
 - `trunk serve`와 `trunk build`는 최적화하지 않은 디버그 빌드를 만들므로 wasm 파일이 약 110MB입니다.

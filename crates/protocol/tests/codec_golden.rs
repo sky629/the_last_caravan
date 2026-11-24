@@ -12,11 +12,11 @@
 
 use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RejectReason, ServerMsg,
-    Snapshot, Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
-    WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile,
-    WirePlayer, WirePos, WireRect, WireRepairTarget, WireShot, WireTile, WireTower, WireTowerState,
-    WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server, encode_client,
-    encode_server,
+    Snapshot, WeaponInfo, Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireDelivery,
+    WireInteraction, WireLife, WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome,
+    WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WireRect, WireRepairTarget, WireShot,
+    WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo,
+    decode_client, decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -104,6 +104,19 @@ fn welcome_carries_the_fixed_world() {
                     radius: 0.25,
                     max_hp: 60,
                 }],
+                weapons: vec![
+                    WeaponInfo {
+                        kind: WireWeaponKind::Sword,
+                        delivery: WireDelivery::Arc {
+                            reach: 1.0,
+                            half_angle_deg: 60.0,
+                        },
+                    },
+                    WeaponInfo {
+                        kind: WireWeaponKind::Bow,
+                        delivery: WireDelivery::Projectile,
+                    },
+                ],
             },
         }),
         &[
@@ -128,6 +141,11 @@ fn welcome_carries_the_fixed_world() {
             0x00, // Grunt
             0x00, 0x00, 0x80, 0x3E, // radius 0.25
             0x3C, // max_hp 60
+            0x02, // weapons: 길이 2
+            0x00, 0x00, // Sword, Arc
+            0x00, 0x00, 0x80, 0x3F, // reach 1.0
+            0x00, 0x00, 0x70, 0x42, // half_angle_deg 60.0
+            0x01, 0x01, // Bow, Projectile
         ],
     );
 }
@@ -232,6 +250,11 @@ fn a_busy_snapshot_matches_golden_bytes() {
             facing: WireAngle(128),
             hp: 60,
         }],
+        projectiles: vec![WireProjectile {
+            id: 9,
+            pos: WirePos { x: 1600, y: 1280 },
+            facing: WireAngle(32),
+        }],
     };
     assert_server_wire(
         ServerMsg::Snapshot(snapshot),
@@ -277,6 +300,9 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x80, 0x18, 0x80, 0x01, // pos 3072, 128
             0x80, // facing 128
             0x3C, // hp 60
+            0x01, // projectiles: 길이 1
+            0x09, 0xC0, 0x0C, 0x80, 0x0A, // id 9, pos 1600, 1280
+            0x20, // facing 32
         ],
     );
 }
@@ -294,6 +320,7 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
         piles: vec![],
         players: vec![],
         monsters: vec![],
+        projectiles: vec![],
     }
 }
 
@@ -301,7 +328,7 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
 fn quiet_bytes(phase: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0x02, 0x01, 0x01]; // Snapshot, tick 1, expedition 1
     bytes.extend_from_slice(phase);
-    bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // wagon 0/0, stash 0, 빈 목록 다섯 개
+    bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // wagon 0/0, stash 0, 빈 목록 여섯 개
     bytes
 }
 
@@ -468,6 +495,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x01, // weapon: Bow (쓰러지거나 죽어도 무기를 듭니다)
             0x00, // monsters: 길이 0
+            0x00, // projectiles: 길이 0
         ],
     );
 }

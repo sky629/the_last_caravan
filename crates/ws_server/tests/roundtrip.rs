@@ -42,6 +42,7 @@ fn snapshot_of(monsters: u32) -> Snapshot {
                 hp: 60,
             })
             .collect(),
+        projectiles: vec![],
     }
 }
 

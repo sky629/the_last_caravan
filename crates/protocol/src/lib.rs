@@ -30,9 +30,10 @@ pub use room_code::{RoomCode, RoomCodeError};
 pub use snapshot::{
     Snapshot, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireMonster,
     WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
-    WireRepairTarget, WireShot, WireTower, WireTowerState, WireWagon, WireWeaponKind,
+    WireProjectile, WireRepairTarget, WireShot, WireTower, WireTowerState, WireWagon,
+    WireWeaponKind,
 };
 pub use transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};
 pub use units::{WireAngle, WirePos, WireRect, WireTile};
-pub use welcome::{MonsterKindInfo, NodeInfo, Welcome, WorldInfo};
+pub use welcome::{MonsterKindInfo, NodeInfo, WeaponInfo, Welcome, WireDelivery, WorldInfo};
 pub use welcome_check::check_welcome;

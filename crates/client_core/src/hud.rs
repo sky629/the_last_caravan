@@ -522,6 +522,7 @@ mod tests {
             }],
             players,
             monsters: Vec::new(),
+            projectiles: Vec::new(),
         }
     }
 

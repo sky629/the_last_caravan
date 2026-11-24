@@ -10,7 +10,8 @@
 
 use caravan_rules::{
     BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Monster, MonsterKind, NightStep,
-    Outcome, Phase, Pile, Player, RepairTarget, Sim, Tower, TowerState, Tuning, WeaponKind,
+    Outcome, Phase, Pile, Player, Projectile, RepairTarget, Sim, Tower, TowerState, Tuning,
+    WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +38,8 @@ pub struct Snapshot {
     pub players: Vec<WirePlayer>,
     /// 번호가 작은 몬스터부터입니다.
     pub monsters: Vec<WireMonster>,
+    /// 날아가는 탄환과 이번 Tick에 끝난 탄환입니다. 번호가 작은 탄환부터입니다. 끝난 탄환이 한 번 실리므로 클라이언트가 탄환이 닿은 자리까지 그립니다.
+    pub projectiles: Vec<WireProjectile>,
 }
 
 /// 원정의 단계입니다. 단계마다 그 단계에서 표시할 값만 가집니다.
@@ -274,6 +277,15 @@ impl WireMonsterKind {
     }
 }
 
+/// 탄환 하나입니다. 날아가는 방향으로 짧은 선을 그리는 데 필요한 값만 보냅니다. 피해량과 반지름은 보내지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireProjectile {
+    pub id: u32,
+    pub pos: WirePos,
+    /// 날아가는 방향입니다.
+    pub facing: WireAngle,
+}
+
 impl Snapshot {
     pub fn from_sim(sim: &Sim) -> Snapshot {
         let tuning = sim.tuning();
@@ -297,6 +309,7 @@ impl Snapshot {
                 .map(|player| wire_player(sim, player))
                 .collect(),
             monsters: sim.monsters().map(wire_monster).collect(),
+            projectiles: sim.projectiles().map(wire_projectile).collect(),
         }
     }
 }
@@ -443,6 +456,14 @@ fn wire_interaction(sim: &Sim, player: &Player, interaction: &Interaction) -> Wi
 /// 진행도가 0.0에서 1.0 사이라는 약속을 전송 형식에서 지킵니다.
 fn clamp_progress(progress: f32) -> f32 {
     progress.clamp(0.0, 1.0)
+}
+
+fn wire_projectile(projectile: &Projectile) -> WireProjectile {
+    WireProjectile {
+        id: projectile.id.0,
+        pos: WirePos::from_tiles(projectile.pos),
+        facing: WireAngle::from_direction(projectile.dir),
+    }
 }
 
 fn wire_monster(monster: &Monster) -> WireMonster {

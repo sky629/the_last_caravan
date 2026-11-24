@@ -167,6 +167,7 @@ mod tests {
             piles,
             players: Vec::new(),
             monsters: Vec::new(),
+            projectiles: Vec::new(),
         });
         app.update();
     }
