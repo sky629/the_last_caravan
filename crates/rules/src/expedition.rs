@@ -3,9 +3,12 @@
 //! 마지막 밤을 막거나 실패하면 결과를 보여 주고 새 원정을 시작합니다.
 //!
 //! 단계를 바꾸는 곳은 이 파일의 `advance_phase`와 `settle_outcome` 둘뿐입니다.
-//! 단계가 바뀔 때 함께 일어나는 일(낮이 시작되면 모든 플레이어가 회복됨)도 단계를 바꾸는 바로 그 자리에서 부르므로, 단계와 그 일이 어긋날 수 없습니다.
+//! 단계가 바뀔 때 함께 일어나는 일(낮이 시작되면 모든 플레이어가 회복되고 낮의 몬스터가 놓이고, 밤이 되면 낮의 몬스터가 마차를 향함)도
+//! 단계를 바꾸는 바로 그 자리에서 부르므로, 단계와 그 일이 어긋날 수 없습니다.
+//! 첫날의 낮은 `Sim`이 원정을 시작하면서 `begin_day`를 불러 시작합니다.
 
 use crate::math::Vec2;
+use crate::monster::Order;
 use crate::resources;
 use crate::spawn::SpawnPlan;
 use crate::tuning::Tuning;
@@ -100,6 +103,7 @@ pub(crate) fn advance_phase(
                     ticks_left: ticks_left - 1,
                 }
             } else {
+                nightfall(world);
                 Phase::Night {
                     day,
                     step: NightStep::Waiting {
@@ -124,7 +128,7 @@ pub(crate) fn advance_phase(
                     day: next_day,
                     ticks_left: t.ticks(t.cycle.day_secs),
                 };
-                begin_day(world, t);
+                begin_day(world, spawns, t);
             }
             Advance::Simulate
         }
@@ -162,16 +166,27 @@ pub(crate) fn advance_phase(
     }
 }
 
-/// 낮이 시작됩니다. 밤을 막은 뒤의 새 날에 부릅니다.
+/// 낮이 시작됩니다. 원정의 첫날과 밤을 막은 뒤의 새 날, 하루가 시작되는 모든 때에 한 번씩 부릅니다.
 ///
 /// 모든 플레이어가 최대 HP의 살아 있는 상태가 됩니다. 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다.
-/// 위치, 하고 있던 일, 든 자원은 그대로입니다. 모든 채집 지점이 가득 다시 채워집니다.
+/// 위치, 하고 있던 일, 든 자원은 그대로입니다. 모든 채집 지점이 가득 다시 채워지고, 지점마다 낮의 몬스터가 자리를 지키며 섭니다.
+/// 밤을 막고 나면 몬스터가 모두 사라졌으므로 낮의 몬스터가 겹쳐서 놓이지 않습니다.
 /// 감시탑과 그 HP, 마차의 HP, 보관함의 자원, 떨어진 자원은 이 함수가 건드리지 않으므로 다음 날로 그대로 이어집니다.
-fn begin_day(world: &mut World, t: &Tuning) {
+pub(crate) fn begin_day(world: &mut World, spawns: &SpawnPlan, t: &Tuning) {
     for player in world.players.values_mut() {
         player.restore_for_new_day(t);
     }
     resources::refill_nodes(world, t);
+    for post in spawns.guard_posts() {
+        world.spawn_monster(t.guards.kind, Order::Guard { post }, post.center(), t);
+    }
+}
+
+/// 밤이 시작됩니다. 낮에 처치하지 않은 몬스터는 자리를 떠나 마차를 향하고, 그때부터 밤의 몬스터와 같이 움직입니다.
+fn nightfall(world: &mut World) {
+    for monster in &mut world.monsters {
+        monster.order = Order::Raid;
+    }
 }
 
 /// 나타날 몬스터가 남아 있고 때가 되었으면 한 마리를 등장시킵니다. 그렇지 않으면 카운트다운만 진행합니다.
@@ -209,7 +224,7 @@ fn spawn_next(phase: &mut Phase, world: &mut World, spawns: &SpawnPlan, t: &Tuni
     };
     let nth = plan.count - to_spawn;
     let spot: Vec2 = spawns.night_spot(t.nights.wave_serial(day, wave), nth);
-    world.spawn_monster(plan.kind, spot, t);
+    world.spawn_monster(plan.kind, Order::Raid, spot, t);
     *phase = fighting(
         to_spawn - 1,
         t.ticks(t.nights.spawn_interval_secs).saturating_sub(1),

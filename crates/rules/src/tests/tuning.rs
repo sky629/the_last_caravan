@@ -128,6 +128,51 @@ fn a_gather_node_must_be_on_a_free_tile_of_the_map_outside_the_village() {
 }
 
 #[test]
+fn a_node_with_too_little_room_for_its_guards_is_rejected() {
+    let mut t = Tuning::default();
+    // 지도의 구석 (0, 0)에는 이웃한 빈 타일이 셋뿐입니다. 하지만 마을 밖이어야 하므로 마을의 범위를 줄입니다.
+    t.village.build_range = 2.0;
+    t.nights.spawn_distance = 18.0;
+    t.map.nodes = vec![Tile::new(0, 0)];
+    t.guards.per_node = 3;
+    assert_eq!(t.validate(), Ok(()), "three neighbours, three guards");
+
+    t.guards.per_node = 4;
+    let why = t.validate().expect_err("a fourth guard has no tile");
+    assert!(why.contains("room for only 3 of the 4 guards"), "{why}");
+
+    t.guards.per_node = 0;
+    assert_eq!(t.validate(), Ok(()), "no guards need no room");
+}
+
+#[test]
+fn two_nodes_do_not_share_a_guard_tile() {
+    let mut t = Tuning::default();
+    t.village.build_range = 2.0;
+    t.nights.spawn_distance = 18.0;
+    // 지점 (0, 0)은 이웃한 빈 타일 (1, 0), (0, 1), (1, 1)을 모두 쓰고, 지점 (2, 0)은 오른쪽이 막혀서 이웃이 (1, 0), (2, 1), (1, 1)뿐입니다.
+    t.map.nodes = vec![Tile::new(0, 0), Tile::new(2, 0)];
+    t.map.obstacles = vec![Rect::new(3.0, 0.0, 4.0, 2.0)];
+    t.guards.per_node = 2;
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "(2, 1) and the shared (1, 0) is enough"
+    );
+
+    t.guards.per_node = 3;
+    let why = t.validate().expect_err("the shared tiles are taken");
+    assert!(why.contains("room for only 1 of the 3 guards"), "{why}");
+}
+
+#[test]
+fn a_negative_chase_range_is_rejected() {
+    let mut t = Tuning::default();
+    t.guards.chase_range = -1.0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
 fn resource_numbers_that_make_gathering_meaningless_are_rejected() {
     let mut t = Tuning::default();
     t.resources.carry_capacity = 0;

@@ -11,7 +11,7 @@ use crate::monster::Monster;
 use crate::player::{Life, Player};
 use crate::sim::Sim;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::{MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
+use crate::tuning::{GuardTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
 use crate::world::Tile;
 
 pub(crate) struct Scenario {
@@ -20,8 +20,9 @@ pub(crate) struct Scenario {
 }
 
 impl Scenario {
-    /// 장애물이 없는 20 x 20 맵입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
+    /// 장애물과 채집 지점이 없는 20 x 20 맵입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
     /// 낮이 끝나지 않으므로 무리가 저절로 나타나지 않고, 몬스터는 테스트가 `monster_at`으로 놓은 것뿐입니다.
+    /// 채집 지점을 더해도 낮의 몬스터는 없습니다(`with_cycle`). 낮의 몬스터를 시험하는 테스트가 `guards.per_node`를 직접 정합니다.
     pub fn open_field() -> Scenario {
         Scenario::with_tuning(|_| {})
     }
@@ -37,7 +38,7 @@ impl Scenario {
     }
 
     /// 낮과 밤이 정해진 시간에 저절로 흐르는 시나리오입니다. `open_field`의 맵을 쓰고, 밤의 몬스터는 마차에서 12타일 떨어진 곳에 나타납니다.
-    /// 원정의 진행을 확인하는 테스트가 씁니다.
+    /// 낮의 몬스터는 없습니다. 원정의 진행을 확인하는 테스트가 씁니다.
     pub fn with_cycle(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
         let defaults = Tuning::default();
         Scenario::started(
@@ -54,6 +55,10 @@ impl Scenario {
                 nights: NightTuning {
                     spawn_distance: 12.0,
                     ..defaults.nights.clone()
+                },
+                guards: GuardTuning {
+                    per_node: 0,
+                    ..defaults.guards.clone()
                 },
                 ..defaults
             },

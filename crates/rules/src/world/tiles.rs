@@ -216,6 +216,16 @@ impl TileMap {
         None
     }
 
+    /// `tile`에 이웃한 여덟 타일 가운데 비어 있는 타일입니다. 상하좌우가 먼저이고 대각선이 뒤입니다.
+    /// 막힌 타일(채집 지점) 둘레에서 서 있을 자리를 찾을 때 씁니다. 대각선 걸음의 제약(`neighbours`)은 없습니다.
+    pub fn free_around(&self, tile: Tile) -> Vec<Tile> {
+        OFFSETS
+            .iter()
+            .filter_map(|(dx, dy)| tile.step(*dx, *dy))
+            .filter(|next| self.is_free(*next))
+            .collect()
+    }
+
     /// 한 걸음에 갈 수 있는 이웃 타일 여덟 곳 가운데 비어 있는 곳입니다. 앞의 네 칸이 상하좌우입니다.
     /// 대각선 걸음은 그 옆의 상하좌우 두 타일이 모두 비어 있을 때만 허용하므로, 경로가 막힌 타일의 모서리를 가로지르지 않습니다.
     pub fn neighbours(&self, tile: Tile) -> [Option<Tile>; 8] {

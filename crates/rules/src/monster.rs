@@ -1,4 +1,7 @@
 //! 몬스터입니다. 목표를 고르고, 흐름장을 따라 걸어가고, 가까이 가면 공격합니다.
+//!
+//! 몬스터에게는 명령(`Order`)이 있습니다. 낮에 채집 지점 곁에 놓인 몬스터는 자리를 지키고(`Guard`),
+//! 밤에 나타난 몬스터와 밤이 된 뒤의 낮의 몬스터는 마차를 향합니다(`Raid`). 명령을 바꾸는 곳은 `expedition::nightfall` 하나입니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,6 +19,7 @@ pub struct Monster {
     pub id: MonsterId,
     pub kind: MonsterKind,
     pub team: Team,
+    pub order: Order,
     pub pos: Vec2,
     pub facing: Vec2,
     /// 존재하는 동안에는 항상 1 이상입니다. 0이 되면 `World::apply_hits`가 제거합니다.
@@ -26,12 +30,28 @@ pub struct Monster {
     pub last_attack_tick: Option<u64>,
 }
 
+/// 몬스터가 받은 명령입니다. 종류(`MonsterKind`)가 「어떤 몬스터인가」라면, 명령은 「지금 무엇을 하라고 놓였는가」입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Order {
+    /// `post`를 지킵니다. 자리에서 `chase_range` 안에 들어온 플레이어를 쫓고, 아무도 없으면 자리로 돌아갑니다.
+    Guard { post: Tile },
+    /// 마차를 향합니다. 가는 길에 `aggro_range` 안에 들어온 플레이어나 감시탑을 쫓습니다.
+    Raid,
+}
+
 impl Monster {
-    pub(crate) fn new(id: MonsterId, kind: MonsterKind, pos: Vec2, t: &Tuning) -> Monster {
+    pub(crate) fn new(
+        id: MonsterId,
+        kind: MonsterKind,
+        order: Order,
+        pos: Vec2,
+        t: &Tuning,
+    ) -> Monster {
         Monster {
             id,
             kind,
             team: Team::HORDE,
+            order,
             pos,
             facing: Vec2::new(0.0, 1.0),
             hp: t.monsters.get(kind).max_hp,
@@ -51,10 +71,10 @@ impl Monster {
     }
 }
 
-/// 쫓기는 플레이어가 서 있는 타일마다 만든 흐름장입니다. 플레이어는 움직이므로 마차와 감시탑처럼 한 번에 만들어 둘 수 없습니다.
+/// 쫓기는 플레이어가 서 있는 타일과 지키는 자리의 타일마다 만든 흐름장입니다. 플레이어는 움직이므로 마차와 감시탑처럼 한 번에 만들어 둘 수 없습니다.
 /// 마차와 감시탑을 향하는 흐름장은 모든 몬스터가 공유하는 `Paths`에 있으므로 여기에 없습니다.
 ///
-/// 표는 도착 타일을 키로 하므로, 한 타일에 있는 플레이어를 쫓는 몬스터가 여럿이어도 표는 하나입니다.
+/// 표는 도착 타일을 키로 하므로, 같은 타일을 향하는 몬스터가 여럿이어도 표는 하나입니다.
 /// 세계의 배치(`layout_revision`)가 바뀌면 낡은 것으로 보고 다시 만들고, 이번 Tick에 필요 없는 표는 버립니다.
 pub(crate) struct TileFields {
     entries: BTreeMap<Tile, (u64, FlowField)>,
@@ -72,6 +92,7 @@ impl TileFields {
             .iter()
             .filter_map(|goal| match goal {
                 Goal::Player(id) => chase_tile(world, *id),
+                Goal::Post(tile) => Some(*tile),
                 Goal::Tower | Goal::Wagon => None,
             })
             .collect();
@@ -111,6 +132,8 @@ enum Goal {
     /// 걸어서 가장 가까운 서 있는 감시탑입니다. 어느 감시탑을 공격할지는 공격이 닿는 거리에 들어온 뒤에 정합니다.
     Tower,
     Wagon,
+    /// 지키는 자리로 돌아갑니다. 공격할 대상이 없습니다.
+    Post(Tile),
 }
 
 /// 한 몬스터가 이번 Tick에 하기로 결정한 일입니다.
@@ -184,14 +207,42 @@ pub(crate) fn monsters_act(
 }
 
 /// 몬스터의 목표를 고릅니다. 몬스터는 목표를 기억하지 않고 Tick마다 새로 고릅니다.
-/// 이 한 함수가 「쫓다가 범위를 벗어나면 다시 마차로」, 「쓰러지거나 사망한 플레이어는 대상이 아님」,
-/// 「파괴된 감시탑은 대상이 아님」을 정합니다.
+/// 이 한 함수가 「쫓다가 범위를 벗어나면 다시 마차로(밤) 또는 자리로(낮)」, 「쓰러지거나 사망한 플레이어는 대상이 아님」,
+/// 「파괴된 감시탑은 대상이 아님」을 정합니다. 명령(`Order`)이 어느 쪽 규칙을 쓸지 정합니다.
+fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
+    match monster.order {
+        Order::Raid => raid_goal(world, monster, ctx, paths),
+        Order::Guard { post } => guard_goal(world, monster, post, ctx),
+    }
+}
+
+/// 자리를 지키는 몬스터의 목표입니다. 자리의 중심에서 `chase_range` 안에 있고 몬스터와 적대하는 살아 있는 플레이어 가운데
+/// 몬스터에게 가장 가까운 플레이어를 쫓고, 없으면 자리로 돌아갑니다. 범위를 몬스터가 아니라 자리에서 재므로,
+/// 플레이어가 자리에서 멀어지면 쫓아 나오던 몬스터가 곧바로 돌아서고 자리에서 계속 멀어지지 않습니다.
+fn guard_goal(world: &World, monster: &Monster, post: Tile, ctx: &Ctx) -> Goal {
+    let chase_range = ctx.t.guards.chase_range;
+    let nearest = world
+        .players
+        .values()
+        .filter(|player| player.is_alive() && monster.team.is_hostile_to(player.team))
+        .filter(|player| post.center().distance(player.pos) <= chase_range)
+        .min_by(|a, b| {
+            let (da, db) = (monster.pos.distance(a.pos), monster.pos.distance(b.pos));
+            da.total_cmp(&db)
+        });
+    match nearest {
+        Some(player) => Goal::Player(player.id),
+        None => Goal::Post(post),
+    }
+}
+
+/// 마차를 향하는 몬스터의 목표입니다.
 ///
 /// 후보는 추적 거리(`aggro_range`) 안에 있고 몬스터와 적대하는 살아 있는 플레이어와, 걸어서 추적 거리 안에 있는 서 있는 감시탑입니다.
 /// 플레이어까지의 거리는 직선으로 재고, 감시탑까지의 거리는 감시탑 흐름장의 걸음 수로 잽니다.
 /// 그래서 벽 너머에 있는 감시탑을 쫓아서 돌아가지 않습니다.
 /// 후보 가운데 가장 가까운 대상을 고르고, 후보가 없으면 마차를 고릅니다.
-fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
+fn raid_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
     let t = ctx.t;
     let aggro_range = t.monsters.get(monster.kind).aggro_range;
     let mut best: Option<(f32, Goal)> = None;
@@ -232,6 +283,14 @@ fn plan(
     let t = ctx.t;
     let monster = &world.monsters[index];
     let kind = t.monsters.get(monster.kind);
+    if let Goal::Post(post) = goal {
+        let walk = walk_to_post(post, monster, world, fields, t);
+        return Action {
+            hit: None,
+            heading: walk.normalize_or_zero(),
+            step: crowd_step(index, walk, world, ctx, neighbours),
+        };
+    }
     let Some((target, body)) = approached(goal, world, monster, t) else {
         return Action {
             hit: None,
@@ -249,6 +308,7 @@ fn plan(
             Goal::Wagon => Some(paths.wagon()),
             Goal::Tower => Some(paths.towers()),
             Goal::Player(id) => chase_tile(world, id).and_then(|tile| fields.get(tile)),
+            Goal::Post(post) => fields.get(post),
         };
         // 흐름장이 알려 주는 다음 타일이 없으면(도착 타일 안이거나 길이 없으면) 목표의 가장 가까운 점으로 곧바로 걸어갑니다.
         let aim = field
@@ -267,6 +327,29 @@ fn plan(
     }
 }
 
+/// 지키는 자리로 돌아가는 한 걸음입니다. 길은 자리를 도착 타일로 하는 흐름장이 알려 주고, 자리의 중심에 닿으면 멈춥니다.
+/// 걸음이 남은 거리보다 길면 남은 거리만큼만 걸으므로, 자리를 지나쳤다가 되돌아오는 떨림이 없습니다.
+fn walk_to_post(
+    post: Tile,
+    monster: &Monster,
+    world: &World,
+    fields: &TileFields,
+    t: &Tuning,
+) -> Vec2 {
+    let center = post.center();
+    let aim = fields
+        .get(post)
+        .and_then(|field| field.next_waypoint(&world.tiles, monster.pos))
+        .unwrap_or(center);
+    let toward = aim - monster.pos;
+    let reach = monster.stats(t).move_speed * t.dt();
+    if toward.length() <= reach {
+        toward
+    } else {
+        toward.normalize_or_zero() * reach
+    }
+}
+
 /// 몬스터가 공격하려고 다가가는 대상과 그 모양입니다. 대상이 사라졌으면 `None`입니다.
 /// 감시탑을 향하는 몬스터는 직선으로 가장 가까운 서 있는 감시탑을 대상으로 삼습니다.
 /// 걸어서 닿는 감시탑은 흐름장이 안내하고, 공격할 감시탑은 닿는 거리에 들어온 뒤에야 의미가 있기 때문입니다.
@@ -274,6 +357,7 @@ fn approached(goal: Goal, world: &World, monster: &Monster, t: &Tuning) -> Optio
     let target = match goal {
         Goal::Player(id) => Target::Player(id),
         Goal::Wagon => Target::Wagon,
+        Goal::Post(_) => return None,
         Goal::Tower => {
             let nearest = world
                 .towers

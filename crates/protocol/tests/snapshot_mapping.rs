@@ -61,7 +61,12 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
         "day_secs is 90, shown as seconds and not as ticks"
     );
     assert_eq!((snapshot.wagon.hp, snapshot.wagon.max_hp), (500, 500));
-    assert!(snapshot.monsters.is_empty());
+    assert_eq!(
+        snapshot.monsters.len(),
+        16,
+        "the day's guards are already there: two beside each of the eight nodes"
+    );
+    assert!(snapshot.monsters.iter().all(|m| m.hp == 60));
 
     assert_eq!(snapshot.stash, 10, "the starting stash");
     assert!(snapshot.towers.is_empty(), "the village starts empty");
@@ -434,7 +439,10 @@ fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
 #[test]
 fn a_gatherer_the_load_it_carries_and_a_dropped_pile_show_on_the_wire() {
     // 플레이어가 첫 채집 지점 (54, 41)의 서쪽 곁에서 시작합니다.
-    let mut sim = sim_with(|t| t.map.player_spawns = vec![Vec2::new(53.5, 41.5)]);
+    let mut sim = sim_with(|t| {
+        t.map.player_spawns = vec![Vec2::new(53.5, 41.5)];
+        t.guards.per_node = 0;
+    });
     let gatherer = sim.add_player().unwrap();
     let holding = PlayerInputs::from([(
         gatherer,

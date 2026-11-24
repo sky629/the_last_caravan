@@ -27,6 +27,7 @@ pub struct Tuning {
     pub structures: StructureTable,
     pub village: VillageTuning,
     pub resources: ResourceTuning,
+    pub guards: GuardTuning,
     pub cycle: CycleTuning,
     pub nights: NightTuning,
     pub map: MapSpec,
@@ -148,6 +149,17 @@ pub struct ResourceTuning {
     pub deposit_reach: f32,
     /// 플레이어의 가장자리에서 떨어진 자원의 중심까지 잰, 자원을 줍는 거리입니다.
     pub pickup_reach: f32,
+}
+
+/// 낮에 채집 지점을 지키는 몬스터의 수치입니다. 이 몬스터들은 낮이 시작될 때마다 놓이고, 밤이 되면 마차를 향합니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GuardTuning {
+    pub kind: MonsterKind,
+    /// 채집 지점 하나를 지키는 몬스터의 수입니다. 지점의 이웃한 빈 타일 하나에 한 마리씩 섭니다.
+    pub per_node: u32,
+    /// 지키는 자리의 중심에서 플레이어의 중심까지 잰, 플레이어를 쫓기 시작하는 거리입니다.
+    /// 몬스터가 아니라 자리에서 재므로, 몬스터가 쫓다가 자리에서 이 거리를 넘으면 돌아갑니다.
+    pub chase_range: f32,
 }
 
 /// 시설 한 종류의 수치입니다.
@@ -458,6 +470,7 @@ impl Tuning {
                 ));
             }
         }
+        check_not_negative("guards chase_range", self.guards.chase_range)?;
         if !map.nodes.is_empty() && resources.node_amount == 0 {
             return Err("node_amount must be at least 1 when the map has gather nodes".to_string());
         }
@@ -574,6 +587,11 @@ impl Default for Tuning {
             village: VillageTuning {
                 build_range: 10.0,
                 tower_limit: 40,
+            },
+            guards: GuardTuning {
+                kind: MonsterKind::Grunt,
+                per_node: 2,
+                chase_range: 6.0,
             },
             resources: ResourceTuning {
                 node_amount: 15,

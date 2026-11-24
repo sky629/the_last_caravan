@@ -295,6 +295,7 @@ fn tick_time_with(count: u32) -> (std::time::Duration, std::time::Duration) {
         t.wagon.max_hp = u32::MAX;
         t.structures.watchtower.max_hp = u32::MAX;
         t.structures.watchtower.damage = 0;
+        t.guards.per_node = 0;
     });
     s.tower_at(35, 31);
     s.run_until(count + 100, |sim| sim.monsters().count() == count as usize);

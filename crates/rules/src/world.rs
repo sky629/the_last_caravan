@@ -22,7 +22,7 @@ use crate::ids::{MonsterId, PileId, PlayerId, Team, TowerId};
 use crate::input::PlayerInputs;
 use crate::kind::{MonsterKind, StructureKind};
 use crate::math::Vec2;
-use crate::monster::Monster;
+use crate::monster::{Monster, Order};
 use crate::player::Player;
 use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
@@ -159,10 +159,16 @@ impl World {
     }
 
     /// 새 몬스터를 만들어 몬스터 목록의 끝에 추가합니다. 번호는 새로 받고 다시 사용하지 않습니다.
-    pub fn spawn_monster(&mut self, kind: MonsterKind, pos: Vec2, t: &Tuning) -> MonsterId {
+    pub fn spawn_monster(
+        &mut self,
+        kind: MonsterKind,
+        order: Order,
+        pos: Vec2,
+        t: &Tuning,
+    ) -> MonsterId {
         let id = MonsterId(self.next_monster);
         self.next_monster += 1;
-        self.monsters.push(Monster::new(id, kind, pos, t));
+        self.monsters.push(Monster::new(id, kind, order, pos, t));
         id
     }
 }

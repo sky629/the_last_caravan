@@ -41,13 +41,14 @@ pub enum JoinError {
 }
 
 impl Sim {
-    /// 플레이어가 없는 방을 만들고 첫 원정을 준비합니다.
+    /// 플레이어가 없는 방을 만들고 첫 원정의 첫날을 시작합니다.
     /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만들고,
-    /// 밤의 몬스터가 나타날 자리가 없는 수치에서는 이 함수가 멈춥니다.
+    /// 몬스터가 나타날 자리가 없는 수치에서는 이 함수가 멈춥니다.
     pub fn new(tuning: Tuning) -> Sim {
-        let world = World::new(&tuning);
+        let mut world = World::new(&tuning);
         let spawns = SpawnPlan::new(&world.tiles, &tuning)
             .expect("a validated tuning has a spot where night monsters appear");
+        expedition::begin_day(&mut world, &spawns, &tuning);
         Sim {
             expedition: 1,
             phase: expedition::opening_phase(&tuning),
@@ -157,6 +158,7 @@ impl Sim {
             assigned.push(slot);
             player.reset(slot, spawn_point(&self.tuning.map, slot), &self.tuning);
         }
+        expedition::begin_day(&mut self.world, &self.spawns, &self.tuning);
     }
 
     /// 진영을 정하는 곳은 이 함수 하나입니다. 협동 모드는 모두를 같은 편으로 둡니다.
@@ -282,6 +284,7 @@ impl Sim {
 
     pub(crate) fn spawn_monster(&mut self, pos: Vec2) -> crate::ids::MonsterId {
         let kind = crate::kind::MonsterKind::Grunt;
-        self.world.spawn_monster(kind, pos, &self.tuning)
+        self.world
+            .spawn_monster(kind, crate::monster::Order::Raid, pos, &self.tuning)
     }
 }

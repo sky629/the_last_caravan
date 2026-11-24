@@ -37,14 +37,14 @@ pub use ids::{MonsterId, NodeId, PileId, PlayerId, Team, TowerId};
 pub use input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 pub use kind::{MonsterKind, StructureKind};
 pub use math::{Rect, Vec2};
-pub use monster::Monster;
+pub use monster::{Monster, Order};
 pub use player::{Interaction, Life, Player};
 pub use resources::{GatherNode, Pile};
 pub use sim::{JoinError, Sim};
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
-    CycleTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan, NightTuning, PlayerTuning,
-    ResourceTuning, ReviveTuning, StructureTable, StructureTuning, Tuning, VillageTuning,
-    WagonTuning, WavePlan,
+    CycleTuning, GuardTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan, NightTuning,
+    PlayerTuning, ResourceTuning, ReviveTuning, StructureTable, StructureTuning, Tuning,
+    VillageTuning, WagonTuning, WavePlan,
 };
 pub use world::Tile;
