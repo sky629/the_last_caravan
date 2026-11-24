@@ -119,8 +119,9 @@ fn releasing_f_cancels_the_revive_and_the_bleed_timer_resumes_where_it_stopped()
     );
     s.run_ticks(1);
     let restarted = s.sim.revive_progress(a).unwrap();
+    let two_ticks = 2.0 / revive_ticks(&s) as f32;
     assert!(
-        restarted < 0.01,
+        restarted < two_ticks,
         "a new revive starts from zero, got {restarted}"
     );
 }

@@ -132,10 +132,7 @@ impl Hud {
                 ..
             } = me.life
             {
-                hud.carry = Some(format!(
-                    "CARRY  {carried} / {}",
-                    joined.welcome.world.carry_capacity
-                ));
+                hud.carry = Some(carry_text(carried, joined.welcome.world.carry_capacity));
                 hud.refusal = build_refusal.map(refusal_text);
             }
             if let WireLife::Downed {
@@ -359,6 +356,15 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
             tone: Tone::Progress,
         }),
         _ => None,
+    }
+}
+
+/// 든 자원과 상한입니다. 상한까지 들면 더 채집할 수 없으므로, 마차로 가져가라는 안내를 붙입니다.
+fn carry_text(carried: u32, capacity: u32) -> String {
+    if carried >= capacity {
+        format!("CARRY  {carried} / {capacity}  FULL - TAKE IT TO THE WAGON")
+    } else {
+        format!("CARRY  {carried} / {capacity}")
     }
 }
 
@@ -727,6 +733,15 @@ mod tests {
             .unwrap();
         assert_eq!(action.label, "GATHERING  9 / 15");
         assert!((action.fraction - 9.0 / 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_full_load_says_where_to_take_it() {
+        assert_eq!(carry_text(9, 10), "CARRY  9 / 10");
+        assert_eq!(
+            carry_text(10, 10),
+            "CARRY  10 / 10  FULL - TAKE IT TO THE WAGON"
+        );
     }
 
     #[test]

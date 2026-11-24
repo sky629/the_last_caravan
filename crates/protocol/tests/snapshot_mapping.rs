@@ -353,8 +353,9 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
         "bleed time is shown in seconds: {bleed_secs_left}"
     );
 
-    // 8초 가운데 절반쯤 지났을 때의 모습입니다.
-    step(&mut sim, &holding, 80);
+    // 부활에 걸리는 시간의 절반이 지났을 때의 모습입니다.
+    let revive_ticks = sim.tuning().ticks(sim.tuning().revive.revive_secs);
+    step(&mut sim, &holding, revive_ticks / 2);
     let snapshot = Snapshot::from_sim(&sim);
     let WireLife::Downed {
         revive_progress: Some(on_downed),
@@ -380,10 +381,10 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
     assert_eq!(progress, on_downed);
     assert!(
         (0.4..=0.6).contains(&progress),
-        "about half of 8 seconds has passed: {progress}"
+        "about half of the revive time has passed: {progress}"
     );
 
-    step(&mut sim, &holding, 100);
+    step(&mut sim, &holding, revive_ticks);
     let snapshot = Snapshot::from_sim(&sim);
     assert_eq!(
         snapshot.players[0].life,

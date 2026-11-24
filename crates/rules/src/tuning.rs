@@ -645,7 +645,7 @@ impl Default for Tuning {
             },
             revive: ReviveTuning {
                 bleed_secs: 30.0,
-                revive_secs: 8.0,
+                revive_secs: 5.0,
                 revived_hp_percent: 30,
                 range: 1.5,
             },
