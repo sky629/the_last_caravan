@@ -181,6 +181,8 @@ mod tests {
             },
             stash: 0,
             towers: Vec::new(),
+            nodes: Vec::new(),
+            piles: Vec::new(),
             players: vec![PlayerView {
                 id: YOU,
                 team: Team::CARAVAN,

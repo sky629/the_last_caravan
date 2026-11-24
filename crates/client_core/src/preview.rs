@@ -45,6 +45,7 @@ mod tests {
         WireLife::Alive {
             hp: 100,
             max_hp: 100,
+            carried: 0,
             interaction,
             build_refusal: refusal,
         }

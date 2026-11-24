@@ -271,6 +271,7 @@ mod tests {
         WireLife::Alive {
             hp,
             max_hp: 100,
+            carried: 0,
             interaction: None,
             build_refusal: None,
         }
@@ -311,6 +312,8 @@ mod tests {
             },
             stash: 0,
             towers: Vec::new(),
+            nodes: Vec::new(),
+            piles: Vec::new(),
             players,
             monsters,
         }
@@ -474,6 +477,7 @@ mod tests {
         let broken = WireLife::Alive {
             hp: 0,
             max_hp: 0,
+            carried: 0,
             interaction: None,
             build_refusal: None,
         };

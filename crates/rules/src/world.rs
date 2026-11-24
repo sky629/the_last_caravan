@@ -18,12 +18,13 @@ mod tiles;
 use std::collections::BTreeMap;
 
 use crate::collision::Body;
-use crate::ids::{MonsterId, PlayerId, Team, TowerId};
+use crate::ids::{MonsterId, PileId, PlayerId, Team, TowerId};
 use crate::input::PlayerInputs;
 use crate::kind::{MonsterKind, StructureKind};
 use crate::math::Vec2;
 use crate::monster::Monster;
 use crate::player::Player;
+use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
 use crate::structures::{Tower, TowerState, Wagon};
 use crate::tuning::Tuning;
@@ -41,6 +42,10 @@ pub(crate) struct World {
     /// 서 있는 감시탑과 짓는 중인 감시탑입니다. 번호를 키로 하고, 넣고 빼는 일은 `add_tower`, `finish_tower`, `remove_tower`만 합니다.
     pub towers: BTreeMap<TowerId, Tower>,
     pub wagon: Wagon,
+    /// 맵에 적힌 채집 지점입니다. 번호가 작은 지점이 앞에 오고, 위치는 원정 동안 바뀌지 않으며 남은 양만 변합니다.
+    pub nodes: Vec<GatherNode>,
+    /// 땅에 떨어진 자원입니다. 번호가 작은 더미가 앞에 옵니다.
+    pub piles: Vec<Pile>,
     /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
     pub stash: u32,
     /// 읽기만 할 수 있습니다. `TileMap::set`은 이 모듈 밖에서 부를 수 없습니다.
@@ -50,32 +55,48 @@ pub(crate) struct World {
     layout_revision: u64,
     next_monster: u32,
     next_tower: u32,
+    next_pile: u32,
+}
+
+/// 원정이 시작될 때의 지면입니다. 장애물과 마차에 채집 지점을 더한 타일 지도와, 가득 찬 채집 지점입니다.
+fn ground(t: &Tuning) -> (TileMap, Vec<GatherNode>) {
+    let nodes = resources::nodes_of(t);
+    let mut tiles = TileMap::from_map(&t.map);
+    for node in &nodes {
+        tiles.set(node.tile, TileUse::Node(node.id));
+    }
+    (tiles, nodes)
 }
 
 impl World {
-    /// 원정이 시작될 때의 세계입니다. 플레이어, 몬스터, 감시탑은 없고, 보관함에는 시작 자원이 있습니다.
+    /// 원정이 시작될 때의 세계입니다. 플레이어, 몬스터, 감시탑, 떨어진 자원은 없고, 보관함에는 시작 자원이 있고, 채집 지점은 가득 차 있습니다.
     pub fn new(t: &Tuning) -> World {
+        let (tiles, nodes) = ground(t);
         World {
             players: BTreeMap::new(),
             monsters: Vec::new(),
             towers: BTreeMap::new(),
             wagon: Wagon::new(t),
+            nodes,
+            piles: Vec::new(),
             stash: t.wagon.start_stash,
-            tiles: TileMap::from_map(&t.map),
+            tiles,
             layout_revision: 0,
             next_monster: 1,
             next_tower: 1,
+            next_pile: 1,
         }
     }
 
-    /// 새 원정을 위해 몬스터, 감시탑, 마차, 보관함, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
+    /// 새 원정을 위해 몬스터, 감시탑, 마차, 보관함, 채집 지점, 떨어진 자원, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
     /// 번호를 세는 값은 되돌리지 않으므로 이전 원정의 번호가 다시 쓰이지 않습니다.
     pub fn restart(&mut self, t: &Tuning) {
         self.monsters.clear();
         self.towers.clear();
+        self.piles.clear();
         self.wagon = Wagon::new(t);
         self.stash = t.wagon.start_stash;
-        self.tiles = TileMap::from_map(&t.map);
+        (self.tiles, self.nodes) = ground(t);
         self.layout_revision += 1;
     }
 
@@ -120,6 +141,23 @@ impl World {
         Some(tower)
     }
 
+    /// 플레이어를 방에서 내보냅니다. 든 자원은 그 자리에 떨어집니다. 없는 번호는 무시합니다.
+    pub fn remove_player(&mut self, id: PlayerId) {
+        if let Some(player) = self.players.remove(&id) {
+            self.add_pile(player.pos, player.carried());
+        }
+    }
+
+    /// `pos`에 자원 `amount`가 떨어진 더미를 놓습니다. 양이 0이면 놓지 않습니다. 번호는 새로 받고 다시 사용하지 않습니다.
+    pub fn add_pile(&mut self, pos: Vec2, amount: u32) {
+        if amount == 0 {
+            return;
+        }
+        let id = PileId(self.next_pile);
+        self.next_pile += 1;
+        self.piles.push(Pile { id, pos, amount });
+    }
+
     /// 새 몬스터를 만들어 몬스터 목록의 끝에 추가합니다. 번호는 새로 받고 다시 사용하지 않습니다.
     pub fn spawn_monster(&mut self, kind: MonsterKind, pos: Vec2, t: &Tuning) -> MonsterId {
         let id = MonsterId(self.next_monster);
@@ -161,7 +199,10 @@ impl World {
             match hit.target {
                 Target::Player(id) => {
                     if let Some(player) = self.players.get_mut(&id) {
-                        player.take_damage(hit.amount, t);
+                        // 쓰러지는 플레이어가 들고 있던 자원은 그 자리에 떨어집니다.
+                        let dropped = player.take_damage(hit.amount, t);
+                        let pos = player.pos;
+                        self.add_pile(pos, dropped);
                     }
                 }
                 Target::Monster(id) => {

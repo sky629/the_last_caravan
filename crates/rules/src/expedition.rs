@@ -6,6 +6,7 @@
 //! 단계가 바뀔 때 함께 일어나는 일(낮이 시작되면 모든 플레이어가 회복됨)도 단계를 바꾸는 바로 그 자리에서 부르므로, 단계와 그 일이 어긋날 수 없습니다.
 
 use crate::math::Vec2;
+use crate::resources;
 use crate::spawn::SpawnPlan;
 use crate::tuning::Tuning;
 use crate::world::World;
@@ -164,12 +165,13 @@ pub(crate) fn advance_phase(
 /// 낮이 시작됩니다. 밤을 막은 뒤의 새 날에 부릅니다.
 ///
 /// 모든 플레이어가 최대 HP의 살아 있는 상태가 됩니다. 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다.
-/// 위치와 하고 있던 일은 그대로입니다.
-/// 감시탑과 그 HP, 마차의 HP, 보관함의 자원은 이 함수가 건드리지 않으므로 다음 날로 그대로 이어집니다.
+/// 위치, 하고 있던 일, 든 자원은 그대로입니다. 모든 채집 지점이 가득 다시 채워집니다.
+/// 감시탑과 그 HP, 마차의 HP, 보관함의 자원, 떨어진 자원은 이 함수가 건드리지 않으므로 다음 날로 그대로 이어집니다.
 fn begin_day(world: &mut World, t: &Tuning) {
     for player in world.players.values_mut() {
         player.restore_for_new_day(t);
     }
+    resources::refill_nodes(world, t);
 }
 
 /// 나타날 몬스터가 남아 있고 때가 되었으면 한 마리를 등장시킵니다. 그렇지 않으면 카운트다운만 진행합니다.

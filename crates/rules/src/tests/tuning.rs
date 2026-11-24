@@ -3,6 +3,7 @@
 use super::support::{Scenario, nights};
 use crate::math::{Rect, Vec2};
 use crate::tuning::Tuning;
+use crate::world::Tile;
 
 #[test]
 fn the_default_tuning_is_valid() {
@@ -92,6 +93,56 @@ fn night_monsters_must_appear_beyond_the_village_and_somewhere_on_the_map() {
 
     let mut t = Tuning::default();
     t.nights.max_alive = 0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn a_gather_node_must_be_on_a_free_tile_of_the_map_outside_the_village() {
+    let rejected = |nodes: Vec<Tile>| {
+        let mut t = Tuning::default();
+        t.map.nodes = nodes;
+        t.validate().expect_err("the node should be refused")
+    };
+
+    assert!(rejected(vec![Tile::new(64, 10)]).contains("outside the map"));
+    assert!(
+        rejected(vec![Tile::new(25, 24)]).contains("overlaps a solid"),
+        "on an obstacle"
+    );
+    assert!(
+        rejected(vec![Tile::new(31, 31)]).contains("overlaps a solid"),
+        "on the wagon"
+    );
+    assert!(
+        rejected(vec![Tile::new(9, 22), Tile::new(9, 22)]).contains("another node"),
+        "twice on one tile"
+    );
+    assert!(
+        rejected(vec![Tile::new(36, 28)]).contains("inside the village"),
+        "within the build range of the wagon"
+    );
+
+    let mut t = Tuning::default();
+    t.map.nodes = Vec::new();
+    assert_eq!(t.validate(), Ok(()), "a map without nodes is fine");
+}
+
+#[test]
+fn resource_numbers_that_make_gathering_meaningless_are_rejected() {
+    let mut t = Tuning::default();
+    t.resources.carry_capacity = 0;
+    assert!(t.validate().is_err(), "nothing could be carried");
+
+    let mut t = Tuning::default();
+    t.resources.gather_per_pulse = 0;
+    assert!(t.validate().is_err(), "a pulse that moves nothing");
+
+    let mut t = Tuning::default();
+    t.resources.node_amount = 0;
+    assert!(t.validate().is_err(), "nodes that start empty");
+
+    let mut t = Tuning::default();
+    t.resources.gather_reach = f32::NAN;
     assert!(t.validate().is_err());
 }
 

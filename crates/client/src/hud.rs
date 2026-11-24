@@ -1,6 +1,6 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
-//! 왼쪽 위에 내 HP, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원이 있고,
+//! 왼쪽 위에 내 HP, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원이 있고,
 //! 아래 가운데에 건설의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 방 코드가 있고, 화면 가운데에 원정의 결과나 접속 문제가 크게 나옵니다.
 
@@ -56,6 +56,7 @@ pub struct HudNodes {
     day: Entity,
     timer: Entity,
     stash: Entity,
+    carry: Entity,
     banner_title: Entity,
     banner_detail: Entity,
     bleed: Entity,
@@ -148,11 +149,12 @@ pub fn setup(mut commands: Commands) {
         }))
         .add_children(&[me, wagon, allies_panel]);
 
-    // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함.
+    // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함, 내가 든 자원.
     let day = text_node(&mut commands, 30.0, TEXT);
     let timer = text_node(&mut commands, 20.0, TEXT);
     let expedition = text_node(&mut commands, 16.0, TEXT_DIM);
     let stash = text_node(&mut commands, 22.0, TEXT);
+    let carry = text_node(&mut commands, 22.0, TEXT);
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
@@ -162,7 +164,7 @@ pub fn setup(mut commands: Commands) {
             align_items: AlignItems::FlexEnd,
             ..default()
         })
-        .add_children(&[day, timer, expedition, stash]);
+        .add_children(&[day, timer, expedition, stash, carry]);
 
     // 아래 가운데: 출혈 시간, 건설의 거절 이유, 부활이나 수리나 건설의 진행 막대.
     let bleed = text_node(&mut commands, 24.0, BLEED);
@@ -223,6 +225,7 @@ pub fn setup(mut commands: Commands) {
         day,
         timer,
         stash,
+        carry,
         banner_title,
         banner_detail,
         bleed,
@@ -330,6 +333,7 @@ pub fn update(
     set_text(&mut texts, nodes.day, hud.day.as_deref().unwrap_or(""));
     set_text(&mut texts, nodes.timer, hud.timer.as_deref().unwrap_or(""));
     set_text(&mut texts, nodes.stash, hud.stash.as_deref().unwrap_or(""));
+    set_text(&mut texts, nodes.carry, hud.carry.as_deref().unwrap_or(""));
     set_text(&mut texts, nodes.bleed, hud.bleed.as_deref().unwrap_or(""));
     set_text(
         &mut texts,

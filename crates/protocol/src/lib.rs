@@ -29,10 +29,10 @@ pub use messages::{ClientMsg, InputMsg, PROTOCOL_VERSION, RejectReason, ServerMs
 pub use room_code::{RoomCode, RoomCodeError};
 pub use snapshot::{
     Snapshot, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireMonster,
-    WireMonsterKind, WireNightStep, WireOutcome, WirePhase, WirePlayer, WireShot, WireTower,
-    WireTowerState, WireWagon,
+    WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
+    WireShot, WireTower, WireTowerState, WireWagon,
 };
 pub use transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};
 pub use units::{WireAngle, WirePos, WireRect, WireTile};
-pub use welcome::{MonsterKindInfo, Welcome, WorldInfo};
+pub use welcome::{MonsterKindInfo, NodeInfo, Welcome, WorldInfo};
 pub use welcome_check::check_welcome;

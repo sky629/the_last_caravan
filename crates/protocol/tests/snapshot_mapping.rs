@@ -80,11 +80,23 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
         WireLife::Alive {
             hp: 100,
             max_hp: 100,
+            carried: 0,
             interaction: None,
             build_refusal: None
         }
     );
     assert_eq!((player.last_input_seq, player.last_attack_tick), (0, None));
+    assert!(snapshot.piles.is_empty(), "nothing lies on the ground");
+    let amounts: Vec<(u32, u32)> = snapshot
+        .nodes
+        .iter()
+        .map(|node| (node.id, node.amount))
+        .collect();
+    assert_eq!(
+        amounts,
+        (1..=8).map(|id| (id, 15)).collect::<Vec<_>>(),
+        "eight full nodes, numbered from 1"
+    );
 }
 
 #[test]
@@ -103,6 +115,20 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
     assert_eq!(world.wagon.to_rect(), Tuning::default().map.wagon);
     assert_eq!(world.day_count, 3);
     assert_eq!(world.tower_limit, 40);
+    assert_eq!((world.carry_capacity, world.node_amount), (10, 15));
+    let sites: Vec<(u32, Tile)> = world
+        .nodes
+        .iter()
+        .map(|node| (node.id, node.tile.to_tile()))
+        .collect();
+    let expected: Vec<(u32, Tile)> = Tuning::default()
+        .map
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, tile)| (index as u32 + 1, *tile))
+        .collect();
+    assert_eq!(sites, expected, "the nodes of the map, numbered from 1");
     assert_eq!(world.player_radius, 0.35);
     let [grunt] = world.monster_kinds[..] else {
         panic!("one monster kind expected");
@@ -357,6 +383,7 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
         WireLife::Alive {
             hp: 30,
             max_hp: 100,
+            carried: 0,
             interaction: None,
             build_refusal: None
         },
@@ -402,4 +429,43 @@ fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
             secs_left: 4.0
         }
     );
+}
+
+#[test]
+fn a_gatherer_the_load_it_carries_and_a_dropped_pile_show_on_the_wire() {
+    // 플레이어가 첫 채집 지점 (54, 41)의 서쪽 곁에서 시작합니다.
+    let mut sim = sim_with(|t| t.map.player_spawns = vec![Vec2::new(53.5, 41.5)]);
+    let gatherer = sim.add_player().unwrap();
+    let holding = PlayerInputs::from([(
+        gatherer,
+        PlayerInput {
+            interact: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    let pulse = sim.tuning().ticks(sim.tuning().resources.gather_pulse_secs);
+
+    step(&mut sim, &holding, pulse);
+    let snapshot = Snapshot::from_sim(&sim);
+
+    assert_eq!(snapshot.nodes[0].amount, 14, "one unit left the first node");
+    assert_eq!(
+        snapshot.players[0].life,
+        WireLife::Alive {
+            hp: 100,
+            max_hp: 100,
+            carried: 1,
+            interaction: Some(WireInteraction::Gathering { node: 1 }),
+            build_refusal: None
+        }
+    );
+
+    let at = sim.player(gatherer).unwrap().pos;
+    sim.remove_player(gatherer);
+    let snapshot = Snapshot::from_sim(&sim);
+    let [pile] = snapshot.piles[..] else {
+        panic!("one pile expected, got {:?}", snapshot.piles);
+    };
+    assert_eq!((pile.id, pile.amount), (1, 1));
+    assert_eq!(pile.pos, WirePos::from_tiles(at));
 }

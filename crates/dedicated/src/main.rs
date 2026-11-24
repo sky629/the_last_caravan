@@ -148,13 +148,15 @@ impl ServerTransport for DebugTransport {
 fn describe(msg: &ServerMsg) -> String {
     match msg {
         ServerMsg::Snapshot(snapshot) => format!(
-            "Snapshot {{ tick: {}, expedition: {}, phase: {:?}, wagon: {:?}, stash: {}, towers: {:?}, players: {:?}, monsters: {} }}",
+            "Snapshot {{ tick: {}, expedition: {}, phase: {:?}, wagon: {:?}, stash: {}, towers: {:?}, nodes: {:?}, piles: {:?}, players: {:?}, monsters: {} }}",
             snapshot.tick,
             snapshot.expedition,
             snapshot.phase,
             snapshot.wagon,
             snapshot.stash,
             snapshot.towers,
+            snapshot.nodes,
+            snapshot.piles,
             snapshot.players,
             snapshot.monsters.len()
         ),

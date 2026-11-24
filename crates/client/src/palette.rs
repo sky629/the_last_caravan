@@ -20,6 +20,7 @@ pub struct Palette {
     pub wagon_block: Handle<Mesh>,
     pub tower_block: Handle<Mesh>,
     pub site_block: Handle<Mesh>,
+    pub node_block: Handle<Mesh>,
 
     /// 지면 메시의 꼭짓점 색이 그대로 보이게 하는 흰색 재질입니다.
     pub ground: Handle<ColorMaterial>,
@@ -27,6 +28,9 @@ pub struct Palette {
     pub wagon: Handle<ColorMaterial>,
     pub tower: Handle<ColorMaterial>,
     pub site: Handle<ColorMaterial>,
+    pub node: Handle<ColorMaterial>,
+    pub node_empty: Handle<ColorMaterial>,
+    pub pile: Handle<ColorMaterial>,
     pub shadow: Handle<ColorMaterial>,
     pub you: Handle<ColorMaterial>,
     pub ally: Handle<ColorMaterial>,
@@ -41,6 +45,7 @@ pub struct Palette {
     pub bar_monster: Handle<ColorMaterial>,
     pub bar_tower: Handle<ColorMaterial>,
     pub bar_site: Handle<ColorMaterial>,
+    pub bar_node: Handle<ColorMaterial>,
 }
 
 /// 시작할 때 한 번 실행해서 `Palette`를 넣습니다.
@@ -56,6 +61,9 @@ pub fn setup_palette(
         wagon: paint(config::WAGON),
         tower: paint(config::TOWER),
         site: paint(config::SITE),
+        node: paint(config::NODE),
+        node_empty: paint(config::NODE_EMPTY),
+        pile: paint(config::PILE),
         shadow: paint(config::SHADOW),
         you: paint(config::YOU),
         ally: paint(config::ALLY),
@@ -70,6 +78,7 @@ pub fn setup_palette(
         bar_monster: paint(config::BAR_MONSTER),
         bar_tower: paint(config::BAR_TOWER),
         bar_site: paint(config::BAR_SITE),
+        bar_node: paint(config::BAR_NODE),
 
         circle: meshes.add(Circle::new(1.0)),
         square: meshes.add(Rectangle::new(1.0, 1.0)),
@@ -77,6 +86,7 @@ pub fn setup_palette(
         wagon_block: meshes.add(block_mesh(config::WAGON_HEIGHT)),
         tower_block: meshes.add(block_mesh(config::TOWER_HEIGHT)),
         site_block: meshes.add(block_mesh(config::SITE_HEIGHT)),
+        node_block: meshes.add(block_mesh(config::NODE_HEIGHT)),
     };
     commands.insert_resource(palette);
 }
@@ -84,7 +94,7 @@ pub fn setup_palette(
 /// 타일 하나 위에 서 있는 높이 `height`의 상자입니다. 원점은 바닥 마름모의 중심입니다.
 ///
 /// 보이는 세 면(윗면, 왼쪽 앞면, 오른쪽 앞면)을 한 메시에 담고, 면마다 꼭짓점 색의 밝기를 달리해서 입체로 보이게 합니다.
-/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑, 공사터의 색을 모두 냅니다.
+/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑, 공사터, 채집 지점의 색을 모두 냅니다.
 fn block_mesh(height: f32) -> Mesh {
     let half_w = TILE_WIDTH_PX / 2.0;
     let half_h = TILE_HEIGHT_PX / 2.0;

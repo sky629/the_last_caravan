@@ -23,6 +23,7 @@ pub const PART_Z_STEP: f32 = 0.001;
 pub const OBSTACLE_HEIGHT: f32 = 28.0;
 pub const WAGON_HEIGHT: f32 = 20.0;
 pub const TOWER_HEIGHT: f32 = 64.0;
+pub const NODE_HEIGHT: f32 = 22.0;
 /// 짓는 중인 감시탑(공사터)입니다.
 pub const SITE_HEIGHT: f32 = 24.0;
 
@@ -34,6 +35,8 @@ pub const DOWNED_BODY_HEIGHT: f32 = 10.0;
 pub const DEAD_BODY_HEIGHT: f32 = 5.0;
 /// 바라보는 방향을 알려 주는 작은 원의 반지름입니다.
 pub const NOSE_RADIUS: f32 = 3.0;
+/// 땅에 떨어진 자원을 나타내는 납작한 원의 가로와 세로 반지름입니다.
+pub const PILE_RADII: Vec2 = Vec2::new(9.0, 4.5);
 
 // HP 막대입니다. 몸통 위에 떠 있습니다.
 pub const BAR_SIZE: Vec2 = Vec2::new(28.0, 5.0);
@@ -56,6 +59,11 @@ pub const OBSTACLE: Color = Color::srgb(0.58, 0.58, 0.62);
 pub const WAGON: Color = Color::srgb(0.68, 0.44, 0.22);
 pub const TOWER: Color = Color::srgb(0.38, 0.58, 0.90);
 pub const SITE: Color = Color::srgb(0.62, 0.55, 0.38);
+/// 채집 지점입니다. 자원이 다 떨어지면 어두운 색이 됩니다.
+pub const NODE: Color = Color::srgb(0.25, 0.72, 0.66);
+pub const NODE_EMPTY: Color = Color::srgb(0.30, 0.34, 0.34);
+/// 땅에 떨어진 자원입니다.
+pub const PILE: Color = Color::srgb(1.00, 0.85, 0.30);
 pub const SHADOW: Color = Color::srgb(0.07, 0.09, 0.07);
 pub const YOU: Color = Color::srgb(1.00, 0.84, 0.25);
 pub const ALLY: Color = Color::srgb(0.35, 0.65, 1.00);
@@ -71,6 +79,7 @@ pub const BAR_PLAYER: Color = Color::srgb(0.30, 0.85, 0.35);
 pub const BAR_MONSTER: Color = Color::srgb(0.95, 0.35, 0.30);
 pub const BAR_TOWER: Color = Color::srgb(0.45, 0.70, 1.00);
 pub const BAR_SITE: Color = Color::srgb(0.95, 0.80, 0.25);
+pub const BAR_NODE: Color = Color::srgb(0.45, 0.90, 0.82);
 pub const SWING: Color = Color::srgb(1.00, 1.00, 0.80);
 pub const WAGON_MARKER: Color = Color::srgb(1.00, 0.72, 0.38);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);

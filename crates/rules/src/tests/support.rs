@@ -2,7 +2,7 @@
 //! 서버가 하는 것과 같은 방식(누르고 있는 입력과 `step`)으로 게임을 진행합니다.
 
 use crate::expedition::Phase;
-use crate::ids::{MonsterId, PlayerId, TowerId};
+use crate::ids::{MonsterId, NodeId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 use crate::kind::MonsterKind;
 use crate::kind::StructureKind;
@@ -47,6 +47,7 @@ impl Scenario {
                     height: 20.0,
                     wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
                     obstacles: vec![],
+                    nodes: vec![],
                     player_spawns: vec![Vec2::new(10.0, 10.0)],
                     spatial_cell: 2.0,
                 },
@@ -110,6 +111,30 @@ impl Scenario {
         self.sim.world_mut().stash = amount;
     }
 
+    /// 채집 지점의 남은 자원을 `amount`로 맞춥니다.
+    pub fn set_node_amount(&mut self, node: NodeId, amount: u32) {
+        let found = self
+            .sim
+            .world_mut()
+            .nodes
+            .iter_mut()
+            .find(|candidate| candidate.id == node)
+            .expect("the node exists");
+        found.amount = amount;
+    }
+
+    /// 플레이어가 들고 있는 자원을 `amount`로 맞춥니다. 쓰러진 플레이어에게는 아무 일도 하지 않습니다.
+    pub fn set_carried(&mut self, id: PlayerId, amount: u32) {
+        if let Life::Alive { carried, .. } = &mut self.player_mut(id).life {
+            *carried = amount;
+        }
+    }
+
+    /// `(x, y)`에 자원 `amount`가 떨어진 더미를 놓습니다.
+    pub fn pile_at(&mut self, x: f32, y: f32, amount: u32) {
+        self.sim.world_mut().add_pile(Vec2::new(x, y), amount);
+    }
+
     /// 처음 놓은 감시탑의 HP를 바꿉니다. 쏘는 동안의 쿨다운과 마지막 사격은 그대로 둡니다.
     pub fn set_tower_hp(&mut self, hp: u32) {
         let tower = self
@@ -151,6 +176,17 @@ impl Scenario {
     /// 이 입력을 바꿀 때까지 매 Tick 적용합니다. 키를 계속 누르고 있는 것과 같습니다.
     pub fn hold(&mut self, id: PlayerId, input: PlayerInput) {
         self.held.insert(id, input);
+    }
+
+    /// 상호작용 키(F)를 누른 채로 서 있습니다.
+    pub fn hold_interact(&mut self, id: PlayerId) {
+        self.hold(
+            id,
+            PlayerInput {
+                interact: true,
+                ..PlayerInput::default()
+            },
+        );
     }
 
     /// 건설 키를 누른 채로 `(x, y)` 방향을 조준합니다. 건설할 타일은 서 있는 타일에서 그 방향으로 이웃한 타일입니다.
@@ -207,6 +243,28 @@ impl Scenario {
     pub fn player(&self, id: PlayerId) -> &Player {
         self.sim.player(id).expect("the player exists")
     }
+}
+
+/// 자원이 있는 모든 곳의 합입니다. 보관함, 플레이어가 든 자원, 떨어진 자원, 짓는 중인 감시탑에 낸 자원, 서 있는 감시탑을 짓는 데 쓴 자원을 더합니다.
+/// 서 있는 감시탑은 하나당 건설 비용이 들었다고 셉니다(파괴된 감시탑이 없는 상황에서만 맞습니다).
+pub(crate) fn resource_total(sim: &Sim) -> u32 {
+    let t = sim.tuning();
+    let carried: u32 = sim.players().map(Player::carried).sum();
+    let piles: u32 = sim.piles().map(|pile| pile.amount).sum();
+    let in_towers: u32 = sim
+        .towers()
+        .map(|tower| match tower.state {
+            TowerState::Building { paid, .. } => paid,
+            TowerState::Standing { .. } => t.structures.get(tower.kind).build_cost,
+        })
+        .sum();
+    sim.stash() + carried + piles + in_towers
+}
+
+/// 채집 지점에서 지금까지 옮겨진 자원의 양입니다. 채집 지점이 가득 찼을 때 줄어든 만큼입니다.
+pub(crate) fn gathered_total(sim: &Sim) -> u32 {
+    let full = sim.tuning().resources.node_amount;
+    sim.nodes().map(|node| full - node.amount).sum()
 }
 
 /// 부동소수점 결과를 비교할 때 쓰는 허용 오차입니다.

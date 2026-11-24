@@ -11,8 +11,8 @@ use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 use caravan_protocol::{
-    Snapshot, WireAngle, WireLife, WireMonster, WireMonsterKind, WirePhase, WirePlayer, WireTower,
-    WireWagon,
+    Snapshot, WireAngle, WireLife, WireMonster, WireMonsterKind, WireNode, WirePhase, WirePile,
+    WirePlayer, WireTower, WireWagon,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -36,6 +36,10 @@ pub struct Frame {
     pub stash: u32,
     /// 서 있는 감시탑과 짓는 중인 감시탑입니다. 위치는 타일이라서 섞지 않습니다.
     pub towers: Vec<WireTower>,
+    /// 채집 지점의 남은 자원입니다. 위치는 입장 안내에 있습니다.
+    pub nodes: Vec<WireNode>,
+    /// 땅에 떨어진 자원입니다. 움직이지 않으므로 위치를 섞지 않습니다.
+    pub piles: Vec<WirePile>,
     pub players: Vec<PlayerView>,
     pub monsters: Vec<MonsterView>,
 }
@@ -189,6 +193,8 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
         wagon: older.wagon,
         stash: older.stash,
         towers: older.towers.clone(),
+        nodes: older.nodes.clone(),
+        piles: older.piles.clone(),
         players,
         monsters,
     }
@@ -269,6 +275,8 @@ mod tests {
             },
             stash: 0,
             towers: Vec::new(),
+            nodes: Vec::new(),
+            piles: Vec::new(),
             players: Vec::new(),
             monsters: Vec::new(),
         }
@@ -293,6 +301,7 @@ mod tests {
             life: WireLife::Alive {
                 hp,
                 max_hp: 100,
+                carried: 0,
                 interaction: None,
                 build_refusal: None,
             },
@@ -325,6 +334,33 @@ mod tests {
 
         assert!(close(frame.monsters[0].pos, Vec2::new(4.5, 5.0)));
         assert!((frame.tick - 10.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_stash_the_towers_the_nodes_and_the_piles_come_from_the_older_snapshot() {
+        let mut older = snapshot(10);
+        older.stash = 7;
+        older.nodes = vec![WireNode { id: 1, amount: 9 }];
+        older.piles = vec![WirePile {
+            id: 1,
+            pos: WirePos::from_tiles(Vec2::new(4.0, 4.0)),
+            amount: 3,
+        }];
+        let mut newer = snapshot(11);
+        newer.stash = 17;
+        newer.nodes = vec![WireNode { id: 1, amount: 8 }];
+        newer.piles = Vec::new();
+        let buffer = buffer_with(vec![older, newer]);
+
+        let between = buffer.sample_at(10.9).unwrap();
+        assert_eq!(between.stash, 7);
+        assert_eq!(between.nodes, [WireNode { id: 1, amount: 9 }]);
+        assert_eq!(between.piles.len(), 1);
+
+        let after = buffer.sample_at(11.0).unwrap();
+        assert_eq!(after.stash, 17);
+        assert_eq!(after.nodes, [WireNode { id: 1, amount: 8 }]);
+        assert!(after.piles.is_empty(), "the pile was picked up");
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
 use crate::player::{self, Interaction, Player};
+use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
 use crate::spawn::SpawnPlan;
 use crate::structures::{self, Tower, Wagon};
@@ -85,9 +86,9 @@ impl Sim {
     }
 
     /// 플레이어를 즉시 제거합니다. 없는 번호는 무시하므로 같은 퇴장을 두 번 처리해도 안전합니다.
-    /// 이 플레이어를 부활시키던 플레이어는 다음 Tick에 대상이 사라진 것을 보고 부활을 멈춥니다.
+    /// 이 플레이어를 부활시키던 플레이어는 다음 Tick에 대상이 사라진 것을 보고 부활을 멈추고, 이 플레이어가 들고 있던 자원은 그 자리에 떨어집니다.
     pub fn remove_player(&mut self, id: PlayerId) {
-        self.world.players.remove(&id);
+        self.world.remove_player(id);
     }
 
     /// 게임을 Tick 하나만큼 진행합니다. `inputs`는 이번 Tick의 플레이어별 입력이고,
@@ -123,6 +124,7 @@ impl Sim {
         structures::advance_construction(&mut self.world, &ctx);
         self.paths.sync(&self.world, &self.tuning);
         player::move_players(&mut self.world, &ctx);
+        resources::deposit_and_pickup(&mut self.world, &ctx);
         player::player_attacks(&mut self.world, &ctx, &mut hits);
         structures::towers_fire(&mut self.world, &ctx, &mut hits);
         monster::monsters_act(
@@ -205,6 +207,16 @@ impl Sim {
 
     pub fn wagon(&self) -> &Wagon {
         &self.world.wagon
+    }
+
+    /// 번호가 작은 채집 지점부터 차례로 돌려줍니다.
+    pub fn nodes(&self) -> impl Iterator<Item = &GatherNode> {
+        self.world.nodes.iter()
+    }
+
+    /// 땅에 떨어진 자원을 번호가 작은 더미부터 차례로 돌려줍니다.
+    pub fn piles(&self) -> impl Iterator<Item = &Pile> {
+        self.world.piles.iter()
     }
 
     /// 마차의 보관함에 있는 자원입니다. 모든 플레이어가 함께 씁니다.

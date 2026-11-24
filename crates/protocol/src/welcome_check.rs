@@ -2,7 +2,7 @@
 //!
 //! 이 값들은 터무니없는 값을 보내는 서버(고장 났거나 악의가 있는 서버)가 클라이언트의 메모리와 시간을 끝없이 쓰지 못하게 막는 점검용 상한이고,
 //! 게임 수치가 아닙니다. 실제 정원, Tick 속도, 맵의 크기는 언제나 서버의 `Tuning`이 정하며 클라이언트에는 어떤 값도 고정되어 있지 않습니다.
-//! 상한은 지금의 값(정원 4, 20Hz, 24 x 24 맵, 감시탑 40개)보다 훨씬 크게 잡았으므로, 정상적인 서버가 수치를 바꿔도 걸리지 않습니다.
+//! 상한은 지금의 값(정원 4, 20Hz, 64 x 64 맵, 감시탑 40개, 채집 지점 8곳)보다 훨씬 크게 잡았으므로, 정상적인 서버가 수치를 바꿔도 걸리지 않습니다.
 //!
 //! 클라이언트는 `Welcome`을 받아서 처음 믿기 전에 한 번 확인합니다. 서버는 시작할 때 자기 설정으로 보낼 `Welcome`에 같은 확인을 해 보므로,
 //! 모든 클라이언트가 거절할 설정으로는 서버가 시작되지 않습니다.
@@ -26,7 +26,9 @@ const MAX_OBSTACLES: usize = 256;
 /// 감시탑의 수의 상한입니다. 스냅샷이 감시탑 하나당 10바이트 안팎이므로 이 값이 스냅샷 크기의 상한이기도 합니다.
 const MAX_TOWER_LIMIT: u32 = 256;
 const MAX_MONSTER_KINDS: usize = 16;
-/// 장애물과 마차가 차지하는 타일의 합입니다. 상자를 타일마다 하나씩 만듭니다.
+/// 채집 지점의 수의 상한입니다. 스냅샷이 지점 하나당 몇 바이트이고, 클라이언트가 지점마다 상자와 막대를 하나씩 만듭니다.
+const MAX_GATHER_NODES: usize = 64;
+/// 장애물, 마차, 채집 지점이 차지하는 타일의 합입니다. 상자를 타일마다 하나씩 만듭니다.
 const MAX_SOLID_TILES: usize = 4096;
 /// 캐릭터를 그리는 원의 반지름(타일)입니다.
 const MAX_RADIUS_TILES: f32 = 8.0;
@@ -39,6 +41,7 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
     check_range("tick rate", welcome.tick_hz, 1, MAX_TICK_HZ)?;
     check_count("obstacles", world.obstacles.len(), MAX_OBSTACLES)?;
     check_range("tower limit", world.tower_limit, 1, MAX_TOWER_LIMIT)?;
+    check_count("gather nodes", world.nodes.len(), MAX_GATHER_NODES)?;
     check_count(
         "monster kinds",
         world.monster_kinds.len(),
@@ -79,7 +82,16 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
         }
         solid_tiles += rect.tile_count();
     }
-    check_count("solid tiles", solid_tiles, MAX_SOLID_TILES)
+    for node in &world.nodes {
+        if !is_inside(node.tile.to_tile().rect(), map) {
+            return Err("a gather node lies outside the map".to_string());
+        }
+    }
+    check_count(
+        "solid tiles",
+        solid_tiles + world.nodes.len(),
+        MAX_SOLID_TILES,
+    )
 }
 
 fn is_inside(rect: Rect, map: Rect) -> bool {
@@ -180,6 +192,20 @@ mod tests {
         assert!(refused(&welcome).contains("tower limit"), "too big");
         welcome.world.tower_limit = MAX_TOWER_LIMIT;
         assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
+    }
+
+    #[test]
+    fn too_many_gather_nodes_or_a_node_off_the_map_are_refused() {
+        let mut welcome = normal();
+        let node = welcome.world.nodes[0];
+        welcome.world.nodes = vec![node; MAX_GATHER_NODES];
+        assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
+        welcome.world.nodes = vec![node; MAX_GATHER_NODES + 1];
+        assert!(refused(&welcome).contains("gather nodes"));
+
+        let mut welcome = normal();
+        welcome.world.nodes[0].tile = crate::WireTile { x: 64, y: 3 };
+        assert!(refused(&welcome).contains("gather node"), "off the map");
     }
 
     #[test]

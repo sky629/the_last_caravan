@@ -11,11 +11,11 @@
 //! 이 테스트가 실패하면 전송 형식이 바뀐 것입니다. 기대 바이트를 고칠 때 `PROTOCOL_VERSION`도 함께 올립니다.
 
 use caravan_protocol::{
-    ClientMsg, InputMsg, MonsterKindInfo, PROTOCOL_VERSION, RejectReason, ServerMsg, Snapshot,
-    Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireMonster,
-    WireMonsterKind, WireNightStep, WireOutcome, WirePhase, WirePlayer, WirePos, WireRect,
-    WireShot, WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WorldInfo, decode_client,
-    decode_server, encode_client, encode_server,
+    ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RejectReason, ServerMsg,
+    Snapshot, Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
+    WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile,
+    WirePlayer, WirePos, WireRect, WireShot, WireTile, WireTower, WireTowerState, WireVec2,
+    WireWagon, WorldInfo, decode_client, decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -87,6 +87,12 @@ fn welcome_carries_the_fixed_world() {
                 wagon: rect(1280, 1408, 1792, 1664),
                 day_count: 3,
                 tower_limit: 40,
+                carry_capacity: 10,
+                node_amount: 15,
+                nodes: vec![NodeInfo {
+                    id: 1,
+                    tile: WireTile { x: 9, y: 22 },
+                }],
                 player_radius: 0.5,
                 monster_kinds: vec![MonsterKindInfo {
                     kind: WireMonsterKind::Grunt,
@@ -108,6 +114,10 @@ fn welcome_carries_the_fixed_world() {
             0x80, 0x0A, 0x80, 0x0B, 0x80, 0x0E, 0x80, 0x0D, // wagon 10, 11 - 14, 13 타일
             0x03, // day_count
             0x28, // tower_limit 40
+            0x0A, // carry_capacity 10
+            0x0F, // node_amount 15
+            0x01, // nodes: 길이 1
+            0x01, 0x09, 0x16, // id 1, tile 9 22
             0x00, 0x00, 0x00, 0x3F, // player_radius 0.5
             0x01, // monster_kinds: 길이 1
             0x00, // Grunt
@@ -166,6 +176,15 @@ fn a_busy_snapshot_matches_golden_bytes() {
                 }),
             },
         }],
+        nodes: vec![
+            WireNode { id: 1, amount: 15 },
+            WireNode { id: 2, amount: 0 },
+        ],
+        piles: vec![WirePile {
+            id: 3,
+            pos: WirePos { x: 1664, y: 1408 },
+            amount: 6,
+        }],
         players: vec![
             WirePlayer {
                 id: 1,
@@ -175,6 +194,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
                 life: WireLife::Alive {
                     hp: 70,
                     max_hp: 100,
+                    carried: 4,
                     interaction: Some(WireInteraction::Reviving {
                         target: 2,
                         progress: 0.5,
@@ -218,12 +238,17 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x01, 0x0F, 0x0B, 0xAC, 0x02, // id 1, tile 15 11, max_hp 300
             0x01, 0x78, // Standing, hp 120
             0x01, 0xC8, 0x01, 0x7F, // last_shot: 있음, target 200, tick 127
+            0x02, // nodes: 길이 2
+            0x01, 0x0F, // id 1, amount 15
+            0x02, 0x00, // id 2, amount 0
+            0x01, // piles: 길이 1
+            0x03, 0x80, 0x0D, 0x80, 0x0B, 0x06, // id 3, pos 1664 1408, amount 6
             0x02, // players: 길이 2
             // 플레이어 1: 살아 있고 2번을 부활시키는 중
             0x01, 0x00, // id, team
             0x80, 0x0C, 0xC0, 0x09, // pos 1536, 1216
             0x40, // facing 64
-            0x00, 0x46, 0x64, // Alive, hp 70, max_hp 100
+            0x00, 0x46, 0x64, 0x04, // Alive, hp 70, max_hp 100, carried 4
             0x01, 0x00, 0x02, 0x00, 0x00, 0x00,
             0x3F, // interaction: 있음, Reviving, target 2, progress 0.5
             0x00, // build_refusal: 없음
@@ -255,6 +280,8 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
         wagon: WireWagon { hp: 0, max_hp: 0 },
         stash: 0,
         towers: vec![],
+        nodes: vec![],
+        piles: vec![],
         players: vec![],
         monsters: vec![],
     }
@@ -264,7 +291,7 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
 fn quiet_bytes(phase: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0x02, 0x01, 0x01]; // Snapshot, tick 1, expedition 1
     bytes.extend_from_slice(phase);
-    bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // wagon 0/0, stash 0, 빈 목록 세 개
+    bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // wagon 0/0, stash 0, 빈 목록 다섯 개
     bytes
 }
 
@@ -320,7 +347,7 @@ fn every_phase_matches_golden_bytes() {
 }
 
 #[test]
-fn a_site_a_refusal_a_builder_a_repairer_and_a_dead_player_match_golden_bytes() {
+fn a_site_a_refusal_a_builder_a_repairer_a_gatherer_and_a_dead_player_match_golden_bytes() {
     let mut snapshot = quiet_snapshot(WirePhase::Night {
         day: 1,
         wave_count: 3,
@@ -340,6 +367,7 @@ fn a_site_a_refusal_a_builder_a_repairer_and_a_dead_player_match_golden_bytes() 
         life: WireLife::Alive {
             hp: 100,
             max_hp: 100,
+            carried: 3,
             interaction,
             build_refusal,
         },
@@ -357,6 +385,7 @@ fn a_site_a_refusal_a_builder_a_repairer_and_a_dead_player_match_golden_bytes() 
             }),
         ),
         alive(5, Some(WireInteraction::Building { tower: 1 }), None),
+        alive(7, Some(WireInteraction::Gathering { node: 2 }), None),
         WirePlayer {
             life: WireLife::Dead,
             ..alive(6, None, None)
@@ -372,20 +401,27 @@ fn a_site_a_refusal_a_builder_a_repairer_and_a_dead_player_match_golden_bytes() 
             0x01, // towers: 길이 1
             0x01, 0x02, 0x03, 0xAC, 0x02, // id 1, tile 2 3, max_hp 300
             0x00, 0x00, 0x00, 0x00, 0x3F, // Building, progress 0.5
-            0x04, // players: 길이 4
+            0x00, // nodes: 길이 0
+            0x00, // piles: 길이 0
+            0x05, // players: 길이 5
             0x03, 0x00, 0x00, 0x00, 0x00, // id 3, team, pos 0 0, facing 0
-            0x00, 0x64, 0x64, // Alive, hp 100, max_hp 100
+            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
             0x01, 0x01, 0x01, // interaction: 있음, Repairing, tower 1
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x04, 0x00, 0x00, 0x00, 0x00, // id 4, team, pos 0 0, facing 0
-            0x00, 0x64, 0x64, // Alive, hp 100, max_hp 100
+            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
             0x00, // interaction: 없음
             0x01, 0x04, 0x05, 0x04, // build_refusal: 있음, tile 4 5, WouldBlockPath
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x05, 0x00, 0x00, 0x00, 0x00, // id 5, team, pos 0 0, facing 0
-            0x00, 0x64, 0x64, // Alive, hp 100, max_hp 100
+            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
             0x01, 0x02, 0x01, // interaction: 있음, Building, tower 1
+            0x00, // build_refusal: 없음
+            0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
+            0x07, 0x00, 0x00, 0x00, 0x00, // id 7, team, pos 0 0, facing 0
+            0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
+            0x01, 0x03, 0x02, // interaction: 있음, Gathering, node 2
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x06, 0x00, 0x00, 0x00, 0x00, // id 6, team, pos 0 0, facing 0

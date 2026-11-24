@@ -1,11 +1,12 @@
-//! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 근접 공격, 상호작용(부활, 수리, 건설)을 다룹니다.
+//! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 근접 공격, 상호작용(부활, 수리, 채집, 건설)을 다룹니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
-use crate::ids::{PlayerId, Team, TowerId};
+use crate::ids::{NodeId, PlayerId, Team, TowerId};
 use crate::math::Vec2;
+use crate::resources;
 use crate::stats::UnitStats;
 use crate::structures::TowerState;
 use crate::tuning::Tuning;
@@ -29,7 +30,7 @@ pub struct Player {
 
 /// 플레이어의 생명 상태입니다. 상태마다 그 상태에서 의미가 있는 값만 가집니다.
 /// 그래서 다음 상태는 코드로 표현할 수 없습니다.
-/// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용을 가지는 상태 (공격, 부활, 수리를 할 수 없습니다).
+/// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용, 든 자원을 가지는 상태 (공격, 부활, 수리, 채집을 할 수 없고 자원을 들 수 없습니다).
 /// - 사망한 플레이어가 출혈 시간을 가지는 상태.
 ///
 /// ```text
@@ -50,6 +51,8 @@ pub enum Life {
         interaction: Option<Interaction>,
         /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 이벤트가 아니라 상태이고, 키를 누르고 있는 동안 Tick마다 다시 정해집니다.
         build_refusal: Option<BuildRefusal>,
+        /// 들고 있는 자원입니다. 상한은 `ResourceTuning::carry_capacity`입니다. 마차에 가까이 가면 보관함으로 옮겨지고, 쓰러지면 그 자리에 떨어집니다.
+        carried: u32,
     },
     Downed {
         /// 남은 출혈 시간입니다. 아무도 부활시키지 않는 동안에만 줄어듭니다.
@@ -62,6 +65,7 @@ pub enum Life {
 /// 상호작용 키(F)나 건설 키(B)를 누르고 있는 동안의 행동입니다. 그 행동을 하는 플레이어가 가지고 있습니다.
 ///
 /// 부활의 진행도는 부활시키는 플레이어의 `Interaction`에만 있고, 건설의 진행도는 짓는 중인 감시탑(`TowerState::Building`)에만 있습니다.
+/// 채집 지점의 남은 양은 지점(`GatherNode`)에만 있습니다.
 /// 「플레이어 X가 부활되고 있는가」는 `Reviving { target: X }`를 가진 플레이어를 찾아서 알아냅니다.
 /// 쓰러진 플레이어에게는 아무것도 저장하지 않으므로, 두 곳의 값이 서로 어긋날 수 없습니다.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +79,11 @@ pub enum Interaction {
     Repairing {
         tower: TowerId,
         /// 마지막 수리 이후의 Tick 수입니다. 수리를 멈춰도 이미 회복한 HP는 유지됩니다.
+        since_pulse_ticks: u32,
+    },
+    Gathering {
+        node: NodeId,
+        /// 마지막으로 자원을 옮긴 뒤의 Tick 수입니다. 채집을 멈춰도 이미 든 자원은 그대로입니다.
         since_pulse_ticks: u32,
     },
     /// `tower`는 이 플레이어가 짓고 있는 감시탑입니다.
@@ -101,6 +110,7 @@ impl Player {
                 cooldown_ticks: 0,
                 interaction: None,
                 build_refusal: None,
+                carried: 0,
             },
             last_input_seq: 0,
             last_attack_tick: None,
@@ -115,8 +125,8 @@ impl Player {
         self.last_input_seq = seq;
     }
 
-    /// 낮이 시작될 때 최대 HP의 살아 있는 상태로 되돌립니다. 위치와 하고 있던 일은 그대로이고,
-    /// 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다.
+    /// 낮이 시작될 때 최대 HP의 살아 있는 상태로 되돌립니다. 위치, 하고 있던 일, 든 자원은 그대로이고,
+    /// 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다(쓰러질 때 든 자원은 이미 떨어졌습니다).
     pub(crate) fn restore_for_new_day(&mut self, t: &Tuning) {
         if let Life::Alive { hp, .. } = &mut self.life {
             *hp = t.player.max_hp;
@@ -126,6 +136,7 @@ impl Player {
                 cooldown_ticks: 0,
                 interaction: None,
                 build_refusal: None,
+                carried: 0,
             };
         }
     }
@@ -161,6 +172,14 @@ impl Player {
         }
     }
 
+    /// 들고 있는 자원입니다. 쓰러졌거나 사망한 플레이어는 자원을 들 수 없으므로 0입니다.
+    pub fn carried(&self) -> u32 {
+        match self.life {
+            Life::Alive { carried, .. } => carried,
+            Life::Downed { .. } | Life::Dead => 0,
+        }
+    }
+
     /// 이동 속도, 공격 피해량, 쿨다운을 읽는 유일한 곳입니다. 상태 효과를 추가하면 여기에서 배율을 곱합니다.
     pub(crate) fn stats(&self, t: &Tuning) -> UnitStats {
         let move_speed = match &self.life {
@@ -184,28 +203,34 @@ impl Player {
 
     /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고, 이때 하고 있던 상호작용이 함께 사라집니다.
     /// 쓰러졌거나 사망한 플레이어는 피해를 받지 않습니다.
-    pub(crate) fn take_damage(&mut self, amount: u32, t: &Tuning) {
-        if let Life::Alive { hp, .. } = &mut self.life {
-            *hp = hp.saturating_sub(amount);
-            if *hp == 0 {
-                self.life = Life::Downed {
-                    bleed_left_ticks: t.ticks(t.revive.bleed_secs),
-                };
-            }
+    ///
+    /// 쓰러지면서 잃은 든 자원의 양을 돌려주므로, 부르는 쪽이 그 자리에 떨어뜨립니다. 쓰러지지 않았으면 0입니다.
+    pub(crate) fn take_damage(&mut self, amount: u32, t: &Tuning) -> u32 {
+        let Life::Alive { hp, carried, .. } = &mut self.life else {
+            return 0;
+        };
+        *hp = hp.saturating_sub(amount);
+        if *hp > 0 {
+            return 0;
         }
+        let dropped = *carried;
+        self.life = Life::Downed {
+            bleed_left_ticks: t.ticks(t.revive.bleed_secs),
+        };
+        dropped
     }
 }
 
-/// 상호작용 키(F)와 건설 키(B)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활, 수리, 건설을 계속하거나, 새로 시작하거나, 취소합니다.
+/// 상호작용 키(F)와 건설 키(B)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활, 수리, 채집, 건설을 계속하거나, 새로 시작하거나, 취소합니다.
 ///
 /// 진행 중인 부활은 키를 누르고 있고, 대상이 여전히 쓰러진 동료이고, 거리가 범위 안인 동안만 이어집니다.
 /// 공격받는 것은 조건이 아닙니다. 조건이 하나라도 깨지면 `Interaction` 값을 버리므로 진행도가 처음으로 돌아갑니다.
 /// 쓰러진 플레이어 한 명은 한 명만 부활시킬 수 있습니다. 이미 진행 중인 부활이 먼저 대상을 차지하고,
 /// 새로 시작하려는 플레이어는 번호 순서로 남은 대상을 차지합니다.
 ///
-/// 수리는 중단해도 잃는 것이 없으므로(이미 회복한 HP는 그대로입니다) Tick마다 대상을 다시 고릅니다.
+/// 수리와 채집은 중단해도 잃는 것이 없으므로(이미 회복한 HP와 이미 든 자원은 그대로입니다) Tick마다 대상을 다시 고릅니다.
 /// 그래서 수리하던 플레이어 곁의 동료가 쓰러지면 곧바로 부활로 바뀝니다.
-/// 수리는 정해진 간격마다 감시탑의 HP를 회복시키고, 여러 명이 수리하면 회복량이 더해집니다.
+/// 수리와 채집은 정해진 간격마다 한 번씩 HP를 회복시키거나 자원을 옮기고, 여러 명이 같은 대상에 하면 양이 더해집니다.
 ///
 /// F로 할 일이 있으면 B보다 먼저입니다. 이미 짓고 있는 건설은 B를 누르고 있는 한 이어지고, F를 눌러도 바뀌지 않습니다.
 /// F로 할 일이 없고 B를 누르고 있으면 건설 요청으로 모아서 `build::start_builds`가 번호 순서로 하나씩 판정합니다.
@@ -219,6 +244,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let mut next: BTreeMap<PlayerId, Option<Interaction>> = BTreeMap::new();
     let mut claimed: BTreeSet<PlayerId> = BTreeSet::new();
     let mut repairs: Vec<(TowerId, u32)> = Vec::new();
+    let mut gathers: Vec<(PlayerId, NodeId)> = Vec::new();
     let mut build_requests: Vec<PlayerId> = Vec::new();
     for player in world.players.values() {
         if let Some(Interaction::Reviving {
@@ -254,15 +280,53 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
         } else {
             None
         };
-        if let Some(Interaction::Reviving { target, .. }) = &chosen {
-            claimed.insert(*target);
-        }
-        if let Some(Interaction::Repairing { tower, .. }) = chosen {
-            let (interaction, repaired) = count_repair_tick(world, player.interaction(), tower, t);
-            if let Some(amount) = repaired {
-                repairs.push((tower, amount));
+        match chosen {
+            Some(Interaction::Reviving { target, .. }) => {
+                claimed.insert(target);
             }
-            chosen = Some(interaction);
+            Some(Interaction::Repairing { tower, .. }) => {
+                let spec = world
+                    .towers
+                    .get(&tower)
+                    .map(|found| t.structures.get(found.kind));
+                if let Some(spec) = spec {
+                    let previous = match player.interaction() {
+                        Some(Interaction::Repairing {
+                            tower: before,
+                            since_pulse_ticks,
+                        }) if *before == tower => Some(*since_pulse_ticks),
+                        _ => None,
+                    };
+                    let (since_pulse_ticks, pulsed) =
+                        count_pulse(previous, t.ticks(spec.repair_pulse_secs));
+                    if pulsed {
+                        repairs.push((tower, spec.repair_hp_per_pulse));
+                    }
+                    chosen = Some(Interaction::Repairing {
+                        tower,
+                        since_pulse_ticks,
+                    });
+                }
+            }
+            Some(Interaction::Gathering { node, .. }) => {
+                let previous = match player.interaction() {
+                    Some(Interaction::Gathering {
+                        node: before,
+                        since_pulse_ticks,
+                    }) if *before == node => Some(*since_pulse_ticks),
+                    _ => None,
+                };
+                let (since_pulse_ticks, pulsed) =
+                    count_pulse(previous, t.ticks(t.resources.gather_pulse_secs));
+                if pulsed {
+                    gathers.push((player.id, node));
+                }
+                chosen = Some(Interaction::Gathering {
+                    node,
+                    since_pulse_ticks,
+                });
+            }
+            Some(Interaction::Building { .. }) | None => {}
         }
         if chosen.is_none() && holding_build(player.id) {
             build_requests.push(player.id);
@@ -292,13 +356,25 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
             tower.repair(amount, max_hp);
         }
     }
+    resources::apply_gathers(world, &gathers, t);
     build::start_builds(world, ctx, &build_requests);
 }
 
-/// 새로 시작할 상호작용을 고릅니다. 범위 안의 쓰러진 동료가 있으면 가장 가까운 동료를 부활시키고,
-/// 없으면 범위 안에서 손상된 가장 가까운 감시탑을 수리합니다.
-/// 이미 다른 플레이어가 부활시키는 동료(`claimed`)와, 파괴된 감시탑과, HP가 가득 찬 감시탑은 고르지 않습니다.
+/// 새로 시작할 상호작용을 고릅니다. 범위 안에 있는 것 가운데 다음 순서로 고르고, 같은 종류 안에서는 가장 가까운 것입니다.
+/// 쓰러진 동료의 부활, 손상된 감시탑의 수리, 채집 지점의 채집.
 fn choose_interaction(
+    world: &World,
+    me: &Player,
+    claimed: &BTreeSet<PlayerId>,
+    t: &Tuning,
+) -> Option<Interaction> {
+    nearest_downed_ally(world, me, claimed, t)
+        .or_else(|| nearest_damaged_tower(world, me, t))
+        .or_else(|| resources::nearest_gatherable_node(world, me, t))
+}
+
+/// 범위 안의 쓰러진 동료 가운데 가장 가까운 동료의 부활입니다. 이미 다른 플레이어가 부활시키는 동료(`claimed`)는 고르지 않습니다.
+fn nearest_downed_ally(
     world: &World,
     me: &Player,
     claimed: &BTreeSet<PlayerId>,
@@ -317,13 +393,14 @@ fn choose_interaction(
             nearest = Some((distance, other.id));
         }
     }
-    if let Some((_, target)) = nearest {
-        return Some(Interaction::Reviving {
-            target,
-            elapsed_ticks: 1,
-        });
-    }
+    nearest.map(|(_, target)| Interaction::Reviving {
+        target,
+        elapsed_ticks: 1,
+    })
+}
 
+/// 범위 안에서 손상된 가장 가까운 감시탑의 수리입니다. 파괴된 감시탑과 HP가 가득 찬 감시탑은 고르지 않습니다.
+fn nearest_damaged_tower(world: &World, me: &Player, t: &Tuning) -> Option<Interaction> {
     let mut nearest_tower: Option<(f32, TowerId)> = None;
     for tower in world.towers.values() {
         let TowerState::Standing { hp, .. } = tower.state else {
@@ -344,40 +421,14 @@ fn choose_interaction(
     })
 }
 
-/// 수리하는 한 Tick을 셉니다. 같은 감시탑을 계속 수리하면 지난 Tick에서 이어서 세고, 새로 시작하면 1부터 셉니다.
-/// 정해진 간격이 차면 카운터를 0으로 돌리고 이번에 회복시킬 HP를 함께 돌려줍니다.
-fn count_repair_tick(
-    world: &World,
-    previous: Option<&Interaction>,
-    tower: TowerId,
-    t: &Tuning,
-) -> (Interaction, Option<u32>) {
-    let counted = match previous {
-        Some(Interaction::Repairing {
-            tower: before,
-            since_pulse_ticks,
-        }) if *before == tower => since_pulse_ticks + 1,
-        _ => 1,
-    };
-    let spec = world
-        .towers
-        .get(&tower)
-        .map(|found| t.structures.get(found.kind));
-    match spec {
-        Some(spec) if counted >= t.ticks(spec.repair_pulse_secs) => (
-            Interaction::Repairing {
-                tower,
-                since_pulse_ticks: 0,
-            },
-            Some(spec.repair_hp_per_pulse),
-        ),
-        _ => (
-            Interaction::Repairing {
-                tower,
-                since_pulse_ticks: counted,
-            },
-            None,
-        ),
+/// 수리나 채집의 한 Tick을 셉니다. `previous`는 같은 대상을 지난 Tick까지 센 값이고, 새로 시작하면 `None`이어서 1부터 셉니다.
+/// 정해진 간격(`pulse_ticks`)이 차면 카운터를 0으로 돌리고 `true`를 함께 돌려줍니다.
+fn count_pulse(previous: Option<u32>, pulse_ticks: u32) -> (u32, bool) {
+    let counted = previous.map_or(1, |count| count + 1);
+    if counted >= pulse_ticks {
+        (0, true)
+    } else {
+        (counted, false)
     }
 }
 
@@ -423,6 +474,7 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
                 cooldown_ticks: 0,
                 interaction: None,
                 build_refusal: None,
+                carried: 0,
             };
         }
     }

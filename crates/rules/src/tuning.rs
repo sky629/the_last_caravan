@@ -7,10 +7,12 @@
 //! 서버는 `Tuning` 하나를 가지고 있고, 방을 만들 때마다 복사해서 넘깁니다.
 //! 수치를 바꾼 `Tuning`은 `validate`로 검사할 수 있습니다.
 
+use std::collections::BTreeSet;
+
 use crate::kind::{MonsterKind, StructureKind};
 use crate::math::{Rect, Vec2};
 use crate::spawn::SpawnPlan;
-use crate::world::{TileMap, World};
+use crate::world::{Tile, TileMap, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tuning {
@@ -24,6 +26,7 @@ pub struct Tuning {
     pub wagon: WagonTuning,
     pub structures: StructureTable,
     pub village: VillageTuning,
+    pub resources: ResourceTuning,
     pub cycle: CycleTuning,
     pub nights: NightTuning,
     pub map: MapSpec,
@@ -127,6 +130,24 @@ pub struct VillageTuning {
     pub build_range: f32,
     /// 서 있는 감시탑과 짓는 중인 감시탑을 합친 수의 상한입니다.
     pub tower_limit: u32,
+}
+
+/// 자원의 수치입니다. 자원은 한 종류이고, 채집 지점에서 플레이어의 손으로, 손에서 마차의 보관함으로 옮겨집니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResourceTuning {
+    /// 채집 지점 하나가 낮이 시작될 때마다 가지는 자원의 양입니다.
+    pub node_amount: u32,
+    /// 플레이어가 한 번에 들 수 있는 자원의 양입니다.
+    pub carry_capacity: u32,
+    /// 채집은 「일정한 시간마다 자원 일정량」으로 정합니다. 그래서 Tick 속도와 관계없이 자원이 정수로 남습니다.
+    pub gather_per_pulse: u32,
+    pub gather_pulse_secs: f32,
+    /// 플레이어의 가장자리에서 채집 지점의 가장자리까지 잰 채집 거리입니다.
+    pub gather_reach: f32,
+    /// 플레이어의 가장자리에서 마차의 가장자리까지 잰, 든 자원이 보관함으로 옮겨지는 거리입니다.
+    pub deposit_reach: f32,
+    /// 플레이어의 가장자리에서 떨어진 자원의 중심까지 잰, 자원을 줍는 거리입니다.
+    pub pickup_reach: f32,
 }
 
 /// 시설 한 종류의 수치입니다.
@@ -236,12 +257,15 @@ impl NightTuning {
 
 /// 고정된 맵 하나입니다. 좌표는 타일 단위입니다.
 /// 맵의 크기, 장애물, 마차는 정수 좌표에 놓아서 타일에 꼭 맞습니다(`Tuning::validate`가 검사합니다).
+/// 채집 지점은 타일을 가리키므로 처음부터 타일에 맞습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapSpec {
     pub width: f32,
     pub height: f32,
     pub wagon: Rect,
     pub obstacles: Vec<Rect>,
+    /// 채집 지점이 있는 타일입니다. 지점은 타일 하나를 차지하고 길을 막습니다. 번호는 이 목록의 순서대로 1부터 붙습니다.
+    pub nodes: Vec<Tile>,
     /// 플레이어가 나타나는 위치입니다. 플레이어마다 자기 등장 순서의 지점을 쓰고, 입장할 때는 방에 있는 플레이어가 쓰지 않는 가장 앞의 순서를 받습니다.
     pub player_spawns: Vec<Vec2>,
     /// 주변 몬스터를 찾는 격자의 칸 크기입니다.
@@ -274,6 +298,7 @@ impl Tuning {
     /// 플레이어는 걷는 거리를, 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값을 이 전제에 맞춰 검사합니다.
     ///
     /// 맵은 타일에 꼭 맞아야 합니다. 크기, 장애물, 마차가 정수 좌표이고, 몸의 반지름이 타일의 절반보다 짧고,
+    /// 채집 지점이 맵 안의 빈 타일이면서 마을의 범위 밖에 있고,
     /// 비어 있는 타일이 모두 마차에 걸어서 이어져야 합니다. 충돌과 몬스터의 이동 경로가 이 전제 위에서 같은 타일 지도를 읽습니다.
     pub fn validate(&self) -> Result<(), String> {
         if self.tick_hz == 0 {
@@ -367,6 +392,18 @@ impl Tuning {
             let build_secs = self.structures.get(kind).build_secs;
             check_not_negative(&format!("{kind:?} build_secs"), build_secs)?;
         }
+        let resources = &self.resources;
+        if resources.carry_capacity == 0 || resources.gather_per_pulse == 0 {
+            return Err("carry_capacity and gather_per_pulse must be at least 1".to_string());
+        }
+        for (name, value) in [
+            ("gather_pulse_secs", resources.gather_pulse_secs),
+            ("gather_reach", resources.gather_reach),
+            ("deposit_reach", resources.deposit_reach),
+            ("pickup_reach", resources.pickup_reach),
+        ] {
+            check_not_negative(name, value)?;
+        }
 
         // 몸의 반지름이 0.5보다 작아야 비어 있는 타일의 중심을 따라 걷는 몸이 이웃한 막힌 타일에 걸리지 않습니다.
         let radii = [self.player.radius]
@@ -396,6 +433,33 @@ impl Tuning {
             if !(bounds.contains(solid.min) && bounds.contains(solid.max)) {
                 return Err(format!("solid {solid:?} is outside the map"));
             }
+        }
+
+        let mut taken: BTreeSet<Tile> = BTreeSet::new();
+        for node in &map.nodes {
+            let center = node.center();
+            if !bounds.contains(center) {
+                return Err(format!("gather node {node:?} is outside the map"));
+            }
+            let on_a_solid = map
+                .obstacles
+                .iter()
+                .chain([&map.wagon])
+                .any(|solid| solid.contains(center));
+            if on_a_solid || !taken.insert(*node) {
+                return Err(format!(
+                    "gather node {node:?} overlaps a solid or another node"
+                ));
+            }
+            if map.wagon.distance_to(center) <= self.village.build_range {
+                return Err(format!(
+                    "gather node {node:?} is inside the village; it must be farther than the build range {} from the wagon",
+                    self.village.build_range
+                ));
+            }
+        }
+        if !map.nodes.is_empty() && resources.node_amount == 0 {
+            return Err("node_amount must be at least 1 when the map has gather nodes".to_string());
         }
 
         // 아래 검사는 규칙이 실제로 쓰는 타일 지도를 읽습니다.
@@ -511,6 +575,15 @@ impl Default for Tuning {
                 build_range: 10.0,
                 tower_limit: 40,
             },
+            resources: ResourceTuning {
+                node_amount: 15,
+                carry_capacity: 10,
+                gather_per_pulse: 1,
+                gather_pulse_secs: 0.5,
+                gather_reach: 1.0,
+                deposit_reach: 1.5,
+                pickup_reach: 0.8,
+            },
             cycle: CycleTuning {
                 day_secs: 90.0,
                 dawn_secs: 4.0,
@@ -544,6 +617,7 @@ impl Default for Tuning {
 impl MapSpec {
     /// 64 x 64 타일입니다. 한가운데에 마차가 있고, 마차 둘레의 마을에 장애물이 다섯 개, 그 바깥에 여덟 개 있습니다.
     /// 바깥의 장애물은 밤의 몬스터가 나타나는 여덟 방향의 자리를 피해서 놓습니다.
+    /// 채집 지점 여덟 곳은 마차에서 24타일쯤 떨어진 곳에, 밤의 몬스터가 나타나는 방향과 방향의 사이마다 하나씩 놓습니다.
     pub fn frontier() -> MapSpec {
         MapSpec {
             width: 64.0,
@@ -563,6 +637,16 @@ impl MapSpec {
                 Rect::new(36.0, 8.0, 40.0, 9.0),
                 Rect::new(57.0, 36.0, 58.0, 40.0),
                 Rect::new(7.0, 24.0, 8.0, 28.0),
+            ],
+            nodes: vec![
+                Tile::new(54, 41),
+                Tile::new(41, 54),
+                Tile::new(22, 54),
+                Tile::new(9, 41),
+                Tile::new(9, 22),
+                Tile::new(22, 9),
+                Tile::new(41, 9),
+                Tile::new(54, 22),
             ],
             player_spawns: vec![
                 Vec2::new(32.0, 29.5),

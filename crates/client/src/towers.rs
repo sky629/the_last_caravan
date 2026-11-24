@@ -161,6 +161,8 @@ mod tests {
             },
             stash: 0,
             towers,
+            nodes: Vec::new(),
+            piles: Vec::new(),
             players: Vec::new(),
             monsters: Vec::new(),
         });

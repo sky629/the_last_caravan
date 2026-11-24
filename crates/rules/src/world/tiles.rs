@@ -1,7 +1,7 @@
 //! 타일 지도입니다. 맵의 모든 타일이 무엇으로 차 있는지를 적은 표이며, 「어디가 막혀 있는가」를 아는 곳은 이 표 하나입니다.
 //!
 //! 충돌, 몬스터의 이동 경로, 지도의 연결 검사가 모두 같은 표를 읽습니다.
-//! 장애물, 마차, 감시탑은 타일에 맞춰 놓이므로(정수 좌표) 사각형 목록을 따로 들고 있지 않습니다.
+//! 장애물, 마차, 채집 지점, 감시탑은 타일에 맞춰 놓이므로(정수 좌표) 사각형 목록을 따로 들고 있지 않습니다.
 //!
 //! 표를 바꾸는 `set`은 `world` 모듈 안에서만 부를 수 있습니다(`pub(super)`). 다른 모듈이 표를 직접 고치면 컴파일되지 않습니다.
 //! 감시탑을 놓는 일은 `World::add_tower`가 표와 감시탑 목록을 함께 고칩니다.
@@ -11,7 +11,7 @@
 
 use std::ops::Range;
 
-use crate::ids::TowerId;
+use crate::ids::{NodeId, TowerId};
 use crate::math::{Rect, Vec2};
 use crate::tuning::MapSpec;
 
@@ -63,6 +63,8 @@ pub(crate) enum TileUse {
     Free,
     Obstacle,
     Wagon,
+    /// 채집 지점입니다. 원정 동안 그 자리에 그대로 있습니다.
+    Node(NodeId),
     Tower(TowerId),
 }
 
@@ -91,7 +93,7 @@ pub(crate) struct TileMap {
 }
 
 impl TileMap {
-    /// 장애물과 마차를 표에 옮깁니다. 감시탑은 `World`가 `add_tower`로 하나씩 놓습니다.
+    /// 장애물과 마차를 표에 옮깁니다. 채집 지점은 `World`가 원정을 시작할 때, 감시탑은 `add_tower`로 하나씩 놓습니다.
     /// 맵의 크기와 사각형이 정수 좌표라는 전제는 `Tuning::validate`가 검사합니다.
     pub fn from_map(map: &MapSpec) -> TileMap {
         let cols = map.width as u16;

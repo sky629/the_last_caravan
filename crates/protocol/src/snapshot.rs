@@ -9,8 +9,8 @@
 //! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    BuildRefusal, CannotBuild, Interaction, Life, Monster, MonsterKind, NightStep, Outcome, Phase,
-    Player, Sim, Tower, TowerState, Tuning,
+    BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Monster, MonsterKind, NightStep,
+    Outcome, Phase, Pile, Player, Sim, Tower, TowerState, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,10 @@ pub struct Snapshot {
     pub stash: u32,
     /// 짓는 중인 감시탑을 포함하고, 번호가 작은 감시탑부터입니다. 파괴된 감시탑은 없습니다.
     pub towers: Vec<WireTower>,
+    /// 번호가 작은 채집 지점부터입니다. 위치는 `Welcome`에 있고 여기에는 남은 양만 있습니다.
+    pub nodes: Vec<WireNode>,
+    /// 땅에 떨어진 자원입니다. 번호가 작은 더미부터이고, 다 주워 간 더미는 없습니다.
+    pub piles: Vec<WirePile>,
     /// 번호가 작은 플레이어부터입니다.
     pub players: Vec<WirePlayer>,
     /// 번호가 작은 몬스터부터입니다.
@@ -74,6 +78,21 @@ pub enum WireOutcome {
 pub struct WireWagon {
     pub hp: u32,
     pub max_hp: u32,
+}
+
+/// 채집 지점 하나의 남은 자원입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireNode {
+    pub id: u32,
+    pub amount: u32,
+}
+
+/// 땅에 떨어진 자원 한 더미입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WirePile {
+    pub id: u32,
+    pub pos: WirePos,
+    pub amount: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -123,6 +142,8 @@ pub enum WireLife {
     Alive {
         hp: u32,
         max_hp: u32,
+        /// 들고 있는 자원입니다. 상한은 `Welcome`의 `carry_capacity`입니다.
+        carried: u32,
         /// 상호작용 키나 건설 키가 지금 하고 있는 일입니다.
         interaction: Option<WireInteraction>,
         /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
@@ -152,6 +173,10 @@ pub enum WireInteraction {
     Building {
         /// 짓고 있는 감시탑의 번호입니다. 진행도는 스냅샷의 그 감시탑에 있습니다.
         tower: u32,
+    },
+    Gathering {
+        /// 채집하는 지점의 번호입니다. 남은 양은 스냅샷의 그 지점에 있습니다.
+        node: u32,
     },
 }
 
@@ -234,6 +259,8 @@ impl Snapshot {
                 .towers()
                 .map(|tower| wire_tower(tower, tuning))
                 .collect(),
+            nodes: sim.nodes().map(wire_node).collect(),
+            piles: sim.piles().map(wire_pile).collect(),
             players: sim
                 .players()
                 .map(|player| wire_player(sim, player))
@@ -309,17 +336,34 @@ fn wire_tower(tower: &Tower, tuning: &Tuning) -> WireTower {
     }
 }
 
+fn wire_node(node: &GatherNode) -> WireNode {
+    WireNode {
+        id: node.id.0,
+        amount: node.amount,
+    }
+}
+
+fn wire_pile(pile: &Pile) -> WirePile {
+    WirePile {
+        id: pile.id.0,
+        pos: WirePos::from_tiles(pile.pos),
+        amount: pile.amount,
+    }
+}
+
 fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
     let tuning = sim.tuning();
     let life = match &player.life {
         Life::Alive {
             hp,
+            carried,
             interaction,
             build_refusal,
             ..
         } => WireLife::Alive {
             hp: *hp,
             max_hp: tuning.player.max_hp,
+            carried: *carried,
             interaction: interaction
                 .as_ref()
                 .map(|interaction| wire_interaction(sim, interaction)),
@@ -351,6 +395,7 @@ fn wire_interaction(sim: &Sim, interaction: &Interaction) -> WireInteraction {
             progress: sim.revive_progress(*target).map_or(0.0, clamp_progress),
         },
         Interaction::Repairing { tower, .. } => WireInteraction::Repairing { tower: tower.0 },
+        Interaction::Gathering { node, .. } => WireInteraction::Gathering { node: node.0 },
         Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },
     }
 }

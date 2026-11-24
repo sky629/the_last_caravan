@@ -179,6 +179,7 @@ fn the_next_day_keeps_the_village_and_restores_every_player() {
         cooldown_ticks: 0,
         interaction: None,
         build_refusal: None,
+        carried: 0,
     };
     s.knock_down(downed);
     s.kill(dead);

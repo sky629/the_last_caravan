@@ -1,4 +1,4 @@
-//! 고정된 세계(지면, 장애물, 마차)를 한 번 만듭니다. 감시탑은 건설과 파괴로 바뀌므로 `towers`가 프레임마다 맞추고, 카메라는 `camera`가 맡습니다.
+//! 고정된 세계(지면, 장애물, 마차)를 한 번 만듭니다. 감시탑은 건설과 파괴로 바뀌므로 `towers`가, 채집 지점과 떨어진 자원은 `supplies`가 프레임마다 맞추고, 카메라는 `camera`가 맡습니다.
 //!
 //! 세계의 모양은 입장할 때 받은 `Welcome`에서 오므로, 서버가 다른 맵으로 실행되어도 클라이언트를 고치지 않습니다.
 //! `Session`이 입장할 때 맵의 크기와 장애물의 수에 상한을 확인했으므로, 여기서는 받은 값만큼 개체를 만들어도 됩니다.
@@ -7,7 +7,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use caravan_client_core as core;
-use caravan_protocol::{MonsterKindInfo, WireMonsterKind};
+use caravan_protocol::{MonsterKindInfo, NodeInfo, WireMonsterKind};
 use caravan_rules::{Team, Vec2 as Ground};
 
 use crate::config;
@@ -26,6 +26,10 @@ pub struct Scene {
     pub wagon_center: Ground,
     /// 맵의 가로와 세로 타일 수입니다. 감시탑이 놓일 타일을 미리 보여 줄 때 맵 밖인지 가립니다.
     pub map_size: (u16, u16),
+    /// 채집 지점의 위치입니다. 스냅샷에는 남은 양만 있습니다.
+    pub nodes: Vec<NodeInfo>,
+    /// 채집 지점이 가득 찼을 때의 양입니다. 지점의 막대를 그리는 기준입니다.
+    pub node_amount: u32,
     monsters: Vec<MonsterLook>,
 }
 
@@ -156,6 +160,8 @@ pub fn spawn_world(
         player: footprint(&mut meshes, world.player_radius),
         wagon_center: world.wagon.to_rect().center(),
         map_size: (map_size.x as u16, map_size.y as u16),
+        nodes: world.nodes.clone(),
+        node_amount: world.node_amount,
         monsters,
     });
 }

@@ -41,6 +41,8 @@ fn snapshot_of(monsters: u32) -> Snapshot {
         wagon: WireWagon { hp: 1, max_hp: 1 },
         stash: 0,
         towers: vec![],
+        nodes: vec![],
+        piles: vec![],
         players: vec![],
         monsters: (1..=monsters)
             .map(|id| WireMonster {

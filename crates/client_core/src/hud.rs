@@ -25,6 +25,8 @@ pub struct Hud {
     pub timer: Option<String>,
     /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
     pub stash: Option<String>,
+    /// 내가 들고 있는 자원과 들 수 있는 상한입니다. 살아 있을 때만 있습니다.
+    pub carry: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
     pub banner: Option<Banner>,
     pub me: Option<Meter>,
@@ -81,6 +83,7 @@ impl Hud {
             day: None,
             timer: None,
             stash: None,
+            carry: None,
             banner: None,
             me: None,
             wagon: None,
@@ -122,13 +125,18 @@ impl Hud {
 
         if let Some(me) = frame.player(you) {
             hud.me = Some(my_meter(me));
-            hud.action = action_meter(me, frame);
+            hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
-                build_refusal: Some(refusal),
+                carried,
+                build_refusal,
                 ..
             } = me.life
             {
-                hud.refusal = Some(refusal_text(refusal));
+                hud.carry = Some(format!(
+                    "CARRY  {carried} / {}",
+                    joined.welcome.world.carry_capacity
+                ));
+                hud.refusal = build_refusal.map(refusal_text);
             }
             if let WireLife::Downed {
                 bleed_secs_left,
@@ -267,9 +275,10 @@ fn ally_meter(ally: &PlayerView) -> Meter {
     }
 }
 
-/// 내가 부활, 수리, 건설을 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
+/// 내가 부활, 수리, 채집, 건설을 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
 /// 수리에는 진행도가 따로 없으므로, 수리하는 감시탑의 HP가 차오르는 모습을 진행도로 보여 줍니다.
-fn action_meter(me: &PlayerView, frame: &Frame) -> Option<Meter> {
+/// 채집도 마찬가지로 채집하는 지점의 남은 자원(`node_amount`가 가득 찬 양)이 줄어드는 모습을 보여 줍니다.
+fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Meter> {
     match me.life {
         WireLife::Alive {
             interaction: Some(WireInteraction::Reviving { target, progress }),
@@ -293,6 +302,17 @@ fn action_meter(me: &PlayerView, frame: &Frame) -> Option<Meter> {
             Some(Meter {
                 label: format!("REPAIRING TOWER  {hp} / {}", tower.max_hp),
                 fraction: bar_fraction(hp, tower.max_hp),
+                tone: Tone::Progress,
+            })
+        }
+        WireLife::Alive {
+            interaction: Some(WireInteraction::Gathering { node }),
+            ..
+        } => {
+            let node = frame.nodes.iter().find(|candidate| candidate.id == node)?;
+            Some(Meter {
+                label: format!("GATHERING  {} / {node_amount}", node.amount),
+                fraction: bar_fraction(node.amount, node_amount),
                 tone: Tone::Progress,
             })
         }
@@ -360,8 +380,8 @@ fn whole_secs(secs: f32) -> u32 {
 mod tests {
     use super::*;
     use caravan_protocol::{
-        ClientEvent, RejectReason, RoomCode, ServerMsg, Welcome, WireShot, WireTile, WireTower,
-        WireWagon,
+        ClientEvent, RejectReason, RoomCode, ServerMsg, Welcome, WireNode, WireShot, WireTile,
+        WireTower, WireWagon,
     };
     use caravan_rules::{Sim, Team, Tuning, Vec2};
 
@@ -386,6 +406,7 @@ mod tests {
         WireLife::Alive {
             hp,
             max_hp: 100,
+            carried: 0,
             interaction: None,
             build_refusal: None,
         }
@@ -416,6 +437,8 @@ mod tests {
                 max_hp: 500,
             },
             stash: 7,
+            nodes: vec![WireNode { id: 1, amount: 9 }],
+            piles: Vec::new(),
             towers: vec![WireTower {
                 id: 1,
                 tile: WireTile { x: 15, y: 11 },
@@ -607,6 +630,7 @@ mod tests {
             WireLife::Alive {
                 hp: 100,
                 max_hp: 100,
+                carried: 0,
                 interaction: Some(WireInteraction::Reviving {
                     target: 2,
                     progress: 0.5,
@@ -629,6 +653,7 @@ mod tests {
             WireLife::Alive {
                 hp: 100,
                 max_hp: 100,
+                carried: 0,
                 interaction: Some(WireInteraction::Repairing { tower: 1 }),
                 build_refusal: None,
             },
@@ -641,6 +666,53 @@ mod tests {
     }
 
     #[test]
+    fn gathering_shows_what_is_left_in_the_node() {
+        let session = session_in_room();
+        let gatherer = player(
+            YOU,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 3,
+                interaction: Some(WireInteraction::Gathering { node: 1 }),
+                build_refusal: None,
+            },
+        );
+        let action = Hud::of(&session, Some(&frame(vec![gatherer])))
+            .action
+            .unwrap();
+        assert_eq!(action.label, "GATHERING  9 / 15");
+        assert!((action.fraction - 9.0 / 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn what_i_carry_is_shown_against_the_capacity_only_while_i_am_alive() {
+        let session = session_in_room();
+        let carrying = player(
+            YOU,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 7,
+                interaction: None,
+                build_refusal: None,
+            },
+        );
+        let hud = Hud::of(&session, Some(&frame(vec![carrying])));
+        assert_eq!(hud.carry.as_deref(), Some("CARRY  7 / 10"));
+
+        let downed = player(
+            YOU,
+            WireLife::Downed {
+                bleed_secs_left: 20.0,
+                revive_progress: None,
+            },
+        );
+        assert_eq!(Hud::of(&session, Some(&frame(vec![downed]))).carry, None);
+        assert_eq!(Hud::of(&session, None).carry, None);
+    }
+
+    #[test]
     fn building_a_tower_shows_the_progress_of_the_site() {
         let session = session_in_room();
         let builder = player(
@@ -648,6 +720,7 @@ mod tests {
             WireLife::Alive {
                 hp: 100,
                 max_hp: 100,
+                carried: 0,
                 interaction: Some(WireInteraction::Building { tower: 2 }),
                 build_refusal: None,
             },
@@ -686,6 +759,7 @@ mod tests {
                 WireLife::Alive {
                     hp: 100,
                     max_hp: 100,
+                    carried: 0,
                     interaction: None,
                     build_refusal: Some(WireBuildRefusal {
                         tile: WireTile { x: 3, y: 4 },
@@ -711,6 +785,7 @@ mod tests {
             WireLife::Alive {
                 hp: 100,
                 max_hp: 100,
+                carried: 0,
                 interaction: None,
                 build_refusal: Some(WireBuildRefusal {
                     tile: WireTile { x: 3, y: 4 },
