@@ -61,6 +61,18 @@ fn positions_outside_the_range_are_pinned_and_broken_numbers_become_zero() {
 }
 
 #[test]
+fn the_largest_sendable_coordinate_comes_back_exactly_and_anything_beyond_it_is_pinned() {
+    let largest = WirePos::from_tiles(Vec2::new(WirePos::MAX_TILES, WirePos::MAX_TILES));
+    assert_eq!(
+        largest.to_tiles(),
+        Vec2::new(WirePos::MAX_TILES, WirePos::MAX_TILES)
+    );
+
+    let beyond = WirePos::from_tiles(Vec2::new(WirePos::MAX_TILES + 1.0, 600.0));
+    assert_eq!(beyond, largest);
+}
+
+#[test]
 fn a_rect_keeps_its_corners() {
     let wagon = Rect::new(10.0, 11.0, 14.0, 13.0);
     assert_eq!(WireRect::from_rect(wagon).to_rect(), wagon);

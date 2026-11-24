@@ -24,6 +24,8 @@ pub struct WirePos {
 
 impl WirePos {
     pub const UNITS_PER_TILE: f32 = 128.0;
+    /// 한 축에서 보낼 수 있는 가장 큰 좌표(타일)입니다. 이보다 큰 좌표는 이 값으로 고정되어 실제 위치와 달라집니다.
+    pub const MAX_TILES: f32 = u16::MAX as f32 / Self::UNITS_PER_TILE;
     /// 맵 안의 좌표를 보냈다가 되돌릴 때 생기는 한 축의 최대 오차(타일)입니다. 가장 가까운 눈금으로 반올림하므로 눈금 간격의 절반입니다.
     pub const MAX_ERROR_TILES: f32 = 0.5 / Self::UNITS_PER_TILE;
 

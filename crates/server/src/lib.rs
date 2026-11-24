@@ -15,7 +15,7 @@ use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use caravan_protocol::{RejectReason, RoomCode, ServerLimits, ServerTransport};
+use caravan_protocol::{RejectReason, RoomCode, ServerLimits, ServerTransport, WirePos};
 use caravan_rules::{PlayerId, Tuning};
 
 use clock::TickClock;
@@ -70,12 +70,15 @@ impl fmt::Display for Notice {
 pub enum ServerError {
     /// `Tuning::validate`가 거절한 수치입니다. 값은 어긋난 첫 항목을 설명하는 문장입니다.
     InvalidTuning(String),
+    /// 접속의 한도가 `Tuning`과 맞지 않습니다. 값은 어긋난 항목을 설명하는 문장입니다.
+    InvalidLimits(String),
 }
 
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ServerError::InvalidTuning(why) => write!(f, "invalid tuning: {why}"),
+            ServerError::InvalidLimits(why) => write!(f, "invalid limits: {why}"),
         }
     }
 }
@@ -94,6 +97,10 @@ pub struct ServerStats {
     pub ticks: u64,
 }
 
+/// 접속 하나가 1초에 보낼 수 있는 메시지 수(`ServerLimits::max_messages_per_sec`)는 `tick_hz`의 이 배수 이상이어야 합니다.
+/// 클라이언트는 Tick마다 입력을 하나씩 보냅니다. 한도가 `tick_hz`와 비슷하면, 브라우저가 지연된 입력을 한꺼번에 보내는 순간 정상적인 클라이언트도 한도를 넘어 접속이 끊깁니다.
+const LINK_RATE_HEADROOM: u32 = 2;
+
 pub struct GameServer {
     transport: Box<dyn ServerTransport>,
     hub: Hub,
@@ -102,16 +109,41 @@ pub struct GameServer {
     ticks_run: u64,
 }
 
+/// `Tuning::validate`가 검사하는 규칙의 전제에 더해, `Tuning`이 전송 형식과 접속 한도 안에 들어가는지 검사합니다.
+fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerError> {
+    tuning.validate().map_err(ServerError::InvalidTuning)?;
+
+    // 위치는 축마다 `u16`으로 보내므로, 이보다 큰 맵의 좌표는 조용히 잘려서 클라이언트가 틀린 위치를 그립니다.
+    let map = &tuning.map;
+    if map.width > WirePos::MAX_TILES || map.height > WirePos::MAX_TILES {
+        return Err(ServerError::InvalidTuning(format!(
+            "map {} x {} tiles does not fit the wire position range of {} tiles per side",
+            map.width,
+            map.height,
+            WirePos::MAX_TILES
+        )));
+    }
+
+    let needed = tuning.tick_hz.saturating_mul(LINK_RATE_HEADROOM);
+    if limits.max_messages_per_sec < needed {
+        return Err(ServerError::InvalidLimits(format!(
+            "max_messages_per_sec {} must be at least {needed} (tick_hz {} x {LINK_RATE_HEADROOM})",
+            limits.max_messages_per_sec, tuning.tick_hz
+        )));
+    }
+    Ok(())
+}
+
 impl GameServer {
-    /// 수치가 규칙의 전제를 지키는지 한 번 검사하고, 어긋나면 오류를 돌려줍니다.
-    /// 이 검사를 통과한 수치로 만든 방은 개체가 벽을 통과하는 것 같은 오동작을 일으키지 않습니다.
+    /// 수치가 규칙의 전제를 지키고 전송 형식과 접속 한도에 맞는지 한 번 검사하고, 어긋나면 오류를 돌려줍니다.
+    /// 이 검사를 통과한 수치로 만든 방은 개체가 벽을 통과하는 것 같은 오동작을 일으키지 않고, 정상적인 클라이언트의 접속을 한도 때문에 끊지 않습니다.
     pub fn new(
         transport: Box<dyn ServerTransport>,
         tuning: Tuning,
         limits: ServerLimits,
         now: Instant,
     ) -> Result<GameServer, ServerError> {
-        tuning.validate().map_err(ServerError::InvalidTuning)?;
+        check_config(&tuning, &limits)?;
         Ok(GameServer {
             transport,
             clock: TickClock::new(tuning.tick_hz, now),

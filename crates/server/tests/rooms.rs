@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
-    ServerLimits, ServerMsg, WireLife, WirePhase, loopback,
+    ServerLimits, ServerMsg, WireLife, WirePhase, WirePos, loopback,
 };
 use caravan_rules::{PlayerId, Tuning};
 use caravan_server::{GameServer, Notice, ServerError, ServerStats};
@@ -507,6 +507,85 @@ fn after_a_player_leaves_the_room_keeps_running_for_the_one_who_stays() {
         position(&snapshot, b_id).y,
         14.5 - 0.6,
         "the one who stays still answers to input",
+    );
+}
+
+fn try_start(tuning: Tuning, limits: ServerLimits) -> Result<(), ServerError> {
+    let (transport, _connector) = loopback();
+    GameServer::new(
+        Box::new(transport),
+        tuning,
+        limits,
+        std::time::Instant::now(),
+    )
+    .map(|_| ())
+}
+
+#[test]
+fn a_server_refuses_a_tick_rate_that_the_link_message_limit_cannot_carry() {
+    let limits = ServerLimits::default();
+    assert_eq!(try_start(Tuning::default(), limits), Ok(()));
+
+    // 클라이언트는 Tick마다 입력을 하나씩 보내므로, 한도와 같은 Tick 속도는 모든 접속을 끊습니다.
+    for tick_hz in [
+        limits.max_messages_per_sec + 20,
+        limits.max_messages_per_sec,
+    ] {
+        let tuning = Tuning {
+            tick_hz,
+            ..Tuning::default()
+        };
+        assert!(
+            matches!(
+                try_start(tuning, limits),
+                Err(ServerError::InvalidLimits(_))
+            ),
+            "{tick_hz} Hz against {} messages per second",
+            limits.max_messages_per_sec
+        );
+    }
+    let barely_under = Tuning {
+        tick_hz: limits.max_messages_per_sec - 1,
+        ..Tuning::default()
+    };
+    assert!(
+        matches!(
+            try_start(barely_under, limits),
+            Err(ServerError::InvalidLimits(_))
+        ),
+        "a limit just above the tick rate leaves no room for a late burst"
+    );
+
+    let roomy = ServerLimits {
+        max_messages_per_sec: 1000,
+        ..limits
+    };
+    let fast = Tuning {
+        tick_hz: 120,
+        ..Tuning::default()
+    };
+    assert_eq!(try_start(fast, roomy), Ok(()));
+}
+
+#[test]
+fn a_server_refuses_a_map_larger_than_the_wire_position_can_represent() {
+    let limits = ServerLimits::default();
+    let mut widest = Tuning::default();
+    widest.map.width = WirePos::MAX_TILES;
+    widest.map.height = WirePos::MAX_TILES;
+    assert_eq!(try_start(widest, limits), Ok(()));
+
+    let mut wide = Tuning::default();
+    wide.map.width = WirePos::MAX_TILES + 1.0;
+    assert!(
+        matches!(try_start(wide, limits), Err(ServerError::InvalidTuning(why)) if why.contains("map")),
+        "a map wider than the wire range"
+    );
+    let mut tall = Tuning::default();
+    tall.map.height = WirePos::MAX_TILES + 1.0;
+    assert!(
+        matches!(try_start(tall, limits), Err(ServerError::InvalidTuning(why)) if why.contains("map")),
+        "a map taller than the wire range"
     );
 }
 
