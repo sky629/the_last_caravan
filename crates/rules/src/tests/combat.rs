@@ -22,6 +22,11 @@ fn hp_of(s: &Scenario, id: MonsterId) -> u32 {
     s.monster(id).expect("the monster is alive").hp
 }
 
+/// HP가 1000인 몬스터가 플레이어의 공격을 `hits`번 맞은 뒤의 HP입니다.
+fn hp_after(s: &Scenario, hits: u32) -> u32 {
+    1000 - hits * s.sim.tuning().player.attack_damage
+}
+
 #[test]
 fn a_swing_damages_a_monster_in_front_of_the_player() {
     let mut s = with_tough_monsters();
@@ -31,8 +36,7 @@ fn a_swing_damages_a_monster_in_front_of_the_player() {
 
     s.run_ticks(1);
 
-    let damage = s.sim.tuning().player.attack_damage;
-    assert_eq!(hp_of(&s, monster), 1000 - damage);
+    assert_eq!(hp_of(&s, monster), hp_after(&s, 1));
     assert_eq!(s.player(a).last_attack_tick, Some(1));
 }
 
@@ -47,8 +51,8 @@ fn a_swing_hits_every_hostile_monster_in_the_arc() {
 
     s.run_ticks(1);
 
-    assert_eq!(hp_of(&s, front), 975);
-    assert_eq!(hp_of(&s, front_left), 975);
+    assert_eq!(hp_of(&s, front), hp_after(&s, 1));
+    assert_eq!(hp_of(&s, front_left), hp_after(&s, 1));
     assert_eq!(
         hp_of(&s, behind),
         1000,
@@ -67,7 +71,7 @@ fn a_monster_beyond_the_reach_is_not_hit() {
     s.run_ticks(1);
 
     // 반지름 0.35와 0.4를 빼면 근접 공격 거리 1.0 안에 들어오는 거리는 1.75까지입니다.
-    assert_eq!(hp_of(&s, near), 975);
+    assert_eq!(hp_of(&s, near), hp_after(&s, 1));
     assert_eq!(hp_of(&s, far), 1000);
 }
 
@@ -81,7 +85,7 @@ fn a_monster_outside_the_arc_is_not_hit() {
 
     s.run_ticks(1);
 
-    assert_eq!(hp_of(&s, inside), 975);
+    assert_eq!(hp_of(&s, inside), hp_after(&s, 1));
     assert_eq!(
         hp_of(&s, outside),
         1000,
@@ -99,7 +103,7 @@ fn the_cooldown_spaces_the_swings() {
     s.run_ticks(s.ticks(1.0));
 
     // 쿨다운 0.5초는 10 Tick이므로, 1초 동안 첫 Tick과 11번째 Tick에 휘두릅니다.
-    assert_eq!(hp_of(&s, monster), 1000 - 2 * 25);
+    assert_eq!(hp_of(&s, monster), hp_after(&s, 2));
 }
 
 #[test]
@@ -132,19 +136,20 @@ fn two_players_hitting_the_same_monster_both_count() {
 
     s.run_ticks(1);
 
-    assert_eq!(hp_of(&s, monster), 1000 - 2 * 25);
+    assert_eq!(hp_of(&s, monster), hp_after(&s, 2));
 }
 
 #[test]
 fn a_monster_at_zero_hp_disappears() {
-    let mut s = Scenario::open_field();
+    let damage = Scenario::open_field().sim.tuning().player.attack_damage;
+    let mut s = Scenario::with_tuning(move |t| t.monsters.grunt.max_hp = 2 * damage);
     let a = s.player_at(10.0, 10.0);
     let monster = s.monster_at(10.9, 10.0);
     s.hold(a, attack_east());
 
-    // 몬스터 HP 60은 피해 25를 세 번 맞아야 0이 됩니다. 세 번째 공격은 21번째 Tick입니다.
-    s.run_ticks(20);
-    assert_eq!(hp_of(&s, monster), 10);
+    // 쿨다운 0.5초는 10 Tick이므로, 두 번째 공격은 11번째 Tick입니다.
+    s.run_ticks(10);
+    assert_eq!(hp_of(&s, monster), damage);
     s.run_ticks(1);
     assert!(s.monster(monster).is_none());
     assert_eq!(s.sim.monsters().count(), 0);
@@ -202,7 +207,7 @@ fn the_swing_finds_exactly_the_monsters_in_reach_across_many_grid_cells() {
         let clearly_in = gap < reach - margin && cos > arc_cos + margin;
         let clearly_out = gap > reach + margin || cos < arc_cos - margin;
         if clearly_in {
-            assert_eq!(hp_of(&s, id), 975, "{at:?} should be hit");
+            assert_eq!(hp_of(&s, id), hp_after(&s, 1), "{at:?} should be hit");
             hit_count += 1;
         } else if clearly_out {
             assert_eq!(hp_of(&s, id), 1000, "{at:?} should not be hit");
@@ -234,7 +239,7 @@ fn a_move_made_during_the_swing_does_not_change_the_swing_direction() {
 
     assert_eq!(
         hp_of(&s, behind),
-        975,
+        hp_after(&s, 1),
         "the player aims west while walking east"
     );
 }

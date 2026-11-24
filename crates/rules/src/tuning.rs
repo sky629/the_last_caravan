@@ -358,7 +358,7 @@ impl Default for Tuning {
                 radius: 0.35,
                 speed: 4.0,
                 crawl_speed: 0.8,
-                attack_damage: 25,
+                attack_damage: 100,
                 attack_reach: 1.0,
                 attack_half_angle_deg: 60.0,
                 attack_cooldown_secs: 0.5,
