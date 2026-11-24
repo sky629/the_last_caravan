@@ -5,12 +5,35 @@ use caravan_protocol::{
     Snapshot, Welcome, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
     WireMonsterKind, WireOutcome, WirePhase, WirePos, WireTile, WireTowerState,
 };
-use caravan_rules::{AimDir, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2};
+use caravan_rules::{
+    AimDir, MonsterKind, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2, WavePlan,
+};
 
 fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
     for _ in 0..ticks {
         sim.step(inputs);
     }
+}
+
+/// 밤이 하나이고 무리가 하나이며 몬스터가 한 마리인 구성입니다.
+fn one_monster() -> Vec<NightPlan> {
+    vec![NightPlan {
+        waves: vec![WavePlan {
+            kind: MonsterKind::Grunt,
+            count: 1,
+        }],
+    }]
+}
+
+/// 낮이 곧 끝나고, 밤의 몬스터가 마차의 동쪽 가장자리에서 2타일 떨어진 곳 (36, 32)에 한 마리 나타나는 수치입니다.
+/// 건설할 수 있는 거리를 줄여서 몬스터가 나타나는 거리도 줄일 수 있게 합니다.
+fn a_monster_right_beside_the_wagon(t: &mut Tuning) {
+    t.village.build_range = 0.5;
+    t.nights.spawn_distance = 2.0;
+    t.nights.spawn_lanes = 1;
+    t.nights.plans = one_monster();
+    t.cycle.day_secs = 0.05;
+    t.nights.first_wave_delay_secs = 0.05;
 }
 
 /// 규칙이 `Tuning::validate`를 통과하는 수치만 받으므로, 바꾼 수치도 같은 검사를 거칩니다.
@@ -31,13 +54,12 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
     assert_eq!(snapshot.expedition, 1);
     assert_eq!(
         snapshot.phase,
-        WirePhase::Intermission {
-            next_wave: 1,
-            secs_left: 3.0
+        WirePhase::Day {
+            day: 1,
+            secs_left: 90.0
         },
-        "first_delay_secs is 3, shown as seconds and not as ticks"
+        "day_secs is 90, shown as seconds and not as ticks"
     );
-    assert_eq!(snapshot.wave_count, 3);
     assert_eq!((snapshot.wagon.hp, snapshot.wagon.max_hp), (500, 500));
     assert!(snapshot.monsters.is_empty());
 
@@ -50,7 +72,7 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
     assert_eq!((player.id, player.team), (1, 0));
     assert_eq!(
         player.pos.to_tiles(),
-        Vec2::new(12.0, 9.5),
+        Vec2::new(32.0, 29.5),
         "first spawn point"
     );
     assert_eq!(
@@ -76,9 +98,10 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
     assert_eq!((welcome.you, welcome.team), (2, 0));
     assert_eq!((welcome.tick_hz, welcome.capacity), (20, 4));
     let world = welcome.world;
-    assert_eq!(world.size.to_tiles(), Vec2::new(24.0, 24.0));
-    assert_eq!(world.obstacles.len(), 5);
+    assert_eq!(world.size.to_tiles(), Vec2::new(64.0, 64.0));
+    assert_eq!(world.obstacles.len(), Tuning::default().map.obstacles.len());
     assert_eq!(world.wagon.to_rect(), Tuning::default().map.wagon);
+    assert_eq!(world.day_count, 3);
     assert_eq!(world.tower_limit, 40);
     assert_eq!(world.player_radius, 0.35);
     let [grunt] = world.monster_kinds[..] else {
@@ -90,8 +113,8 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
 
 #[test]
 fn monsters_and_the_tower_shots_at_them_appear_once_the_first_wave_comes() {
-    // 마차 옆에 감시탑이 하나 서 있습니다. 시설을 세우는 입력은 따로 시험하므로 여기서는 규칙의 공개 함수로 건설을 마칩니다.
-    let mut sim = Sim::new(Tuning::default());
+    // 낮이 곧 끝나므로, 건설을 하는 동안 밤이 시작되어 첫 무리가 마을에 다가옵니다.
+    let mut sim = sim_with(|t| t.cycle.day_secs = 0.1);
     let builder = sim.add_player().unwrap();
     let none = PlayerInputs::new();
     let building = PlayerInputs::from([(
@@ -111,12 +134,23 @@ fn monsters_and_the_tower_shots_at_them_appear_once_the_first_wave_comes() {
         "the tower stands after the build time"
     );
     let snapshot = Snapshot::from_sim(&sim);
-    assert_eq!(snapshot.phase, WirePhase::Fighting { wave: 1 });
+    assert!(
+        matches!(
+            snapshot.phase,
+            WirePhase::Night {
+                day: 1,
+                wave_count: 2,
+                ..
+            }
+        ),
+        "got {:?}",
+        snapshot.phase
+    );
     assert_eq!(snapshot.tick, 60);
 
     // 규칙의 몬스터와 전송된 몬스터는 같은 순서, 같은 번호, 같은 HP이고 위치는 오차 안에서 같습니다.
     let mut shot = None;
-    for _ in 0..400 {
+    for _ in 0..600 {
         sim.step(&none);
         let snapshot = Snapshot::from_sim(&sim);
         let rules: Vec<_> = sim.monsters().collect();
@@ -144,7 +178,7 @@ fn monsters_and_the_tower_shots_at_them_appear_once_the_first_wave_comes() {
 #[test]
 fn a_site_under_construction_and_a_destroyed_tower_show_on_the_wire() {
     // 마차 옆에서 건설을 시작하고 3초 가운데 절반쯤 지났을 때의 모습입니다.
-    let mut sim = sim_with(|t| t.map.player_spawns = vec![Vec2::new(14.5, 10.5)]);
+    let mut sim = sim_with(|_| {});
     let builder = sim.add_player().unwrap();
     let building = PlayerInputs::from([(
         builder,
@@ -160,7 +194,7 @@ fn a_site_under_construction_and_a_destroyed_tower_show_on_the_wire() {
     let [site] = snapshot.towers[..] else {
         panic!("one site expected, got {:?}", snapshot.towers);
     };
-    assert_eq!(site.tile, WireTile::from_tile(Tile::new(15, 10)));
+    assert_eq!(site.tile, WireTile::from_tile(Tile::new(33, 29)));
     let WireTowerState::Building { progress } = site.state else {
         panic!("the site is under construction, got {:?}", site.state);
     };
@@ -181,7 +215,7 @@ fn a_site_under_construction_and_a_destroyed_tower_show_on_the_wire() {
 
 #[test]
 fn a_refused_build_shows_the_reason_and_the_tile_on_the_wire() {
-    let mut sim = sim_with(|t| t.map.player_spawns = vec![Vec2::new(14.5, 10.5)]);
+    let mut sim = sim_with(|_| {});
     let builder = sim.add_player().unwrap();
     let building = PlayerInputs::from([(
         builder,
@@ -211,7 +245,7 @@ fn a_refused_build_shows_the_reason_and_the_tile_on_the_wire() {
     assert_eq!(
         build_refusal,
         Some(WireBuildRefusal {
-            tile: WireTile { x: 14, y: 11 },
+            tile: WireTile { x: 32, y: 35 },
             why: WireCannotBuild::NotEnoughStash
         })
     );
@@ -219,31 +253,31 @@ fn a_refused_build_shows_the_reason_and_the_tile_on_the_wire() {
 
 #[test]
 fn a_destroyed_tower_is_gone_from_the_wire() {
-    // 몬스터가 감시탑 바로 옆에서 나타나서 한 번에 부숩니다.
+    // 감시탑은 마차의 남쪽 가장자리에 붙어 서고, 몬스터는 동쪽에서 나타나 감시탑 하나만 노리고 한 번에 부숩니다.
+    // 플레이어가 있으면 몬스터가 플레이어를 먼저 쫓으므로, 건설을 마치면 플레이어를 내보냅니다.
     let mut sim = sim_with(|t| {
+        a_monster_right_beside_the_wagon(t);
         t.structures.watchtower.max_hp = 10;
         t.structures.watchtower.build_secs = 0.1;
-        t.map.player_spawns = vec![Vec2::new(14.5, 10.5)];
-        t.map.monster_spawns = vec![Vec2::new(16.5, 10.5)];
-        t.waves.sizes = vec![1];
-        t.waves.spawn_lanes = 1;
-        t.waves.first_delay_secs = 3.0;
+        t.monsters.grunt.max_hp = 100_000;
         t.monsters.grunt.attack_damage = 10;
-        t.monsters.grunt.aggro_range = 0.0;
+        t.monsters.grunt.aggro_range = 10.0;
+        t.nights.first_wave_delay_secs = 3.0;
     });
     let builder = sim.add_player().unwrap();
     let building = PlayerInputs::from([(
         builder,
         PlayerInput {
             build: true,
-            aim: AimDir::new(1.0, 0.0),
+            aim: AimDir::new(0.0, 1.0),
             ..PlayerInput::default()
         },
     )]);
     step(&mut sim, &building, 5);
     assert_eq!(Snapshot::from_sim(&sim).towers.len(), 1);
+    sim.remove_player(builder);
 
-    step(&mut sim, &PlayerInputs::new(), 100);
+    step(&mut sim, &PlayerInputs::new(), 200);
 
     assert!(Snapshot::from_sim(&sim).towers.is_empty());
 }
@@ -254,11 +288,8 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
     // 두 번째 플레이어는 처음부터 상호작용 키를 누르고 있습니다.
     let mut sim = sim_with(|t| {
         t.max_players = 2;
-        t.map.player_spawns = vec![Vec2::new(10.0, 2.0), Vec2::new(11.0, 2.0)];
-        t.map.monster_spawns = vec![Vec2::new(10.0, 2.5)];
-        t.waves.sizes = vec![1];
-        t.waves.spawn_lanes = 1;
-        t.waves.first_delay_secs = 0.1;
+        a_monster_right_beside_the_wagon(t);
+        t.map.player_spawns = vec![Vec2::new(37.2, 32.0), Vec2::new(38.2, 32.0)];
         t.monsters.grunt.attack_damage = 100;
         t.monsters.grunt.attack_cooldown_secs = 100.0;
         t.wagon.max_hp = u32::MAX;
@@ -339,10 +370,7 @@ fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
     let mut sim = sim_with(|t| {
         t.wagon.max_hp = 1;
         t.monsters.grunt.aggro_range = 0.1;
-        t.map.monster_spawns = vec![Vec2::new(12.0, 10.5)];
-        t.waves.sizes = vec![1];
-        t.waves.spawn_lanes = 1;
-        t.waves.first_delay_secs = 0.1;
+        a_monster_right_beside_the_wagon(t);
     });
     sim.add_player().unwrap();
     let none = PlayerInputs::new();

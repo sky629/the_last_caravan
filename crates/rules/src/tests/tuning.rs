@@ -1,6 +1,6 @@
 //! 기본 수치가 규칙의 전제를 지키는지 확인합니다. 수치를 고치다가 전제가 깨지면 이 테스트가 실패합니다.
 
-use super::support::Scenario;
+use super::support::{Scenario, nights};
 use crate::math::{Rect, Vec2};
 use crate::tuning::Tuning;
 
@@ -28,18 +28,18 @@ fn a_tick_rate_that_would_let_bodies_tunnel_is_rejected() {
 #[test]
 fn a_spawn_point_inside_a_wall_is_rejected() {
     let mut t = Tuning::default();
-    t.map.player_spawns = vec![Vec2::new(4.5, 4.5)];
-    assert!(t.map.obstacles.contains(&Rect::new(4.0, 4.0, 8.0, 5.0)));
+    t.map.player_spawns = vec![Vec2::new(24.5, 24.5)];
+    assert!(t.map.obstacles.contains(&Rect::new(24.0, 24.0, 28.0, 25.0)));
     assert!(t.validate().is_err());
 }
 
 #[test]
 fn a_map_whose_free_tiles_are_cut_off_from_the_wagon_is_rejected() {
     let mut t = Tuning::default();
-    t.map.obstacles = vec![Rect::new(0.0, 5.0, 24.0, 6.0)];
+    t.map.obstacles = vec![Rect::new(0.0, 5.0, 64.0, 6.0)];
     assert!(t.validate().is_err(), "a wall across the whole map");
 
-    t.map.obstacles = vec![Rect::new(0.0, 5.0, 23.0, 6.0)];
+    t.map.obstacles = vec![Rect::new(0.0, 5.0, 63.0, 6.0)];
     assert_eq!(t.validate(), Ok(()), "a gap of one tile keeps it connected");
 }
 
@@ -62,9 +62,36 @@ fn a_body_as_wide_as_a_tile_is_rejected() {
 }
 
 #[test]
-fn a_wave_with_no_monsters_is_rejected() {
+fn a_night_without_waves_and_a_wave_without_monsters_are_rejected() {
     let mut t = Tuning::default();
-    t.waves.sizes = vec![6, 0];
+    t.nights.plans = nights(&[&[6, 0]]);
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.nights.plans = nights(&[&[6], &[]]);
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.nights.plans = Vec::new();
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn night_monsters_must_appear_beyond_the_village_and_somewhere_on_the_map() {
+    let mut t = Tuning::default();
+    t.nights.spawn_distance = t.village.build_range + 1.0;
+    assert!(t.validate().is_err(), "inside the village range");
+
+    let mut t = Tuning::default();
+    t.nights.spawn_distance = 500.0;
+    assert!(t.validate().is_err(), "off the map in every direction");
+
+    let mut t = Tuning::default();
+    t.nights.spawn_lanes = 0;
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.nights.max_alive = 0;
     assert!(t.validate().is_err());
 }
 

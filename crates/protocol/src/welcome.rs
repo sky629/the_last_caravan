@@ -31,6 +31,8 @@ pub struct WorldInfo {
     pub size: WirePos,
     pub obstacles: Vec<WireRect>,
     pub wagon: WireRect,
+    /// 원정의 날 수입니다. 「날 2 / 3」 같은 표시에 씁니다.
+    pub day_count: u32,
     /// 서 있는 감시탑과 짓는 중인 감시탑을 합친 수의 상한입니다. 감시탑의 위치는 스냅샷에 실립니다.
     pub tower_limit: u32,
     /// 플레이어를 그리는 원의 반지름(타일)입니다.
@@ -65,6 +67,7 @@ impl Welcome {
                     .map(|r| WireRect::from_rect(*r))
                     .collect(),
                 wagon: WireRect::from_rect(map.wagon),
+                day_count: tuning.day_count(),
                 tower_limit: tuning.village.tower_limit,
                 player_radius: tuning.player.radius,
                 monster_kinds: MonsterKind::ALL

@@ -37,7 +37,7 @@ pub struct Player {
 ///     ^                        |
 ///     +----(부활이 끝남)-------+
 ///
-///   새 원정이 시작되면 모든 플레이어가 최대 HP의 Alive가 됩니다.
+///   새 원정이 시작되거나 낮이 시작되면 모든 플레이어가 최대 HP의 Alive가 됩니다.
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum Life {
@@ -113,6 +113,21 @@ impl Player {
         let seq = self.last_input_seq;
         *self = Player::new(self.id, self.team, spawn_slot, pos, t);
         self.last_input_seq = seq;
+    }
+
+    /// 낮이 시작될 때 최대 HP의 살아 있는 상태로 되돌립니다. 위치와 하고 있던 일은 그대로이고,
+    /// 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다.
+    pub(crate) fn restore_for_new_day(&mut self, t: &Tuning) {
+        if let Life::Alive { hp, .. } = &mut self.life {
+            *hp = t.player.max_hp;
+        } else {
+            self.life = Life::Alive {
+                hp: t.player.max_hp,
+                cooldown_ticks: 0,
+                interaction: None,
+                build_refusal: None,
+            };
+        }
     }
 
     pub fn is_alive(&self) -> bool {

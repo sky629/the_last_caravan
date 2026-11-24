@@ -13,9 +13,9 @@
 use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, PROTOCOL_VERSION, RejectReason, ServerMsg, Snapshot,
     Welcome, WireAngle, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireMonster,
-    WireMonsterKind, WireOutcome, WirePhase, WirePlayer, WirePos, WireRect, WireShot, WireTile,
-    WireTower, WireTowerState, WireVec2, WireWagon, WorldInfo, decode_client, decode_server,
-    encode_client, encode_server,
+    WireMonsterKind, WireNightStep, WireOutcome, WirePhase, WirePlayer, WirePos, WireRect,
+    WireShot, WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WorldInfo, decode_client,
+    decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -85,6 +85,7 @@ fn welcome_carries_the_fixed_world() {
                 size: WirePos { x: 3072, y: 3072 },
                 obstacles: vec![rect(512, 640, 1024, 768)],
                 wagon: rect(1280, 1408, 1792, 1664),
+                day_count: 3,
                 tower_limit: 40,
                 player_radius: 0.5,
                 monster_kinds: vec![MonsterKindInfo {
@@ -105,6 +106,7 @@ fn welcome_carries_the_fixed_world() {
             0x01, // obstacles: 길이 1
             0x80, 0x04, 0x80, 0x05, 0x80, 0x08, 0x80, 0x06, // 512, 640 - 1024, 768
             0x80, 0x0A, 0x80, 0x0B, 0x80, 0x0E, 0x80, 0x0D, // wagon 10, 11 - 14, 13 타일
+            0x03, // day_count
             0x28, // tower_limit 40
             0x00, 0x00, 0x00, 0x3F, // player_radius 0.5
             0x01, // monster_kinds: 길이 1
@@ -142,8 +144,11 @@ fn a_busy_snapshot_matches_golden_bytes() {
     let snapshot = Snapshot {
         tick: 128,
         expedition: 2,
-        phase: WirePhase::Fighting { wave: 2 },
-        wave_count: 3,
+        phase: WirePhase::Night {
+            day: 2,
+            wave_count: 3,
+            step: WireNightStep::Fighting { wave: 2 },
+        },
         wagon: WireWagon {
             hp: 450,
             max_hp: 500,
@@ -206,8 +211,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x02, // Snapshot 변형
             0x80, 0x01, // tick 128
             0x02, // expedition
-            0x01, 0x02, // phase: Fighting, wave 2
-            0x03, // wave_count
+            0x01, 0x02, 0x03, 0x01, 0x02, // phase: Night, day 2, 3 waves, Fighting, wave 2
             0xC2, 0x03, 0xF4, 0x03, // wagon hp 450, max_hp 500
             0x07, // stash
             0x01, // towers: 길이 1
@@ -242,13 +246,12 @@ fn a_busy_snapshot_matches_golden_bytes() {
     );
 }
 
-/// 지금까지의 테스트에 나오지 않은 변형들을 한 번씩 보냅니다. 앞부분(tick 1, expedition 1, wave_count 3)은 모두 같습니다.
+/// 지금까지의 테스트에 나오지 않은 변형들을 한 번씩 보냅니다. 단계를 뺀 나머지(tick 1, expedition 1, 빈 마차, 빈 목록)는 모두 같습니다.
 fn quiet_snapshot(phase: WirePhase) -> Snapshot {
     Snapshot {
         tick: 1,
         expedition: 1,
         phase,
-        wave_count: 3,
         wagon: WireWagon { hp: 0, max_hp: 0 },
         stash: 0,
         towers: vec![],
@@ -261,42 +264,68 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
 fn quiet_bytes(phase: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0x02, 0x01, 0x01]; // Snapshot, tick 1, expedition 1
     bytes.extend_from_slice(phase);
-    bytes.extend_from_slice(&[0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // wave_count 3, wagon 0/0, stash 0, 빈 목록 세 개
+    bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // wagon 0/0, stash 0, 빈 목록 세 개
     bytes
 }
 
 #[test]
 fn every_phase_matches_golden_bytes() {
     assert_server_wire(
-        ServerMsg::Snapshot(quiet_snapshot(WirePhase::Intermission {
-            next_wave: 1,
+        ServerMsg::Snapshot(quiet_snapshot(WirePhase::Day {
+            day: 2,
             secs_left: 3.0,
         })),
-        &quiet_bytes(&[0x00, 0x01, 0x00, 0x00, 0x40, 0x40]),
+        &quiet_bytes(&[0x00, 0x02, 0x00, 0x00, 0x40, 0x40]),
     );
     assert_server_wire(
-        ServerMsg::Snapshot(quiet_snapshot(WirePhase::Fighting { wave: 3 })),
-        &quiet_bytes(&[0x01, 0x03]),
+        ServerMsg::Snapshot(quiet_snapshot(WirePhase::Night {
+            day: 1,
+            wave_count: 2,
+            step: WireNightStep::Waiting {
+                next_wave: 2,
+                secs_left: 4.0,
+            },
+        })),
+        &quiet_bytes(&[0x01, 0x01, 0x02, 0x00, 0x02, 0x00, 0x00, 0x80, 0x40]),
+    );
+    assert_server_wire(
+        ServerMsg::Snapshot(quiet_snapshot(WirePhase::Night {
+            day: 3,
+            wave_count: 3,
+            step: WireNightStep::Fighting { wave: 3 },
+        })),
+        &quiet_bytes(&[0x01, 0x03, 0x03, 0x01, 0x03]),
+    );
+    assert_server_wire(
+        ServerMsg::Snapshot(quiet_snapshot(WirePhase::Dawn {
+            next_day: 2,
+            secs_left: 4.0,
+        })),
+        &quiet_bytes(&[0x02, 0x02, 0x00, 0x00, 0x80, 0x40]),
     );
     assert_server_wire(
         ServerMsg::Snapshot(quiet_snapshot(WirePhase::Over {
             outcome: WireOutcome::Victory,
             secs_left: 5.0,
         })),
-        &quiet_bytes(&[0x02, 0x00, 0x00, 0x00, 0xA0, 0x40]),
+        &quiet_bytes(&[0x03, 0x00, 0x00, 0x00, 0xA0, 0x40]),
     );
     assert_server_wire(
         ServerMsg::Snapshot(quiet_snapshot(WirePhase::Over {
             outcome: WireOutcome::Defeat,
             secs_left: 5.0,
         })),
-        &quiet_bytes(&[0x02, 0x01, 0x00, 0x00, 0xA0, 0x40]),
+        &quiet_bytes(&[0x03, 0x01, 0x00, 0x00, 0xA0, 0x40]),
     );
 }
 
 #[test]
 fn a_site_a_refusal_a_builder_a_repairer_and_a_dead_player_match_golden_bytes() {
-    let mut snapshot = quiet_snapshot(WirePhase::Fighting { wave: 1 });
+    let mut snapshot = quiet_snapshot(WirePhase::Night {
+        day: 1,
+        wave_count: 3,
+        step: WireNightStep::Fighting { wave: 1 },
+    });
     snapshot.towers = vec![WireTower {
         id: 1,
         tile: WireTile { x: 2, y: 3 },
@@ -337,8 +366,7 @@ fn a_site_a_refusal_a_builder_a_repairer_and_a_dead_player_match_golden_bytes() 
         ServerMsg::Snapshot(snapshot),
         &[
             0x02, 0x01, 0x01, // Snapshot, tick 1, expedition 1
-            0x01, 0x01, // phase: Fighting, wave 1
-            0x03, // wave_count
+            0x01, 0x01, 0x03, 0x01, 0x01, // phase: Night, day 1, 3 waves, Fighting, wave 1
             0x00, 0x00, // wagon
             0x00, // stash
             0x01, // towers: 길이 1

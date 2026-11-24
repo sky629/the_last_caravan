@@ -9,8 +9,8 @@
 //! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    BuildRefusal, CannotBuild, Interaction, Life, Monster, MonsterKind, Outcome, Phase, Player,
-    Sim, Tower, TowerState, Tuning,
+    BuildRefusal, CannotBuild, Interaction, Life, Monster, MonsterKind, NightStep, Outcome, Phase,
+    Player, Sim, Tower, TowerState, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,8 +24,6 @@ pub struct Snapshot {
     /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
     pub expedition: u32,
     pub phase: WirePhase,
-    /// 한 원정의 무리 수입니다. 「무리 2 / 3」 같은 표시에 씁니다.
-    pub wave_count: u32,
     pub wagon: WireWagon,
     /// 마차의 보관함에 있는 자원입니다. 모든 플레이어가 함께 씁니다.
     pub stash: u32,
@@ -40,15 +38,30 @@ pub struct Snapshot {
 /// 원정의 단계입니다. 단계마다 그 단계에서 표시할 값만 가집니다.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WirePhase {
-    /// `next_wave`번 무리가 나타나기까지 `secs_left`초 남았습니다.
-    Intermission { next_wave: u32, secs_left: f32 },
-    /// `wave`번 무리가 나타나는 중이거나 싸우는 중입니다.
-    Fighting { wave: u32 },
+    /// `day`번째 날의 낮이고, `secs_left`초 뒤에 밤이 됩니다.
+    Day { day: u32, secs_left: f32 },
+    /// `day`번째 날의 밤이고, 그 밤의 무리는 `wave_count`개입니다.
+    Night {
+        day: u32,
+        wave_count: u32,
+        step: WireNightStep,
+    },
+    /// 밤의 무리를 모두 처치했고, `secs_left`초 뒤에 `next_day`번째 날의 낮이 시작됩니다.
+    Dawn { next_day: u32, secs_left: f32 },
     /// 결과를 보여 주는 중이며, `secs_left`초 뒤에 새 원정이 시작됩니다.
     Over {
         outcome: WireOutcome,
         secs_left: f32,
     },
+}
+
+/// 밤 안에서의 진행입니다. 무리의 번호는 그 밤 안에서 1부터 셉니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum WireNightStep {
+    /// `next_wave`번 무리가 나타나기까지 `secs_left`초 남았습니다.
+    Waiting { next_wave: u32, secs_left: f32 },
+    /// `wave`번 무리가 나타나는 중이거나 싸우는 중입니다.
+    Fighting { wave: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,7 +225,6 @@ impl Snapshot {
             tick: sim.tick(),
             expedition: sim.expedition_number(),
             phase: wire_phase(sim.phase(), tuning),
-            wave_count: tuning.wave_count(),
             wagon: WireWagon {
                 hp: sim.wagon().hp,
                 max_hp: tuning.wagon.max_hp,
@@ -238,14 +250,31 @@ fn secs(ticks: u32, tuning: &Tuning) -> f32 {
 
 fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
     match phase {
-        Phase::Intermission {
-            next_wave,
-            ticks_left,
-        } => WirePhase::Intermission {
-            next_wave,
+        Phase::Day { day, ticks_left } => WirePhase::Day {
+            day,
             secs_left: secs(ticks_left, tuning),
         },
-        Phase::Fighting { wave, .. } => WirePhase::Fighting { wave },
+        Phase::Night { day, step } => WirePhase::Night {
+            day,
+            wave_count: tuning.nights.wave_count(day),
+            step: match step {
+                NightStep::Waiting {
+                    next_wave,
+                    ticks_left,
+                } => WireNightStep::Waiting {
+                    next_wave,
+                    secs_left: secs(ticks_left, tuning),
+                },
+                NightStep::Fighting { wave, .. } => WireNightStep::Fighting { wave },
+            },
+        },
+        Phase::Dawn {
+            next_day,
+            ticks_left,
+        } => WirePhase::Dawn {
+            next_day,
+            secs_left: secs(ticks_left, tuning),
+        },
         Phase::Over {
             outcome,
             ticks_left,

@@ -4,8 +4,8 @@
 //! 모든 값은 지금 그리는 `Frame`에서 오므로, 막대는 그 피해를 일으킨 공격이 화면에 나타난 뒤에 줄어듭니다.
 
 use caravan_protocol::{
-    WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireOutcome, WirePhase,
-    WireTowerState,
+    WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireNightStep, WireOutcome,
+    WirePhase, WireTowerState,
 };
 use caravan_rules::Team;
 
@@ -19,7 +19,10 @@ pub struct Hud {
     pub connection: String,
     pub room: Option<String>,
     pub expedition: Option<String>,
-    pub wave: Option<String>,
+    /// 「DAY 1 / 3」이나 「NIGHT 2 / 3」처럼 지금이 몇 번째 날의 낮인지 밤인지입니다. 결과를 보여 주는 동안에는 없습니다.
+    pub day: Option<String>,
+    /// 낮의 남은 시간, 밤의 무리 번호, 새벽이 끝나기까지의 시간입니다. 결과를 보여 주는 동안에는 없습니다.
+    pub timer: Option<String>,
     /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
     pub stash: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
@@ -75,7 +78,8 @@ impl Hud {
             connection: session.status_text(),
             room: None,
             expedition: None,
-            wave: None,
+            day: None,
+            timer: None,
             stash: None,
             banner: None,
             me: None,
@@ -96,7 +100,7 @@ impl Hud {
         let you = joined.welcome.you;
         let my_team = Team(joined.welcome.team);
         hud.expedition = Some(format!("EXPEDITION {}", frame.expedition));
-        hud.wave = wave_text(frame);
+        (hud.day, hud.timer) = phase_text(frame.phase, joined.welcome.world.day_count);
         hud.stash = Some(format!("STASH  {}", frame.stash));
         if let WirePhase::Over {
             outcome, secs_left, ..
@@ -180,19 +184,40 @@ fn result_banner(outcome: WireOutcome, secs_left: f32) -> Banner {
     }
 }
 
-fn wave_text(frame: &Frame) -> Option<String> {
-    match frame.phase {
-        WirePhase::Fighting { wave } => Some(format!("WAVE {wave} / {}", frame.wave_count)),
-        WirePhase::Intermission {
-            next_wave,
+/// 화면 오른쪽 위에 적는 두 줄입니다. 첫 줄은 몇 번째 날의 낮인지 밤인지이고, 둘째 줄은 거기서 기다리는 것입니다.
+fn phase_text(phase: WirePhase, day_count: u32) -> (Option<String>, Option<String>) {
+    let (day, timer) = match phase {
+        WirePhase::Day { day, secs_left } => (
+            format!("DAY {day} / {day_count}"),
+            format!("NIGHT IN {}s", whole_secs(secs_left)),
+        ),
+        WirePhase::Night {
+            day,
+            wave_count,
+            step,
+        } => (
+            format!("NIGHT {day} / {day_count}"),
+            match step {
+                WireNightStep::Waiting {
+                    next_wave,
+                    secs_left,
+                } => format!(
+                    "WAVE {next_wave} / {wave_count} IN {}s",
+                    whole_secs(secs_left)
+                ),
+                WireNightStep::Fighting { wave } => format!("WAVE {wave} / {wave_count}"),
+            },
+        ),
+        WirePhase::Dawn {
+            next_day,
             secs_left,
-        } => Some(format!(
-            "WAVE {next_wave} / {} IN {}s",
-            frame.wave_count,
-            whole_secs(secs_left)
-        )),
-        WirePhase::Over { .. } => None,
-    }
+        } => (
+            "DAWN".to_string(),
+            format!("DAY {next_day} / {day_count} IN {}s", whole_secs(secs_left)),
+        ),
+        WirePhase::Over { .. } => return (None, None),
+    };
+    (Some(day), Some(timer))
 }
 
 fn my_meter(me: &PlayerView) -> Meter {
@@ -381,8 +406,11 @@ mod tests {
         Frame {
             tick: 100.0,
             expedition: 2,
-            phase: WirePhase::Fighting { wave: 2 },
-            wave_count: 3,
+            phase: WirePhase::Night {
+                day: 2,
+                wave_count: 3,
+                step: WireNightStep::Fighting { wave: 2 },
+            },
             wagon: WireWagon {
                 hp: 400,
                 max_hp: 500,
@@ -403,11 +431,12 @@ mod tests {
     }
 
     #[test]
-    fn the_wave_wagon_stash_and_room_are_shown() {
+    fn the_day_wave_wagon_stash_and_room_are_shown() {
         let session = session_in_room();
         let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72))])));
 
-        assert_eq!(hud.wave.as_deref(), Some("WAVE 2 / 3"));
+        assert_eq!(hud.day.as_deref(), Some("NIGHT 2 / 3"));
+        assert_eq!(hud.timer.as_deref(), Some("WAVE 2 / 3"));
         assert_eq!(hud.expedition.as_deref(), Some("EXPEDITION 2"));
         assert_eq!(hud.room.as_deref(), Some("ROOM test"));
         assert_eq!(hud.connection, "Connected");
@@ -419,16 +448,49 @@ mod tests {
     }
 
     #[test]
-    fn between_waves_the_countdown_is_rounded_up() {
+    fn every_step_of_the_day_names_the_day_and_what_comes_next() {
         let session = session_in_room();
-        let mut frame = frame(vec![player(YOU, alive(100))]);
-        frame.phase = WirePhase::Intermission {
-            next_wave: 3,
-            secs_left: 3.2,
+        let shown = |phase| {
+            let mut frame = frame(vec![player(YOU, alive(100))]);
+            frame.phase = phase;
+            let hud = Hud::of(&session, Some(&frame));
+            (hud.day, hud.timer)
         };
+        let text = |day: &str, timer: &str| (Some(day.to_string()), Some(timer.to_string()));
+
+        // 남은 시간은 올림해서 보여 줍니다. 3.2초가 남았을 때 「3초」라고 하면 4번째 초가 끝나기 전에 시작되는 것처럼 보입니다.
         assert_eq!(
-            Hud::of(&session, Some(&frame)).wave.as_deref(),
-            Some("WAVE 3 / 3 IN 4s")
+            shown(WirePhase::Day {
+                day: 1,
+                secs_left: 72.2
+            }),
+            text("DAY 1 / 3", "NIGHT IN 73s")
+        );
+        assert_eq!(
+            shown(WirePhase::Night {
+                day: 2,
+                wave_count: 3,
+                step: WireNightStep::Waiting {
+                    next_wave: 3,
+                    secs_left: 3.2
+                }
+            }),
+            text("NIGHT 2 / 3", "WAVE 3 / 3 IN 4s")
+        );
+        assert_eq!(
+            shown(WirePhase::Dawn {
+                next_day: 3,
+                secs_left: 0.4
+            }),
+            text("DAWN", "DAY 3 / 3 IN 1s")
+        );
+        assert_eq!(
+            shown(WirePhase::Over {
+                outcome: WireOutcome::Victory,
+                secs_left: 5.0
+            }),
+            (None, None),
+            "the result takes the place of the day"
         );
     }
 
@@ -683,7 +745,7 @@ mod tests {
         let won = Hud::of(&session, Some(&frame)).banner.unwrap();
         assert_eq!(won.title, "EXPEDITION SUCCESS");
         assert_eq!(won.tone, BannerTone::Good);
-        assert_eq!(Hud::of(&session, Some(&frame)).wave, None);
+        assert_eq!(Hud::of(&session, Some(&frame)).day, None);
     }
 
     #[test]
@@ -723,7 +785,7 @@ mod tests {
             hud.connection,
             "Disconnected: the server closed the connection"
         );
-        assert_eq!(hud.wave, None);
+        assert_eq!(hud.day, None);
         assert_eq!(hud.room, None);
     }
 

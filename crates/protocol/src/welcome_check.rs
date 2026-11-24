@@ -222,7 +222,7 @@ mod tests {
         assert!(refused(&welcome).contains("solid tiles"), "too many tiles");
 
         let mut welcome = normal();
-        welcome.world.obstacles = vec![rect(tiles(20), tiles(20), tiles(40), tiles(21))];
+        welcome.world.obstacles = vec![rect(tiles(60), tiles(20), tiles(80), tiles(21))];
         assert!(refused(&welcome).contains("outside the map"), "outside");
 
         let mut welcome = normal();

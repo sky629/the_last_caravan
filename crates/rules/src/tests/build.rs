@@ -201,12 +201,15 @@ fn being_attacked_alone_does_not_cancel_a_build() {
 }
 
 #[test]
-fn a_tower_can_be_built_while_a_wave_is_fighting() {
+fn a_tower_can_be_built_during_the_night() {
     let mut s = Scenario::open_field();
-    s.sim.set_phase(crate::expedition::Phase::Fighting {
-        wave: 1,
-        to_spawn: 1,
-        spawn_in_ticks: u32::MAX,
+    s.sim.set_phase(crate::expedition::Phase::Night {
+        day: 1,
+        step: crate::expedition::NightStep::Fighting {
+            wave: 1,
+            to_spawn: 1,
+            spawn_in_ticks: u32::MAX,
+        },
     });
     builder_facing_east(&mut s);
 

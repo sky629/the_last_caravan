@@ -151,8 +151,10 @@ mod tests {
         app.world_mut().resource_mut::<CurrentFrame>().0 = Some(Frame {
             tick: 1.0,
             expedition: 1,
-            phase: WirePhase::Fighting { wave: 1 },
-            wave_count: 3,
+            phase: WirePhase::Day {
+                day: 1,
+                secs_left: 90.0,
+            },
             wagon: WireWagon {
                 hp: 500,
                 max_hp: 500,

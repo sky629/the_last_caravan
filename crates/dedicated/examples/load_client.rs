@@ -13,8 +13,8 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientMsg, InputMsg, PROTOCOL_VERSION, ServerMsg, Snapshot, WirePhase, WireVec2, decode_server,
-    encode_client,
+    ClientMsg, InputMsg, PROTOCOL_VERSION, ServerMsg, Snapshot, WireNightStep, WirePhase, WireVec2,
+    decode_server, encode_client,
 };
 use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::{Error, Message, WebSocket, connect};
@@ -222,8 +222,20 @@ fn report_line(elapsed: Duration, window: &Window, latest: Option<&Snapshot>) ->
 
 fn phase_name(snapshot: &Snapshot) -> String {
     match snapshot.phase {
-        WirePhase::Intermission { next_wave, .. } => format!("intermission(next {next_wave})"),
-        WirePhase::Fighting { wave } => format!("fighting({wave}/{})", snapshot.wave_count),
+        WirePhase::Day { day, .. } => format!("day({day})"),
+        WirePhase::Night {
+            day,
+            wave_count,
+            step,
+        } => match step {
+            WireNightStep::Waiting { next_wave, .. } => {
+                format!("night({day}) waiting(next {next_wave}/{wave_count})")
+            }
+            WireNightStep::Fighting { wave } => {
+                format!("night({day}) fighting({wave}/{wave_count})")
+            }
+        },
+        WirePhase::Dawn { next_day, .. } => format!("dawn(next {next_day})"),
         WirePhase::Over { outcome, .. } => format!("over({outcome:?})"),
     }
 }

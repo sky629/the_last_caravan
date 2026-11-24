@@ -9,6 +9,7 @@
 
 use crate::kind::{MonsterKind, StructureKind};
 use crate::math::{Rect, Vec2};
+use crate::spawn::SpawnPlan;
 use crate::world::{TileMap, World};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -23,7 +24,8 @@ pub struct Tuning {
     pub wagon: WagonTuning,
     pub structures: StructureTable,
     pub village: VillageTuning,
-    pub waves: WaveTuning,
+    pub cycle: CycleTuning,
+    pub nights: NightTuning,
     pub map: MapSpec,
 }
 
@@ -160,35 +162,75 @@ impl StructureTable {
     }
 }
 
+/// 원정의 날이 흐르는 시간입니다.
 #[derive(Clone, Debug, PartialEq)]
-pub struct WaveTuning {
-    /// 모든 무리가 등장시키는 몬스터의 종류입니다.
-    pub kind: MonsterKind,
-    /// 무리마다 몬스터의 수입니다. 길이가 무리의 수입니다.
-    /// 무리는 겹치지 않으므로, 가장 큰 값이 동시에 존재하는 몬스터 수의 상한입니다.
-    pub sizes: Vec<u32>,
-    /// 원정이 시작된 뒤 첫 무리가 등장하기까지의 시간입니다.
-    pub first_delay_secs: f32,
-    /// 한 무리 안에서 몬스터가 한 마리씩 등장하는 간격입니다.
-    pub spawn_interval_secs: f32,
-    /// 등장 지점에서 맵 가장자리를 따라 몬스터를 나란히 세우는 줄의 수입니다.
-    pub spawn_lanes: u32,
-    /// 줄 사이의 간격입니다.
-    pub spawn_lane_spacing: f32,
-    /// 한 무리를 모두 처치한 뒤 다음 무리가 등장하기까지의 시간입니다.
-    pub between_secs: f32,
+pub struct CycleTuning {
+    /// 낮의 길이입니다. 이 시간이 지나면 밤이 됩니다.
+    pub day_secs: f32,
+    /// 밤의 무리를 모두 처치한 뒤 다음 날의 낮이 시작되기까지의 시간입니다.
+    pub dawn_secs: f32,
     /// 원정의 결과를 보여 주는 시간입니다. 이 시간이 지나면 새 원정이 시작됩니다.
     pub restart_secs: f32,
 }
 
-impl WaveTuning {
-    /// `wave`번 무리(1부터 셉니다)의 몬스터 수입니다. 없는 무리는 0입니다.
-    pub fn size_of(&self, wave: u32) -> u32 {
-        (wave as usize)
-            .checked_sub(1)
-            .and_then(|index| self.sizes.get(index))
-            .copied()
-            .unwrap_or(0)
+/// 밤 하나입니다. 무리는 목록의 순서대로 나옵니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NightPlan {
+    pub waves: Vec<WavePlan>,
+}
+
+/// 무리 하나입니다. 무리가 나타나는 방법은 종류와 수뿐이므로, 새 종류의 몬스터가 나오는 밤은 이 목록에 항목을 더해서 만듭니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WavePlan {
+    pub kind: MonsterKind,
+    pub count: u32,
+}
+
+/// 밤의 진행과 밤의 몬스터가 나타나는 방법입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NightTuning {
+    /// 날마다 밤 하나입니다. 길이가 원정의 날 수입니다.
+    pub plans: Vec<NightPlan>,
+    /// 밤이 시작된 뒤 첫 무리가 나타나기까지의 시간입니다.
+    pub first_wave_delay_secs: f32,
+    /// 한 무리를 모두 처치한 뒤 다음 무리가 나타나기까지의 시간입니다.
+    pub between_waves_secs: f32,
+    /// 한 무리 안에서 몬스터가 한 마리씩 나타나는 간격입니다.
+    pub spawn_interval_secs: f32,
+    /// 마차의 가장자리에서 밤의 몬스터가 나타나는 자리까지의 거리입니다. 마을의 범위보다 멀어야 합니다.
+    pub spawn_distance: f32,
+    /// 한 방향에서 나란히 나타나는 줄의 수와 줄 사이의 간격입니다.
+    pub spawn_lanes: u32,
+    pub spawn_lane_spacing: f32,
+    /// 동시에 살아 있을 수 있는 몬스터의 수입니다. 이 수에 이르면 등장이 멈췄다가 몬스터가 줄면 이어집니다.
+    pub max_alive: u32,
+}
+
+impl NightTuning {
+    /// `day`번째 밤(1부터 셉니다)의 무리 수입니다. 없는 밤은 0입니다.
+    pub fn wave_count(&self, day: u32) -> u32 {
+        self.plan(day).map_or(0, |plan| plan.waves.len() as u32)
+    }
+
+    /// `day`번째 밤의 `wave`번째 무리입니다(둘 다 1부터 셉니다).
+    pub fn wave(&self, day: u32, wave: u32) -> Option<WavePlan> {
+        let index = (wave as usize).checked_sub(1)?;
+        self.plan(day)?.waves.get(index).copied()
+    }
+
+    /// 원정의 첫 무리부터 센 이 무리의 순번입니다(0부터 셉니다). 무리가 나타나는 방향이 이 순번으로 정해집니다.
+    pub fn wave_serial(&self, day: u32, wave: u32) -> u32 {
+        let earlier: usize = self
+            .plans
+            .iter()
+            .take((day as usize).saturating_sub(1))
+            .map(|plan| plan.waves.len())
+            .sum();
+        earlier as u32 + wave.saturating_sub(1)
+    }
+
+    fn plan(&self, day: u32) -> Option<&NightPlan> {
+        self.plans.get((day as usize).checked_sub(1)?)
     }
 }
 
@@ -202,8 +244,6 @@ pub struct MapSpec {
     pub obstacles: Vec<Rect>,
     /// 플레이어가 나타나는 위치입니다. 플레이어마다 자기 등장 순서의 지점을 쓰고, 입장할 때는 방에 있는 플레이어가 쓰지 않는 가장 앞의 순서를 받습니다.
     pub player_spawns: Vec<Vec2>,
-    /// 맵 가장자리의 등장 지점입니다. 무리 N은 `monster_spawns[(N - 1) % 개수]`에서 등장합니다.
-    pub monster_spawns: Vec<Vec2>,
     /// 주변 몬스터를 찾는 격자의 칸 크기입니다.
     pub spatial_cell: f32,
 }
@@ -221,8 +261,9 @@ impl Tuning {
         if secs > 0.0 { ticks.max(1) } else { 0 }
     }
 
-    pub fn wave_count(&self) -> u32 {
-        self.waves.sizes.len() as u32
+    /// 원정의 날 수입니다. 밤의 목록의 길이이므로, 날 수를 적는 곳은 따로 없습니다.
+    pub fn day_count(&self) -> u32 {
+        self.nights.plans.len() as u32
     }
 
     /// 수치가 규칙의 전제를 지키는지 검사합니다. 어긋난 첫 번째 항목을 설명하는 문장을 돌려줍니다.
@@ -241,11 +282,22 @@ impl Tuning {
         if self.max_players == 0 {
             return Err("max_players must be at least 1".to_string());
         }
-        if self.waves.sizes.is_empty() || self.waves.sizes.contains(&0) {
-            return Err("every wave needs at least one monster".to_string());
+        if self.nights.plans.is_empty() {
+            return Err("there must be at least one night".to_string());
         }
-        if self.waves.spawn_lanes == 0 {
+        for plan in &self.nights.plans {
+            if plan.waves.is_empty() || plan.waves.iter().any(|wave| wave.count == 0) {
+                return Err(
+                    "every night needs at least one wave, and every wave at least one monster"
+                        .to_string(),
+                );
+            }
+        }
+        if self.nights.spawn_lanes == 0 {
             return Err("spawn_lanes must be at least 1".to_string());
+        }
+        if self.nights.max_alive == 0 {
+            return Err("max_alive must be at least 1".to_string());
         }
         // HP가 0인 개체는 만들어지는 순간 쓰러지거나 제거되므로, 모든 최대 HP는 1 이상이어야 합니다.
         let all_hp = [self.player.max_hp, self.wagon.max_hp]
@@ -293,6 +345,24 @@ impl Tuning {
             return Err("tower_limit must be at least 1".to_string());
         }
         check_not_negative("village build_range", self.village.build_range)?;
+        for (name, value) in [
+            ("day_secs", self.cycle.day_secs),
+            ("dawn_secs", self.cycle.dawn_secs),
+            ("restart_secs", self.cycle.restart_secs),
+            ("first_wave_delay_secs", self.nights.first_wave_delay_secs),
+            ("between_waves_secs", self.nights.between_waves_secs),
+            ("spawn_interval_secs", self.nights.spawn_interval_secs),
+            ("spawn_lane_spacing", self.nights.spawn_lane_spacing),
+        ] {
+            check_not_negative(name, value)?;
+        }
+        let beyond_the_village = self.nights.spawn_distance > self.village.build_range + 1.0;
+        if !beyond_the_village {
+            return Err(format!(
+                "spawn_distance {} must be longer than the build range {} plus one tile",
+                self.nights.spawn_distance, self.village.build_range
+            ));
+        }
         for kind in StructureKind::ALL {
             let build_secs = self.structures.get(kind).build_secs;
             check_not_negative(&format!("{kind:?} build_secs"), build_secs)?;
@@ -337,17 +407,11 @@ impl Tuning {
             bounds,
             &tiles,
         )?;
-        check_spawns(
-            "monster_spawns",
-            &map.monster_spawns,
-            self.monsters.largest_radius(),
-            bounds,
-            &tiles,
-        )?;
         let wagon_tiles = tiles.engage_tiles(map.wagon, self.monsters.longest_engage_distance());
         if !tiles.is_fully_connected(&wagon_tiles, None) {
             return Err("every free tile must be connected to the wagon".to_string());
         }
+        SpawnPlan::new(&tiles, self)?;
         Ok(())
     }
 }
@@ -391,6 +455,10 @@ fn check_spawns(
 
 impl Default for Tuning {
     fn default() -> Tuning {
+        let grunts = |count| WavePlan {
+            kind: MonsterKind::Grunt,
+            count,
+        };
         Tuning {
             tick_hz: 20,
             max_players: 4,
@@ -443,46 +511,64 @@ impl Default for Tuning {
                 build_range: 10.0,
                 tower_limit: 40,
             },
-            waves: WaveTuning {
-                kind: MonsterKind::Grunt,
-                sizes: vec![6, 10, 16],
-                first_delay_secs: 3.0,
-                spawn_interval_secs: 0.3,
-                spawn_lanes: 5,
-                spawn_lane_spacing: 0.9,
-                between_secs: 4.0,
+            cycle: CycleTuning {
+                day_secs: 90.0,
+                dawn_secs: 4.0,
                 restart_secs: 5.0,
             },
-            map: MapSpec::stage1(),
+            nights: NightTuning {
+                plans: vec![
+                    NightPlan {
+                        waves: vec![grunts(8), grunts(12)],
+                    },
+                    NightPlan {
+                        waves: vec![grunts(20), grunts(30), grunts(40)],
+                    },
+                    NightPlan {
+                        waves: vec![grunts(60), grunts(90), grunts(150)],
+                    },
+                ],
+                first_wave_delay_secs: 3.0,
+                between_waves_secs: 4.0,
+                spawn_interval_secs: 0.3,
+                spawn_distance: 18.0,
+                spawn_lanes: 5,
+                spawn_lane_spacing: 0.9,
+                max_alive: 300,
+            },
+            map: MapSpec::frontier(),
         }
     }
 }
 
 impl MapSpec {
-    /// 24 x 24 타일입니다. 한가운데에 마차가 있고, 장애물이 다섯 개 있습니다.
-    pub fn stage1() -> MapSpec {
+    /// 64 x 64 타일입니다. 한가운데에 마차가 있고, 마차 둘레의 마을에 장애물이 다섯 개, 그 바깥에 여덟 개 있습니다.
+    /// 바깥의 장애물은 밤의 몬스터가 나타나는 여덟 방향의 자리를 피해서 놓습니다.
+    pub fn frontier() -> MapSpec {
         MapSpec {
-            width: 24.0,
-            height: 24.0,
-            wagon: Rect::new(10.0, 11.0, 14.0, 13.0),
+            width: 64.0,
+            height: 64.0,
+            wagon: Rect::new(30.0, 31.0, 34.0, 33.0),
             obstacles: vec![
-                Rect::new(4.0, 4.0, 8.0, 5.0),
-                Rect::new(17.0, 3.0, 18.0, 8.0),
-                Rect::new(5.0, 15.0, 6.0, 20.0),
-                Rect::new(15.0, 18.0, 20.0, 19.0),
-                Rect::new(11.0, 6.0, 13.0, 7.0),
+                Rect::new(24.0, 24.0, 28.0, 25.0),
+                Rect::new(37.0, 23.0, 38.0, 28.0),
+                Rect::new(25.0, 35.0, 26.0, 40.0),
+                Rect::new(35.0, 38.0, 40.0, 39.0),
+                Rect::new(31.0, 26.0, 33.0, 27.0),
+                Rect::new(16.0, 20.0, 19.0, 21.0),
+                Rect::new(45.0, 18.0, 46.0, 21.0),
+                Rect::new(50.0, 44.0, 52.0, 46.0),
+                Rect::new(14.0, 44.0, 15.0, 48.0),
+                Rect::new(24.0, 52.0, 28.0, 53.0),
+                Rect::new(36.0, 8.0, 40.0, 9.0),
+                Rect::new(57.0, 36.0, 58.0, 40.0),
+                Rect::new(7.0, 24.0, 8.0, 28.0),
             ],
             player_spawns: vec![
-                Vec2::new(12.0, 9.5),
-                Vec2::new(12.0, 14.5),
-                Vec2::new(8.5, 12.0),
-                Vec2::new(17.0, 12.0),
-            ],
-            monster_spawns: vec![
-                Vec2::new(12.0, 0.6),
-                Vec2::new(23.4, 12.0),
-                Vec2::new(12.0, 23.4),
-                Vec2::new(0.6, 12.0),
+                Vec2::new(32.0, 29.5),
+                Vec2::new(32.0, 34.5),
+                Vec2::new(28.5, 32.0),
+                Vec2::new(37.0, 32.0),
             ],
             spatial_cell: 2.0,
         }

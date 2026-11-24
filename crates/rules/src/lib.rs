@@ -6,7 +6,7 @@
 //! 바깥에서 쓰는 것은 `Sim`(생성, 입장, 퇴장, `step`, 읽기 함수), `Tuning`(모든 수치), `PlayerInput`, 그리고 스냅샷이 읽는 상태 타입입니다.
 //! 타일 지도, 충돌, 경로 탐색 같은 내부 모듈은 공개하지 않습니다.
 //!
-//! 읽는 순서: `tuning`(모든 수치), `sim`(Tick 하나의 처리 순서), `player`, `monster`, `structures`, `build`, `expedition`.
+//! 읽는 순서: `tuning`(모든 수치), `sim`(Tick 하나의 처리 순서), `player`, `monster`, `structures`, `build`, `expedition`, `spawn`.
 //! `world`(타일 지도 포함), `collision`, `nav`, `spatial`은 이 모듈들이 쓰는 도구입니다.
 
 mod build;
@@ -21,6 +21,7 @@ mod nav;
 mod player;
 mod sim;
 mod spatial;
+mod spawn;
 mod stats;
 mod structures;
 mod tuning;
@@ -30,7 +31,7 @@ mod world;
 mod tests;
 
 pub use build::{BuildRefusal, CannotBuild};
-pub use expedition::{Outcome, Phase};
+pub use expedition::{NightStep, Outcome, Phase};
 pub use ids::{MonsterId, PlayerId, Team, TowerId};
 pub use input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 pub use kind::{MonsterKind, StructureKind};
@@ -40,7 +41,7 @@ pub use player::{Interaction, Life, Player};
 pub use sim::{JoinError, Sim};
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
-    MapSpec, MonsterTable, MonsterTuning, PlayerTuning, ReviveTuning, StructureTable,
-    StructureTuning, Tuning, VillageTuning, WagonTuning, WaveTuning,
+    CycleTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan, NightTuning, PlayerTuning,
+    ReviveTuning, StructureTable, StructureTuning, Tuning, VillageTuning, WagonTuning, WavePlan,
 };
 pub use world::Tile;

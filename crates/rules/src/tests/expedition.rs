@@ -1,4 +1,4 @@
-//! 원정의 진행(무리, 성공과 실패, 새 원정, 입장과 퇴장)을 확인합니다.
+//! 원정의 시작과 끝(입장과 퇴장, 성공과 실패, 새 원정)과 결정성을 확인합니다. 낮과 밤의 흐름은 `days.rs`가 확인합니다.
 
 use super::support::Scenario;
 use crate::expedition::{Outcome, Phase};
@@ -6,24 +6,6 @@ use crate::ids::PlayerId;
 use crate::math::Vec2;
 use crate::sim::{JoinError, Sim};
 use crate::tuning::Tuning;
-
-/// 등장하지 않은 몬스터 없이 무리가 모두 나타난 상태가 될 때까지 진행합니다.
-fn run_until_fully_spawned(s: &mut Scenario) {
-    s.run_until(1000, |sim| {
-        matches!(sim.phase(), Phase::Fighting { to_spawn: 0, .. })
-    });
-}
-
-/// 한 무리가 모두 나타난 뒤 그 몬스터를 모두 처치한 상황을 만들고, 한 Tick 진행합니다.
-fn defeat_the_current_wave(s: &mut Scenario) {
-    run_until_fully_spawned(s);
-    s.clear_monsters();
-    s.run_ticks(1);
-}
-
-fn monster_count(s: &Scenario) -> usize {
-    s.sim.monsters().count()
-}
 
 #[test]
 fn players_get_increasing_ids_until_the_room_is_full() {
@@ -90,9 +72,12 @@ fn leaving_removes_the_player_at_once() {
 
 #[test]
 fn a_player_who_joins_in_the_middle_of_an_expedition_is_alive_at_a_spawn_point() {
-    let mut s = Scenario::with_waves(|_| {});
-    s.run_ticks(s.ticks(5.0));
-    assert!(monster_count(&s) > 0, "the expedition is in progress");
+    let mut s = Scenario::with_cycle(|t| t.cycle.day_secs = 1.0);
+    s.run_until(400, |sim| sim.monsters().count() > 0);
+    assert!(
+        matches!(s.sim.phase(), Phase::Night { .. }),
+        "the expedition is in progress"
+    );
 
     let late = s.sim.add_player().unwrap();
 
@@ -150,7 +135,7 @@ fn a_new_expedition_returns_each_player_to_their_own_spawn_point_after_someone_l
 
     s.set_wagon_hp(0);
     s.run_ticks(1);
-    s.run_ticks(s.ticks(s.sim.tuning().waves.restart_secs) + 1);
+    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 1);
 
     assert_eq!(s.sim.expedition_number(), 2);
     assert_eq!(s.player(second).pos, spawns[1]);
@@ -202,142 +187,12 @@ fn a_new_expedition_does_not_stack_two_players_on_one_point_while_another_is_fre
 
     s.set_wagon_hp(0);
     s.run_ticks(1);
-    s.run_ticks(s.ticks(s.sim.tuning().waves.restart_secs) + 1);
+    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 1);
 
     assert_eq!(s.sim.expedition_number(), 2);
     let mut positions: Vec<_> = staying.iter().map(|&id| s.player(id).pos).collect();
     positions.sort_by(|a, b| a.x.total_cmp(&b.x));
     assert_eq!(positions, spawns);
-}
-
-#[test]
-fn the_first_wave_appears_after_the_delay_one_monster_at_a_time() {
-    let mut s = Scenario::with_waves(|_| {});
-    let delay = s.ticks(s.sim.tuning().waves.first_delay_secs);
-    let interval = s.ticks(s.sim.tuning().waves.spawn_interval_secs);
-
-    s.run_ticks(delay - 1);
-    assert_eq!(monster_count(&s), 0, "nothing before the delay");
-
-    s.run_ticks(1);
-    assert_eq!(monster_count(&s), 1, "the stream starts with one monster");
-    s.run_ticks(interval - 1);
-    assert_eq!(monster_count(&s), 1);
-    s.run_ticks(1);
-    assert_eq!(monster_count(&s), 2);
-
-    s.run_ticks(interval * 10);
-    assert_eq!(monster_count(&s), 6, "the first wave has six monsters");
-}
-
-#[test]
-fn monsters_appear_at_the_map_edge_and_at_different_spots() {
-    let mut s = Scenario::with_waves(|_| {});
-    let lanes = s.sim.tuning().waves.spawn_lanes as usize;
-    let mut spawn_points: Vec<Vec2> = Vec::new();
-    while spawn_points.len() < lanes {
-        s.run_until(100, |sim| sim.monsters().count() > spawn_points.len());
-        let newest = s.sim.monsters().max_by_key(|m| m.id).unwrap();
-        spawn_points.push(newest.pos);
-    }
-
-    assert!(
-        spawn_points.iter().all(|p| p.y < 1.0),
-        "south edge, {spawn_points:?}"
-    );
-    for (i, a) in spawn_points.iter().enumerate() {
-        for b in &spawn_points[i + 1..] {
-            assert!(
-                a.distance(*b) > 0.3,
-                "two monsters appeared on the same spot"
-            );
-        }
-    }
-}
-
-#[test]
-fn a_wave_is_not_cleared_while_monsters_are_still_to_come() {
-    let mut s = Scenario::with_waves(|_| {});
-    s.run_until(200, |sim| sim.monsters().count() == 1);
-
-    s.clear_monsters();
-    s.run_ticks(1);
-
-    assert!(matches!(s.sim.phase(), Phase::Fighting { wave: 1, .. }));
-}
-
-#[test]
-fn the_next_larger_wave_comes_after_a_pause_once_the_wave_is_cleared() {
-    let mut s = Scenario::with_waves(|_| {});
-    defeat_the_current_wave(&mut s);
-
-    let pause = s.ticks(s.sim.tuning().waves.between_secs);
-    assert!(matches!(
-        s.sim.phase(),
-        Phase::Intermission { next_wave: 2, .. }
-    ));
-    s.run_ticks(pause - 2);
-    assert_eq!(monster_count(&s), 0, "still waiting");
-
-    s.run_ticks(2);
-    assert!(matches!(s.sim.phase(), Phase::Fighting { wave: 2, .. }));
-    run_until_fully_spawned(&mut s);
-    assert_eq!(monster_count(&s), 10, "the second wave is larger");
-}
-
-#[test]
-fn the_wave_sizes_come_from_the_tuning() {
-    let mut s = Scenario::with_waves(|t| t.waves.sizes = vec![3, 5]);
-    run_until_fully_spawned(&mut s);
-    assert_eq!(monster_count(&s), 3);
-
-    s.clear_monsters();
-    s.run_until(1000, |sim| {
-        matches!(
-            sim.phase(),
-            Phase::Fighting {
-                wave: 2,
-                to_spawn: 0,
-                ..
-            }
-        )
-    });
-    assert_eq!(monster_count(&s), 5);
-}
-
-#[test]
-fn clearing_every_wave_is_a_victory_and_a_new_expedition_follows() {
-    let mut s = Scenario::with_waves(|_| {});
-    s.player_at(2.0, 2.0);
-    for _ in 0..3 {
-        defeat_the_current_wave(&mut s);
-    }
-
-    let restart = s.ticks(s.sim.tuning().waves.restart_secs);
-    assert!(
-        matches!(
-            s.sim.phase(),
-            Phase::Over {
-                outcome: Outcome::Victory,
-                ..
-            }
-        ),
-        "got {:?}",
-        s.sim.phase()
-    );
-
-    s.run_ticks(restart - 2);
-    assert_eq!(
-        s.sim.expedition_number(),
-        1,
-        "the result is still on the screen"
-    );
-    s.run_ticks(2);
-    assert_eq!(s.sim.expedition_number(), 2);
-    assert!(matches!(
-        s.sim.phase(),
-        Phase::Intermission { next_wave: 1, .. }
-    ));
 }
 
 #[test]
@@ -365,12 +220,12 @@ fn the_expedition_fails_when_every_player_is_downed_or_dead() {
     let a = s.player_at(2.0, 2.0);
     let b = s.player_at(3.0, 2.0);
     s.run_ticks(1);
-    assert!(matches!(s.sim.phase(), Phase::Intermission { .. }));
+    assert!(matches!(s.sim.phase(), Phase::Day { .. }));
 
     s.knock_down(a);
     s.run_ticks(1);
     assert!(
-        matches!(s.sim.phase(), Phase::Intermission { .. }),
+        matches!(s.sim.phase(), Phase::Day { .. }),
         "one is still standing"
     );
 
@@ -395,61 +250,12 @@ fn an_empty_room_never_fails() {
 
     s.run_ticks(100);
 
-    assert!(matches!(s.sim.phase(), Phase::Intermission { .. }));
+    assert!(matches!(s.sim.phase(), Phase::Day { .. }));
 
     let a = s.player_at(2.0, 2.0);
     s.sim.remove_player(a);
     s.run_ticks(100);
-    assert!(matches!(s.sim.phase(), Phase::Intermission { .. }));
-}
-
-/// 마지막 몬스터를 플레이어가 처치하는 Tick에, 그 몬스터가 마차에 마지막 피해를 줍니다.
-fn last_monster_dies_while_hitting_the_wagon(wagon_hp: u32) -> Scenario {
-    let mut s = Scenario::with_waves(|t| {
-        t.waves.sizes = vec![1];
-        t.waves.first_delay_secs = 0.05;
-        t.waves.spawn_lanes = 1;
-        t.map.monster_spawns = vec![Vec2::new(16.3, 18.0)];
-        t.monsters.grunt.max_hp = 25;
-        t.monsters.grunt.aggro_range = 0.0;
-    });
-    let a = s.player_at(15.5, 18.0);
-    s.hold(
-        a,
-        crate::input::PlayerInput {
-            aim: crate::input::AimDir::new(1.0, 0.0),
-            attack: true,
-            ..Default::default()
-        },
-    );
-    s.set_wagon_hp(wagon_hp);
-    s.run_ticks(1);
-    s
-}
-
-#[test]
-fn clearing_the_last_wave_in_the_same_tick_the_wagon_falls_is_a_defeat() {
-    let wagon_survives = last_monster_dies_while_hitting_the_wagon(500);
-    assert!(
-        matches!(
-            wagon_survives.sim.phase(),
-            Phase::Over {
-                outcome: Outcome::Victory,
-                ..
-            }
-        ),
-        "with the wagon standing the same tick is a victory"
-    );
-
-    let wagon_falls = last_monster_dies_while_hitting_the_wagon(10);
-    assert_eq!(wagon_falls.sim.monsters().count(), 0);
-    assert!(matches!(
-        wagon_falls.sim.phase(),
-        Phase::Over {
-            outcome: Outcome::Defeat,
-            ..
-        }
-    ));
+    assert!(matches!(s.sim.phase(), Phase::Day { .. }));
 }
 
 #[test]
@@ -484,7 +290,7 @@ fn a_new_expedition_restores_the_players_the_wagon_and_the_field() {
     let old_monster_count = s.sim.monsters().count();
     assert_eq!(old_monster_count, 1);
 
-    let restart = s.ticks(s.sim.tuning().waves.restart_secs);
+    let restart = s.ticks(s.sim.tuning().cycle.restart_secs);
     s.run_ticks(restart + 1);
 
     assert_eq!(s.sim.expedition_number(), 2);
@@ -502,33 +308,26 @@ fn a_new_expedition_restores_the_players_the_wagon_and_the_field() {
 
 #[test]
 fn monster_ids_are_not_reused_in_a_new_expedition() {
-    let mut s = Scenario::with_waves(|_| {});
-    s.run_until(200, |sim| sim.monsters().count() > 0);
+    let mut s = Scenario::with_cycle(|t| t.cycle.day_secs = 1.0);
+    s.run_until(400, |sim| sim.monsters().count() > 0);
     let old_ids: Vec<_> = s.sim.monsters().map(|m| m.id).collect();
     s.sim.world_mut().wagon.hp = 0;
     s.player_at(2.0, 2.0);
-    s.run_ticks(s.ticks(s.sim.tuning().waves.restart_secs) + 2);
+    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 2);
     assert_eq!(s.sim.expedition_number(), 2);
 
-    s.run_until(200, |sim| sim.monsters().count() > 0);
+    s.run_until(400, |sim| sim.monsters().count() > 0);
 
     let new_ids: Vec<_> = s.sim.monsters().map(|m| m.id).collect();
     assert!(new_ids.iter().all(|id| !old_ids.contains(id)));
 }
 
-#[test]
-fn the_default_game_has_three_waves_and_each_one_is_larger() {
-    let waves = Tuning::default().waves.sizes;
-
-    assert_eq!(waves.len(), 3);
-    assert!(waves.windows(2).all(|pair| pair[0] < pair[1]));
-}
-
-/// 두 플레이어가 움직이고, 싸우고, 부활과 수리와 건설을 하는 원정을 800 Tick 진행하고 모든 상태를 글자로 돌려줍니다.
+/// 두 플레이어가 움직이고, 싸우고, 부활과 수리와 건설을 하는 원정을 800 Tick 진행하고, 50 Tick마다의 몬스터와 마지막 상태를 글자로 돌려줍니다.
 fn play_a_scripted_expedition() -> String {
-    let mut s = Scenario::with_waves(|t| t.map = crate::tuning::MapSpec::stage1());
+    let mut s = Scenario::default_game(|t| t.cycle.day_secs = 3.0);
     let a = s.sim.add_player().unwrap();
     let b = s.sim.add_player().unwrap();
+    let mut trace = String::new();
     for tick in 0..800 {
         let phase = tick / 100;
         for (id, offset) in [(a, 0.0), (b, 1.7)] {
@@ -548,12 +347,16 @@ fn play_a_scripted_expedition() -> String {
             );
         }
         s.run_ticks(1);
+        if tick % 50 == 0 {
+            let monsters: Vec<_> = s.sim.monsters().collect();
+            trace += &format!("{monsters:?} ");
+        }
     }
     let players: Vec<_> = s.sim.players().collect();
     let monsters: Vec<_> = s.sim.monsters().collect();
     let towers: Vec<_> = s.sim.towers().collect();
     format!(
-        "{players:?} {monsters:?} {towers:?} {:?} {:?}",
+        "{trace}{players:?} {monsters:?} {towers:?} {:?} {:?}",
         s.sim.wagon(),
         s.sim.phase()
     )

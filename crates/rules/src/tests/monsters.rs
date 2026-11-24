@@ -1,6 +1,6 @@
 //! 몬스터의 목표 선택, 이동, 공격을 확인합니다.
 
-use super::support::Scenario;
+use super::support::{Scenario, nights};
 use crate::expedition::{Outcome, Phase};
 use crate::math::{Rect, Vec2};
 
@@ -140,8 +140,8 @@ fn a_monster_walks_around_a_wall_to_reach_the_wagon() {
 #[test]
 fn monsters_never_enter_obstacles_or_leave_the_map() {
     // 기본 맵에서 실제 무리가 나타나서 마차를 공격하는 동안 모든 Tick의 모든 몬스터 위치를 검사합니다.
-    let mut s = Scenario::with_waves(|t| t.map = crate::tuning::MapSpec::stage1());
-    s.tower_at(15, 11);
+    let mut s = Scenario::default_game(|t| t.cycle.day_secs = 1.0);
+    s.tower_at(35, 31);
     let t = s.sim.tuning().clone();
     let radius = t.monsters.grunt.radius;
 
@@ -241,11 +241,11 @@ fn a_crowd_queues_behind_the_front_line_instead_of_piling_onto_one_spot() {
 /// 몬스터 300마리가 1 Tick 간격으로 나타나는 한 무리입니다.
 /// 마차와 감시탑은 버티고, 맵 전체를 덮는 감시탑이 2 Tick마다 한 마리씩 처치합니다.
 fn crowd_of_300() -> Scenario {
-    let mut s = Scenario::with_waves(|t| {
-        t.map = crate::tuning::MapSpec::stage1();
-        t.waves.sizes = vec![300];
-        t.waves.first_delay_secs = 0.05;
-        t.waves.spawn_interval_secs = 0.05;
+    let mut s = Scenario::default_game(|t| {
+        t.cycle.day_secs = 0.05;
+        t.nights.plans = nights(&[&[300]]);
+        t.nights.first_wave_delay_secs = 0.05;
+        t.nights.spawn_interval_secs = 0.05;
         t.wagon.max_hp = u32::MAX;
         let tower = &mut t.structures.watchtower;
         tower.max_hp = u32::MAX;
@@ -253,7 +253,7 @@ fn crowd_of_300() -> Scenario {
         tower.damage = t.monsters.grunt.max_hp;
         tower.cooldown_secs = 0.1;
     });
-    s.tower_at(15, 11);
+    s.tower_at(35, 31);
     s
 }
 
@@ -287,16 +287,16 @@ fn a_wave_of_300_monsters_runs_to_victory() {
 
 /// 몬스터가 `count`마리 마차 둘레에 모여 있을 때, Tick 1,000번의 실행 시간을 재서 (평균, 가장 느린 Tick)을 돌려줍니다.
 fn tick_time_with(count: u32) -> (std::time::Duration, std::time::Duration) {
-    let mut s = Scenario::with_waves(|t| {
-        t.map = crate::tuning::MapSpec::stage1();
-        t.waves.sizes = vec![count];
-        t.waves.first_delay_secs = 0.05;
-        t.waves.spawn_interval_secs = 0.05;
+    let mut s = Scenario::default_game(|t| {
+        t.cycle.day_secs = 0.05;
+        t.nights.plans = nights(&[&[count]]);
+        t.nights.first_wave_delay_secs = 0.05;
+        t.nights.spawn_interval_secs = 0.05;
         t.wagon.max_hp = u32::MAX;
         t.structures.watchtower.max_hp = u32::MAX;
         t.structures.watchtower.damage = 0;
     });
-    s.tower_at(15, 11);
+    s.tower_at(35, 31);
     s.run_until(count + 100, |sim| sim.monsters().count() == count as usize);
     s.run_ticks(600);
     assert_eq!(s.sim.monsters().count(), count as usize, "nobody died");

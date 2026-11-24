@@ -14,7 +14,6 @@ fn a_one_tile_wide_corridor_is_a_path_for_monsters() {
             Rect::new(10.0, 10.0, 11.0, 20.0),
         ];
         t.map.player_spawns = vec![Vec2::new(3.0, 3.0)];
-        t.map.monster_spawns = vec![Vec2::new(3.0, 0.6)];
     });
     let monster = s.monster_at(5.5, 9.5);
 

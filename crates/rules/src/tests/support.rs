@@ -4,13 +4,14 @@
 use crate::expedition::Phase;
 use crate::ids::{MonsterId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
+use crate::kind::MonsterKind;
 use crate::kind::StructureKind;
 use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
 use crate::player::{Life, Player};
 use crate::sim::Sim;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::{MapSpec, Tuning};
+use crate::tuning::{MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
 use crate::world::Tile;
 
 pub(crate) struct Scenario {
@@ -20,35 +21,51 @@ pub(crate) struct Scenario {
 
 impl Scenario {
     /// 장애물이 없는 20 x 20 맵입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
-    /// 무리가 저절로 나타나지 않으므로, 몬스터는 테스트가 `monster_at`으로 놓은 것뿐입니다.
+    /// 낮이 끝나지 않으므로 무리가 저절로 나타나지 않고, 몬스터는 테스트가 `monster_at`으로 놓은 것뿐입니다.
     pub fn open_field() -> Scenario {
         Scenario::with_tuning(|_| {})
     }
 
     /// `open_field`와 같지만 수치를 먼저 바꿉니다.
     pub fn with_tuning(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
-        let mut scenario = Scenario::with_waves(adjust);
-        scenario.sim.set_phase(Phase::Intermission {
-            next_wave: 1,
+        let mut scenario = Scenario::with_cycle(adjust);
+        scenario.sim.set_phase(Phase::Day {
+            day: 1,
             ticks_left: u32::MAX,
         });
         scenario
     }
 
-    /// 무리가 정해진 시간에 저절로 나타나는 시나리오입니다. 원정의 진행을 확인하는 테스트가 씁니다.
-    pub fn with_waves(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
-        let mut tuning = Tuning {
-            map: MapSpec {
-                width: 20.0,
-                height: 20.0,
-                wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
-                obstacles: vec![],
-                player_spawns: vec![Vec2::new(10.0, 10.0)],
-                monster_spawns: vec![Vec2::new(10.0, 0.6)],
-                spatial_cell: 2.0,
+    /// 낮과 밤이 정해진 시간에 저절로 흐르는 시나리오입니다. `open_field`의 맵을 쓰고, 밤의 몬스터는 마차에서 12타일 떨어진 곳에 나타납니다.
+    /// 원정의 진행을 확인하는 테스트가 씁니다.
+    pub fn with_cycle(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+        let defaults = Tuning::default();
+        Scenario::started(
+            Tuning {
+                map: MapSpec {
+                    width: 20.0,
+                    height: 20.0,
+                    wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
+                    obstacles: vec![],
+                    player_spawns: vec![Vec2::new(10.0, 10.0)],
+                    spatial_cell: 2.0,
+                },
+                nights: NightTuning {
+                    spawn_distance: 12.0,
+                    ..defaults.nights.clone()
+                },
+                ..defaults
             },
-            ..Tuning::default()
-        };
+            adjust,
+        )
+    }
+
+    /// 기본 맵과 기본 수치로 흐르는 시나리오입니다. 수치만 `adjust`로 바꿉니다.
+    pub fn default_game(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+        Scenario::started(Tuning::default(), adjust)
+    }
+
+    fn started(mut tuning: Tuning, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
         adjust(&mut tuning);
         assert_eq!(tuning.validate(), Ok(()), "the scenario's tuning is valid");
         Scenario {
@@ -195,4 +212,20 @@ impl Scenario {
 /// 부동소수점 결과를 비교할 때 쓰는 허용 오차입니다.
 pub(crate) fn close(a: f32, b: f32) -> bool {
     (a - b).abs() < 1e-3
+}
+
+/// 밤마다 무리의 몬스터 수를 적은 목록에서 밤의 구성을 만듭니다. 모든 몬스터는 `Grunt`입니다.
+pub(crate) fn nights(counts: &[&[u32]]) -> Vec<NightPlan> {
+    counts
+        .iter()
+        .map(|waves| NightPlan {
+            waves: waves
+                .iter()
+                .map(|&count| WavePlan {
+                    kind: MonsterKind::Grunt,
+                    count,
+                })
+                .collect(),
+        })
+        .collect()
 }

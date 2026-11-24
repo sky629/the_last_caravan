@@ -9,7 +9,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{ServerMsg, encode_server};
-use caravan_rules::Tuning;
+use caravan_rules::{MonsterKind, NightPlan, Tuning, WavePlan};
 use common::rig_with;
 
 /// 이 크기를 넘으면 접속 하나의 대역폭이 예산(약 55 KB/s)을 넘습니다.
@@ -18,9 +18,15 @@ const BOUND_BYTES: usize = 3_000;
 
 fn crowd_tuning() -> Tuning {
     let mut tuning = Tuning::default();
-    tuning.waves.sizes = vec![300];
-    tuning.waves.first_delay_secs = 0.1;
-    tuning.waves.spawn_interval_secs = 0.05;
+    tuning.cycle.day_secs = 0.1;
+    tuning.nights.plans = vec![NightPlan {
+        waves: vec![WavePlan {
+            kind: MonsterKind::Grunt,
+            count: 300,
+        }],
+    }];
+    tuning.nights.first_wave_delay_secs = 0.1;
+    tuning.nights.spawn_interval_secs = 0.05;
     tuning.wagon.max_hp = u32::MAX;
     tuning.player.max_hp = u32::MAX;
     tuning

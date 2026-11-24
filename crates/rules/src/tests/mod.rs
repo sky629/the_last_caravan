@@ -8,7 +8,8 @@ mod support;
 
 mod build; // 건설: 시작과 완료, 취소와 환불, 다섯 가지 거절, 동시 건설
 mod combat; // 근접 공격의 범위, 부채꼴, 쿨다운
-mod expedition; // 무리, 성공과 실패, 새 원정, 입장과 퇴장
+mod days; // 낮과 밤, 밤의 무리와 등장하는 자리, 새벽, 성공과 새 원정
+mod expedition; // 성공과 실패, 새 원정, 입장과 퇴장
 mod monsters; // 몬스터의 목표 선택, 이동 경로, 공격
 mod movement; // 장애물과 맵 경계, 이동 속도, 입력 보정
 mod paths; // 몬스터가 걷는 길: 좁은 통로, 걸어서 가까운 감시탑

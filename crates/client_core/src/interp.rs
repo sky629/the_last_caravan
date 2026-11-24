@@ -31,7 +31,6 @@ pub struct Frame {
     pub tick: f64,
     pub expedition: u32,
     pub phase: WirePhase,
-    pub wave_count: u32,
     pub wagon: WireWagon,
     /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
     pub stash: u32,
@@ -187,7 +186,6 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
         tick,
         expedition: older.expedition,
         phase: older.phase,
-        wave_count: older.wave_count,
         wagon: older.wagon,
         stash: older.stash,
         towers: older.towers.clone(),
@@ -261,8 +259,10 @@ mod tests {
         Snapshot {
             tick,
             expedition: 1,
-            phase: WirePhase::Fighting { wave: 1 },
-            wave_count: 3,
+            phase: WirePhase::Day {
+                day: 1,
+                secs_left: 90.0,
+            },
             wagon: WireWagon {
                 hp: 500,
                 max_hp: 500,
@@ -360,7 +360,13 @@ mod tests {
 
         assert_eq!(frame.monsters[0].hp, 60);
         assert_eq!(frame.wagon.hp, 500);
-        assert_eq!(frame.phase, WirePhase::Fighting { wave: 1 });
+        assert_eq!(
+            frame.phase,
+            WirePhase::Day {
+                day: 1,
+                secs_left: 90.0
+            }
+        );
         assert!(matches!(
             frame.players[0].life,
             WireLife::Alive { hp: 100, .. }

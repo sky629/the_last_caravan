@@ -8,6 +8,7 @@ use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
 use crate::player::{self, Interaction, Player};
 use crate::spatial::MonsterGrid;
+use crate::spawn::SpawnPlan;
 use crate::structures::{self, Tower, Wagon};
 use crate::tuning::{MapSpec, Tuning};
 use crate::world::{Ctx, World};
@@ -28,6 +29,8 @@ pub struct Sim {
     monster_grid: MonsterGrid,
     /// 쫓기는 플레이어가 서 있는 타일을 향하는 이동 경로입니다.
     tile_fields: TileFields,
+    /// 밤의 몬스터가 나타나는 자리입니다. 지형으로만 정해지므로 방을 만들 때 한 번 정합니다.
+    spawns: SpawnPlan,
     next_player: u32,
 }
 
@@ -38,15 +41,19 @@ pub enum JoinError {
 
 impl Sim {
     /// 플레이어가 없는 방을 만들고 첫 원정을 준비합니다.
-    /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만듭니다.
+    /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만들고,
+    /// 밤의 몬스터가 나타날 자리가 없는 수치에서는 이 함수가 멈춥니다.
     pub fn new(tuning: Tuning) -> Sim {
         let world = World::new(&tuning);
+        let spawns = SpawnPlan::new(&world.tiles, &tuning)
+            .expect("a validated tuning has a spot where night monsters appear");
         Sim {
             expedition: 1,
             phase: expedition::opening_phase(&tuning),
             paths: Paths::new(&world, &tuning),
             monster_grid: MonsterGrid::new(world.tiles.bounds(), tuning.map.spatial_cell),
             tile_fields: TileFields::new(),
+            spawns,
             world,
             tick: 0,
             next_player: 1,
@@ -89,7 +96,12 @@ impl Sim {
     /// 모든 공격은 같은 상태를 보고 결정한 뒤 한꺼번에 적용합니다. 그래서 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다.
     pub fn step(&mut self, inputs: &PlayerInputs) {
         self.tick += 1;
-        match expedition::advance_phase(&mut self.phase, &mut self.world, &self.tuning) {
+        match expedition::advance_phase(
+            &mut self.phase,
+            &mut self.world,
+            &self.spawns,
+            &self.tuning,
+        ) {
             Advance::Frozen => return,
             Advance::StartNewExpedition => {
                 self.reset_expedition();
@@ -257,7 +269,7 @@ impl Sim {
     }
 
     pub(crate) fn spawn_monster(&mut self, pos: Vec2) -> crate::ids::MonsterId {
-        let kind = self.tuning.waves.kind;
+        let kind = crate::kind::MonsterKind::Grunt;
         self.world.spawn_monster(kind, pos, &self.tuning)
     }
 }

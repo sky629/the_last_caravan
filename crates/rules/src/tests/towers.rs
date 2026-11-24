@@ -4,6 +4,7 @@
 
 use super::support::Scenario;
 use crate::input::PlayerInput;
+use crate::math::Rect;
 use crate::structures::{Shot, TowerState};
 use crate::tuning::Tuning;
 
@@ -188,7 +189,7 @@ fn a_destroyed_tower_leaves_a_tile_that_players_can_walk_through() {
 
 #[test]
 fn a_tower_can_be_built_again_where_one_was_destroyed() {
-    let mut s = field_with_tower_tuned(|t| t.village.build_range = 30.0);
+    let mut s = field_with_tower_tuned(|t| t.map.wagon = Rect::new(6.0, 17.0, 8.0, 19.0));
     let a = s.player_at(0.5, 16.5);
     s.set_tower_hp(10);
     s.monster_at(3.0, 17.5);
