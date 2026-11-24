@@ -13,6 +13,14 @@ pub struct MonsterId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TowerId(pub u32);
 
+/// 채집 지점의 번호입니다. 맵에 적힌 순서대로 1부터 붙고 원정 동안 바뀌지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId(pub u32);
+
+/// 땅에 떨어진 자원 한 더미의 번호입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PileId(pub u32);
+
 /// 개체가 편들어 싸우는 쪽입니다.
 ///
 /// 「누가 누구를 공격할 수 있는가」와 「누가 누구를 도울 수 있는가」는 모두 `is_hostile_to`와 `is_allied_with`로 판정합니다.

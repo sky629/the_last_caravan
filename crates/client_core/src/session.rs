@@ -36,7 +36,7 @@ pub enum Session {
     Rejected {
         reason: RejectReason,
     },
-    /// 열려 있던 접속이 끝났습니다. 1단계에는 자동 재접속이 없습니다.
+    /// 열려 있던 접속이 끝났습니다. 자동 재접속은 없습니다.
     Disconnected {
         reason: String,
     },
@@ -323,10 +323,7 @@ mod tests {
             joined.welcome.world.obstacles.len(),
             tuning.map.obstacles.len()
         );
-        assert_eq!(
-            joined.welcome.world.towers.len(),
-            tuning.map.structures.len()
-        );
+        assert_eq!(joined.welcome.world.tower_limit, tuning.village.tower_limit);
     }
 
     #[test]

@@ -4,9 +4,9 @@ use super::support::{Scenario, close};
 use crate::input::{AimDir, MoveDir, PlayerInput};
 use crate::math::{Rect, Vec2};
 
-/// x = 12..13을 지나는 세로 벽입니다. 맵의 위아래 끝까지 이어집니다.
+/// x = 12..13을 지나는 세로 벽입니다. 맵의 위쪽 끝까지 이어지고, 아래쪽 끝에 폭 1타일의 틈이 있어서 맵이 둘로 갈라지지 않습니다.
 fn with_wall() -> Scenario {
-    Scenario::with_tuning(|t| t.map.obstacles = vec![Rect::new(12.0, 0.0, 13.0, 20.0)])
+    Scenario::with_tuning(|t| t.map.obstacles = vec![Rect::new(12.0, 1.0, 13.0, 20.0)])
 }
 
 #[test]
@@ -162,6 +162,7 @@ fn a_player_cannot_leave_the_map() {
 #[test]
 fn the_wagon_and_a_tower_block_players() {
     let mut s = Scenario::open_field();
+    s.tower_at(1, 17);
     let radius = s.sim.tuning().player.radius;
 
     let toward_wagon = s.player_at(15.0, 18.0);
@@ -178,8 +179,8 @@ fn the_wagon_and_a_tower_block_players() {
 fn a_player_pressed_into_a_corner_stays_out_of_both_walls() {
     let mut s = Scenario::with_tuning(|t| {
         t.map.obstacles = vec![
-            Rect::new(12.0, 0.0, 13.0, 20.0),
-            Rect::new(0.0, 12.0, 20.0, 13.0),
+            Rect::new(12.0, 0.0, 13.0, 13.0),
+            Rect::new(1.0, 12.0, 13.0, 13.0),
         ];
     });
     let a = s.player_at(10.0, 10.0);

@@ -1,13 +1,16 @@
-//! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 근접 공격, 상호작용(부활과 수리)을 다룹니다.
+//! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 근접 공격, 상호작용(부활, 수리, 채집, 건설)을 다룹니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
-use crate::ids::{PlayerId, Team, TowerId};
+use crate::ids::{NodeId, PlayerId, Team, TowerId};
 use crate::math::Vec2;
+use crate::resources;
+use crate::stamina::Stamina;
 use crate::stats::UnitStats;
 use crate::structures::TowerState;
-use crate::tuning::Tuning;
+use crate::tuning::{RepairTuning, Tuning};
 use crate::world::{Ctx, Hit, Target, World};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,7 +31,7 @@ pub struct Player {
 
 /// 플레이어의 생명 상태입니다. 상태마다 그 상태에서 의미가 있는 값만 가집니다.
 /// 그래서 다음 상태는 코드로 표현할 수 없습니다.
-/// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용을 가지는 상태 (공격, 부활, 수리를 할 수 없습니다).
+/// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용, 든 자원, 달리기 게이지를 가지는 상태 (공격, 부활, 수리, 채집, 달리기를 할 수 없고 자원을 들 수 없습니다).
 /// - 사망한 플레이어가 출혈 시간을 가지는 상태.
 ///
 /// ```text
@@ -36,7 +39,7 @@ pub struct Player {
 ///     ^                        |
 ///     +----(부활이 끝남)-------+
 ///
-///   새 원정이 시작되면 모든 플레이어가 최대 HP의 Alive가 됩니다.
+///   새 원정이 시작되거나 낮이 시작되면 모든 플레이어가 최대 HP와 가득 찬 달리기 게이지의 Alive가 됩니다.
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum Life {
@@ -45,8 +48,16 @@ pub enum Life {
         hp: u32,
         /// 다음 근접 공격까지 남은 Tick입니다.
         cooldown_ticks: u32,
-        /// 상호작용 키(F)가 지금 하고 있는 일입니다. 값이 있으면 이동과 공격을 할 수 없습니다.
+        /// 상호작용 키(F)나 건설 키(B)가 지금 하고 있는 일입니다. 값이 있으면 이동과 공격을 할 수 없습니다.
         interaction: Option<Interaction>,
+        /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 이벤트가 아니라 상태이고, 키를 누르고 있는 동안 Tick마다 다시 정해집니다.
+        build_refusal: Option<BuildRefusal>,
+        /// 들고 있는 자원입니다. 상한은 `ResourceTuning::carry_capacity`입니다. 마차에 가까이 가면 보관함으로 옮겨지고, 쓰러지면 그 자리에 떨어집니다.
+        carried: u32,
+        /// 달리기 게이지입니다. 쓰러지면 사라지고, 부활하면 가득 찬 상태로 다시 생깁니다.
+        stamina: Stamina,
+        /// 이번 Tick에 달리고 있는지입니다. `update_sprint`가 Tick마다 정하고, 이동 속도를 읽는 `Player::stats`가 읽습니다.
+        sprinting: bool,
     },
     Downed {
         /// 남은 출혈 시간입니다. 아무도 부활시키지 않는 동안에만 줄어듭니다.
@@ -56,9 +67,10 @@ pub enum Life {
     Dead,
 }
 
-/// 상호작용 키(F)를 누르고 있는 동안의 행동입니다. 그 행동을 하는 플레이어가 가지고 있습니다.
+/// 상호작용 키(F)나 건설 키(B)를 누르고 있는 동안의 행동입니다. 그 행동을 하는 플레이어가 가지고 있습니다.
 ///
-/// 부활의 진행도는 부활시키는 플레이어의 `Interaction`에만 있습니다.
+/// 부활의 진행도는 부활시키는 플레이어의 `Interaction`에만 있고, 건설의 진행도는 짓는 중인 감시탑(`TowerState::Building`)에만 있습니다.
+/// 채집 지점의 남은 양은 지점(`GatherNode`)에만 있습니다.
 /// 「플레이어 X가 부활되고 있는가」는 `Reviving { target: X }`를 가진 플레이어를 찾아서 알아냅니다.
 /// 쓰러진 플레이어에게는 아무것도 저장하지 않으므로, 두 곳의 값이 서로 어긋날 수 없습니다.
 #[derive(Clone, Debug, PartialEq)]
@@ -70,10 +82,39 @@ pub enum Interaction {
         elapsed_ticks: u32,
     },
     Repairing {
-        tower: TowerId,
+        target: RepairTarget,
         /// 마지막 수리 이후의 Tick 수입니다. 수리를 멈춰도 이미 회복한 HP는 유지됩니다.
         since_pulse_ticks: u32,
     },
+    Gathering {
+        node: NodeId,
+        /// 마지막으로 자원을 옮긴 뒤의 Tick 수입니다. 채집을 멈춰도 이미 든 자원은 그대로입니다.
+        since_pulse_ticks: u32,
+    },
+    /// `tower`는 이 플레이어가 짓고 있는 감시탑입니다.
+    Building { tower: TowerId },
+}
+
+/// 수리하는 대상입니다. 감시탑은 번호로 가리키고, 마차는 방마다 하나뿐이므로 번호가 없습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepairTarget {
+    Tower(TowerId),
+    Wagon,
+}
+
+impl Life {
+    /// 하고 있는 일이 없고, 쿨다운이 없고, 든 자원이 없고, 달리기 게이지가 가득 찬 `Alive`입니다.
+    pub(crate) fn alive(hp: u32, t: &Tuning) -> Life {
+        Life::Alive {
+            hp,
+            cooldown_ticks: 0,
+            interaction: None,
+            build_refusal: None,
+            carried: 0,
+            stamina: Stamina::full(t),
+            sprinting: false,
+        }
+    }
 }
 
 impl Player {
@@ -91,11 +132,7 @@ impl Player {
             spawn_slot,
             pos,
             facing: Vec2::new(1.0, 0.0),
-            life: Life::Alive {
-                hp: t.player.max_hp,
-                cooldown_ticks: 0,
-                interaction: None,
-            },
+            life: Life::alive(t.player.max_hp, t),
             last_input_seq: 0,
             last_attack_tick: None,
         }
@@ -107,6 +144,17 @@ impl Player {
         let seq = self.last_input_seq;
         *self = Player::new(self.id, self.team, spawn_slot, pos, t);
         self.last_input_seq = seq;
+    }
+
+    /// 낮이 시작될 때 최대 HP와 가득 찬 달리기 게이지의 살아 있는 상태로 되돌립니다. 위치, 하고 있던 일, 든 자원은 그대로이고,
+    /// 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다(쓰러질 때 든 자원은 이미 떨어졌습니다).
+    pub(crate) fn restore_for_new_day(&mut self, t: &Tuning) {
+        if let Life::Alive { hp, stamina, .. } = &mut self.life {
+            *hp = t.player.max_hp;
+            *stamina = Stamina::full(t);
+        } else {
+            self.life = Life::alive(t.player.max_hp, t);
+        }
     }
 
     pub fn is_alive(&self) -> bool {
@@ -132,9 +180,39 @@ impl Player {
         }
     }
 
+    /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다.
+    pub fn build_refusal(&self) -> Option<&BuildRefusal> {
+        match &self.life {
+            Life::Alive { build_refusal, .. } => build_refusal.as_ref(),
+            Life::Downed { .. } | Life::Dead => None,
+        }
+    }
+
+    /// 들고 있는 자원입니다. 쓰러졌거나 사망한 플레이어는 자원을 들 수 없으므로 0입니다.
+    pub fn carried(&self) -> u32 {
+        match self.life {
+            Life::Alive { carried, .. } => carried,
+            Life::Downed { .. } | Life::Dead => 0,
+        }
+    }
+
+    /// 달리기 게이지가 가득 찬 값에 대해 몇 퍼센트인지입니다(0에서 100). 쓰러졌거나 사망한 플레이어는 게이지가 없으므로 0입니다.
+    pub fn stamina_percent(&self, t: &Tuning) -> u8 {
+        match &self.life {
+            Life::Alive { stamina, .. } => stamina.percent(t),
+            Life::Downed { .. } | Life::Dead => 0,
+        }
+    }
+
     /// 이동 속도, 공격 피해량, 쿨다운을 읽는 유일한 곳입니다. 상태 효과를 추가하면 여기에서 배율을 곱합니다.
+    /// 달리는 중(`sprinting`)이면 걷는 속도에 달리기 배율을 곱합니다.
     pub(crate) fn stats(&self, t: &Tuning) -> UnitStats {
         let move_speed = match &self.life {
+            Life::Alive {
+                interaction: None,
+                sprinting: true,
+                ..
+            } => t.player.speed * t.sprint.speed_multiplier,
             Life::Alive {
                 interaction: None, ..
             } => t.player.speed,
@@ -155,36 +233,50 @@ impl Player {
 
     /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고, 이때 하고 있던 상호작용이 함께 사라집니다.
     /// 쓰러졌거나 사망한 플레이어는 피해를 받지 않습니다.
-    pub(crate) fn take_damage(&mut self, amount: u32, t: &Tuning) {
-        if let Life::Alive { hp, .. } = &mut self.life {
-            *hp = hp.saturating_sub(amount);
-            if *hp == 0 {
-                self.life = Life::Downed {
-                    bleed_left_ticks: t.ticks(t.revive.bleed_secs),
-                };
-            }
+    ///
+    /// 쓰러지면서 잃은 든 자원의 양을 돌려주므로, 부르는 쪽이 그 자리에 떨어뜨립니다. 쓰러지지 않았으면 0입니다.
+    pub(crate) fn take_damage(&mut self, amount: u32, t: &Tuning) -> u32 {
+        let Life::Alive { hp, carried, .. } = &mut self.life else {
+            return 0;
+        };
+        *hp = hp.saturating_sub(amount);
+        if *hp > 0 {
+            return 0;
         }
+        let dropped = *carried;
+        self.life = Life::Downed {
+            bleed_left_ticks: t.ticks(t.revive.bleed_secs),
+        };
+        dropped
     }
 }
 
-/// 상호작용 키(F)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활이나 수리를 계속하거나, 새로 시작하거나, 취소합니다.
+/// 상호작용 키(F)와 건설 키(B)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활, 수리, 채집, 건설을 계속하거나, 새로 시작하거나, 취소합니다.
 ///
 /// 진행 중인 부활은 키를 누르고 있고, 대상이 여전히 쓰러진 동료이고, 거리가 범위 안인 동안만 이어집니다.
 /// 공격받는 것은 조건이 아닙니다. 조건이 하나라도 깨지면 `Interaction` 값을 버리므로 진행도가 처음으로 돌아갑니다.
 /// 쓰러진 플레이어 한 명은 한 명만 부활시킬 수 있습니다. 이미 진행 중인 부활이 먼저 대상을 차지하고,
 /// 새로 시작하려는 플레이어는 번호 순서로 남은 대상을 차지합니다.
 ///
-/// 수리는 중단해도 잃는 것이 없으므로(이미 회복한 HP는 그대로입니다) Tick마다 대상을 다시 고릅니다.
+/// 수리와 채집은 중단해도 잃는 것이 없으므로(이미 회복한 HP와 이미 든 자원은 그대로입니다) Tick마다 대상을 다시 고릅니다.
 /// 그래서 수리하던 플레이어 곁의 동료가 쓰러지면 곧바로 부활로 바뀝니다.
-/// 수리는 정해진 간격마다 감시탑의 HP를 회복시키고, 여러 명이 수리하면 회복량이 더해집니다.
+/// 수리와 채집은 정해진 간격마다 한 번씩 HP를 회복시키거나 자원을 옮기고, 여러 명이 같은 대상에 하면 양이 더해집니다.
+/// 대상은 보관함이 수리의 비용을 낼 수 있는지와 관계없이 고릅니다. 낼 수 없는 동안에도 플레이어는 그 수리를 계속하고 채집으로 바뀌지 않습니다.
+///
+/// F로 할 일이 있으면 B보다 먼저입니다. 이미 짓고 있는 건설은 B를 누르고 있는 한 이어지고, F를 눌러도 바뀌지 않습니다.
+/// F로 할 일이 없고 B를 누르고 있으면 건설 요청으로 모아서 `build::start_builds`가 번호 순서로 하나씩 판정합니다.
+/// 건설의 진행과 완료와 취소는 `structures::advance_construction`이 정합니다.
 pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     let holding = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.interact);
+    let holding_build = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.build);
 
     // 읽기: 이번 Tick에 플레이어마다 가지게 될 상호작용을 정합니다.
     let mut next: BTreeMap<PlayerId, Option<Interaction>> = BTreeMap::new();
     let mut claimed: BTreeSet<PlayerId> = BTreeSet::new();
-    let mut repairs: Vec<(TowerId, u32)> = Vec::new();
+    let mut repairs: Vec<RepairTarget> = Vec::new();
+    let mut gathers: Vec<(PlayerId, NodeId)> = Vec::new();
+    let mut build_requests: Vec<PlayerId> = Vec::new();
     for player in world.players.values() {
         if let Some(Interaction::Reviving {
             target,
@@ -207,20 +299,64 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
         if !player.is_alive() || next.contains_key(&player.id) {
             continue;
         }
+        if let Some(Interaction::Building { tower }) = player.interaction()
+            && holding_build(player.id)
+            && build::is_building(world, *tower, player.id)
+        {
+            next.insert(player.id, Some(Interaction::Building { tower: *tower }));
+            continue;
+        }
         let mut chosen = if holding(player.id) {
             choose_interaction(world, player, &claimed, t)
         } else {
             None
         };
-        if let Some(Interaction::Reviving { target, .. }) = &chosen {
-            claimed.insert(*target);
-        }
-        if let Some(Interaction::Repairing { tower, .. }) = chosen {
-            let (interaction, repaired) = count_repair_tick(world, player.interaction(), tower, t);
-            if let Some(amount) = repaired {
-                repairs.push((tower, amount));
+        match chosen {
+            Some(Interaction::Reviving { target, .. }) => {
+                claimed.insert(target);
             }
-            chosen = Some(interaction);
+            Some(Interaction::Repairing { target, .. }) => {
+                if let Some(spec) = repair_spec(world, target, t) {
+                    let previous = match player.interaction() {
+                        Some(Interaction::Repairing {
+                            target: before,
+                            since_pulse_ticks,
+                        }) if *before == target => Some(*since_pulse_ticks),
+                        _ => None,
+                    };
+                    let (since_pulse_ticks, pulsed) =
+                        count_pulse(previous, t.ticks(spec.heal.pulse_secs));
+                    if pulsed {
+                        repairs.push(target);
+                    }
+                    chosen = Some(Interaction::Repairing {
+                        target,
+                        since_pulse_ticks,
+                    });
+                }
+            }
+            Some(Interaction::Gathering { node, .. }) => {
+                let previous = match player.interaction() {
+                    Some(Interaction::Gathering {
+                        node: before,
+                        since_pulse_ticks,
+                    }) if *before == node => Some(*since_pulse_ticks),
+                    _ => None,
+                };
+                let (since_pulse_ticks, pulsed) =
+                    count_pulse(previous, t.ticks(t.resources.gather_pulse_secs));
+                if pulsed {
+                    gathers.push((player.id, node));
+                }
+                chosen = Some(Interaction::Gathering {
+                    node,
+                    since_pulse_ticks,
+                });
+            }
+            Some(Interaction::Building { .. }) | None => {}
+        }
+        if chosen.is_none() && holding_build(player.id) {
+            build_requests.push(player.id);
         }
         next.insert(player.id, chosen);
     }
@@ -228,27 +364,40 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     // 적용
     for (id, interaction) in next {
         if let Some(Player {
-            life: Life::Alive {
-                interaction: slot, ..
-            },
+            life:
+                Life::Alive {
+                    interaction: slot,
+                    build_refusal,
+                    ..
+                },
             ..
         }) = world.players.get_mut(&id)
         {
             *slot = interaction;
+            *build_refusal = None;
         }
     }
-    for (id, amount) in repairs {
-        if let Some(tower) = world.towers.get_mut(&id) {
-            let max_hp = t.structures.get(tower.kind).max_hp;
-            tower.repair(amount, max_hp);
-        }
-    }
+    apply_repairs(world, &repairs, t);
+    resources::apply_gathers(world, &gathers, t);
+    build::start_builds(world, ctx, &build_requests);
 }
 
-/// 새로 시작할 상호작용을 고릅니다. 범위 안의 쓰러진 동료가 있으면 가장 가까운 동료를 부활시키고,
-/// 없으면 범위 안에서 손상된 가장 가까운 감시탑을 수리합니다.
-/// 이미 다른 플레이어가 부활시키는 동료(`claimed`)와, 파괴된 감시탑과, HP가 가득 찬 감시탑은 고르지 않습니다.
+/// 새로 시작할 상호작용을 고릅니다. 범위 안에 있는 것 가운데 다음 순서로 고르고, 같은 종류 안에서는 가장 가까운 것입니다.
+/// 쓰러진 동료의 부활, 손상된 감시탑의 수리, 손상된 마차의 수리, 채집 지점의 채집.
 fn choose_interaction(
+    world: &World,
+    me: &Player,
+    claimed: &BTreeSet<PlayerId>,
+    t: &Tuning,
+) -> Option<Interaction> {
+    nearest_downed_ally(world, me, claimed, t)
+        .or_else(|| nearest_damaged_tower(world, me, t))
+        .or_else(|| damaged_wagon_in_reach(world, me, t))
+        .or_else(|| resources::nearest_gatherable_node(world, me, t))
+}
+
+/// 범위 안의 쓰러진 동료 가운데 가장 가까운 동료의 부활입니다. 이미 다른 플레이어가 부활시키는 동료(`claimed`)는 고르지 않습니다.
+fn nearest_downed_ally(
     world: &World,
     me: &Player,
     claimed: &BTreeSet<PlayerId>,
@@ -267,13 +416,14 @@ fn choose_interaction(
             nearest = Some((distance, other.id));
         }
     }
-    if let Some((_, target)) = nearest {
-        return Some(Interaction::Reviving {
-            target,
-            elapsed_ticks: 1,
-        });
-    }
+    nearest.map(|(_, target)| Interaction::Reviving {
+        target,
+        elapsed_ticks: 1,
+    })
+}
 
+/// 범위 안에서 손상된 가장 가까운 감시탑의 수리입니다. 파괴된 감시탑과 HP가 가득 찬 감시탑은 고르지 않습니다.
+fn nearest_damaged_tower(world: &World, me: &Player, t: &Tuning) -> Option<Interaction> {
     let mut nearest_tower: Option<(f32, TowerId)> = None;
     for tower in world.towers.values() {
         let TowerState::Standing { hp, .. } = tower.state else {
@@ -283,51 +433,91 @@ fn choose_interaction(
         if hp >= spec.max_hp || !me.team.is_allied_with(tower.team) {
             continue;
         }
-        let gap = Body::Box(tower.rect).gap_from(me.pos, t.player.radius);
-        if gap <= spec.repair_range && nearest_tower.is_none_or(|(best, _)| gap < best) {
+        let gap = Body::Box(tower.rect()).gap_from(me.pos, t.player.radius);
+        if gap <= spec.repair.heal.range && nearest_tower.is_none_or(|(best, _)| gap < best) {
             nearest_tower = Some((gap, tower.id));
         }
     }
     nearest_tower.map(|(_, tower)| Interaction::Repairing {
-        tower,
+        target: RepairTarget::Tower(tower),
         since_pulse_ticks: 0,
     })
 }
 
-/// 수리하는 한 Tick을 셉니다. 같은 감시탑을 계속 수리하면 지난 Tick에서 이어서 세고, 새로 시작하면 1부터 셉니다.
-/// 정해진 간격이 차면 카운터를 0으로 돌리고 이번에 회복시킬 HP를 함께 돌려줍니다.
-fn count_repair_tick(
+/// 범위 안에 있는 손상된 마차의 수리입니다. 마차의 HP가 0이면 원정이 곧바로 실패하므로 고르지 않습니다.
+fn damaged_wagon_in_reach(world: &World, me: &Player, t: &Tuning) -> Option<Interaction> {
+    let wagon = &world.wagon;
+    let damaged = wagon.hp > 0 && wagon.hp < t.wagon.max_hp;
+    let gap = Body::Box(wagon.rect).gap_from(me.pos, t.player.radius);
+    (damaged && me.team.is_allied_with(wagon.team) && gap <= t.wagon.repair.heal.range).then_some(
+        Interaction::Repairing {
+            target: RepairTarget::Wagon,
+            since_pulse_ticks: 0,
+        },
+    )
+}
+
+/// 수리 대상의 수리 수치입니다. 대상인 감시탑이 사라졌으면 `None`입니다.
+pub(crate) fn repair_spec<'a>(
     world: &World,
-    previous: Option<&Interaction>,
-    tower: TowerId,
-    t: &Tuning,
-) -> (Interaction, Option<u32>) {
-    let counted = match previous {
-        Some(Interaction::Repairing {
-            tower: before,
-            since_pulse_ticks,
-        }) if *before == tower => since_pulse_ticks + 1,
-        _ => 1,
-    };
-    let spec = world
-        .towers
-        .get(&tower)
-        .map(|found| t.structures.get(found.kind));
-    match spec {
-        Some(spec) if counted >= t.ticks(spec.repair_pulse_secs) => (
-            Interaction::Repairing {
-                tower,
-                since_pulse_ticks: 0,
-            },
-            Some(spec.repair_hp_per_pulse),
-        ),
-        _ => (
-            Interaction::Repairing {
-                tower,
-                since_pulse_ticks: counted,
-            },
-            None,
-        ),
+    target: RepairTarget,
+    t: &'a Tuning,
+) -> Option<&'a RepairTuning> {
+    match target {
+        RepairTarget::Tower(id) => world
+            .towers
+            .get(&id)
+            .map(|tower| &t.structures.get(tower.kind).repair),
+        RepairTarget::Wagon => Some(&t.wagon.repair),
+    }
+}
+
+/// 이번 Tick에 수리의 간격이 찬 플레이어마다 보관함에서 비용을 내고 대상의 HP를 회복시킵니다. 플레이어 번호 순서로 하나씩 처리합니다.
+/// 보관함의 자원이 비용보다 적으면 그 수리는 회복시키지 않고 아무것도 내지 않으므로, 보관함은 0 아래로 내려가지 않습니다.
+/// 같은 Tick에 여럿이 수리하면 번호가 작은 플레이어가 먼저 내고, 자원이 모자라면 번호가 큰 플레이어의 수리가 회복시키지 못합니다.
+/// 대상의 HP가 최대에 가까워서 회복시키는 양이 `hp_per_pulse`보다 적어도 비용은 같습니다.
+/// 같은 Tick의 앞선 수리가 대상을 이미 최대 HP로 만들었으면, 뒤의 수리는 회복시킬 것이 없으므로 비용도 내지 않습니다.
+fn apply_repairs(world: &mut World, pulses: &[RepairTarget], t: &Tuning) {
+    for &target in pulses {
+        let Some(spec) = repair_spec(world, target, t) else {
+            continue;
+        };
+        if !is_below_max_hp(world, target, t) || world.stash < spec.cost_per_pulse {
+            continue;
+        }
+        world.stash -= spec.cost_per_pulse;
+        let amount = spec.heal.hp_per_pulse;
+        match target {
+            RepairTarget::Tower(id) => {
+                if let Some(tower) = world.towers.get_mut(&id) {
+                    let max_hp = t.structures.get(tower.kind).max_hp;
+                    tower.repair(amount, max_hp);
+                }
+            }
+            RepairTarget::Wagon => world.wagon.repair(amount, t.wagon.max_hp),
+        }
+    }
+}
+
+/// 수리할 대상의 HP가 최대보다 적은지 봅니다. 대상이 사라졌으면 `false`입니다.
+fn is_below_max_hp(world: &World, target: RepairTarget, t: &Tuning) -> bool {
+    match target {
+        RepairTarget::Tower(id) => world
+            .towers
+            .get(&id)
+            .is_some_and(|tower| tower.hp() < t.structures.get(tower.kind).max_hp),
+        RepairTarget::Wagon => world.wagon.hp < t.wagon.max_hp,
+    }
+}
+
+/// 수리나 채집의 한 Tick을 셉니다. `previous`는 같은 대상을 지난 Tick까지 센 값이고, 새로 시작하면 `None`이어서 1부터 셉니다.
+/// 정해진 간격(`pulse_ticks`)이 차면 카운터를 0으로 돌리고 `true`를 함께 돌려줍니다.
+fn count_pulse(previous: Option<u32>, pulse_ticks: u32) -> (u32, bool) {
+    let counted = previous.map_or(1, |count| count + 1);
+    if counted >= pulse_ticks {
+        (0, true)
+    } else {
+        (counted, false)
     }
 }
 
@@ -368,11 +558,7 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
         }
         if let Some(revived) = world.players.get_mut(&target) {
             let hp = (t.player.max_hp * t.revive.revived_hp_percent / 100).max(1);
-            revived.life = Life::Alive {
-                hp,
-                cooldown_ticks: 0,
-                interaction: None,
-            };
+            revived.life = Life::alive(hp, t);
         }
     }
 
@@ -389,9 +575,65 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
     }
 }
 
-/// 입력대로 플레이어를 움직입니다. 살아 있는 플레이어는 걷고, 쓰러진 플레이어는 기어갑니다.
+/// 마차 곁에 있는 살아 있는 플레이어의 HP를 회복합니다. 낮과 밤, 공격받는 중인지와 관계없이 같고,
+/// 쓰러졌거나 사망한 플레이어는 회복하지 않습니다.
+///
+/// 회복하는 때는 방의 Tick 번호가 정하므로 플레이어마다 따로 세는 값이 없고, 모든 플레이어가 같은 Tick에 회복합니다.
+/// 이번 Tick의 피해를 모두 적용한 뒤에 부르므로, 쓰러뜨리는 피해를 같은 Tick의 회복이 되돌리지 않습니다.
+pub(crate) fn recover_near_wagon(world: &mut World, ctx: &Ctx) {
+    let t = ctx.t;
+    let heal = &t.wagon.recovery;
+    if !ctx.tick.is_multiple_of(u64::from(t.ticks(heal.pulse_secs))) {
+        return;
+    }
+    let wagon_body = Body::Box(world.wagon.rect);
+    let wagon_team = world.wagon.team;
+    for player in world.players.values_mut() {
+        let in_reach = wagon_body.gap_from(player.pos, t.player.radius) <= heal.range
+            && player.team.is_allied_with(wagon_team);
+        if let Life::Alive { hp, .. } = &mut player.life
+            && in_reach
+        {
+            *hp = hp.saturating_add(heal.hp_per_pulse).min(t.player.max_hp);
+        }
+    }
+}
+
+/// 이번 Tick에 플레이어마다 달리는지 정하고 달리기 게이지를 고칩니다. `move_players`가 이동 속도를 읽기 전에 부릅니다.
+///
+/// 달리는 플레이어는 살아 있고, 하고 있는 일이 없고(부활, 수리, 채집, 건설 중에는 움직일 수 없습니다), 움직이려 하고,
+/// 달리기 키를 누르고 있고, 게이지에 한 Tick을 달릴 만큼이 남아 있는 플레이어입니다. 달리면 게이지가 Tick마다 줄고, 달리기 키를 떼고 있으면 Tick마다 찹니다.
+/// 키를 누르고 있지만 달리지 못하는 동안(제자리에 서 있거나 게이지가 빈 상태)에는 게이지가 줄지도 차지도 않으므로,
+/// 빈 게이지에서 키를 누르고 있어도 달리기와 걷기가 번갈아 나오지 않고 걷기만 합니다.
+/// 입력이 없는 플레이어는 키를 떼고 있는 것으로 봅니다.
+pub(crate) fn update_sprint(world: &mut World, ctx: &Ctx) {
+    let t = ctx.t;
+    for player in world.players.values_mut() {
+        let Life::Alive {
+            stamina,
+            sprinting,
+            interaction,
+            ..
+        } = &mut player.life
+        else {
+            continue;
+        };
+        let input = ctx.inputs.get(&player.id);
+        let holding = input.is_some_and(|input| input.sprint);
+        let moving = input.is_some_and(|input| input.move_dir.get() != Vec2::ZERO);
+        *sprinting = holding && moving && interaction.is_none() && stamina.can_spend(t);
+        if *sprinting {
+            stamina.spend(t);
+        } else if !holding {
+            stamina.refill(t);
+        }
+    }
+}
+
+/// 입력대로 플레이어를 움직입니다. 살아 있는 플레이어는 걷거나 달리고, 쓰러진 플레이어는 기어갑니다.
 pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
+    let mut scratch = Vec::new();
     for player in world.players.values_mut() {
         let Some(input) = ctx.inputs.get(&player.id) else {
             continue;
@@ -407,8 +649,8 @@ pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
                 player.pos,
                 t.player.radius,
                 delta,
-                &ctx.statics.solids,
-                ctx.statics.bounds,
+                &world.tiles,
+                &mut scratch,
             );
         }
     }

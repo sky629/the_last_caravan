@@ -9,7 +9,7 @@ use caravan_rules::{MonsterKind, Player, Sim, Vec2};
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::WireMonsterKind;
-use crate::units::{WirePos, WireRect};
+use crate::units::{WirePos, WireRect, WireTile};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Welcome {
@@ -31,18 +31,26 @@ pub struct WorldInfo {
     pub size: WirePos,
     pub obstacles: Vec<WireRect>,
     pub wagon: WireRect,
-    pub towers: Vec<TowerSite>,
+    /// 원정의 날 수입니다. 「날 2 / 3」 같은 표시에 씁니다.
+    pub day_count: u32,
+    /// 서 있는 감시탑과 짓는 중인 감시탑을 합친 수의 상한입니다. 감시탑의 위치는 스냅샷에 실립니다.
+    pub tower_limit: u32,
+    /// 플레이어가 한 번에 들 수 있는 자원의 양입니다. 「들고 있는 양 / 상한」 표시에 씁니다.
+    pub carry_capacity: u32,
+    /// 채집 지점이 낮마다 가득 찼을 때 가지는 자원의 양입니다. 지점의 막대를 그리는 기준입니다.
+    pub node_amount: u32,
+    /// 채집 지점의 위치입니다. 번호가 작은 지점부터이고, 원정 동안 바뀌지 않습니다. 남은 양은 스냅샷에 실립니다.
+    pub nodes: Vec<NodeInfo>,
     /// 플레이어를 그리는 원의 반지름(타일)입니다.
     pub player_radius: f32,
     /// 몬스터 종류마다 하나씩입니다. 새 종류가 생기면 항목이 늘어납니다.
     pub monster_kinds: Vec<MonsterKindInfo>,
 }
 
-/// 감시탑이 서 있는 자리입니다. 스냅샷의 `WireTower`는 같은 번호로 이 자리와 짝을 이룹니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TowerSite {
+pub struct NodeInfo {
     pub id: u32,
-    pub rect: WireRect,
+    pub tile: WireTile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,11 +79,15 @@ impl Welcome {
                     .map(|r| WireRect::from_rect(*r))
                     .collect(),
                 wagon: WireRect::from_rect(map.wagon),
-                towers: sim
-                    .towers()
-                    .map(|tower| TowerSite {
-                        id: tower.id.0,
-                        rect: WireRect::from_rect(tower.rect),
+                day_count: tuning.day_count(),
+                tower_limit: tuning.village.tower_limit,
+                carry_capacity: tuning.resources.carry_capacity,
+                node_amount: tuning.resources.node_amount,
+                nodes: sim
+                    .nodes()
+                    .map(|node| NodeInfo {
+                        id: node.id.0,
+                        tile: WireTile::from_tile(node.tile),
                     })
                     .collect(),
                 player_radius: tuning.player.radius,

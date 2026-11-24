@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
-    ServerLimits, ServerMsg, Welcome, WireLife, WirePhase, check_welcome, loopback,
+    ServerLimits, ServerMsg, Welcome, WireLife, WireNightStep, WirePhase, check_welcome, loopback,
 };
 use caravan_rules::{PlayerId, Sim, Tuning};
 use caravan_server::{GameServer, Notice, ServerError, ServerStats};
@@ -423,23 +423,39 @@ fn the_welcome_reports_the_players_id_the_capacity_and_the_tick_rate_from_the_tu
         panic!("expected Welcome, got {answer:?}");
     };
     assert_eq!((welcome.you, welcome.capacity, welcome.tick_hz), (2, 3, 30));
-    assert_eq!(welcome.world.towers.len(), 1);
+    assert_eq!(
+        welcome.world.tower_limit,
+        Tuning::default().village.tower_limit
+    );
 }
 
 #[test]
 fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
-    let mut rig = rig();
+    let mut tuning = Tuning::default();
+    tuning.cycle.day_secs = 0.1;
+    let mut rig = rig_with(tuning);
     let (mut a, _) = rig.join_ok("test");
-    // 첫 무리는 3초(60 Tick) 뒤에 나타나므로 3.1초를 기다리면 싸우는 중입니다.
-    rig.run_ticks(62);
+    // 낮은 0.1초(2 Tick), 첫 무리는 그 뒤 3초(60 Tick)에 나타나므로 3.2초를 기다리면 싸우는 중입니다.
+    rig.run_ticks(64);
     let fighting = last_snapshot(&mut a);
-    assert_eq!(fighting.phase, WirePhase::Fighting { wave: 1 });
+    assert!(
+        matches!(
+            fighting.phase,
+            WirePhase::Night {
+                day: 1,
+                step: WireNightStep::Fighting { wave: 1 },
+                ..
+            }
+        ),
+        "got {:?}",
+        fighting.phase
+    );
 
     let (mut b, b_id) = rig.join_ok("test");
     rig.run_ticks(1);
     let first_seen = last_snapshot(&mut b);
     assert_eq!(first_seen.expedition, 1, "no new expedition starts");
-    assert_eq!(first_seen.phase, WirePhase::Fighting { wave: 1 });
+    assert!(matches!(first_seen.phase, WirePhase::Night { day: 1, .. }));
     assert!(
         !first_seen.monsters.is_empty(),
         "the newcomer sees the monsters already on the field"
@@ -449,7 +465,10 @@ fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
         WireLife::Alive {
             hp: 100,
             max_hp: 100,
-            interaction: None
+            carried: 0,
+            stamina: 100,
+            interaction: None,
+            build_refusal: None
         }
     );
 }
@@ -511,12 +530,12 @@ fn a_players_movement_in_one_room_is_not_visible_in_another_room() {
 
     assert_near(
         position(&last_snapshot(&mut red), red_id).x,
-        13.0,
+        33.0,
         "the red player moved",
     );
     assert_near(
         position(&last_snapshot(&mut blue), blue_id).x,
-        12.0,
+        32.0,
         "the blue player did not move",
     );
 }
@@ -539,7 +558,7 @@ fn after_a_player_leaves_the_room_keeps_running_for_the_one_who_stays() {
     );
     assert_near(
         position(&snapshot, b_id).y,
-        14.5 - 0.6,
+        34.5 - 0.6,
         "the one who stays still answers to input",
     );
 }
@@ -707,7 +726,9 @@ fn a_server_refuses_to_start_with_numbers_that_break_the_rules() {
 
 #[test]
 fn the_stats_count_rooms_members_monsters_and_ticks() {
-    let mut rig = rig();
+    let mut tuning = Tuning::default();
+    tuning.cycle.day_secs = 0.1;
+    let mut rig = rig_with(tuning);
     let (_a1, _) = rig.join_ok("a");
     let (_a2, _) = rig.join_ok("a");
     let (b, _) = rig.join_ok("b");
@@ -716,16 +737,21 @@ fn the_stats_count_rooms_members_monsters_and_ticks() {
         ServerStats {
             rooms: 2,
             members: 3,
-            monsters: 0,
+            monsters: 32,
             ticks: 0
         }
     );
 
-    // 첫 무리가 나타난 뒤에는 방마다 몬스터가 있습니다.
-    rig.run_ticks(62);
+    // 낮이 시작될 때 방마다 낮의 몬스터가 열여섯 마리(채집 지점 여덟 곳에 둘씩) 놓입니다.
+    // 낮이 끝나고 첫 무리가 나타난 뒤에는 방마다 밤의 몬스터가 더해집니다.
+    rig.run_ticks(64);
     let busy = rig.server.stats();
-    assert_eq!((busy.rooms, busy.members, busy.ticks), (2, 3, 62));
-    assert!(busy.monsters >= 2, "one monster per room at least");
+    assert_eq!((busy.rooms, busy.members, busy.ticks), (2, 3, 64));
+    assert!(
+        busy.monsters >= 34,
+        "the guards and at least one night monster per room, got {}",
+        busy.monsters
+    );
 
     drop(b);
     rig.pump();

@@ -1,13 +1,26 @@
-//! 감시탑의 사격, 피해와 파괴, 수리를 확인합니다.
+//! 감시탑의 사격, 피해와 파괴, 수리와 수리의 비용을 확인합니다.
 //!
-//! 시나리오의 감시탑은 (1, 17)에서 (2, 18)까지의 사각형이고 중심은 (1.5, 17.5)입니다.
+//! 시나리오의 감시탑은 테스트가 놓은 타일 (1, 17)이고, 사각형은 (1, 17)에서 (2, 18)까지, 중심은 (1.5, 17.5)입니다.
 
-use super::support::{Scenario, close};
+use super::support::Scenario;
+use crate::build::CannotBuild;
+use crate::expedition::{Outcome, Phase};
 use crate::input::PlayerInput;
-use crate::kind::StructureKind;
 use crate::math::Rect;
 use crate::structures::{Shot, TowerState};
-use crate::tuning::StructurePlacement;
+use crate::tuning::Tuning;
+use crate::world::Tile;
+
+/// 타일 (1, 17)에 서 있는 감시탑이 하나 있는 빈 들판입니다.
+fn field_with_tower() -> Scenario {
+    field_with_tower_tuned(|_| {})
+}
+
+fn field_with_tower_tuned(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+    let mut s = Scenario::with_tuning(adjust);
+    s.tower_at(1, 17);
+    s
+}
 
 fn press_f() -> PlayerInput {
     PlayerInput {
@@ -18,7 +31,7 @@ fn press_f() -> PlayerInput {
 
 /// 감시탑 곁에서 F를 누르고 있는 플레이어와, HP가 100인 감시탑입니다.
 fn repairer_at_a_damaged_tower() -> (Scenario, crate::ids::PlayerId) {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let a = s.player_at(2.5, 17.5);
     s.set_tower_hp(100);
     s.hold(a, press_f());
@@ -27,7 +40,7 @@ fn repairer_at_a_damaged_tower() -> (Scenario, crate::ids::PlayerId) {
 
 #[test]
 fn a_tower_shoots_the_nearest_monster_in_range() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.max_hp = 1000);
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.max_hp = 1000);
     let near = s.monster_at(4.0, 17.5);
     let far = s.monster_at(6.0, 17.5);
 
@@ -50,7 +63,7 @@ fn a_tower_shoots_the_nearest_monster_in_range() {
 
 #[test]
 fn a_tower_ignores_monsters_beyond_its_range() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.aggro_range = 0.0);
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.aggro_range = 0.0);
     let monster = s.monster_at(9.0, 17.5);
 
     s.run_ticks(1);
@@ -64,7 +77,7 @@ fn a_tower_ignores_monsters_beyond_its_range() {
 
 #[test]
 fn a_tower_shoots_again_after_its_cooldown() {
-    let mut s = Scenario::with_tuning(|t| {
+    let mut s = field_with_tower_tuned(|t| {
         t.monsters.grunt.max_hp = 1000;
         t.monsters.grunt.aggro_range = 0.0;
         t.monsters.grunt.speed = 0.5;
@@ -84,13 +97,8 @@ fn a_tower_shoots_again_after_its_cooldown() {
 
 #[test]
 fn towers_are_kept_by_id_and_each_one_shoots() {
-    let mut s = Scenario::with_tuning(|t| {
-        t.monsters.grunt.max_hp = 1000;
-        t.map.structures.push(StructurePlacement {
-            kind: StructureKind::Watchtower,
-            rect: Rect::new(1.0, 14.0, 2.0, 15.0),
-        });
-    });
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.max_hp = 1000);
+    s.tower_at(1, 14);
     let monster = s.monster_at(3.0, 16.0);
 
     s.run_ticks(1);
@@ -107,7 +115,7 @@ fn towers_are_kept_by_id_and_each_one_shoots() {
 
 #[test]
 fn a_monster_in_range_goes_for_the_tower_and_hurts_it() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     s.monster_at(3.0, 17.5);
     let max_hp = s.sim.tuning().structures.watchtower.max_hp;
 
@@ -122,23 +130,22 @@ fn a_monster_in_range_goes_for_the_tower_and_hurts_it() {
 }
 
 #[test]
-fn zero_hp_destroys_the_tower() {
-    let mut s = Scenario::open_field();
+fn zero_hp_removes_the_tower_and_frees_its_tile() {
+    let mut s = field_with_tower();
     s.set_tower_hp(10);
     s.monster_at(3.0, 17.5);
 
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
 
-    assert_eq!(s.tower().state, TowerState::Destroyed);
-    assert_eq!(s.tower().hp(), 0);
+    assert_eq!(s.sim.towers().count(), 0, "no rubble is left");
 }
 
 #[test]
 fn a_destroyed_tower_stops_shooting() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.max_hp = 1000);
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.max_hp = 1000);
     s.set_tower_hp(10);
     let attacker = s.monster_at(3.0, 17.5);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
     let hp_when_destroyed = s.monster(attacker).unwrap().hp;
 
     s.run_ticks(s.ticks(3.0));
@@ -147,11 +154,11 @@ fn a_destroyed_tower_stops_shooting() {
 }
 
 #[test]
-fn monsters_do_not_attack_a_destroyed_tower() {
-    let mut s = Scenario::open_field();
+fn monsters_do_not_attack_a_tower_that_is_gone() {
+    let mut s = field_with_tower();
     s.set_tower_hp(10);
     s.monster_at(3.0, 17.5);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
     s.clear_monsters();
 
     let fresh = s.monster_at(3.0, 17.5);
@@ -165,43 +172,73 @@ fn monsters_do_not_attack_a_destroyed_tower() {
 }
 
 #[test]
-fn a_destroyed_tower_still_blocks_movement() {
-    let mut s = Scenario::open_field();
+fn a_destroyed_tower_leaves_a_tile_that_players_can_walk_through() {
+    let mut s = field_with_tower();
     let a = s.player_at(5.0, 17.5);
     s.set_tower_hp(10);
     s.monster_at(3.0, 17.5);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
     s.clear_monsters();
 
     s.hold_move(a, -1.0, 0.0);
     s.run_ticks(s.ticks(3.0));
 
-    assert!(close(s.player(a).pos.x, 2.0 + s.sim.tuning().player.radius));
+    assert!(
+        s.player(a).pos.x < 1.0,
+        "it walked across the tile where the tower stood, {:?}",
+        s.player(a).pos
+    );
 }
 
 #[test]
-fn holding_f_next_to_a_damaged_tower_repairs_it_in_pulses() {
+fn a_tower_can_be_built_again_where_one_was_destroyed() {
+    let mut s = field_with_tower_tuned(|t| t.map.wagon = Rect::new(6.0, 17.0, 8.0, 19.0));
+    let a = s.player_at(0.5, 16.5);
+    s.set_tower_hp(10);
+    s.monster_at(3.0, 17.5);
+    s.run_until(100, |sim| sim.towers().count() == 0);
+    s.clear_monsters();
+
+    s.hold_build(a, 1.0, 1.0);
+    s.run_ticks(s.ticks(3.0));
+
+    let tower = s.sim.towers().next().expect("the new tower stands");
+    assert_eq!(tower.tile, crate::world::Tile::new(1, 17));
+}
+
+fn tower_repair_pulse(s: &Scenario) -> u32 {
+    s.ticks(s.sim.tuning().structures.watchtower.repair.heal.pulse_secs)
+}
+
+#[test]
+fn holding_f_next_to_a_damaged_tower_repairs_it_in_pulses_and_each_pulse_costs_one() {
     let (mut s, a) = repairer_at_a_damaged_tower();
-    let pulse = s.ticks(s.sim.tuning().structures.watchtower.repair_pulse_secs);
+    let pulse = tower_repair_pulse(&s);
+    let stash = s.sim.stash();
 
     s.run_ticks(pulse - 1);
     assert_eq!(s.tower().hp(), 100, "no HP before the first pulse");
+    assert_eq!(s.sim.stash(), stash, "and nothing is paid before it");
 
     s.run_ticks(1);
-    assert_eq!(s.tower().hp(), 110, "10 HP per pulse");
+    assert_eq!(s.tower().hp(), 130, "30 HP per pulse");
+    assert_eq!(s.sim.stash(), stash - 1, "paid with 1 resource");
     s.run_ticks(pulse);
-    assert_eq!(s.tower().hp(), 120);
+    assert_eq!(s.tower().hp(), 160);
+    assert_eq!(s.sim.stash(), stash - 2);
     assert!(s.player(a).interaction().is_some());
 }
 
 #[test]
-fn a_repair_ends_at_full_hp_and_never_goes_above_it() {
+fn a_repair_ends_at_full_hp_and_never_goes_above_it_and_the_short_last_pulse_costs_one() {
     let (mut s, a) = repairer_at_a_damaged_tower();
     s.set_tower_hp(295);
+    let stash = s.sim.stash();
 
     s.run_ticks(s.ticks(2.0));
 
     assert_eq!(s.tower().hp(), 300);
+    assert_eq!(s.sim.stash(), stash - 1);
     assert!(
         s.player(a).interaction().is_none(),
         "nothing left to repair"
@@ -209,19 +246,37 @@ fn a_repair_ends_at_full_hp_and_never_goes_above_it() {
 }
 
 #[test]
+fn a_tower_repaired_from_almost_nothing_to_full_costs_what_building_one_costs() {
+    let (mut s, _) = repairer_at_a_damaged_tower();
+    s.set_tower_hp(1);
+    s.set_stash(100);
+    let pulse = tower_repair_pulse(&s);
+    let build_cost = s.sim.tuning().structures.watchtower.build_cost;
+
+    let elapsed = s.run_until(pulse * 20, |sim| {
+        sim.towers().all(|tower| tower.hp() == 300)
+    });
+
+    assert_eq!(elapsed, 10 * pulse, "299 HP in pulses of 30 is 10 pulses");
+    assert_eq!(100 - s.sim.stash(), build_cost);
+}
+
+#[test]
 fn releasing_f_stops_the_repair_and_keeps_the_hp_restored_so_far() {
     let (mut s, a) = repairer_at_a_damaged_tower();
-    s.run_ticks(25);
-    assert_eq!(s.tower().hp(), 120);
+    s.run_ticks(2 * tower_repair_pulse(&s) + 5);
+    assert_eq!(s.tower().hp(), 160);
+    let stash = s.sim.stash();
 
     s.hold(a, PlayerInput::default());
     s.run_ticks(60);
 
     assert_eq!(
         s.tower().hp(),
-        120,
+        160,
         "the restored HP stays and nothing more arrives"
     );
+    assert_eq!(s.sim.stash(), stash, "and nothing more is paid");
 }
 
 #[test]
@@ -249,7 +304,7 @@ fn a_repairer_can_neither_move_nor_attack() {
 
 #[test]
 fn the_repair_stops_when_the_repairer_goes_down() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.attack_damage = 100);
+    let mut s = field_with_tower_tuned(|t| t.monsters.grunt.attack_damage = 100);
     let a = s.player_at(2.5, 17.5);
     s.player_at(15.0, 3.0);
     s.set_tower_hp(100);
@@ -265,63 +320,71 @@ fn the_repair_stops_when_the_repairer_goes_down() {
     assert!(s.player(a).is_downed());
     assert!(s.player(a).interaction().is_none());
     assert!(
-        s.tower().hp() <= hp,
+        s.sim.towers().next().is_none_or(|tower| tower.hp() <= hp),
         "no more HP is restored once the repairer is down"
     );
 }
 
 #[test]
-fn several_repairers_add_up() {
+fn several_repairers_add_up_and_each_pays_for_its_own_pulse() {
     let (mut s, _) = repairer_at_a_damaged_tower();
     let b = s.player_at(2.5, 17.0);
     s.hold(b, press_f());
-    let pulse = s.ticks(s.sim.tuning().structures.watchtower.repair_pulse_secs);
+    let stash = s.sim.stash();
 
-    s.run_ticks(pulse);
+    s.run_ticks(tower_repair_pulse(&s));
 
-    assert_eq!(s.tower().hp(), 100 + 2 * 10);
+    assert_eq!(s.tower().hp(), 100 + 2 * 30);
+    assert_eq!(s.sim.stash(), stash - 2);
 }
 
 #[test]
-fn a_repair_needs_no_resource_and_a_far_player_cannot_repair() {
-    let mut s = Scenario::open_field();
+fn a_tower_pulse_the_stash_cannot_pay_does_not_heal() {
+    let (mut s, a) = repairer_at_a_damaged_tower();
+    s.set_stash(0);
+
+    s.run_ticks(3 * tower_repair_pulse(&s));
+
+    assert_eq!(s.tower().hp(), 100);
+    assert!(s.player(a).interaction().is_some(), "still repairing");
+    assert!(s.sim.lacks_stash_to_repair(a));
+}
+
+#[test]
+fn a_far_player_cannot_repair_and_a_near_player_can() {
+    let mut s = field_with_tower();
     let near = s.player_at(2.5, 17.5);
     let far = s.player_at(6.0, 17.5);
     s.set_tower_hp(100);
     s.hold(far, press_f());
 
-    s.run_ticks(40);
+    s.run_ticks(2 * tower_repair_pulse(&s));
     assert_eq!(s.tower().hp(), 100, "out of the repair range");
     assert!(s.player(far).interaction().is_none());
 
     s.hold(near, press_f());
-    s.run_ticks(10);
-    assert_eq!(
-        s.tower().hp(),
-        110,
-        "a player in range repairs with no cost"
-    );
+    s.run_ticks(tower_repair_pulse(&s));
+    assert_eq!(s.tower().hp(), 130, "a player in range repairs");
 }
 
 #[test]
 fn a_destroyed_tower_cannot_be_repaired() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let a = s.player_at(1.5, 18.4);
     s.set_tower_hp(10);
     s.monster_at(1.5, 16.6);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
+    s.run_until(100, |sim| sim.towers().count() == 0);
     s.clear_monsters();
 
     s.hold(a, press_f());
     s.run_ticks(s.ticks(3.0));
 
-    assert_eq!(s.tower().state, TowerState::Destroyed);
     assert!(s.player(a).interaction().is_none());
 }
 
 #[test]
 fn a_downed_ally_in_range_comes_before_a_damaged_tower() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let reviver = s.player_at(2.5, 17.5);
     let downed = s.player_at(3.5, 17.5);
     s.player_at(15.0, 3.0);
@@ -341,7 +404,7 @@ fn a_downed_ally_in_range_comes_before_a_damaged_tower() {
 
 #[test]
 fn a_repairer_switches_to_reviving_when_an_ally_goes_down_beside_them() {
-    let mut s = Scenario::open_field();
+    let mut s = field_with_tower();
     let reviver = s.player_at(2.5, 17.5);
     let ally = s.player_at(3.5, 17.5);
     s.player_at(15.0, 3.0);
@@ -357,17 +420,149 @@ fn a_repairer_switches_to_reviving_when_an_ally_goes_down_beside_them() {
 }
 
 #[test]
-fn a_new_expedition_rebuilds_a_destroyed_tower() {
-    let mut s = Scenario::open_field();
+fn a_new_expedition_removes_the_towers_and_refills_the_stash() {
+    let mut s = field_with_tower();
     s.player_at(15.0, 3.0);
-    s.set_tower_hp(10);
-    s.monster_at(3.0, 17.5);
-    s.run_until(100, |sim| !sim.towers().next().unwrap().is_standing());
-    s.clear_monsters();
+    s.set_stash(3);
     s.set_wagon_hp(0);
 
     s.run_until(400, |sim| sim.expedition_number() == 2);
 
-    assert_eq!(s.tower().hp(), s.sim.tuning().structures.watchtower.max_hp);
-    assert_eq!(s.sim.towers().count(), 1);
+    assert_eq!(s.sim.towers().count(), 0);
+    assert_eq!(s.sim.stash(), s.sim.tuning().wagon.start_stash);
+}
+
+#[test]
+fn a_new_expedition_frees_the_tiles_the_towers_stood_on() {
+    let mut s = field_with_tower();
+    let a = s.player_at(5.0, 17.5);
+    s.set_wagon_hp(0);
+    s.run_until(400, |sim| sim.expedition_number() == 2);
+    // 원정이 시작되면 플레이어는 등장 지점으로 돌아갑니다. 다시 (5, 17.5)로 옮겨서 감시탑이 있던 자리를 지나 걷게 합니다.
+    s.sim.world_mut().players.get_mut(&a).unwrap().pos = crate::math::Vec2::new(5.0, 17.5);
+
+    s.hold_move(a, -1.0, 0.0);
+    s.run_ticks(s.ticks(3.0));
+
+    assert!(s.player(a).pos.x < 1.0);
+}
+
+// 원정이 시작될 때 이미 서 있는 감시탑
+
+#[test]
+fn start_towers_stand_at_full_hp_when_the_expedition_begins_and_again_after_a_new_one() {
+    let sites = vec![Tile::new(14, 14), Tile::new(16, 14)];
+    let mut s = Scenario::with_tuning(|t| t.village.start_towers = sites.clone());
+
+    let standing: Vec<(Tile, u32)> = s
+        .sim
+        .towers()
+        .map(|tower| (tower.tile, tower.hp()))
+        .collect();
+    assert_eq!(standing, vec![(sites[0], 300), (sites[1], 300)]);
+
+    s.set_tower_hp(10);
+    s.sim.set_phase(Phase::Over {
+        outcome: Outcome::Defeat,
+        ticks_left: 1,
+    });
+    s.run_ticks(1);
+
+    assert_eq!(s.sim.expedition_number(), 2);
+    let standing: Vec<(Tile, u32)> = s
+        .sim
+        .towers()
+        .map(|tower| (tower.tile, tower.hp()))
+        .collect();
+    assert_eq!(standing, vec![(sites[0], 300), (sites[1], 300)]);
+}
+
+#[test]
+fn start_towers_count_toward_the_limit() {
+    let mut s = Scenario::with_tuning(|t| {
+        t.village.start_towers = vec![Tile::new(14, 14)];
+        t.village.tower_limit = 1;
+    });
+    let a = s.player_at(14.5, 12.5);
+
+    s.hold_build(a, 1.0, 0.0);
+    s.run_ticks(1);
+
+    assert_eq!(
+        s.player(a).build_refusal().map(|refusal| refusal.why),
+        Some(CannotBuild::TowerLimit)
+    );
+}
+
+#[test]
+fn start_towers_take_their_tiles() {
+    let mut s = Scenario::with_tuning(|t| t.village.start_towers = vec![Tile::new(14, 14)]);
+    let a = s.player_at(13.5, 14.5);
+
+    s.hold_build(a, 1.0, 0.0);
+    s.run_ticks(1);
+
+    assert_eq!(
+        s.player(a).build_refusal().map(|refusal| refusal.why),
+        Some(CannotBuild::TileTaken)
+    );
+}
+
+#[test]
+fn the_default_map_takes_a_full_set_of_spread_out_towers() {
+    let mut t = Tuning::default();
+    t.village.start_towers = t.spread_tower_sites(t.village.tower_limit);
+    assert_eq!(t.village.start_towers.len(), t.village.tower_limit as usize);
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "the towers leave every tile reachable"
+    );
+
+    let s = Scenario::default_game(|tuning| *tuning = t.clone());
+
+    assert_eq!(s.sim.towers().count(), t.village.tower_limit as usize);
+    assert!(s.sim.towers().all(|tower| tower.is_standing()));
+    for tower in s.sim.towers() {
+        let gap = s.sim.wagon().rect.distance_to(tower.tile.center());
+        assert!(
+            gap <= t.village.build_range,
+            "{:?} is outside the village",
+            tower.tile
+        );
+    }
+}
+
+#[test]
+fn spread_out_sites_leave_a_free_tile_between_neighbours_and_keep_the_player_spawns_clear() {
+    let t = Tuning::default();
+    let sites = t.spread_tower_sites(t.village.tower_limit);
+    let distinct: std::collections::BTreeSet<Tile> = sites.iter().copied().collect();
+    assert_eq!(distinct.len(), sites.len(), "no tile twice");
+    for (i, a) in sites.iter().enumerate() {
+        for b in &sites[i + 1..] {
+            let (dx, dy) = (a.x.abs_diff(b.x), a.y.abs_diff(b.y));
+            assert!(dx >= 2 || dy >= 2, "{a:?} and {b:?} touch");
+        }
+    }
+    for spawn in &t.map.player_spawns {
+        for site in &sites {
+            assert!(
+                site.rect().distance_to(*spawn) >= t.player.radius,
+                "{site:?} sits on a player spawn {spawn:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn asking_for_more_sites_than_the_village_has_gives_what_fits() {
+    let t = Tuning::default();
+    let all = t.spread_tower_sites(u32::MAX);
+    assert!(all.len() > t.village.tower_limit as usize);
+    assert!(
+        all.len() < 10_000,
+        "bounded by the village, got {}",
+        all.len()
+    );
 }

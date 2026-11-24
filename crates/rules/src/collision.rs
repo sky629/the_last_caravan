@@ -1,12 +1,14 @@
-//! 충돌 처리입니다. 플레이어와 몬스터는 원이고, 장애물, 마차, 감시탑은 축에 정렬된 사각형입니다.
+//! 충돌 처리입니다. 플레이어와 몬스터는 원이고, 장애물, 마차, 감시탑은 타일 하나하나의 정사각형입니다.
 //! 맵 경계는 원이 그 안에 머물러야 하는 사각형 하나로 다룹니다. 원끼리는 충돌하지 않습니다.
 //!
 //! 방식은 「이동한 뒤 밀어내기」입니다. 원이 한 Tick의 이동 거리만큼 이동한 뒤, 겹친 사각형에서 가장 짧은 방향으로 밀려납니다.
+//! 막힌 곳은 타일 지도에서 읽고, 원이 걸치는 타일(대개 3 x 3)만 봅니다. 그래서 감시탑이 몇 개이든 이동 한 번의 비용이 같습니다.
 //! 벽에 비스듬히 부딪히면 벽에 수직인 성분만 사라지므로 벽을 따라 미끄러집니다.
 //! 이 방식에는 한 Tick에 움직일 수 있는 거리(걷는 거리와 몬스터끼리 밀려나는 거리의 합)가 반지름보다 짧아야 한다는 전제가 있습니다.
 //! 그렇지 않으면 얇은 벽을 건너뛸 수 있습니다. `Tuning::validate`가 이 전제를 검사합니다.
 
 use crate::math::{Rect, Vec2};
+use crate::world::TileMap;
 
 /// 거리를 잴 때 쓰는 모양입니다. 근접 공격, 추적 시작, 수리의 거리 판정이 모두 `gap_from` 하나를 거칩니다.
 #[derive(Clone, Copy, Debug)]
@@ -45,19 +47,21 @@ impl Body {
     }
 }
 
-/// 원을 `delta`만큼 옮긴 뒤 `solids`와 `bounds`에 맞추어 보정하고, 새 중심을 돌려줍니다.
+/// 원을 `delta`만큼 옮긴 뒤 막힌 타일과 맵 경계에 맞추어 보정하고, 새 중심을 돌려줍니다.
+/// `scratch`는 막힌 타일의 사각형을 담는 작업용 배열입니다. 호출하는 쪽이 재사용하면 이동마다 메모리를 새로 할당하지 않습니다.
 pub(crate) fn move_circle(
     pos: Vec2,
     radius: f32,
     delta: Vec2,
-    solids: &[Rect],
-    bounds: Rect,
+    tiles: &TileMap,
+    scratch: &mut Vec<Rect>,
 ) -> Vec2 {
-    let area = bounds.shrink(radius);
+    let area = tiles.bounds().shrink(radius);
     let mut p = pos + delta;
     // 한 사각형에서 밀려난 원이 이웃한 사각형으로 들어갈 수 있으므로 두 번 반복합니다.
     for _ in 0..2 {
-        for solid in solids {
+        tiles.blocked_rects_near(p, radius, scratch);
+        for solid in scratch.iter() {
             p = push_out(p, radius, *solid);
         }
         p = clamp_inside(p, area);

@@ -34,10 +34,15 @@ fn snapshot_of(monsters: u32) -> Snapshot {
     Snapshot {
         tick: 1,
         expedition: 1,
-        phase: WirePhase::Fighting { wave: 1 },
-        wave_count: 3,
+        phase: WirePhase::Day {
+            day: 1,
+            secs_left: 90.0,
+        },
         wagon: WireWagon { hp: 1, max_hp: 1 },
+        stash: 0,
         towers: vec![],
+        nodes: vec![],
+        piles: vec![],
         players: vec![],
         monsters: (1..=monsters)
             .map(|id| WireMonster {

@@ -5,7 +5,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use caravan_rules::{Rect, Vec2};
+use caravan_rules::{Rect, Tile, Vec2};
 use serde::{Deserialize, Serialize};
 
 /// 1/128 타일 단위로 줄인 지면 좌표입니다. 한 축이 `u16`이고, postcard는 이 값을 최대 3바이트로 기록합니다.
@@ -45,7 +45,28 @@ impl WirePos {
     }
 }
 
-/// 축에 정렬된 사각형입니다. 장애물, 마차, 감시탑의 위치를 보낼 때 씁니다. 두 꼭짓점은 `WirePos`와 같은 눈금입니다.
+/// 타일 하나의 위치입니다. 한 축이 `u8`이므로 맵 한 변이 256 타일을 넘지 않는 맵에서만 값이 맞습니다.
+/// 입장 안내의 점검(`check_welcome`)이 맵 한 변을 128 타일 이하로 제한합니다. 범위를 넘는 값은 경계 값으로 고정됩니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireTile {
+    pub x: u8,
+    pub y: u8,
+}
+
+impl WireTile {
+    pub fn from_tile(tile: Tile) -> WireTile {
+        WireTile {
+            x: u8::try_from(tile.x).unwrap_or(u8::MAX),
+            y: u8::try_from(tile.y).unwrap_or(u8::MAX),
+        }
+    }
+
+    pub fn to_tile(self) -> Tile {
+        Tile::new(u16::from(self.x), u16::from(self.y))
+    }
+}
+
+/// 축에 정렬된 사각형입니다. 장애물과 마차의 위치를 보낼 때 씁니다. 두 꼭짓점은 `WirePos`와 같은 눈금입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireRect {
     pub min: WirePos,

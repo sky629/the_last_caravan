@@ -28,10 +28,11 @@ pub use loopback::{LoopbackClient, LoopbackConnector, LoopbackServer, loopback};
 pub use messages::{ClientMsg, InputMsg, PROTOCOL_VERSION, RejectReason, ServerMsg, WireVec2};
 pub use room_code::{RoomCode, RoomCodeError};
 pub use snapshot::{
-    Snapshot, WireInteraction, WireLife, WireMonster, WireMonsterKind, WireOutcome, WirePhase,
-    WirePlayer, WireShot, WireTower, WireTowerState, WireWagon,
+    Snapshot, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireMonster,
+    WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
+    WireRepairTarget, WireShot, WireTower, WireTowerState, WireWagon,
 };
 pub use transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};
-pub use units::{WireAngle, WirePos, WireRect};
-pub use welcome::{MonsterKindInfo, TowerSite, Welcome, WorldInfo};
+pub use units::{WireAngle, WirePos, WireRect, WireTile};
+pub use welcome::{MonsterKindInfo, NodeInfo, Welcome, WorldInfo};
 pub use welcome_check::check_welcome;

@@ -1,8 +1,9 @@
 //! 기본 수치가 규칙의 전제를 지키는지 확인합니다. 수치를 고치다가 전제가 깨지면 이 테스트가 실패합니다.
 
-use super::support::Scenario;
+use super::support::{Scenario, nights};
 use crate::math::{Rect, Vec2};
 use crate::tuning::Tuning;
+use crate::world::Tile;
 
 #[test]
 fn the_default_tuning_is_valid() {
@@ -28,16 +29,316 @@ fn a_tick_rate_that_would_let_bodies_tunnel_is_rejected() {
 #[test]
 fn a_spawn_point_inside_a_wall_is_rejected() {
     let mut t = Tuning::default();
-    t.map.player_spawns = vec![Vec2::new(4.5, 4.5)];
-    assert!(t.map.obstacles.contains(&Rect::new(4.0, 4.0, 8.0, 5.0)));
+    t.map.player_spawns = vec![Vec2::new(24.5, 24.5)];
+    assert!(t.map.obstacles.contains(&Rect::new(24.0, 24.0, 28.0, 25.0)));
     assert!(t.validate().is_err());
 }
 
 #[test]
-fn a_wave_with_no_monsters_is_rejected() {
+fn a_map_whose_free_tiles_are_cut_off_from_the_wagon_is_rejected() {
     let mut t = Tuning::default();
-    t.waves.sizes = vec![6, 0];
+    t.map.obstacles = vec![Rect::new(0.0, 5.0, 64.0, 6.0)];
+    assert!(t.validate().is_err(), "a wall across the whole map");
+
+    t.map.obstacles = vec![Rect::new(0.0, 5.0, 63.0, 6.0)];
+    assert_eq!(t.validate(), Ok(()), "a gap of one tile keeps it connected");
+}
+
+#[test]
+fn an_obstacle_that_does_not_fit_the_tile_grid_is_rejected() {
+    let mut t = Tuning::default();
+    t.map.obstacles = vec![Rect::new(4.0, 4.0, 8.5, 5.0)];
     assert!(t.validate().is_err());
+}
+
+#[test]
+fn a_body_as_wide_as_a_tile_is_rejected() {
+    let mut t = Tuning::default();
+    t.player.radius = 0.5;
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.monsters.grunt.radius = 0.5;
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn a_night_without_waves_and_a_wave_without_monsters_are_rejected() {
+    let mut t = Tuning::default();
+    t.nights.plans = nights(&[&[6, 0]]);
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.nights.plans = nights(&[&[6], &[]]);
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.nights.plans = Vec::new();
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn night_monsters_must_appear_beyond_the_village_and_somewhere_on_the_map() {
+    let mut t = Tuning::default();
+    t.nights.spawn_distance = t.village.build_range + 1.0;
+    assert!(t.validate().is_err(), "inside the village range");
+
+    let mut t = Tuning::default();
+    t.nights.spawn_distance = 500.0;
+    assert!(t.validate().is_err(), "off the map in every direction");
+
+    let mut t = Tuning::default();
+    t.nights.spawn_lanes = 0;
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.nights.max_alive = 0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn a_gather_node_must_be_on_a_free_tile_of_the_map_outside_the_village() {
+    let rejected = |nodes: Vec<Tile>| {
+        let mut t = Tuning::default();
+        t.map.nodes = nodes;
+        t.validate().expect_err("the node should be refused")
+    };
+
+    assert!(rejected(vec![Tile::new(64, 10)]).contains("outside the map"));
+    assert!(
+        rejected(vec![Tile::new(25, 24)]).contains("overlaps a solid"),
+        "on an obstacle"
+    );
+    assert!(
+        rejected(vec![Tile::new(31, 31)]).contains("overlaps a solid"),
+        "on the wagon"
+    );
+    assert!(
+        rejected(vec![Tile::new(9, 22), Tile::new(9, 22)]).contains("another node"),
+        "twice on one tile"
+    );
+    assert!(
+        rejected(vec![Tile::new(36, 28)]).contains("inside the village"),
+        "within the build range of the wagon"
+    );
+
+    let mut t = Tuning::default();
+    t.map.nodes = Vec::new();
+    assert_eq!(t.validate(), Ok(()), "a map without nodes is fine");
+}
+
+#[test]
+fn a_node_with_too_little_room_for_its_guards_is_rejected() {
+    let mut t = Tuning::default();
+    // 지도의 구석 (0, 0)에는 이웃한 빈 타일이 셋뿐입니다. 하지만 마을 밖이어야 하므로 마을의 범위를 줄입니다.
+    t.village.build_range = 2.0;
+    t.nights.spawn_distance = 18.0;
+    t.map.nodes = vec![Tile::new(0, 0)];
+    t.guards.per_node = 3;
+    assert_eq!(t.validate(), Ok(()), "three neighbours, three guards");
+
+    t.guards.per_node = 4;
+    let why = t.validate().expect_err("a fourth guard has no tile");
+    assert!(why.contains("room for only 3 of the 4 guards"), "{why}");
+
+    t.guards.per_node = 0;
+    assert_eq!(t.validate(), Ok(()), "no guards need no room");
+}
+
+#[test]
+fn two_nodes_do_not_share_a_guard_tile() {
+    let mut t = Tuning::default();
+    t.village.build_range = 2.0;
+    t.nights.spawn_distance = 18.0;
+    // 지점 (0, 0)은 이웃한 빈 타일 (1, 0), (0, 1), (1, 1)을 모두 쓰고, 지점 (2, 0)은 오른쪽이 막혀서 이웃이 (1, 0), (2, 1), (1, 1)뿐입니다.
+    t.map.nodes = vec![Tile::new(0, 0), Tile::new(2, 0)];
+    t.map.obstacles = vec![Rect::new(3.0, 0.0, 4.0, 2.0)];
+    t.guards.per_node = 2;
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "(2, 1) and the shared (1, 0) is enough"
+    );
+
+    t.guards.per_node = 3;
+    let why = t.validate().expect_err("the shared tiles are taken");
+    assert!(why.contains("room for only 1 of the 3 guards"), "{why}");
+}
+
+#[test]
+fn a_negative_chase_range_is_rejected() {
+    let mut t = Tuning::default();
+    t.guards.chase_range = -1.0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn resource_numbers_that_make_gathering_meaningless_are_rejected() {
+    let mut t = Tuning::default();
+    t.resources.carry_capacity = 0;
+    assert!(t.validate().is_err(), "nothing could be carried");
+
+    let mut t = Tuning::default();
+    t.resources.gather_per_pulse = 0;
+    assert!(t.validate().is_err(), "a pulse that moves nothing");
+
+    let mut t = Tuning::default();
+    t.resources.node_amount = 0;
+    assert!(t.validate().is_err(), "nodes that start empty");
+
+    let mut t = Tuning::default();
+    t.resources.gather_reach = f32::NAN;
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn a_healing_pulse_needs_a_length_and_a_reach() {
+    let mut t = Tuning::default();
+    t.wagon.recovery.pulse_secs = 0.0;
+    assert!(t.validate().is_err(), "a recovery that never happens");
+
+    let mut t = Tuning::default();
+    t.wagon.repair.heal.pulse_secs = f32::NAN;
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.structures.watchtower.repair.heal.pulse_secs = -1.0;
+    assert!(t.validate().is_err());
+
+    let mut t = Tuning::default();
+    t.wagon.recovery.range = -1.0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn a_repair_that_costs_nothing_is_rejected_and_the_reason_names_it() {
+    let mut t = Tuning::default();
+    t.wagon.repair.cost_per_pulse = 0;
+    let why = t.validate().expect_err("a free wagon repair");
+    assert!(why.contains("wagon repair cost_per_pulse"), "{why}");
+
+    let mut t = Tuning::default();
+    t.structures.watchtower.repair.cost_per_pulse = 0;
+    let why = t.validate().expect_err("a free tower repair");
+    assert!(why.contains("Watchtower repair cost_per_pulse"), "{why}");
+}
+
+#[test]
+fn the_default_repairs_heal_20_hp_a_second_and_a_full_repair_costs_10_for_a_tower_and_17_for_the_wagon()
+ {
+    let t = Tuning::default();
+    let rate = |heal: &crate::tuning::HealTuning| heal.hp_per_pulse as f32 / heal.pulse_secs;
+    assert_eq!(rate(&t.wagon.repair.heal), 20.0);
+    assert_eq!(rate(&t.structures.watchtower.repair.heal), 20.0);
+
+    let pulses = |max_hp: u32, heal: &crate::tuning::HealTuning| max_hp.div_ceil(heal.hp_per_pulse);
+    let tower = t.structures.watchtower.clone();
+    assert_eq!(
+        pulses(tower.max_hp, &tower.repair.heal) * tower.repair.cost_per_pulse,
+        tower.build_cost,
+        "a full tower repair costs what building the tower costs"
+    );
+    assert_eq!(
+        pulses(t.wagon.max_hp, &t.wagon.repair.heal) * t.wagon.repair.cost_per_pulse,
+        17
+    );
+}
+
+#[test]
+fn a_sprint_slower_than_walking_or_not_a_number_is_rejected() {
+    for bad in [0.99, 0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.sprint.speed_multiplier = bad;
+        let why = t.validate().expect_err(&format!("a multiplier of {bad}"));
+        assert!(why.contains("sprint speed_multiplier"), "{bad}: {why}");
+    }
+    let mut t = Tuning::default();
+    t.sprint.speed_multiplier = 1.0;
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "a sprint as fast as walking is allowed"
+    );
+}
+
+#[test]
+fn a_sprint_gauge_without_a_length_is_rejected() {
+    for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.sprint.sprint_secs = bad;
+        let why = t.validate().expect_err(&format!("sprint_secs of {bad}"));
+        assert!(why.contains("sprint_secs"), "{bad}: {why}");
+
+        let mut t = Tuning::default();
+        t.sprint.refill_secs = bad;
+        let why = t.validate().expect_err(&format!("refill_secs of {bad}"));
+        assert!(why.contains("refill_secs"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn a_gauge_too_big_to_count_in_whole_numbers_is_rejected() {
+    let mut t = Tuning::default();
+    t.sprint.sprint_secs = 100_000.0;
+    t.sprint.refill_secs = 100_000.0;
+    let why = t.validate().expect_err("the gauge does not fit in 32 bits");
+    assert!(why.contains("sprint gauge"), "{why}");
+}
+
+#[test]
+fn a_sprint_that_moves_a_player_a_body_radius_or_more_in_one_tick_is_rejected() {
+    // 걷는 속도 4에 배율 1.75를 곱한 속도 7은 한 Tick에 0.35타일이고, 이것이 몸의 반지름입니다.
+    let mut t = Tuning::default();
+    t.sprint.speed_multiplier = 1.74;
+    assert_eq!(t.validate(), Ok(()), "just under the radius");
+
+    t.sprint.speed_multiplier = 1.76;
+    let why = t.validate().expect_err("longer than the radius");
+    assert!(why.contains("a player moves"), "{why}");
+
+    t.sprint.speed_multiplier = 3.0;
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn start_towers_must_be_free_tiles_of_the_village_within_the_limit() {
+    let valid = |sites: Vec<Tile>| {
+        let mut t = Tuning::default();
+        t.village.start_towers = sites;
+        t.validate()
+    };
+    let near_the_wagon = Tile::new(27, 29);
+    assert_eq!(valid(vec![near_the_wagon]), Ok(()));
+    assert!(
+        valid(vec![near_the_wagon, near_the_wagon]).is_err(),
+        "twice"
+    );
+    assert!(valid(vec![Tile::new(31, 31)]).is_err(), "on the wagon");
+    assert!(valid(vec![Tile::new(24, 24)]).is_err(), "on an obstacle");
+    assert!(
+        valid(vec![Tile::new(60, 60)]).is_err(),
+        "outside the village"
+    );
+    assert!(valid(vec![Tile::new(64, 31)]).is_err(), "outside the map");
+
+    let mut t = Tuning::default();
+    t.village.tower_limit = 1;
+    t.village.start_towers = vec![Tile::new(27, 29), Tile::new(25, 29)];
+    assert!(t.validate().is_err(), "more than the limit");
+}
+
+#[test]
+fn start_towers_that_wall_in_a_free_tile_are_rejected() {
+    // 타일 (26, 29)의 네 이웃을 모두 막으면 그 타일은 마차에서 걸어갈 수 없습니다.
+    let mut t = Tuning::default();
+    t.village.start_towers = vec![
+        Tile::new(25, 29),
+        Tile::new(27, 29),
+        Tile::new(26, 28),
+        Tile::new(26, 30),
+    ];
+    let err = t.validate().expect_err("one tile is cut off");
+    assert!(err.contains("connected to the wagon"), "{err}");
 }
 
 #[test]

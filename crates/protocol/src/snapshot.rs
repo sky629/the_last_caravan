@@ -9,11 +9,12 @@
 //! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    Interaction, Life, Monster, MonsterKind, Outcome, Phase, Player, Sim, Tower, TowerState, Tuning,
+    BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Monster, MonsterKind, NightStep,
+    Outcome, Phase, Pile, Player, RepairTarget, Sim, Tower, TowerState, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::units::{WireAngle, WirePos};
+use crate::units::{WireAngle, WirePos, WireTile};
 
 /// Tick 하나가 끝난 뒤의 방 전체 상태입니다.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -23,11 +24,15 @@ pub struct Snapshot {
     /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
     pub expedition: u32,
     pub phase: WirePhase,
-    /// 한 원정의 무리 수입니다. 「무리 2 / 3」 같은 표시에 씁니다.
-    pub wave_count: u32,
     pub wagon: WireWagon,
-    /// 번호가 작은 시설부터입니다.
+    /// 마차의 보관함에 있는 자원입니다. 모든 플레이어가 함께 씁니다.
+    pub stash: u32,
+    /// 짓는 중인 감시탑을 포함하고, 번호가 작은 감시탑부터입니다. 파괴된 감시탑은 없습니다.
     pub towers: Vec<WireTower>,
+    /// 번호가 작은 채집 지점부터입니다. 위치는 `Welcome`에 있고 여기에는 남은 양만 있습니다.
+    pub nodes: Vec<WireNode>,
+    /// 땅에 떨어진 자원입니다. 번호가 작은 더미부터이고, 다 주워 간 더미는 없습니다.
+    pub piles: Vec<WirePile>,
     /// 번호가 작은 플레이어부터입니다.
     pub players: Vec<WirePlayer>,
     /// 번호가 작은 몬스터부터입니다.
@@ -37,15 +42,30 @@ pub struct Snapshot {
 /// 원정의 단계입니다. 단계마다 그 단계에서 표시할 값만 가집니다.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WirePhase {
-    /// `next_wave`번 무리가 나타나기까지 `secs_left`초 남았습니다.
-    Intermission { next_wave: u32, secs_left: f32 },
-    /// `wave`번 무리가 나타나는 중이거나 싸우는 중입니다.
-    Fighting { wave: u32 },
+    /// `day`번째 날의 낮이고, `secs_left`초 뒤에 밤이 됩니다.
+    Day { day: u32, secs_left: f32 },
+    /// `day`번째 날의 밤이고, 그 밤의 무리는 `wave_count`개입니다.
+    Night {
+        day: u32,
+        wave_count: u32,
+        step: WireNightStep,
+    },
+    /// 밤의 무리를 모두 처치했고, `secs_left`초 뒤에 `next_day`번째 날의 낮이 시작됩니다.
+    Dawn { next_day: u32, secs_left: f32 },
     /// 결과를 보여 주는 중이며, `secs_left`초 뒤에 새 원정이 시작됩니다.
     Over {
         outcome: WireOutcome,
         secs_left: f32,
     },
+}
+
+/// 밤 안에서의 진행입니다. 무리의 번호는 그 밤 안에서 1부터 셉니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum WireNightStep {
+    /// `next_wave`번 무리가 나타나기까지 `secs_left`초 남았습니다.
+    Waiting { next_wave: u32, secs_left: f32 },
+    /// `wave`번 무리가 나타나는 중이거나 싸우는 중입니다.
+    Fighting { wave: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,21 +80,40 @@ pub struct WireWagon {
     pub max_hp: u32,
 }
 
+/// 채집 지점 하나의 남은 자원입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireNode {
+    pub id: u32,
+    pub amount: u32,
+}
+
+/// 땅에 떨어진 자원 한 더미입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WirePile {
+    pub id: u32,
+    pub pos: WirePos,
+    pub amount: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WireTower {
     pub id: u32,
+    pub tile: WireTile,
     pub max_hp: u32,
     pub state: WireTowerState,
 }
 
-/// 파괴된 감시탑에는 HP와 사격 대상이 없습니다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// 짓는 중인 감시탑에는 HP와 사격 대상이 없고, 서 있는 감시탑에는 건설의 진행도가 없습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WireTowerState {
+    Building {
+        /// 건설의 진행도(0.0에서 1.0)입니다.
+        progress: f32,
+    },
     Standing {
         hp: u32,
         last_shot: Option<WireShot>,
     },
-    Destroyed,
 }
 
 /// 감시탑의 마지막 사격입니다. 클라이언트는 `tick`이 최근일 때만 `target`을 향한 사격 선을 그립니다.
@@ -103,8 +142,14 @@ pub enum WireLife {
     Alive {
         hp: u32,
         max_hp: u32,
-        /// 상호작용 키가 지금 하고 있는 일입니다.
+        /// 들고 있는 자원입니다. 상한은 `Welcome`의 `carry_capacity`입니다.
+        carried: u32,
+        /// 달리기 게이지가 가득 찬 값에 대한 백분율입니다(0에서 100). 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
+        stamina: u8,
+        /// 상호작용 키나 건설 키가 지금 하고 있는 일입니다.
         interaction: Option<WireInteraction>,
+        /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
+        build_refusal: Option<WireBuildRefusal>,
     },
     Downed {
         /// 남은 출혈 시간(초)입니다. 부활이 진행되는 동안에는 줄지 않습니다.
@@ -124,9 +169,66 @@ pub enum WireInteraction {
         progress: f32,
     },
     Repairing {
+        target: WireRepairTarget,
+        /// 보관함의 자원이 수리의 비용보다 적어서 다음 수리가 회복시키지 못합니다. 이벤트가 아니라 상태이고, 자원이 생기면 곧바로 거짓이 됩니다.
+        stash_short: bool,
+    },
+    Building {
+        /// 짓고 있는 감시탑의 번호입니다. 진행도는 스냅샷의 그 감시탑에 있습니다.
+        tower: u32,
+    },
+    Gathering {
+        /// 채집하는 지점의 번호입니다. 남은 양은 스냅샷의 그 지점에 있습니다.
+        node: u32,
+    },
+}
+
+/// 수리하는 대상입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireRepairTarget {
+    Tower {
         /// 수리하는 감시탑의 번호입니다.
         tower: u32,
     },
+    Wagon,
+}
+
+/// 건설이 거절된 이유와 놓으려던 타일입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireBuildRefusal {
+    pub tile: WireTile,
+    pub why: WireCannotBuild,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireCannotBuild {
+    NotEnoughStash,
+    TowerLimit,
+    OutsideVillage,
+    TileTaken,
+    WouldBlockPath,
+}
+
+impl WireCannotBuild {
+    /// `match`가 모든 이유를 다루므로, 규칙에 거절의 이유를 추가하면 여기서 컴파일 오류가 납니다.
+    pub fn of(why: CannotBuild) -> WireCannotBuild {
+        match why {
+            CannotBuild::NotEnoughStash => WireCannotBuild::NotEnoughStash,
+            CannotBuild::TowerLimit => WireCannotBuild::TowerLimit,
+            CannotBuild::OutsideVillage => WireCannotBuild::OutsideVillage,
+            CannotBuild::TileTaken => WireCannotBuild::TileTaken,
+            CannotBuild::WouldBlockPath => WireCannotBuild::WouldBlockPath,
+        }
+    }
+}
+
+impl WireBuildRefusal {
+    fn of(refusal: &BuildRefusal) -> WireBuildRefusal {
+        WireBuildRefusal {
+            tile: WireTile::from_tile(refusal.tile),
+            why: WireCannotBuild::of(refusal.why),
+        }
+    }
 }
 
 /// 몬스터 하나입니다. 몬스터는 수백 마리일 수 있으므로 필드를 이 여섯 개로 한정합니다.
@@ -161,15 +263,17 @@ impl Snapshot {
             tick: sim.tick(),
             expedition: sim.expedition_number(),
             phase: wire_phase(sim.phase(), tuning),
-            wave_count: tuning.wave_count(),
             wagon: WireWagon {
                 hp: sim.wagon().hp,
                 max_hp: tuning.wagon.max_hp,
             },
+            stash: sim.stash(),
             towers: sim
                 .towers()
                 .map(|tower| wire_tower(tower, tuning))
                 .collect(),
+            nodes: sim.nodes().map(wire_node).collect(),
+            piles: sim.piles().map(wire_pile).collect(),
             players: sim
                 .players()
                 .map(|player| wire_player(sim, player))
@@ -186,14 +290,31 @@ fn secs(ticks: u32, tuning: &Tuning) -> f32 {
 
 fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
     match phase {
-        Phase::Intermission {
-            next_wave,
-            ticks_left,
-        } => WirePhase::Intermission {
-            next_wave,
+        Phase::Day { day, ticks_left } => WirePhase::Day {
+            day,
             secs_left: secs(ticks_left, tuning),
         },
-        Phase::Fighting { wave, .. } => WirePhase::Fighting { wave },
+        Phase::Night { day, step } => WirePhase::Night {
+            day,
+            wave_count: tuning.nights.wave_count(day),
+            step: match step {
+                NightStep::Waiting {
+                    next_wave,
+                    ticks_left,
+                } => WireNightStep::Waiting {
+                    next_wave,
+                    secs_left: secs(ticks_left, tuning),
+                },
+                NightStep::Fighting { wave, .. } => WireNightStep::Fighting { wave },
+            },
+        },
+        Phase::Dawn {
+            next_day,
+            ticks_left,
+        } => WirePhase::Dawn {
+            next_day,
+            secs_left: secs(ticks_left, tuning),
+        },
         Phase::Over {
             outcome,
             ticks_left,
@@ -209,6 +330,9 @@ fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
 
 fn wire_tower(tower: &Tower, tuning: &Tuning) -> WireTower {
     let state = match &tower.state {
+        TowerState::Building { .. } => WireTowerState::Building {
+            progress: clamp_progress(tower.build_progress(tuning).unwrap_or(0.0)),
+        },
         TowerState::Standing { hp, last_shot, .. } => WireTowerState::Standing {
             hp: *hp,
             last_shot: last_shot.map(|shot| WireShot {
@@ -216,12 +340,27 @@ fn wire_tower(tower: &Tower, tuning: &Tuning) -> WireTower {
                 tick: shot.tick,
             }),
         },
-        TowerState::Destroyed => WireTowerState::Destroyed,
     };
     WireTower {
         id: tower.id.0,
+        tile: WireTile::from_tile(tower.tile),
         max_hp: tuning.structures.get(tower.kind).max_hp,
         state,
+    }
+}
+
+fn wire_node(node: &GatherNode) -> WireNode {
+    WireNode {
+        id: node.id.0,
+        amount: node.amount,
+    }
+}
+
+fn wire_pile(pile: &Pile) -> WirePile {
+    WirePile {
+        id: pile.id.0,
+        pos: WirePos::from_tiles(pile.pos),
+        amount: pile.amount,
     }
 }
 
@@ -229,13 +368,21 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
     let tuning = sim.tuning();
     let life = match &player.life {
         Life::Alive {
-            hp, interaction, ..
+            hp,
+            carried,
+            stamina,
+            interaction,
+            build_refusal,
+            ..
         } => WireLife::Alive {
             hp: *hp,
             max_hp: tuning.player.max_hp,
+            carried: *carried,
+            stamina: stamina.percent(tuning),
             interaction: interaction
                 .as_ref()
-                .map(|interaction| wire_interaction(sim, interaction)),
+                .map(|interaction| wire_interaction(sim, player, interaction)),
+            build_refusal: build_refusal.as_ref().map(WireBuildRefusal::of),
         },
         Life::Downed { bleed_left_ticks } => WireLife::Downed {
             bleed_secs_left: secs(*bleed_left_ticks, tuning),
@@ -254,7 +401,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
     }
 }
 
-fn wire_interaction(sim: &Sim, interaction: &Interaction) -> WireInteraction {
+fn wire_interaction(sim: &Sim, player: &Player, interaction: &Interaction) -> WireInteraction {
     match interaction {
         Interaction::Reviving { target, .. } => WireInteraction::Reviving {
             target: target.0,
@@ -262,7 +409,15 @@ fn wire_interaction(sim: &Sim, interaction: &Interaction) -> WireInteraction {
             // 대상이 방금 사라진 Tick에는 값이 없으므로 0으로 둡니다. 부활은 다음 Tick에 취소됩니다.
             progress: sim.revive_progress(*target).map_or(0.0, clamp_progress),
         },
-        Interaction::Repairing { tower, .. } => WireInteraction::Repairing { tower: tower.0 },
+        Interaction::Repairing { target, .. } => WireInteraction::Repairing {
+            target: match target {
+                RepairTarget::Tower(tower) => WireRepairTarget::Tower { tower: tower.0 },
+                RepairTarget::Wagon => WireRepairTarget::Wagon,
+            },
+            stash_short: sim.lacks_stash_to_repair(player.id),
+        },
+        Interaction::Gathering { node, .. } => WireInteraction::Gathering { node: node.0 },
+        Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },
     }
 }
 
