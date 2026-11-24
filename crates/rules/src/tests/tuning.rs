@@ -1,5 +1,6 @@
 //! 기본 수치가 규칙의 전제를 지키는지 확인합니다. 수치를 고치다가 전제가 깨지면 이 테스트가 실패합니다.
 
+use super::support::Scenario;
 use crate::math::{Rect, Vec2};
 use crate::tuning::Tuning;
 
@@ -59,4 +60,45 @@ fn durations_are_written_in_seconds_and_become_whole_ticks_in_one_place() {
         ..Tuning::default()
     };
     assert_eq!(slow.ticks(8.0), 80);
+}
+
+/// 두께 1 타일의 벽 바로 앞에서 겹친 몬스터 둘을 한 Tick 진행하고, 벽에 닿은 쪽 몬스터의 y를 돌려줍니다.
+fn y_after_a_push_against_a_thin_wall(separation_speed: f32) -> f32 {
+    let mut s = Scenario::with_tuning(|t| {
+        t.map.obstacles = vec![Rect::new(6.0, 8.0, 14.0, 9.0)];
+        t.monsters.grunt.separation_speed = separation_speed;
+    });
+    let pushed = s.monster_at(10.0, 7.6);
+    let _behind = s.monster_at(10.0, 7.59);
+    s.run_ticks(1);
+    s.monster(pushed).expect("the monster is alive").pos.y
+}
+
+#[test]
+fn a_separation_push_that_could_carry_a_monster_across_a_wall_is_rejected() {
+    let mut t = Tuning::default();
+    t.map.obstacles = vec![Rect::new(6.0, 8.0, 14.0, 9.0)];
+    t.monsters.grunt.separation_speed = 20.0;
+    assert!(
+        t.monsters.grunt.speed * t.dt() < t.monsters.grunt.radius,
+        "walking alone is within the limit"
+    );
+    assert!(t.validate().is_err());
+}
+
+#[test]
+fn walking_plus_the_largest_separation_push_stays_shorter_than_a_body_radius() {
+    let grunt = Tuning::default().monsters.grunt;
+    let dt = Tuning::default().dt();
+    let largest_push = grunt.radius / dt - grunt.speed;
+
+    let mut within = Tuning::default();
+    within.monsters.grunt.separation_speed = largest_push * 0.95;
+    assert_eq!(within.validate(), Ok(()));
+    let y = y_after_a_push_against_a_thin_wall(largest_push * 0.95);
+    assert!(y < 8.0, "the monster stayed in front of the wall, at y {y}");
+
+    let mut beyond = Tuning::default();
+    beyond.monsters.grunt.separation_speed = largest_push * 1.05;
+    assert!(beyond.validate().is_err());
 }
