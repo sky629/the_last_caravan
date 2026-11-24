@@ -5,7 +5,7 @@ use crate::expedition::Phase;
 use crate::ids::{MonsterId, NodeId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 use crate::kind::MonsterKind;
-use crate::kind::StructureKind;
+use crate::kind::{StructureKind, WeaponKind};
 use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
 use crate::player::{Life, Player};
@@ -178,6 +178,29 @@ impl Scenario {
 
     pub fn kill(&mut self, id: PlayerId) {
         self.player_mut(id).life = Life::Dead;
+    }
+
+    /// 플레이어가 드는 무기를 `kind`로 바꿉니다. 무기는 생명 상태와 따로 있으므로 쓰러졌거나 사망한 플레이어도 바뀝니다.
+    /// 테스트가 「활을 든 사수」라는 상황을 만들 때 씁니다.
+    pub fn give_weapon(&mut self, id: PlayerId, kind: WeaponKind) {
+        self.player_mut(id).weapon = kind;
+    }
+
+    /// 지금 누르고 있는 입력은 그대로 두고, 무기 전환 키(Q)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.
+    ///
+    /// `hold`는 입력을 매 Tick 되풀이하므로 `hold`로는 「한 번 누름」을 만들 수 없습니다. 서버가 하는 일과 같이 이 Tick의 입력에만 참을 넣습니다.
+    pub fn tap_switch_key(&mut self, id: PlayerId) {
+        let mut inputs = self.held.clone();
+        inputs.entry(id).or_default().switch_weapon = true;
+        self.sim.step(&inputs);
+    }
+
+    /// 날아가는 중인 탄환의 수입니다. 이번 Tick에 끝난 탄환은 세지 않습니다.
+    pub fn flying(&self) -> usize {
+        self.sim
+            .projectiles()
+            .filter(|projectile| projectile.is_flying())
+            .count()
     }
 
     fn player_mut(&mut self, id: PlayerId) -> &mut Player {

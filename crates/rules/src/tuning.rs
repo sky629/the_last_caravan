@@ -2,14 +2,14 @@
 //!
 //! 시간은 초, 속도는 초당 타일 수로 적습니다. 그래서 `tick_hz`를 바꿔도 게임의 속도감이 유지됩니다.
 //! 초를 Tick으로 바꾸는 곳은 `Tuning::ticks` 하나이고, 게임 상태에는 정수 Tick만 저장합니다.
-//! 몬스터와 시설의 수치는 종류별 표(`MonsterTable`, `StructureTable`)에 있습니다.
+//! 몬스터, 시설, 무기의 수치는 종류별 표(`MonsterTable`, `StructureTable`, `WeaponTable`)에 있습니다.
 //!
 //! 서버는 `Tuning` 하나를 가지고 있고, 방을 만들 때마다 복사해서 넘깁니다.
 //! 수치를 바꾼 `Tuning`은 `validate`로 검사할 수 있습니다.
 
 use std::collections::BTreeSet;
 
-use crate::kind::{MonsterKind, StructureKind};
+use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::math::{Rect, Vec2};
 use crate::spawn::SpawnPlan;
 use crate::world::{Tile, TileMap, World};
@@ -21,6 +21,8 @@ pub struct Tuning {
     /// 한 방에 들어올 수 있는 최대 인원입니다. `Sim::add_player`만 이 값을 읽습니다.
     pub max_players: usize,
     pub player: PlayerTuning,
+    /// 무기 종류별 수치입니다. 플레이어의 공격 피해량과 쿨다운은 들고 있는 무기의 행에서 읽습니다(`Player::stats`).
+    pub weapons: WeaponTable,
     pub sprint: SprintTuning,
     pub revive: ReviveTuning,
     pub monsters: MonsterTable,
@@ -34,6 +36,7 @@ pub struct Tuning {
     pub map: MapSpec,
 }
 
+/// 플레이어의 몸에 관한 수치입니다. 공격에 관한 수치는 무기 표(`WeaponTable`)에 있습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayerTuning {
     pub max_hp: u32,
@@ -41,21 +44,79 @@ pub struct PlayerTuning {
     pub speed: f32,
     /// 쓰러진 상태에서 기어가는 속도입니다.
     pub crawl_speed: f32,
-    pub attack_damage: u32,
-    /// 플레이어의 가장자리에서 몬스터의 가장자리까지 잰 근접 공격 거리입니다.
-    pub attack_reach: f32,
-    /// 조준 방향을 기준으로 한 공격 부채꼴의 절반 각도입니다(도). 부채꼴 안의 적을 모두 공격합니다.
-    pub attack_half_angle_deg: f32,
-    pub attack_cooldown_secs: f32,
 }
 
-impl PlayerTuning {
-    /// 공격 부채꼴의 경계 각도에 대한 코사인입니다. 몬스터 방향과 조준 방향의 내적이 이 값 이상이면 부채꼴 안입니다.
-    /// 규칙에서 삼각함수를 쓰는 곳은 이 함수 하나입니다.
-    pub fn attack_arc_cos(&self) -> f32 {
-        self.attack_half_angle_deg.to_radians().cos()
+/// 무기 한 종류의 수치입니다. 무기마다 다른 점은 모두 이 구조체의 값입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WeaponTuning {
+    /// 공격이 맞힌 몬스터 하나가 입는 피해량입니다.
+    pub damage: u32,
+    /// 공격한 뒤 다음 공격까지의 시간입니다. 쿨다운은 플레이어가 하나만 가지므로, 무기를 바꿔도 남은 시간이 이어집니다.
+    pub cooldown_secs: f32,
+    pub delivery: Delivery,
+}
+
+/// 공격이 맞히는 곳까지 전달되는 방식입니다. 방식마다 그 방식에서만 의미가 있는 수치를 한 구조체로 가집니다.
+/// 방식을 추가하려면 변형을 하나 더하고, `weapon::deliver`의 `match`에 갈래를 하나 더합니다. 다른 방식의 코드는 바뀌지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Delivery {
+    /// 공격하는 순간 부채꼴 안에 있는 몬스터를 모두 맞힙니다.
+    Arc(ArcTuning),
+    /// 탄환을 쏩니다. 탄환은 직선으로 날아가며 처음 닿는 몬스터 한 마리를 맞힙니다.
+    Projectile(ProjectileTuning),
+}
+
+/// 부채꼴로 공격하는 방식의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ArcTuning {
+    /// 플레이어의 가장자리에서 몬스터의 가장자리까지 잰 거리입니다.
+    pub reach: f32,
+    /// 조준 방향을 기준으로 한 부채꼴의 절반 각도입니다(도).
+    pub half_angle_deg: f32,
+}
+
+/// 탄환을 쏘는 방식의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProjectileTuning {
+    /// 초당 타일 수입니다.
+    pub speed: f32,
+    /// 날아갈 수 있는 거리(타일)입니다. 이 거리를 다 날면 사라집니다.
+    pub range: f32,
+    /// 탄환의 반지름(타일)입니다. 몬스터의 반지름과 더한 거리 안으로 지나가면 닿은 것입니다.
+    /// 플레이어의 반지름을 √2로 나눈 값보다 짧아야 합니다. 그래야 장애물의 모서리에 붙어 서서 쏜 탄환이 쏜 자리에서 멈추지 않습니다.
+    pub radius: f32,
+}
+
+/// 부채꼴의 경계 각도에 대한 코사인입니다. 몬스터 방향과 조준 방향의 내적이 이 값 이상이면 부채꼴 안입니다.
+/// 규칙에서 삼각함수를 쓰는 곳은 이 함수 하나입니다.
+pub(crate) fn arc_cos(half_angle_deg: f32) -> f32 {
+    half_angle_deg.to_radians().cos()
+}
+
+/// 무기 종류별 수치표입니다. 무기를 추가하는 일은 `WeaponKind`의 변형과 `ALL`, 이 표의 필드와 `get`의 분기, `Default`의 행 하나입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WeaponTable {
+    pub sword: WeaponTuning,
+    pub bow: WeaponTuning,
+}
+
+impl WeaponTable {
+    pub fn get(&self, kind: WeaponKind) -> &WeaponTuning {
+        match kind {
+            WeaponKind::Sword => &self.sword,
+            WeaponKind::Bow => &self.bow,
+        }
     }
 }
+
+/// 정상 피해량입니다. 서비스할 때의 값입니다.
+const SWORD_DAMAGE: u32 = 25;
+const BOW_DAMAGE: u32 = 15;
+
+/// 테스트하는 동안 모든 무기의 피해량에 곱하는 배수입니다. 서비스하기 전에 1로 내립니다.
+/// 무기마다 따로 올리지 않고 이 값 하나로 올리므로, 무기 사이의 피해량 비율은 정상 값과 같습니다.
+/// 서비스하기 전에는 `cargo test -p caravan_rules -- --ignored`가 이 값이 1인지 확인합니다.
+pub(crate) const PLAYTEST_DAMAGE_MULTIPLIER: u32 = 4;
 
 /// 달리기의 수치입니다. 달리기 키를 누르고 움직이는 살아 있는 플레이어는 걷는 속도에 배율을 곱한 속도로 달리고,
 /// 달리는 동안 게이지가 줄고 키를 떼고 있으면 게이지가 찹니다.
@@ -427,6 +488,7 @@ impl Tuning {
                 monster.separation_speed,
             )?;
         }
+        self.validate_weapons()?;
 
         let sprint = &self.sprint;
         if !(sprint.speed_multiplier.is_finite() && sprint.speed_multiplier >= 1.0) {
@@ -625,6 +687,49 @@ impl Tuning {
         SpawnPlan::new(&tiles, self)?;
         Ok(())
     }
+
+    /// 모든 무기의 수치를 검사합니다. `validate`가 속도를 검사한 직후에 부릅니다.
+    ///
+    /// - 쿨다운과 부채꼴의 닿는 거리는 유한하고 0 이상입니다. 쿨다운이 음수나 NaN이면 Tick 수로 바꾸는 계산이 깨집니다.
+    /// - 부채꼴의 절반 각도는 0도 이상 180도 이하입니다.
+    /// - 탄환의 속도와 사거리는 유한하고 0보다 큽니다. 0이면 탄환이 사라지지 않아서 스냅샷이 끝없이 커집니다.
+    /// - 탄환의 반지름은 유한하고 0 이상이며, √2를 곱한 값이 플레이어의 반지름보다 짧습니다. 탄환은 플레이어의 중심에서 나가므로,
+    ///   벽이나 장애물의 모서리에 붙어 선 플레이어가 쏘는 탄환이 처음부터 막힌 곳에 닿으면 안 되기 때문입니다.
+    ///
+    /// 탄환의 속도에는 상한이 없습니다. 이동(`collision`)은 한 Tick의 거리가 반지름보다 짧아야 하지만, 탄환의 명중 판정은 이동하는 선분 전체를 검사합니다.
+    ///
+    /// `match`에 `_` 갈래가 없으므로 전달 방식을 추가하면 컴파일러가 이 검사를 더하라고 알려 줍니다.
+    fn validate_weapons(&self) -> Result<(), String> {
+        for kind in WeaponKind::ALL {
+            let weapon = self.weapons.get(kind);
+            check_not_negative(&format!("{kind:?} cooldown_secs"), weapon.cooldown_secs)?;
+            match weapon.delivery {
+                Delivery::Arc(arc) => {
+                    check_not_negative(&format!("{kind:?} reach"), arc.reach)?;
+                    if !(0.0..=180.0).contains(&arc.half_angle_deg) {
+                        return Err(format!(
+                            "{kind:?} half_angle_deg must be between 0 and 180 degrees, but it is {}",
+                            arc.half_angle_deg
+                        ));
+                    }
+                }
+                Delivery::Projectile(shot) => {
+                    check_positive(&format!("{kind:?} projectile speed"), shot.speed)?;
+                    check_positive(&format!("{kind:?} projectile range"), shot.range)?;
+                    check_not_negative(&format!("{kind:?} projectile radius"), shot.radius)?;
+                    // 탄환은 막힌 타일을 반지름만큼 키운 각진 사각형에 닿으면 멈춥니다. 그 사각형의 모서리는 타일의 모서리에서
+                    // 반지름의 √2배까지 나와 있으므로, 타일의 모서리에 대각선으로 붙어 선 플레이어의 중심이 그 안에 들어가지 않아야 합니다.
+                    if shot.radius * std::f32::consts::SQRT_2 >= self.player.radius {
+                        return Err(format!(
+                            "{kind:?} projectile radius {} times the square root of 2 must be shorter than the player radius {}",
+                            shot.radius, self.player.radius
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// 속도는 유한하고 0 이상이어야 합니다.
@@ -634,6 +739,17 @@ fn check_not_negative(name: &str, value: f32) -> Result<(), String> {
     } else {
         Err(format!(
             "{name} must be a finite number that is not negative, but it is {value}"
+        ))
+    }
+}
+
+/// 유한하고 0보다 커야 합니다.
+fn check_positive(name: &str, value: f32) -> Result<(), String> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{name} must be a finite number longer than 0, but it is {value}"
         ))
     }
 }
@@ -699,10 +815,25 @@ impl Default for Tuning {
                 radius: 0.35,
                 speed: 4.0,
                 crawl_speed: 0.8,
-                attack_damage: 100,
-                attack_reach: 1.0,
-                attack_half_angle_deg: 60.0,
-                attack_cooldown_secs: 0.5,
+            },
+            weapons: WeaponTable {
+                sword: WeaponTuning {
+                    damage: SWORD_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 0.5,
+                    delivery: Delivery::Arc(ArcTuning {
+                        reach: 1.0,
+                        half_angle_deg: 60.0,
+                    }),
+                },
+                bow: WeaponTuning {
+                    damage: BOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 0.4,
+                    delivery: Delivery::Projectile(ProjectileTuning {
+                        speed: 14.0,
+                        range: 9.0,
+                        radius: 0.15,
+                    }),
+                },
             },
             sprint: SprintTuning {
                 speed_multiplier: 1.6,

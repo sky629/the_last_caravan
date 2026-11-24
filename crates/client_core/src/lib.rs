@@ -23,7 +23,7 @@ mod session;
 pub use fps::FpsMeter;
 pub use hud::{Banner, BannerTone, Hud, Meter, Tone, bar_fraction};
 pub use input::Controls;
-pub use interp::{Frame, MonsterView, PlayerView, effect_progress};
+pub use interp::{Frame, MonsterView, PlayerView, ProjectileView, effect_progress};
 pub use iso::{
     TILE_HEIGHT_PX, TILE_WIDTH_PX, circle_to_screen_radii, depth, ground_to_screen,
     screen_dir_to_ground, screen_to_ground, tile_centers,

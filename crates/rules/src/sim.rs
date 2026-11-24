@@ -7,11 +7,13 @@ use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
 use crate::player::{self, Interaction, Player};
+use crate::projectile::{self, Projectile};
 use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
 use crate::spawn::SpawnPlan;
 use crate::structures::{self, Tower, Wagon};
 use crate::tuning::{MapSpec, Tuning};
+use crate::weapon;
 use crate::world::{Ctx, World};
 
 /// 방 하나의 게임입니다. 바깥 코드는 `&Sim`으로 상태를 읽고,
@@ -121,7 +123,11 @@ impl Sim {
             &self.spawns,
             &self.tuning,
         ) {
-            Advance::Frozen => return,
+            Advance::Frozen => {
+                // 결과 화면 동안 세계는 멈춥니다. 날던 탄환은 그 자리에 멈추고, 끝난 탄환은 스냅샷에 한 번 실렸으므로 지웁니다.
+                projectile::remove_landed(&mut self.world);
+                return;
+            }
             Advance::StartNewExpedition => {
                 self.reset_expedition();
                 return;
@@ -144,7 +150,8 @@ impl Sim {
         player::update_sprint(&mut self.world, &ctx);
         player::move_players(&mut self.world, &ctx);
         resources::deposit_and_pickup(&mut self.world, &ctx);
-        player::player_attacks(&mut self.world, &ctx, &mut hits);
+        weapon::use_weapons(&mut self.world, &ctx, &mut hits);
+        projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
         structures::towers_fire(&mut self.world, &ctx, &mut hits);
         monster::monsters_act(
             &mut self.world,
@@ -219,6 +226,12 @@ impl Sim {
     /// 번호가 작은 몬스터부터 차례로 돌려줍니다.
     pub fn monsters(&self) -> impl Iterator<Item = &Monster> {
         self.world.monsters.iter()
+    }
+
+    /// 번호가 작은 탄환부터 차례로 돌려줍니다. 이번 Tick에 끝난 탄환도 포함합니다(`Projectile::flight`).
+    /// 끝난 탄환을 포함하는 까닭은 클라이언트가 탄환이 끝난 자리까지 그릴 수 있게 하려는 것입니다.
+    pub fn projectiles(&self) -> impl Iterator<Item = &Projectile> {
+        self.world.projectiles.iter()
     }
 
     /// 번호가 작은 시설부터 차례로 돌려줍니다. 짓는 중인 감시탑도 포함합니다.

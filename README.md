@@ -76,7 +76,7 @@ cargo run --release -p caravan_dedicated -- --stress --waves 100,200,300 --stats
 cargo run --release -p caravan_dedicated --example load_client -- --addr 127.0.0.1:7777 --room load --secs 60
 ```
 
-부하 시험용 클라이언트의 옵션은 `--addr HOST:PORT`, `--room CODE`, `--secs SECONDS`, `--passive`입니다. `--passive`를 붙이면 공격하지 않으므로 몬스터가 가장 많이 쌓입니다.
+부하 시험용 클라이언트의 옵션은 `--addr HOST:PORT`, `--room CODE`, `--secs SECONDS`, `--passive`, `--bow`입니다. `--passive`를 붙이면 공격하지 않으므로 몬스터가 가장 많이 쌓입니다. `--bow`를 붙이면 원정마다 한 번 활로 바꾸고 탄환을 쏩니다. 활은 쿨다운이 있으므로 플레이어 넷이 `--bow`로 쏴도 동시에 날아다니는 탄환은 한 자릿수입니다(감시탑 40개가 서 있고 몬스터가 260마리쯤 몰릴 때 측정한 최대는 6개입니다). 탄환이 100개 넘게 날아다니는 부하는 이 시험이 아니라 `cargo test --release -p caravan_rules perf -- --nocapture`의 시험이 만듭니다. 부하 시험용 클라이언트가 출력하는 `projectiles=`와 마지막 줄의 `peak_projectiles`로 날아다니는 탄환의 수를 확인할 수 있습니다.
 
 ### PC 클라이언트를 실행합니다
 
@@ -141,7 +141,8 @@ trunk serve
 | `W` `A` `S` `D` | 화면을 기준으로 위, 왼쪽, 아래, 오른쪽으로 이동합니다. |
 | `Shift`를 누르고 있기 | 움직이는 동안 걷는 속도의 1.6배로 달립니다. 달리는 동안 화면 왼쪽 위 HP 아래의 `STAMINA` 막대가 줄고, 키를 떼면 막대가 다시 찹니다. 왼쪽과 오른쪽 `Shift`가 같습니다. |
 | 마우스 | 커서가 가리키는 지면 위치로 조준합니다. |
-| 왼쪽 클릭 | 조준한 방향의 부채꼴 안에 있는 모든 몬스터를 근접 공격합니다. |
+| 왼쪽 클릭 | 들고 있는 무기로 공격합니다. 검은 조준한 방향의 부채꼴 안에 있는 모든 몬스터를 베고, 활은 조준한 방향으로 탄환을 쏩니다. |
+| `Q` | 검과 활 사이에서 무기를 바꿉니다. 누르고 있어도 한 번만 바뀝니다. 화면 오른쪽 위의 `WEAPON  SWORD  [Q]`나 `WEAPON  BOW  [Q]`가 든 무기를 알려 줍니다. 부활, 수리, 채집, 건설 중이거나 쓰러졌을 때는 바뀌지 않습니다. |
 | `B`를 누르고 있기 | 바라보는 쪽의 이웃한 타일에 감시탑을 짓습니다(비용 10, 3초). 키를 누르기 전에도 그 타일이 밝은 테두리로 보입니다. 마차에서 10타일 안이어야 하고, 마차로 가는 길을 막을 수 없습니다. 세울 수 없으면 그 타일을 빨간 테두리로 표시하고 이유를 화면 아래에 알립니다. 짓는 동안 이동과 공격을 할 수 없고, 짓는 중에 `B`를 떼거나 쓰러지면 건설이 취소되고 비용을 돌려받습니다. |
 | `F`를 누르고 있기 | 가까이 쓰러진 동료가 있으면 부활시키고(5초), 없으면 가까이 있는 손상된 감시탑을 수리하고(1.5초에 HP 30, 자원 1), 그것도 없으면 가까이 있는 손상된 마차를 수리하고(1.5초에 HP 30, 자원 1), 그것도 없으면 가까이 있는 채집 지점에서 자원을 0.5초에 1씩 채집합니다(최대 10). 그동안 이동과 공격을 할 수 없습니다. 채집한 자원은 마차 곁(1.5타일 안)에 가면 자동으로 보관함에 들어가고, 쓰러지거나 접속을 끊으면 그 자리에 떨어지며, 살아 있는 플레이어가 가까이 가면 자동으로 줍습니다. |
 
@@ -167,7 +168,7 @@ cd crates/client && trunk build
 - `cargo test --workspace`는 게임 규칙, 프로토콜, 서버, 클라이언트 로직을 시험합니다. 대부분의 테스트는 화면과 네트워크 없이 실행되고, `crates/dedicated/tests/real_socket.rs`, `crates/ws_server/tests/roundtrip.rs`, `crates/ws_client/tests/message_limit.rs`만 `127.0.0.1`의 실제 소켓을 씁니다.
 - `sh scripts/check-deps.sh`는 계층 사이의 금지된 의존이 없는지 검사하고, 통과하면 `dependency rules hold`를 출력합니다.
 - `trunk build`는 웹 클라이언트를 `crates/client/dist`에 빌드합니다.
-- 감시탑이 상한만큼 서 있고 몬스터가 300마리 있을 때 Tick 하나의 계산 시간은 릴리스 빌드에서만 한계를 확인합니다. 평균은 Tick 간격(50ms)의 10% 이하, 감시탑을 짓거나 부순 Tick은 한 간격 이하여야 합니다. `cargo test --release -p caravan_rules perf -- --nocapture`가 시간을 출력하고, 일반 `cargo test`는 이 상황이 말한 대로 만들어졌는지만 확인합니다. 스냅샷의 크기는 `crates/protocol/tests/snapshot_size.rs`와 `crates/server/tests/load.rs`가 확인합니다.
+- 감시탑이 상한만큼 서 있고 몬스터가 300마리 있을 때 Tick 하나의 계산 시간은 릴리스 빌드에서만 한계를 확인합니다. 평균은 Tick 간격(50ms)의 10% 이하, 감시탑을 짓거나 부순 Tick은 한 간격 이하여야 합니다. `cargo test --release -p caravan_rules perf -- --nocapture`가 시간을 출력하고, 일반 `cargo test`는 이 상황이 말한 대로 만들어졌는지만 확인합니다. 활을 든 플레이어 넷이 쏘는 상황과 탄환 150개쯤이 동시에 날아다니는 상황의 시간도 같은 명령이 출력하고, 이때 날아다니는 탄환의 평균과 최대 수가 함께 출력됩니다. 스냅샷의 크기는 `crates/protocol/tests/snapshot_size.rs`와 `crates/server/tests/load.rs`가 확인합니다.
 
 ## 구조
 
@@ -205,7 +206,7 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 
 ## Tick 하나의 처리 순서
 
-`Sim::step`(`crates/rules/src/sim.rs`)은 한 Tick에 다음 순서로 상태를 바꿉니다. 모든 공격과 피해는 같은 상태를 읽고 결정한 뒤 13번에서 한꺼번에 적용합니다.
+`Sim::step`(`crates/rules/src/sim.rs`)은 한 Tick에 다음 순서로 상태를 바꿉니다. 모든 공격과 피해는 같은 상태를 읽고 결정한 뒤 14번에서 한꺼번에 적용합니다.
 
 1. `advance_phase`가 낮, 밤, 새벽, 결과 화면의 카운트다운을 줄이고, 때가 되면 밤이나 낮을 시작하거나 몬스터를 한 마리 등장시킵니다. 결과 화면의 동안에는 여기서 Tick이 끝납니다.
 2. `Paths::sync`가 마차와 감시탑으로 가는 이동 경로를 필요하면 다시 만듭니다.
@@ -216,13 +217,14 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 7. `update_sprint`가 플레이어마다 이번 Tick에 달리는지 정하고 달리기 게이지를 줄이거나 채웁니다. 4번과 5번이 정한 하고 있는 일을 읽으므로 그 뒤에 부릅니다.
 8. `move_players`가 플레이어를 움직입니다.
 9. `deposit_and_pickup`이 마차 곁의 플레이어가 든 자원을 보관함에 넣고, 땅에 떨어진 자원을 줍게 합니다.
-10. `player_attacks`가 플레이어의 근접 공격을 결정합니다.
-11. `towers_fire`가 감시탑의 사격을 결정합니다.
-12. `monsters_act`가 몬스터의 이동과 공격을 결정합니다. 낮의 몬스터는 자리를 지키고, 밤의 몬스터는 마차로 향합니다.
-13. `World::apply_hits`가 이번 Tick의 모든 피해를 적용하고, HP가 0이 된 몬스터와 감시탑을 지우고, 쓰러진 플레이어가 든 자원을 그 자리에 떨어뜨립니다.
-14. `recover_near_wagon`이 마차 곁의 살아 있는 플레이어의 HP를 회복합니다. 피해를 적용한 뒤에 부르므로, 같은 Tick의 회복이 쓰러뜨리는 피해를 되돌리지 않습니다.
-15. `advance_life_timers`가 부활을 마무리하고 출혈 시간을 줄입니다.
-16. `settle_outcome`이 원정의 성공과 실패, 무리를 모두 처치했는지를 판정합니다.
+10. `use_weapons`가 `Q`를 누른 플레이어의 무기를 바꾸고, 플레이어의 공격을 결정하고, 들고 있는 무기의 전달 방식에 따라 처리합니다. 검은 부채꼴 안의 몬스터를 맞히고, 활은 탄환을 만듭니다.
+11. `advance_projectiles`가 날아가는 탄환을 한 Tick만큼 움직입니다. 탄환은 이번 Tick에 쏜 것도 움직이고, 지나간 선분에서 처음 닿는 몬스터 한 마리의 피해를 결정하며, 막힌 타일이나 사거리의 끝에서는 피해 없이 사라집니다. 끝난 탄환은 한 Tick 더 남았다가 다음 Tick의 처음에 지워집니다. 결과 화면 동안에는 날던 탄환이 그 자리에 멈추고, 끝난 탄환은 지워집니다.
+12. `towers_fire`가 감시탑의 사격을 결정합니다.
+13. `monsters_act`가 몬스터의 이동과 공격을 결정합니다. 낮의 몬스터는 자리를 지키고, 밤의 몬스터는 마차로 향합니다.
+14. `World::apply_hits`가 이번 Tick의 모든 피해를 적용하고, HP가 0이 된 몬스터와 감시탑을 지우고, 쓰러진 플레이어가 든 자원을 그 자리에 떨어뜨립니다.
+15. `recover_near_wagon`이 마차 곁의 살아 있는 플레이어의 HP를 회복합니다. 피해를 적용한 뒤에 부르므로, 같은 Tick의 회복이 쓰러뜨리는 피해를 되돌리지 않습니다.
+16. `advance_life_timers`가 부활을 마무리하고 출혈 시간을 줄입니다.
+17. `settle_outcome`이 원정의 성공과 실패, 무리를 모두 처치했는지를 판정합니다.
 
 ## 키 입력 하나가 다른 플레이어의 화면에 그려지기까지
 
@@ -246,7 +248,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 
 1. `crates/rules/src/tuning.rs`에서는 게임의 모든 수치가 한 구조체에 모인 모습과, `Default` 트레이트 구현, 그리고 초를 정수 Tick으로 바꾸는 `Tuning::ticks`를 봅니다.
 2. `crates/rules/src/sim.rs`의 `Sim::step`은 Tick 하나의 처리 순서를 나열하며, `world`만 가변 참조로 넘기고 `tuning`과 `paths` 같은 다른 필드는 `Ctx`에 공유 참조로 빌려 주는 방식이 구조체 필드를 따로 빌리는 소유권 규칙의 첫 예입니다.
-3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다. `crates/rules/src/stamina.rs`의 `Stamina`는 정수 하나를 새 타입(newtype)으로 감싸서, 달리기 게이지를 소수 없이 정수 점수로 세는 방법을 한 곳에 모읍니다.
+3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다. `crates/rules/src/weapon.rs`는 공격을 두 단계(`decide`가 공격을 모으고, `deliver`가 `Delivery`의 값에 따라 전달합니다)로 나누고, 무기마다 다른 수치는 `crates/rules/src/tuning.rs`의 무기 표(`WeaponTable`) 한 행에 둡니다. `crates/rules/src/projectile.rs`는 탄환을 쏜 플레이어와 따로 세계의 개체 목록에 두고, `crates/rules/src/sweep.rs`는 한 Tick에 움직인 선분 전체를 검사해서 빠른 탄환이 얇은 몬스터를 건너뛰지 못하게 합니다. `crates/rules/src/stamina.rs`의 `Stamina`는 정수 하나를 새 타입(newtype)으로 감싸서, 달리기 게이지를 소수 없이 정수 점수로 세는 방법을 한 곳에 모읍니다.
 4. `crates/rules/src/world/tiles.rs`의 `TileMap`은 어디가 막혔는지 아는 유일한 곳이고, `crates/rules/src/build.rs`는 감시탑을 놓을 수 있는 조건을 한 함수(`check_site`)로 판정합니다. `crates/rules/src/expedition.rs`는 낮, 밤, 새벽, 결과 화면의 단계를 열거형(`Phase`)으로 두고 단계를 바꾸는 곳을 두 함수로 모았으며, 낮이 시작될 때 일어나는 일은 `begin_day` 하나에 있습니다. `crates/rules/src/resources.rs`는 자원이 채집 지점, 플레이어의 손, 땅, 보관함 가운데 한 곳에만 있도록 옮기는 규칙입니다. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 명령(`Order`: 낮에는 자리를 지키고 밤에는 마차로 향합니다), 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
 5. `crates/rules/src/tests/support.rs`와 같은 폴더의 테스트는 화면과 네트워크 없이 개체를 원하는 자리에 놓고 `step`을 반복해서 규칙을 시험하는 방법을 보여 줍니다.
 6. `crates/protocol/src/messages.rs`의 `ClientMsg`와 `ServerMsg`는 serde의 derive로 직렬화하는 열거형이며, 클라이언트가 보낼 수 있는 게임 정보가 입력뿐이라는 서버 권위 방식이 이 타입에 드러납니다.
@@ -255,7 +257,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 9. `crates/protocol/src/transport.rs`의 `ServerTransport`와 `ClientTransport`는 접속 방식을 트레이트로 정의한 인터페이스이고, 구현이 지켜야 하는 약속이 문서 주석에 있습니다.
 10. `crates/protocol/src/codec.rs`의 `decode_exact`는 트레이트 경계(`T: DeserializeOwned`)를 가진 제네릭 함수의 예입니다.
 11. `crates/protocol/src/loopback.rs`는 같은 트레이트의 두 번째 구현이며, `std::sync::mpsc` 채널로 같은 프로세스 안에서 메시지를 옮깁니다.
-12. `crates/server/src/input.rs`는 불규칙하게 도착하는 입력을 Tick마다 하나씩 넘기는 입력으로 바꾸고, `Option`으로 「아직 받은 입력이 없음」을 표현합니다.
+12. `crates/server/src/input.rs`는 불규칙하게 도착하는 입력을 Tick마다 하나씩 넘기는 입력으로 바꾸고, `Option`으로 「아직 받은 입력이 없음」을 표현합니다. 입력이 늦는 Tick에는 마지막 입력을 다시 쓰는데, 누른 순간인 `Q`는 `PlayerInput::held`가 지워서 되풀이되지 않게 합니다.
 13. `crates/server/src/room.rs`와 `crates/server/src/hub.rs`에서는 허브가 접속 방식을 직접 부르지 않고 할 일을 `Out` 목록으로 돌려주는 방식과, 접속 상태를 열거형(`LinkState`)으로 표현하는 방식을 봅니다.
 14. `crates/server/src/clock.rs`는 고정 간격의 Tick 일정과 밀린 Tick의 상한을 다루며, 현재 시각을 인자로 받으므로 테스트가 가짜 시각을 쓸 수 있습니다.
 15. `crates/server/src/lib.rs`의 `GameServer`는 접속 방식을 `Box<dyn ServerTransport>`로 가지는 트레이트 객체의 예입니다.
@@ -263,24 +265,25 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 17. `crates/ws_client/src/lib.rs`는 외부 라이브러리(ewebsock)를 이 프로젝트의 트레이트 뒤에 감싸는 어댑터이고, PC와 웹에서 같은 코드가 동작합니다.
 18. `crates/dedicated/src/main.rs`는 실행 인자를 해석하고, 다른 트레이트 객체를 감싸서 메시지를 기록하는 `DebugTransport`를 끼운 뒤, `pump`를 부르고 쉬는 서버의 반복을 실행합니다.
 19. `crates/client_core/src/session.rs`의 `Session`은 열거형으로 만든 상태 기계이며, 방에 들어간 뒤에만 필요한 값을 `InRoom(Joined)` 안에만 둡니다.
-20. `crates/client_core/src/interp.rs`에서는 스냅샷을 보관하고 일정한 지연을 두고 두 스냅샷 사이를 보간(interpolation)하는 방법을 배웁니다.
+20. `crates/client_core/src/interp.rs`에서는 스냅샷을 보관하고 일정한 지연을 두고 두 스냅샷 사이를 보간(interpolation)하는 방법을 배웁니다. 탄환은 번호로 앞뒤 스냅샷의 같은 탄환을 찾아서 위치를 섞고, 앞쪽 스냅샷에만 있는 탄환(끝난 탄환)은 끝난 자리에 그립니다.
 21. `crates/client_core/src/iso.rs`는 지면 좌표를 쿼터뷰 화면 좌표로 바꾸는 투영과 그 역변환, 그리고 화면에서 아래쪽에 있는 개체를 앞에 그리는 순서(`depth`)를 다룹니다. `crates/client_core/src/camera.rs`는 카메라가 내 캐릭터를 따라가는 속도와, 화면 밖의 마차를 가리키는 표시의 자리를 Bevy 없이 계산하는 순수 함수(`follow`, `wagon_marker`)이고, `crates/client_core/src/preview.rs`는 건설 키를 누르기 전에 감시탑이 놓일 타일을 서버와 같은 함수(`front_tile`)로 정합니다.
-22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭을 잃지 않도록 기억합니다.
+22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭과 `Q`를 잃지 않도록 기억하고 입력에 한 번만 싣습니다.
 23. `crates/client/src/main.rs`에서는 Bevy의 `App`, 플러그인, `.chain()`으로 순서를 고정한 시스템 목록, 그리고 `#[cfg(target_arch = "wasm32")]`로 PC와 웹의 코드를 나누는 조건부 컴파일을 봅니다.
 24. `crates/client/src/net.rs`는 Bevy의 리소스와 시스템 매개변수(`Res`, `ResMut`, `NonSendMut`)의 예이고, 다른 스레드로 옮길 수 없는 웹의 WebSocket을 non-send 리소스로 보관합니다.
-25. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/supplies.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
+25. `crates/client/src/effects.rs`는 부채꼴 공격과 탄환과 감시탑의 사격을 상태에서 선으로 그리고, 부채꼴의 거리와 각도는 입장 안내의 무기 표에서 읽습니다. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/supplies.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
 26. `crates/client/src/hud.rs`는 `caravan_client_core::Hud`가 정한 내용을 Bevy UI 노드에 옮깁니다.
 
 ## 현재의 한계
 
 - 클라이언트 예측이 없습니다. 내 캐릭터도 서버의 스냅샷으로만 움직이므로, 키를 누른 뒤 서버까지의 왕복 시간과 보간 지연(100ms)이 지나야 화면에서 움직입니다.
 - 재접속이 없습니다. 접속이 끊기면 화면에 `DISCONNECTED`와 이유가 표시되고, 서버는 그 플레이어의 캐릭터를 즉시 지웁니다. 클라이언트를 다시 실행하면 새 플레이어로 참가합니다.
-- 서버는 Tick마다 방 전체의 스냅샷(모든 플레이어, 몬스터, 시설)을 방의 모든 접속에 보냅니다. 바뀐 부분만 보내지 않습니다.
+- 서버는 Tick마다 방 전체의 스냅샷(모든 플레이어, 몬스터, 시설, 날아가는 탄환)을 방의 모든 접속에 보냅니다. 바뀐 부분만 보내지 않습니다.
 - 브라우저 탭이 백그라운드로 가면 브라우저가 페이지의 실행을 제한해서 입력 전송이 멈춥니다. 서버는 입력 없이 10 Tick(0.5초)보다 오래 지나면 그 캐릭터를 아무것도 누르지 않은 상태로 움직이고, 메시지 없이 30초가 지나면 접속을 닫고 플레이어를 방에서 뺍니다. 탭으로 돌아와도 다시 접속하지 않으므로 페이지를 새로 고쳐야 합니다.
 - 서버는 TLS를 처리하지 않으므로 `ws://` 접속만 받습니다.
 - 서버의 기본 주소와 `trunk serve`의 주소(`crates/client/Trunk.toml`)는 `127.0.0.1`이므로, 기본 설정에서는 같은 컴퓨터에서만 접속할 수 있습니다.
 - 한 방의 최대 인원은 4명입니다(`crates/rules/src/tuning.rs`의 `max_players`). 가득 찬 방에 접속한 클라이언트는 거절되고 화면에 이유가 표시됩니다.
 - 로비 화면이 없으므로 방 코드는 실행할 때 지정합니다.
 - 맵은 64 x 64 타일 하나이고, 몬스터는 한 종류, 시설은 감시탑 하나, 자원은 한 종류입니다.
-- 화면의 문구는 영어입니다. Bevy의 기본 글꼴이 한글을 표시하지 못하기 때문입니다.
+- 화면의 문구는 영어입니다. Bevy의 기본 글꼴이 한글을 표시하지 못하기 때문입니다. 무기의 이름도 영어입니다.
+- 탄환과 공격 효과는 선으로 그립니다.
 - `trunk serve`와 `trunk build`는 최적화하지 않은 디버그 빌드를 만들므로 wasm 파일이 약 110MB입니다.

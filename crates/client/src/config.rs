@@ -47,10 +47,9 @@ pub const BAR_BORDER: f32 = 1.0;
 // 효과. 시간은 서버 Tick으로 셉니다.
 pub const SWING_TICKS: f64 = 4.0;
 pub const SHOT_TICKS: f64 = 3.0;
-/// 근접 공격 표시의 반지름(타일)과 부채꼴의 절반 각도(라디안)입니다. 서버의 공격 범위를 흉내 낸 표현이고, 판정은 서버가 합니다.
-pub const SWING_REACH_TILES: f32 = 1.35;
-pub const SWING_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_3;
 pub const SWING_ARC_STEPS: usize = 10;
+/// 탄환의 선에서 꼬리의 길이(타일)입니다. 머리는 탄환의 위치이고, 꼬리는 날아온 쪽으로 이만큼 늘어납니다.
+pub const BULLET_TAIL_TILES: f32 = 0.6;
 
 pub const BACKGROUND: Color = Color::srgb(0.07, 0.06, 0.06);
 pub const GROUND_A: Color = Color::srgb(0.20, 0.27, 0.18);
@@ -83,6 +82,8 @@ pub const BAR_NODE: Color = Color::srgb(0.45, 0.90, 0.82);
 pub const SWING: Color = Color::srgb(1.00, 1.00, 0.80);
 pub const WAGON_MARKER: Color = Color::srgb(1.00, 0.72, 0.38);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
+/// 활의 탄환입니다.
+pub const BULLET: Color = Color::srgb(1.00, 0.97, 0.75);
 /// 건설이 거절된 타일의 테두리입니다.
 pub const REFUSAL: Color = Color::srgb(1.00, 0.35, 0.30);
 /// 건설 키를 누르면 감시탑이 놓일 타일의 테두리입니다.

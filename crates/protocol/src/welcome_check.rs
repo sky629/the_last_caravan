@@ -10,7 +10,7 @@
 use caravan_rules::Rect;
 
 use crate::units::WirePos;
-use crate::welcome::Welcome;
+use crate::welcome::{Welcome, WireDelivery};
 
 /// 한 방의 정원입니다. HUD가 동료 막대를 정원만큼 만듭니다.
 const MAX_CAPACITY: u32 = 16;
@@ -26,6 +26,8 @@ const MAX_OBSTACLES: usize = 256;
 /// 감시탑의 수의 상한입니다. 스냅샷이 감시탑 하나당 10바이트 안팎이므로 이 값이 스냅샷 크기의 상한이기도 합니다.
 const MAX_TOWER_LIMIT: u32 = 256;
 const MAX_MONSTER_KINDS: usize = 16;
+/// 무기 종류의 수의 상한입니다. 클라이언트가 무기마다 표의 항목 하나를 가집니다.
+const MAX_WEAPON_KINDS: usize = 16;
 /// 채집 지점의 수의 상한입니다. 스냅샷이 지점 하나당 몇 바이트이고, 클라이언트가 지점마다 상자와 막대를 하나씩 만듭니다.
 const MAX_GATHER_NODES: usize = 64;
 /// 장애물, 마차, 채집 지점이 차지하는 타일의 합입니다. 상자를 타일마다 하나씩 만듭니다.
@@ -47,10 +49,25 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
         world.monster_kinds.len(),
         MAX_MONSTER_KINDS,
     )?;
+    check_count("weapon kinds", world.weapons.len(), MAX_WEAPON_KINDS)?;
 
     // 최대 HP가 0이면 막대의 비율을 정할 수 없으므로, 몬스터 종류는 최대 HP가 1 이상이어야 합니다.
     if world.monster_kinds.iter().any(|kind| kind.max_hp == 0) {
         return Err("a monster kind has a max HP of 0".to_string());
+    }
+
+    for weapon in &world.weapons {
+        if let WireDelivery::Arc {
+            reach,
+            half_angle_deg,
+        } = weapon.delivery
+            && !((0.0..=MAX_RADIUS_TILES).contains(&reach)
+                && (0.0..=180.0).contains(&half_angle_deg))
+        {
+            return Err(format!(
+                "a weapon arc of {reach} tiles and {half_angle_deg} degrees is outside 0 to {MAX_RADIUS_TILES} tiles and 0 to 180 degrees"
+            ));
+        }
     }
 
     let size = world.size.to_tiles();
@@ -235,6 +252,39 @@ mod tests {
         let kind = welcome.world.monster_kinds[0];
         welcome.world.monster_kinds = vec![kind; MAX_MONSTER_KINDS + 1];
         assert!(refused(&welcome).contains("monster kinds"));
+    }
+
+    #[test]
+    fn too_many_weapon_kinds_are_refused() {
+        let mut welcome = normal();
+        let weapon = welcome.world.weapons[0];
+        welcome.world.weapons = vec![weapon; MAX_WEAPON_KINDS];
+        assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
+
+        welcome.world.weapons = vec![weapon; MAX_WEAPON_KINDS + 1];
+        assert!(refused(&welcome).contains("weapon kinds"));
+    }
+
+    #[test]
+    fn a_weapon_arc_that_is_not_a_real_reach_and_angle_is_refused() {
+        for (reach, half_angle_deg) in [
+            (-1.0, 60.0),
+            (MAX_RADIUS_TILES + 1.0, 60.0),
+            (f32::NAN, 60.0),
+            (1.0, -1.0),
+            (1.0, 181.0),
+            (1.0, f32::NAN),
+        ] {
+            let mut welcome = normal();
+            welcome.world.weapons[0].delivery = WireDelivery::Arc {
+                reach,
+                half_angle_deg,
+            };
+            assert!(
+                refused(&welcome).contains("weapon arc"),
+                "{reach} tiles, {half_angle_deg} degrees"
+            );
+        }
     }
 
     #[test]

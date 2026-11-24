@@ -136,10 +136,11 @@ pub fn send_input(
 fn describe(event: &ClientEvent) -> String {
     match event {
         ClientEvent::Message(ServerMsg::Snapshot(snapshot)) => format!(
-            "Snapshot {{ tick: {}, players: {}, monsters: {} }}",
+            "Snapshot {{ tick: {}, players: {}, monsters: {}, projectiles: {} }}",
             snapshot.tick,
             snapshot.players.len(),
-            snapshot.monsters.len()
+            snapshot.monsters.len(),
+            snapshot.projectiles.len()
         ),
         other => format!("{other:?}"),
     }

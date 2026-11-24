@@ -1,8 +1,9 @@
 //! 기본 수치가 규칙의 전제를 지키는지 확인합니다. 수치를 고치다가 전제가 깨지면 이 테스트가 실패합니다.
 
 use super::support::{Scenario, nights};
+use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
-use crate::tuning::Tuning;
+use crate::tuning::{ArcTuning, Delivery, PLAYTEST_DAMAGE_MULTIPLIER, ProjectileTuning, Tuning};
 use crate::world::Tile;
 
 #[test]
@@ -429,4 +430,140 @@ fn a_speed_that_is_negative_or_not_finite_is_rejected_and_the_reason_names_it() 
         *field(&mut t) = 0.0;
         assert_eq!(t.validate(), Ok(()), "{name} of zero is a valid standstill");
     }
+}
+
+#[test]
+fn a_weapon_with_a_bad_cooldown_or_arc_is_rejected_and_the_reason_names_it() {
+    for bad in [-0.1, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.weapons.sword.cooldown_secs = bad;
+        let why = t.validate().expect_err(&format!("a cooldown of {bad}"));
+        assert!(why.contains("Sword cooldown_secs"), "{bad}: {why}");
+
+        let mut t = Tuning::default();
+        t.weapons.sword.delivery = Delivery::Arc(ArcTuning {
+            reach: bad,
+            half_angle_deg: 60.0,
+        });
+        let why = t.validate().expect_err(&format!("a reach of {bad}"));
+        assert!(why.contains("Sword reach"), "{bad}: {why}");
+    }
+    for bad in [-1.0, 180.5, f32::NAN] {
+        let mut t = Tuning::default();
+        t.weapons.sword.delivery = Delivery::Arc(ArcTuning {
+            reach: 1.0,
+            half_angle_deg: bad,
+        });
+        let why = t.validate().expect_err(&format!("an angle of {bad}"));
+        assert!(why.contains("Sword half_angle_deg"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn an_arc_from_a_line_to_a_full_circle_is_valid() {
+    for angle in [0.0, 180.0] {
+        let mut t = Tuning::default();
+        t.weapons.sword.delivery = Delivery::Arc(ArcTuning {
+            reach: 0.0,
+            half_angle_deg: angle,
+        });
+        assert_eq!(t.validate(), Ok(()), "an angle of {angle}");
+    }
+}
+
+fn with_bow(shot: ProjectileTuning) -> Tuning {
+    let mut t = Tuning::default();
+    t.weapons.bow.delivery = Delivery::Projectile(shot);
+    t
+}
+
+fn default_shot() -> ProjectileTuning {
+    let Delivery::Projectile(shot) = Tuning::default().weapons.bow.delivery else {
+        panic!("the bow shoots projectiles");
+    };
+    shot
+}
+
+#[test]
+fn a_projectile_that_never_moves_or_never_ends_is_rejected() {
+    for bad in [0.0, -14.0, f32::NAN, f32::INFINITY] {
+        let t = with_bow(ProjectileTuning {
+            speed: bad,
+            ..default_shot()
+        });
+        let why = t.validate().expect_err(&format!("a speed of {bad}"));
+        assert!(why.contains("Bow projectile speed"), "{bad}: {why}");
+
+        let t = with_bow(ProjectileTuning {
+            range: bad,
+            ..default_shot()
+        });
+        let why = t.validate().expect_err(&format!("a range of {bad}"));
+        assert!(why.contains("Bow projectile range"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn a_projectile_as_wide_as_the_player_is_rejected() {
+    let player_radius = Tuning::default().player.radius;
+    // 0.75배는 플레이어보다 가늘지만, 장애물의 모서리에 붙어 서서 쏘면 쏜 자리에서 멈추는 굵기입니다.
+    for bad in [player_radius, player_radius * 0.75, 1.0, -0.1, f32::NAN] {
+        let t = with_bow(ProjectileTuning {
+            radius: bad,
+            ..default_shot()
+        });
+        let why = t.validate().expect_err(&format!("a radius of {bad}"));
+        assert!(why.contains("Bow projectile radius"), "{bad}: {why}");
+    }
+    let t = with_bow(ProjectileTuning {
+        radius: 0.0,
+        ..default_shot()
+    });
+    assert_eq!(t.validate(), Ok(()), "a point of a projectile is valid");
+}
+
+#[test]
+fn a_projectile_fast_enough_to_cross_the_map_in_one_tick_is_still_valid() {
+    // 명중 판정이 이동하는 선분 전체를 검사하므로 속도에 상한이 없습니다. 이동과 달리 한 Tick의 거리가 반지름보다 길어도 됩니다.
+    let t = with_bow(ProjectileTuning {
+        speed: 5000.0,
+        ..default_shot()
+    });
+    assert!(5000.0 * t.dt() > t.map.width);
+    assert_eq!(t.validate(), Ok(()));
+}
+
+#[test]
+fn the_playtest_multiplier_raises_every_weapon_by_the_same_ratio() {
+    let t = Tuning::default();
+    let sword = t.weapons.get(WeaponKind::Sword).damage;
+    let bow = t.weapons.get(WeaponKind::Bow).damage;
+
+    assert_eq!(
+        sword,
+        25 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal sword damage is 25"
+    );
+    assert_eq!(
+        bow,
+        15 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal bow damage is 15"
+    );
+    assert_eq!(
+        sword * 15,
+        bow * 25,
+        "the bow is 60% of the sword at any multiplier"
+    );
+}
+
+#[test]
+#[ignore = "the playtest damage is on; run `cargo test -p caravan_rules -- --ignored` before a release"]
+fn before_a_release_the_damage_is_the_normal_damage() {
+    assert_eq!(
+        PLAYTEST_DAMAGE_MULTIPLIER, 1,
+        "lower PLAYTEST_DAMAGE_MULTIPLIER to 1"
+    );
+    let t = Tuning::default();
+    assert_eq!(t.weapons.get(WeaponKind::Sword).damage, 25);
+    assert_eq!(t.weapons.get(WeaponKind::Bow).damage, 15);
 }

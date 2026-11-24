@@ -5,10 +5,10 @@
 //!
 //! 이 파일은 게임 상태가 아니라 고정된 설정을 전송 형식으로 바꿉니다. 게임 상태를 바꾸는 곳은 `Snapshot::from_sim` 하나입니다.
 
-use caravan_rules::{MonsterKind, Player, Sim, Vec2};
+use caravan_rules::{Delivery, MonsterKind, Player, Sim, Vec2, WeaponKind};
 use serde::{Deserialize, Serialize};
 
-use crate::snapshot::WireMonsterKind;
+use crate::snapshot::{WireMonsterKind, WireWeaponKind};
 use crate::units::{WirePos, WireRect, WireTile};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,6 +45,8 @@ pub struct WorldInfo {
     pub player_radius: f32,
     /// 몬스터 종류마다 하나씩입니다. 새 종류가 생기면 항목이 늘어납니다.
     pub monster_kinds: Vec<MonsterKindInfo>,
+    /// 무기 종류마다 하나씩입니다. 클라이언트가 공격 효과를 수치표의 값으로 그리게 하려고 보냅니다. 새 무기가 생기면 항목이 늘어납니다.
+    pub weapons: Vec<WeaponInfo>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +61,35 @@ pub struct MonsterKindInfo {
     /// 몬스터를 그리는 원의 반지름(타일)입니다.
     pub radius: f32,
     pub max_hp: u32,
+}
+
+/// 무기 하나가 화면에 그려지는 데 필요한 것입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WeaponInfo {
+    pub kind: WireWeaponKind,
+    pub delivery: WireDelivery,
+}
+
+/// 공격이 전달되는 방식 가운데 그리는 데 필요한 값입니다. 규칙의 `Delivery`와 따로 정의해서, 규칙의 수치 구조가 전송 형식이 되지 않게 합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum WireDelivery {
+    /// 플레이어의 가장자리에서 `reach`까지, 조준 방향의 양쪽으로 `half_angle_deg`도의 부채꼴입니다.
+    Arc { reach: f32, half_angle_deg: f32 },
+    /// 탄환입니다. 탄환은 스냅샷의 탄환 목록으로 그리므로 수치가 없습니다.
+    Projectile,
+}
+
+impl WireDelivery {
+    /// `match`가 모든 방식을 다루므로, 규칙에 전달 방식을 추가하면 여기서 컴파일 오류가 납니다.
+    fn of(delivery: Delivery) -> WireDelivery {
+        match delivery {
+            Delivery::Arc(arc) => WireDelivery::Arc {
+                reach: arc.reach,
+                half_angle_deg: arc.half_angle_deg,
+            },
+            Delivery::Projectile(_) => WireDelivery::Projectile,
+        }
+    }
 }
 
 impl Welcome {
@@ -100,6 +131,13 @@ impl Welcome {
                             radius: numbers.radius,
                             max_hp: numbers.max_hp,
                         }
+                    })
+                    .collect(),
+                weapons: WeaponKind::ALL
+                    .iter()
+                    .map(|&kind| WeaponInfo {
+                        kind: WireWeaponKind::of(kind),
+                        delivery: WireDelivery::of(tuning.weapons.get(kind).delivery),
                     })
                     .collect(),
             },

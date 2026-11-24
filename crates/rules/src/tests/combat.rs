@@ -1,9 +1,10 @@
-//! 플레이어의 근접 공격을 확인합니다.
+//! 검의 공격을 확인합니다. 부채꼴의 범위와 각도, 쿨다운을 봅니다.
 
 use super::support::Scenario;
 use crate::ids::MonsterId;
 use crate::input::{AimDir, MoveDir, PlayerInput};
 use crate::math::Vec2;
+use crate::tuning::{Delivery, arc_cos};
 
 /// 몬스터가 한 번에 죽지 않도록 HP를 크게 한 시나리오입니다.
 fn with_tough_monsters() -> Scenario {
@@ -24,7 +25,7 @@ fn hp_of(s: &Scenario, id: MonsterId) -> u32 {
 
 /// HP가 1000인 몬스터가 플레이어의 공격을 `hits`번 맞은 뒤의 HP입니다.
 fn hp_after(s: &Scenario, hits: u32) -> u32 {
-    1000 - hits * s.sim.tuning().player.attack_damage
+    1000 - hits * s.sim.tuning().weapons.sword.damage
 }
 
 #[test]
@@ -37,7 +38,7 @@ fn a_swing_damages_a_monster_in_front_of_the_player() {
     s.run_ticks(1);
 
     assert_eq!(hp_of(&s, monster), hp_after(&s, 1));
-    assert_eq!(s.player(a).last_attack_tick, Some(1));
+    assert_eq!(s.player(a).last_attack.map(|attack| attack.tick), Some(1));
 }
 
 #[test]
@@ -122,7 +123,7 @@ fn a_player_who_is_not_holding_attack_does_not_swing() {
     s.run_ticks(20);
 
     assert_eq!(hp_of(&s, monster), 1000);
-    assert_eq!(s.player(a).last_attack_tick, None);
+    assert_eq!(s.player(a).last_attack.map(|attack| attack.tick), None);
 }
 
 #[test]
@@ -141,7 +142,7 @@ fn two_players_hitting_the_same_monster_both_count() {
 
 #[test]
 fn a_monster_at_zero_hp_disappears() {
-    let damage = Scenario::open_field().sim.tuning().player.attack_damage;
+    let damage = Scenario::open_field().sim.tuning().weapons.sword.damage;
     let mut s = Scenario::with_tuning(move |t| t.monsters.grunt.max_hp = 2 * damage);
     let a = s.player_at(10.0, 10.0);
     let monster = s.monster_at(10.9, 10.0);
@@ -193,9 +194,12 @@ fn the_swing_finds_exactly_the_monsters_in_reach_across_many_grid_cells() {
 
     s.run_ticks(1);
 
-    let reach = s.sim.tuning().player.attack_reach;
+    let Delivery::Arc(arc) = s.sim.tuning().weapons.sword.delivery else {
+        panic!("the sword swings an arc");
+    };
+    let reach = arc.reach;
     let radii = s.sim.tuning().player.radius + s.sim.tuning().monsters.grunt.radius;
-    let arc_cos = s.sim.tuning().player.attack_arc_cos();
+    let arc_cos = arc_cos(arc.half_angle_deg);
     let origin = Vec2::new(9.4, 9.1);
     let facing = facing.get().unwrap();
     let (mut hit_count, mut miss_count) = (0, 0);

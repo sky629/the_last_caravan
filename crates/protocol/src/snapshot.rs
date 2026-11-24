@@ -10,7 +10,8 @@
 
 use caravan_rules::{
     BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Monster, MonsterKind, NightStep,
-    Outcome, Phase, Pile, Player, RepairTarget, Sim, Tower, TowerState, Tuning,
+    Outcome, Phase, Pile, Player, Projectile, RepairTarget, Sim, Tower, TowerState, Tuning,
+    WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +38,8 @@ pub struct Snapshot {
     pub players: Vec<WirePlayer>,
     /// 번호가 작은 몬스터부터입니다.
     pub monsters: Vec<WireMonster>,
+    /// 날아가는 탄환과 이번 Tick에 끝난 탄환입니다. 번호가 작은 탄환부터입니다. 끝난 탄환이 한 번 실리므로 클라이언트가 탄환이 닿은 자리까지 그립니다.
+    pub projectiles: Vec<WireProjectile>,
 }
 
 /// 원정의 단계입니다. 단계마다 그 단계에서 표시할 값만 가집니다.
@@ -124,6 +127,14 @@ pub struct WireShot {
     pub tick: u64,
 }
 
+/// 플레이어가 마지막으로 한 공격입니다. `weapon`은 공격한 무기이고, 지금 든 무기와 다를 수 있습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireAttack {
+    /// 공격한 서버 Tick입니다.
+    pub tick: u64,
+    pub weapon: WireWeaponKind,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WirePlayer {
     pub id: u32,
@@ -133,8 +144,26 @@ pub struct WirePlayer {
     pub life: WireLife,
     /// 서버가 마지막으로 처리한 입력의 순서 번호입니다. 클라이언트 예측이 어디까지 확인되었는지 알려 줍니다.
     pub last_input_seq: u32,
-    /// 마지막으로 근접 공격을 휘두른 서버 Tick입니다. 클라이언트는 스냅샷의 `tick`과 비교해서 공격 효과를 그립니다.
-    pub last_attack_tick: Option<u64>,
+    /// 마지막으로 한 공격입니다. 클라이언트는 공격한 Tick을 스냅샷의 `tick`과 비교해서, 공격한 무기의 효과를 그립니다.
+    pub last_attack: Option<WireAttack>,
+    /// 들고 있는 무기입니다. 쓰러졌거나 사망한 플레이어도 무기를 들고 있습니다.
+    pub weapon: WireWeaponKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireWeaponKind {
+    Sword,
+    Bow,
+}
+
+impl WireWeaponKind {
+    /// `match`가 모든 종류를 다루므로, 규칙에 무기 종류를 추가하면 여기서 컴파일 오류가 납니다.
+    pub fn of(kind: WeaponKind) -> WireWeaponKind {
+        match kind {
+            WeaponKind::Sword => WireWeaponKind::Sword,
+            WeaponKind::Bow => WireWeaponKind::Bow,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -256,6 +285,15 @@ impl WireMonsterKind {
     }
 }
 
+/// 탄환 하나입니다. 날아가는 방향으로 짧은 선을 그리는 데 필요한 값만 보냅니다. 피해량과 반지름은 보내지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireProjectile {
+    pub id: u32,
+    pub pos: WirePos,
+    /// 날아가는 방향입니다.
+    pub facing: WireAngle,
+}
+
 impl Snapshot {
     pub fn from_sim(sim: &Sim) -> Snapshot {
         let tuning = sim.tuning();
@@ -279,6 +317,7 @@ impl Snapshot {
                 .map(|player| wire_player(sim, player))
                 .collect(),
             monsters: sim.monsters().map(wire_monster).collect(),
+            projectiles: sim.projectiles().map(wire_projectile).collect(),
         }
     }
 }
@@ -397,7 +436,11 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
         facing: WireAngle::from_direction(player.facing),
         life,
         last_input_seq: player.last_input_seq,
-        last_attack_tick: player.last_attack_tick,
+        last_attack: player.last_attack.map(|attack| WireAttack {
+            tick: attack.tick,
+            weapon: WireWeaponKind::of(attack.weapon),
+        }),
+        weapon: WireWeaponKind::of(player.weapon),
     }
 }
 
@@ -424,6 +467,14 @@ fn wire_interaction(sim: &Sim, player: &Player, interaction: &Interaction) -> Wi
 /// 진행도가 0.0에서 1.0 사이라는 약속을 전송 형식에서 지킵니다.
 fn clamp_progress(progress: f32) -> f32 {
     progress.clamp(0.0, 1.0)
+}
+
+fn wire_projectile(projectile: &Projectile) -> WireProjectile {
+    WireProjectile {
+        id: projectile.id.0,
+        pos: WirePos::from_tiles(projectile.pos),
+        facing: WireAngle::from_direction(projectile.dir),
+    }
 }
 
 fn wire_monster(monster: &Monster) -> WireMonster {

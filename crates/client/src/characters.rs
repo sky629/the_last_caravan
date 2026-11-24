@@ -243,7 +243,7 @@ mod tests {
     use crate::testing::{YOU, joined_session};
     use crate::view;
     use caravan_client_core::Frame;
-    use caravan_protocol::{WireMonsterKind, WirePhase, WireWagon};
+    use caravan_protocol::{WireMonsterKind, WirePhase, WireWagon, WireWeaponKind};
     use caravan_rules::Team;
 
     /// 화면과 GPU 없이 시스템만 돌리는 앱입니다. 입장을 마친 세션을 가집니다.
@@ -285,7 +285,8 @@ mod tests {
             pos: Ground::new(x, y),
             facing: Ground::new(1.0, 0.0),
             life,
-            last_attack_tick: None,
+            last_attack: None,
+            weapon: WireWeaponKind::Sword,
         }
     }
 
@@ -317,6 +318,7 @@ mod tests {
             piles: Vec::new(),
             players,
             monsters,
+            projectiles: Vec::new(),
         }
     }
 

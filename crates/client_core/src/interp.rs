@@ -11,8 +11,8 @@ use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 use caravan_protocol::{
-    Snapshot, WireAngle, WireLife, WireMonster, WireMonsterKind, WireNode, WirePhase, WirePile,
-    WirePlayer, WireTower, WireWagon,
+    Snapshot, WireAngle, WireAttack, WireLife, WireMonster, WireMonsterKind, WireNode, WirePhase,
+    WirePile, WirePlayer, WireProjectile, WireTower, WireWagon, WireWeaponKind,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -42,6 +42,8 @@ pub struct Frame {
     pub piles: Vec<WirePile>,
     pub players: Vec<PlayerView>,
     pub monsters: Vec<MonsterView>,
+    /// 날아가는 탄환과 한 Tick 전에 끝난 탄환입니다. 끝난 탄환은 끝난 자리에 그려집니다.
+    pub projectiles: Vec<ProjectileView>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,7 +56,10 @@ pub struct PlayerView {
     /// 길이가 1인 지면 방향입니다.
     pub facing: Vec2,
     pub life: WireLife,
-    pub last_attack_tick: Option<u64>,
+    /// 마지막으로 한 공격과 공격한 무기입니다.
+    pub last_attack: Option<WireAttack>,
+    /// 들고 있는 무기입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub weapon: WireWeaponKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,6 +69,16 @@ pub struct MonsterView {
     pub pos: Vec2,
     pub facing: Vec2,
     pub hp: u32,
+}
+
+/// 탄환 하나입니다. 날아가는 방향의 짧은 선을 그리는 데 필요한 위치와 방향입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProjectileView {
+    pub id: u32,
+    /// 지면 좌표(타일)입니다.
+    pub pos: Vec2,
+    /// 길이가 1인 지면 방향입니다.
+    pub facing: Vec2,
 }
 
 impl Frame {
@@ -186,6 +201,22 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
             monster_view(a, b, alpha)
         })
         .collect();
+    // 탄환은 직선으로 일정한 속도로 날아가므로, 두 스냅샷 사이에서 위치를 선형으로 섞은 값이 실제 위치와 같습니다.
+    // 뒤쪽 스냅샷에 없는 탄환(맞았거나, 막혔거나, 사거리를 다 날았습니다)은 재생 시각이 뒤쪽 스냅샷을 지날 때까지 끝난 자리에 그립니다.
+    let projectiles = older
+        .projectiles
+        .iter()
+        .map(|a| {
+            let b = newer.and_then(|newer| {
+                let index = newer
+                    .projectiles
+                    .binary_search_by_key(&a.id, |p| p.id)
+                    .ok()?;
+                newer.projectiles.get(index)
+            });
+            projectile_view(a, b, alpha)
+        })
+        .collect();
     Frame {
         tick,
         expedition: older.expedition,
@@ -197,6 +228,7 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
         piles: older.piles.clone(),
         players,
         monsters,
+        projectiles,
     }
 }
 
@@ -214,7 +246,20 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
         pos,
         facing,
         life: a.life,
-        last_attack_tick: a.last_attack_tick,
+        last_attack: a.last_attack,
+        weapon: a.weapon,
+    }
+}
+
+fn projectile_view(a: &WireProjectile, b: Option<&WireProjectile>, alpha: f32) -> ProjectileView {
+    let pos = match b {
+        Some(b) => lerp(a.pos.to_tiles(), b.pos.to_tiles(), alpha),
+        None => a.pos.to_tiles(),
+    };
+    ProjectileView {
+        id: a.id,
+        pos,
+        facing: a.facing.to_direction(),
     }
 }
 
@@ -279,6 +324,7 @@ mod tests {
             piles: Vec::new(),
             players: Vec::new(),
             monsters: Vec::new(),
+            projectiles: Vec::new(),
         }
     }
 
@@ -307,7 +353,8 @@ mod tests {
                 build_refusal: None,
             },
             last_input_seq: 0,
-            last_attack_tick: None,
+            last_attack: None,
+            weapon: WireWeaponKind::Sword,
         }
     }
 
@@ -409,6 +456,72 @@ mod tests {
             WireLife::Alive { hp: 100, .. }
         ));
         assert!(close(frame.players[0].pos, Vec2::new(8.9, 8.0)));
+    }
+
+    fn arrow(id: u32, x: f32, y: f32) -> WireProjectile {
+        WireProjectile {
+            id,
+            pos: WirePos::from_tiles(Vec2::new(x, y)),
+            facing: WireAngle(0),
+        }
+    }
+
+    #[test]
+    fn an_arrow_flies_in_a_straight_line_between_two_snapshots() {
+        let mut older = snapshot(10);
+        older.projectiles = vec![arrow(1, 4.0, 4.0), arrow(2, 8.0, 9.0)];
+        let mut newer = snapshot(11);
+        newer.projectiles = vec![arrow(1, 4.7, 4.0), arrow(2, 8.0, 9.7)];
+        let buffer = buffer_with(vec![older, newer]);
+
+        let frame = buffer.sample_at(10.5).unwrap();
+
+        assert_eq!(frame.projectiles.len(), 2);
+        assert!(close(frame.projectiles[0].pos, Vec2::new(4.35, 4.0)));
+        assert!(close(frame.projectiles[1].pos, Vec2::new(8.0, 9.35)));
+        assert!(close(frame.projectiles[0].facing, Vec2::new(1.0, 0.0)));
+    }
+
+    #[test]
+    fn an_arrow_that_ended_stays_where_it_ended_until_playback_passes_the_snapshot_without_it() {
+        let mut older = snapshot(10);
+        older.projectiles = vec![arrow(1, 6.0, 4.0)];
+        let newer = snapshot(11);
+        let buffer = buffer_with(vec![older, newer]);
+
+        let before = buffer.sample_at(10.9).unwrap();
+        assert_eq!(before.projectiles.len(), 1);
+        assert!(close(before.projectiles[0].pos, Vec2::new(6.0, 4.0)));
+
+        let after = buffer.sample_at(11.0).unwrap();
+        assert!(after.projectiles.is_empty());
+    }
+
+    #[test]
+    fn an_arrow_that_is_only_in_the_newer_snapshot_appears_when_playback_reaches_it() {
+        let older = snapshot(10);
+        let mut newer = snapshot(11);
+        newer.projectiles = vec![arrow(1, 4.7, 4.0)];
+        let buffer = buffer_with(vec![older, newer]);
+
+        assert!(buffer.sample_at(10.9).unwrap().projectiles.is_empty());
+        assert_eq!(buffer.sample_at(11.0).unwrap().projectiles.len(), 1);
+    }
+
+    #[test]
+    fn a_weapon_switch_shows_when_playback_reaches_the_snapshot_that_carries_it() {
+        let mut older = snapshot(10);
+        older.players = vec![player(1, 8.0, 8.0, 100)];
+        let mut newer = snapshot(11);
+        newer.players = vec![player(1, 8.0, 8.0, 100)];
+        newer.players[0].weapon = WireWeaponKind::Bow;
+        let buffer = buffer_with(vec![older, newer]);
+
+        let between = buffer.sample_at(10.9).unwrap();
+        assert_eq!(between.players[0].weapon, WireWeaponKind::Sword);
+
+        let after = buffer.sample_at(11.0).unwrap();
+        assert_eq!(after.players[0].weapon, WireWeaponKind::Bow);
     }
 
     #[test]

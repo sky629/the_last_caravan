@@ -139,7 +139,7 @@ mod tests {
     use crate::view;
     use bevy::time::TimeUpdateStrategy;
     use caravan_client_core::{Frame, PlayerView};
-    use caravan_protocol::{WireLife, WirePhase, WireWagon};
+    use caravan_protocol::{WireLife, WirePhase, WireWagon, WireWeaponKind};
     use caravan_rules::{Team, Vec2 as Ground};
 
     /// 화면과 GPU 없이 시스템만 돌리는 앱입니다. 한 번 갱신할 때마다 0.05초가 흐릅니다.
@@ -189,9 +189,11 @@ mod tests {
                 pos: Ground::new(x, y),
                 facing: Ground::new(1.0, 0.0),
                 life: WireLife::Dead,
-                last_attack_tick: None,
+                last_attack: None,
+                weapon: WireWeaponKind::Sword,
             }],
             monsters: Vec::new(),
+            projectiles: Vec::new(),
         });
         app.update();
     }

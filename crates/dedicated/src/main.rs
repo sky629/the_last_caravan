@@ -147,11 +147,11 @@ impl ServerTransport for DebugTransport {
     }
 }
 
-/// 읽을 수 있는 한 줄로 바꿉니다. 스냅샷은 몬스터가 수백 마리일 수 있으므로 몬스터 목록을 수로 줄입니다.
+/// 읽을 수 있는 한 줄로 바꿉니다. 스냅샷은 몬스터가 수백 마리, 탄환이 수십 개일 수 있으므로 두 목록을 수로 줄입니다.
 fn describe(msg: &ServerMsg) -> String {
     match msg {
         ServerMsg::Snapshot(snapshot) => format!(
-            "Snapshot {{ tick: {}, expedition: {}, phase: {:?}, wagon: {:?}, stash: {}, towers: {:?}, nodes: {:?}, piles: {:?}, players: {:?}, monsters: {} }}",
+            "Snapshot {{ tick: {}, expedition: {}, phase: {:?}, wagon: {:?}, stash: {}, towers: {:?}, nodes: {:?}, piles: {:?}, players: {:?}, monsters: {}, projectiles: {} }}",
             snapshot.tick,
             snapshot.expedition,
             snapshot.phase,
@@ -161,7 +161,8 @@ fn describe(msg: &ServerMsg) -> String {
             snapshot.nodes,
             snapshot.piles,
             snapshot.players,
-            snapshot.monsters.len()
+            snapshot.monsters.len(),
+            snapshot.projectiles.len()
         ),
         other => format!("{other:?}"),
     }

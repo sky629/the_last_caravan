@@ -2,8 +2,9 @@
 //! 규칙은 공개 함수(`add_player`, `step`)로만 움직이고, 기대하는 값은 규칙의 약속(수치표의 값)에서 구합니다.
 
 use caravan_protocol::{
-    Snapshot, Welcome, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
-    WireMonsterKind, WireOutcome, WirePhase, WirePos, WireRepairTarget, WireTile, WireTowerState,
+    Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
+    WireDelivery, WireInteraction, WireLife, WireMonsterKind, WireOutcome, WirePhase, WirePos,
+    WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
     AimDir, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2,
@@ -92,7 +93,12 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
             build_refusal: None
         }
     );
-    assert_eq!((player.last_input_seq, player.last_attack_tick), (0, None));
+    assert_eq!((player.last_input_seq, player.last_attack), (0, None));
+    assert_eq!(
+        player.weapon,
+        WireWeaponKind::Sword,
+        "a player starts with the sword"
+    );
     assert!(snapshot.piles.is_empty(), "nothing lies on the ground");
     let amounts: Vec<(u32, u32)> = snapshot
         .nodes
@@ -571,5 +577,138 @@ fn a_sprinting_player_runs_farther_and_the_stamina_on_the_wire_drains() {
     assert!(
         (x - (32.0 + 6.4)).abs() <= WirePos::MAX_ERROR_TILES,
         "ran 6.4 tiles from x = 32, got {x}"
+    );
+}
+
+#[test]
+fn the_weapon_a_player_holds_is_on_the_wire() {
+    let mut sim = sim_with(|_| {});
+    let alive = sim.add_player().unwrap();
+    let other = sim.add_player().unwrap();
+    let press_q = PlayerInputs::from([(
+        alive,
+        PlayerInput {
+            switch_weapon: true,
+            ..PlayerInput::default()
+        },
+    )]);
+
+    step(&mut sim, &press_q, 1);
+
+    let players = Snapshot::from_sim(&sim).players;
+    let weapon_of = |id: u32| players.iter().find(|p| p.id == id).map(|p| p.weapon);
+    assert_eq!(weapon_of(alive.0), Some(WireWeaponKind::Bow));
+    assert_eq!(
+        weapon_of(other.0),
+        Some(WireWeaponKind::Sword),
+        "only the player who pressed Q switched"
+    );
+}
+
+#[test]
+fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_held_now() {
+    let mut sim = sim_with(|_| {});
+    let fighter = sim.add_player().unwrap();
+    let swing = PlayerInputs::from([(
+        fighter,
+        PlayerInput {
+            aim: AimDir::new(1.0, 0.0),
+            attack: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    let press_q = PlayerInputs::from([(
+        fighter,
+        PlayerInput {
+            switch_weapon: true,
+            ..PlayerInput::default()
+        },
+    )]);
+
+    step(&mut sim, &swing, 1);
+    let swung_at = Snapshot::from_sim(&sim).tick;
+    step(&mut sim, &press_q, 1);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let player = snapshot.players.iter().find(|p| p.id == fighter.0).unwrap();
+    assert_eq!(player.weapon, WireWeaponKind::Bow);
+    assert_eq!(
+        player.last_attack,
+        Some(WireAttack {
+            tick: swung_at,
+            weapon: WireWeaponKind::Sword
+        }),
+        "the effect to draw is the sword swing"
+    );
+}
+
+#[test]
+fn a_shot_arrow_is_on_the_wire_with_its_position_and_direction_and_is_gone_when_it_ends() {
+    let mut sim = sim_with(|_| {});
+    let archer = sim.add_player().unwrap();
+    let press_q = PlayerInputs::from([(
+        archer,
+        PlayerInput {
+            switch_weapon: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    let shoot = PlayerInputs::from([(
+        archer,
+        PlayerInput {
+            aim: AimDir::new(1.0, 0.0),
+            attack: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    assert!(Snapshot::from_sim(&sim).projectiles.is_empty());
+
+    step(&mut sim, &press_q, 1);
+    step(&mut sim, &shoot, 1);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let [arrow] = snapshot.projectiles[..] else {
+        panic!("one arrow expected, got {:?}", snapshot.projectiles);
+    };
+    assert_eq!(arrow.id, 1);
+    let at = arrow.pos.to_tiles();
+    // 플레이어는 (32, 29.5)에서 동쪽을 향해 쏘고, 활의 탄환은 한 Tick에 14 / 20 = 0.7타일 날아갑니다.
+    assert!(
+        (at.x - 32.7).abs() <= WirePos::MAX_ERROR_TILES
+            && (at.y - 29.5).abs() <= WirePos::MAX_ERROR_TILES,
+        "arrow at {at:?}"
+    );
+    assert_eq!(arrow.facing, WireAngle::from_direction(Vec2::new(1.0, 0.0)));
+
+    let ended = PlayerInputs::new();
+    step(&mut sim, &ended, 40);
+    assert!(
+        Snapshot::from_sim(&sim).projectiles.is_empty(),
+        "an arrow that ended is removed from the snapshot"
+    );
+}
+
+#[test]
+fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
+    let mut sim = Sim::new(Tuning::default());
+    let first = sim.add_player().unwrap();
+
+    let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
+
+    assert_eq!(
+        welcome.world.weapons,
+        vec![
+            WeaponInfo {
+                kind: WireWeaponKind::Sword,
+                delivery: WireDelivery::Arc {
+                    reach: 1.0,
+                    half_angle_deg: 60.0
+                },
+            },
+            WeaponInfo {
+                kind: WireWeaponKind::Bow,
+                delivery: WireDelivery::Projectile,
+            },
+        ]
     );
 }

@@ -220,7 +220,11 @@ fn a_reviver_stays_in_place_and_cannot_attack() {
     s.run_ticks(20);
 
     assert_eq!(s.player(b).pos, start, "cannot move");
-    assert_eq!(s.player(b).last_attack_tick, None, "cannot attack");
+    assert_eq!(
+        s.player(b).last_attack.map(|attack| attack.tick),
+        None,
+        "cannot attack"
+    );
     assert_eq!(s.monster(monster).unwrap().hp, 60);
     assert!(s.sim.revive_progress(a).is_some());
 }
@@ -267,7 +271,7 @@ fn a_downed_player_crawls_slowly_and_cannot_attack() {
         close(crawled, 2.0 * s.sim.tuning().player.crawl_speed),
         "crawled {crawled}"
     );
-    assert_eq!(s.player(a).last_attack_tick, None);
+    assert_eq!(s.player(a).last_attack.map(|attack| attack.tick), None);
     assert_eq!(s.monster(monster).unwrap().hp, 60);
 }
 
