@@ -15,11 +15,14 @@ use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use caravan_protocol::{RejectReason, RoomCode, ServerLimits, ServerTransport, WirePos};
+use caravan_protocol::{
+    LinkId, RejectReason, RoomCode, ServerLimits, ServerTransport, Welcome, check_welcome,
+};
 use caravan_rules::{PlayerId, Tuning};
 
 use clock::TickClock;
 use hub::{Hub, Out};
+use room::Room;
 
 /// 서버에서 일어난 일 가운데 운영자에게 알릴 것입니다. 라이브러리는 직접 로그를 쓰지 않고, 이 값을 돌려줍니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,7 +71,8 @@ impl fmt::Display for Notice {
 /// 서버를 만들지 못한 이유입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerError {
-    /// `Tuning::validate`가 거절한 수치입니다. 값은 어긋난 첫 항목을 설명하는 문장입니다.
+    /// `Tuning::validate`가 거절했거나, 클라이언트가 받아들이지 않을 입장 안내를 만드는 수치입니다.
+    /// 값은 어긋난 첫 항목을 설명하는 문장입니다.
     InvalidTuning(String),
     /// 접속의 한도가 `Tuning`과 맞지 않습니다. 값은 어긋난 항목을 설명하는 문장입니다.
     InvalidLimits(String),
@@ -109,20 +113,13 @@ pub struct GameServer {
     ticks_run: u64,
 }
 
-/// `Tuning::validate`가 검사하는 규칙의 전제에 더해, `Tuning`이 전송 형식과 접속 한도 안에 들어가는지 검사합니다.
+/// `Tuning::validate`가 검사하는 규칙의 전제에 더해, 이 수치로 보낼 입장 안내를 클라이언트가 받아들이는지와 접속 한도에 맞는지 검사합니다.
 fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerError> {
     tuning.validate().map_err(ServerError::InvalidTuning)?;
 
-    // 위치는 축마다 `u16`으로 보내므로, 이보다 큰 맵의 좌표는 조용히 잘려서 클라이언트가 틀린 위치를 그립니다.
-    let map = &tuning.map;
-    if map.width > WirePos::MAX_TILES || map.height > WirePos::MAX_TILES {
-        return Err(ServerError::InvalidTuning(format!(
-            "map {} x {} tiles does not fit the wire position range of {} tiles per side",
-            map.width,
-            map.height,
-            WirePos::MAX_TILES
-        )));
-    }
+    // 클라이언트는 상한을 넘는 입장 안내를 받으면 접속을 포기하므로, 보낼 입장 안내에 같은 확인을 미리 해서
+    // 어떤 클라이언트도 들어올 수 없는 서버가 시작되지 않게 합니다. 이 상한은 맵 좌표가 전송 범위(`WirePos`)를 넘는 설정도 거절합니다.
+    check_welcome(&first_welcome(tuning, limits)).map_err(ServerError::InvalidTuning)?;
 
     let needed = tuning.tick_hz.saturating_mul(LINK_RATE_HEADROOM);
     if limits.max_messages_per_sec < needed {
@@ -134,8 +131,18 @@ fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerErro
     Ok(())
 }
 
+/// 이 수치로 만든 빈 방에 첫 플레이어가 입장할 때 서버가 보내는 입장 안내입니다.
+fn first_welcome(tuning: &Tuning, limits: &ServerLimits) -> Welcome {
+    let mut room = Room::new(tuning.clone(), limits.input_stale_ticks);
+    // `Tuning::validate`가 정원이 1 이상임을 확인했으므로 빈 방의 첫 입장은 항상 성공합니다.
+    let (_, welcome) = room
+        .admit(LinkId(0))
+        .expect("a validated tuning admits the first player");
+    welcome
+}
+
 impl GameServer {
-    /// 수치가 규칙의 전제를 지키고 전송 형식과 접속 한도에 맞는지 한 번 검사하고, 어긋나면 오류를 돌려줍니다.
+    /// 수치가 규칙의 전제를 지키고, 클라이언트가 받아들이는 입장 안내를 만들고, 접속 한도에 맞는지 한 번 검사하고, 어긋나면 오류를 돌려줍니다.
     /// 이 검사를 통과한 수치로 만든 방은 개체가 벽을 통과하는 것 같은 오동작을 일으키지 않고, 정상적인 클라이언트의 접속을 한도 때문에 끊지 않습니다.
     pub fn new(
         transport: Box<dyn ServerTransport>,

@@ -13,12 +13,12 @@
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, PROTOCOL_VERSION, RejectReason, RoomCode, ServerMsg, Snapshot, Welcome,
+    check_welcome,
 };
 use caravan_rules::Vec2;
 
 use crate::input::{Controls, InputSender};
 use crate::interp::{Frame, SnapshotBuffer};
-use crate::limits::check_welcome;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Session {

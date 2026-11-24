@@ -7,6 +7,7 @@
 //! - `transport`: 접속 방식 인터페이스 두 개. 서버와 클라이언트는 이 트레이트만 압니다.
 //! - `loopback`: 같은 프로세스 안에서 메시지를 전달하는 접속 방식. 서버 테스트가 사용합니다.
 //! - `limits`: 서버가 접속 하나와 메시지 하나에 허용하는 한계. 게임 서버와 서버 쪽 접속 방식이 함께 읽습니다.
+//! - `welcome_check`: `Welcome`이 믿고 쓸 만한 값인지 확인하는 상한. 클라이언트는 받은 `Welcome`에, 서버는 시작할 때 보낼 `Welcome`에 같은 확인을 합니다.
 //!
 //! 읽는 순서: `messages`, `snapshot`, `welcome`, `units`, `transport`, `codec`, `loopback`.
 
@@ -19,6 +20,7 @@ mod snapshot;
 mod transport;
 mod units;
 mod welcome;
+mod welcome_check;
 
 pub use codec::{DecodeError, decode_client, decode_server, encode_client, encode_server};
 pub use limits::ServerLimits;
@@ -32,3 +34,4 @@ pub use snapshot::{
 pub use transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};
 pub use units::{WireAngle, WirePos, WireRect};
 pub use welcome::{MonsterKindInfo, TowerSite, Welcome, WorldInfo};
+pub use welcome_check::check_welcome;

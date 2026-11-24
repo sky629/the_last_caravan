@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
-    ServerLimits, ServerMsg, WireLife, WirePhase, WirePos, loopback,
+    ServerLimits, ServerMsg, Welcome, WireLife, WirePhase, check_welcome, loopback,
 };
-use caravan_rules::{PlayerId, Tuning};
+use caravan_rules::{PlayerId, Sim, Tuning};
 use caravan_server::{GameServer, Notice, ServerError, ServerStats};
 use common::{
     assert_near, drain, input, input_with, last_snapshot, player, player_ids, position, rig,
@@ -567,25 +567,60 @@ fn a_server_refuses_a_tick_rate_that_the_link_message_limit_cannot_carry() {
     assert_eq!(try_start(fast, roomy), Ok(()));
 }
 
-#[test]
-fn a_server_refuses_a_map_larger_than_the_wire_position_can_represent() {
-    let limits = ServerLimits::default();
-    let mut widest = Tuning::default();
-    widest.map.width = WirePos::MAX_TILES;
-    widest.map.height = WirePos::MAX_TILES;
-    assert_eq!(try_start(widest, limits), Ok(()));
+/// 이 수치로 입장한 클라이언트가 입장 안내를 확인한 결과입니다.
+fn client_verdict(tuning: &Tuning) -> Result<(), String> {
+    let mut sim = Sim::new(tuning.clone());
+    let first = sim.add_player().expect("an empty room admits a player");
+    let me = sim.player(first).expect("the player was just added");
+    check_welcome(&Welcome::from_sim(&sim, me))
+}
 
-    let mut wide = Tuning::default();
-    wide.map.width = WirePos::MAX_TILES + 1.0;
+#[test]
+fn a_server_starts_exactly_when_a_client_would_accept_its_welcome() {
+    let with_map_side = |side: f32| {
+        let mut tuning = Tuning::default();
+        tuning.map.width = side;
+        tuning.map.height = side;
+        tuning
+    };
+    let with_capacity = |max_players: usize| Tuning {
+        max_players,
+        ..Tuning::default()
+    };
+    let cases = [
+        ("the default numbers", Tuning::default()),
+        ("a 128 x 128 map", with_map_side(128.0)),
+        ("a 129 x 129 map", with_map_side(129.0)),
+        ("a 200 x 200 map", with_map_side(200.0)),
+        // 전송할 수 있는 좌표 범위보다 넓은 맵입니다.
+        ("a 600 x 600 map", with_map_side(600.0)),
+        ("a capacity of 16", with_capacity(16)),
+        ("a capacity of 17", with_capacity(17)),
+        ("a capacity of 20", with_capacity(20)),
+    ];
+
+    let (mut accepted, mut refused) = (0, 0);
+    for (name, tuning) in cases {
+        let verdict = client_verdict(&tuning);
+        let started = try_start(tuning, ServerLimits::default());
+        match verdict {
+            Ok(()) => {
+                accepted += 1;
+                assert_eq!(started, Ok(()), "{name}: the clients accept it");
+            }
+            Err(reason) => {
+                refused += 1;
+                assert_eq!(
+                    started,
+                    Err(ServerError::InvalidTuning(reason)),
+                    "{name}: the clients refuse it, so the server says why"
+                );
+            }
+        }
+    }
     assert!(
-        matches!(try_start(wide, limits), Err(ServerError::InvalidTuning(why)) if why.contains("map")),
-        "a map wider than the wire range"
-    );
-    let mut tall = Tuning::default();
-    tall.map.height = WirePos::MAX_TILES + 1.0;
-    assert!(
-        matches!(try_start(tall, limits), Err(ServerError::InvalidTuning(why)) if why.contains("map")),
-        "a map taller than the wire range"
+        accepted > 1 && refused > 1,
+        "the cases cover both answers ({accepted} accepted, {refused} refused)"
     );
 }
 

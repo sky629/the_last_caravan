@@ -141,7 +141,7 @@ cd crates/client && trunk build
 | 계층 | 크레이트 | 역할 | 의존할 수 있는 것 |
 |---|---|---|---|
 | 도메인 | `caravan_rules` | 게임 규칙 전체입니다. 이동, 충돌, 전투, 몬스터, 무리, 마차와 감시탑, 쓰러짐과 부활, 원정의 성공과 실패를 계산합니다. | 없음 |
-| 계약 | `caravan_protocol` | 메시지, 규칙 상태를 전송 형식으로 바꾸는 변환, 바이트 변환, 접속 방식 인터페이스 두 개, 프로세스 내부 전달입니다. | `caravan_rules`, serde, postcard |
+| 계약 | `caravan_protocol` | 메시지, 규칙 상태를 전송 형식으로 바꾸는 변환, 바이트 변환, 접속 방식 인터페이스 두 개, 프로세스 내부 전달, 입장 안내의 상한 검사입니다. 서버는 시작할 때, 클라이언트는 입장 안내를 받을 때 같은 검사를 합니다. | `caravan_rules`, serde, postcard |
 | 애플리케이션 | `caravan_server` | 방, Tick 일정, 입장과 퇴장, 입력 처리입니다. 소켓, 스레드, 현재 시각을 직접 쓰지 않습니다. | `caravan_rules`, `caravan_protocol` |
 | 애플리케이션 | `caravan_client_core` | 클라이언트에서 Bevy가 필요하지 않은 로직입니다. 접속 상태, 입력 전송, 보간, 쿼터뷰 투영, HUD의 내용, 실행 옵션을 다룹니다. | `caravan_rules`, `caravan_protocol` |
 | 어댑터 | `caravan_ws_server` | WebSocket으로 서버 쪽 접속 방식 인터페이스를 구현합니다 (PC 전용). | `caravan_protocol`, tokio, tokio-tungstenite, futures-util |
