@@ -107,6 +107,61 @@ fn a_player_who_joins_in_the_middle_of_an_expedition_is_alive_at_a_spawn_point()
 }
 
 #[test]
+fn a_player_who_joins_after_someone_left_takes_the_spawn_point_nobody_in_the_room_uses() {
+    let spawns = [
+        Vec2::new(10.0, 10.0),
+        Vec2::new(11.0, 10.0),
+        Vec2::new(12.0, 10.0),
+        Vec2::new(13.0, 10.0),
+    ];
+    let mut s = Scenario::with_tuning(|t| t.map.player_spawns = spawns.to_vec());
+    let first = s.sim.add_player().unwrap();
+    let second = s.sim.add_player().unwrap();
+    let third = s.sim.add_player().unwrap();
+
+    s.sim.remove_player(first);
+    let newcomer = s.sim.add_player().unwrap();
+    assert_eq!(
+        s.player(newcomer).pos,
+        spawns[0],
+        "the free point is reused"
+    );
+    assert_eq!(s.player(second).pos, spawns[1]);
+    assert_eq!(s.player(third).pos, spawns[2]);
+
+    s.sim.remove_player(second);
+    s.sim.remove_player(third);
+    let next = s.sim.add_player().unwrap();
+    assert_eq!(
+        s.player(next).pos,
+        spawns[1],
+        "the lowest free point comes first"
+    );
+}
+
+#[test]
+fn a_new_expedition_returns_each_player_to_their_own_spawn_point_after_someone_left() {
+    let spawns = [
+        Vec2::new(10.0, 10.0),
+        Vec2::new(11.0, 10.0),
+        Vec2::new(12.0, 10.0),
+    ];
+    let mut s = Scenario::with_tuning(|t| t.map.player_spawns = spawns.to_vec());
+    let first = s.player_at(3.0, 3.0);
+    let second = s.player_at(4.0, 4.0);
+    let third = s.player_at(5.0, 5.0);
+    s.sim.remove_player(first);
+
+    s.set_wagon_hp(0);
+    s.run_ticks(1);
+    s.run_ticks(s.ticks(s.sim.tuning().waves.restart_secs) + 1);
+
+    assert_eq!(s.sim.expedition_number(), 2);
+    assert_eq!(s.player(second).pos, spawns[1]);
+    assert_eq!(s.player(third).pos, spawns[2]);
+}
+
+#[test]
 fn the_first_wave_appears_after_the_delay_one_monster_at_a_time() {
     let mut s = Scenario::with_waves(|_| {});
     let delay = s.ticks(s.sim.tuning().waves.first_delay_secs);

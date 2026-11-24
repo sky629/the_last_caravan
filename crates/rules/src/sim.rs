@@ -81,6 +81,7 @@ impl Sim {
     }
 
     /// 새 플레이어를 최대 HP의 살아 있는 상태로 등장 지점에 추가하고 번호를 돌려줍니다.
+    /// 등장 지점은 방에 있는 플레이어가 쓰지 않는 가장 앞의 순서로 정하므로, 먼저 나간 플레이어의 자리를 새 플레이어가 이어받습니다.
     /// 원정이 진행되는 도중에도 곧바로 참가합니다. 방이 가득 차 있으면 거절합니다.
     pub fn add_player(&mut self) -> Result<PlayerId, JoinError> {
         if self.world.players.len() >= self.tuning.max_players {
@@ -90,9 +91,10 @@ impl Sim {
         }
         let id = PlayerId(self.next_player);
         self.next_player += 1;
-        let spawn = spawn_point(&self.tuning.map, self.world.players.len());
+        let slot = self.free_spawn_slot();
+        let spawn = spawn_point(&self.tuning.map, slot);
         let team = self.team_for_new_player();
-        let player = Player::new(id, team, spawn, &self.tuning);
+        let player = Player::new(id, team, slot, spawn, &self.tuning);
         self.world.players.insert(id, player);
         Ok(id)
     }
@@ -145,9 +147,21 @@ impl Sim {
         self.world.monsters.clear();
         self.world.wagon = Wagon::new(&self.tuning);
         self.world.towers = structures::build_towers(&self.tuning);
-        for (slot, player) in self.world.players.values_mut().enumerate() {
-            player.reset(spawn_point(&self.tuning.map, slot), &self.tuning);
+        for player in self.world.players.values_mut() {
+            player.reset(
+                spawn_point(&self.tuning.map, player.spawn_slot),
+                &self.tuning,
+            );
         }
+    }
+
+    /// 방에 있는 플레이어가 쓰지 않는 가장 앞의 등장 순서입니다.
+    /// 플레이어가 n명이면 순서 0부터 n - 1까지가 모두 쓰이고 있을 때만 n이 가장 앞입니다.
+    fn free_spawn_slot(&self) -> usize {
+        let count = self.world.players.len();
+        (0..count)
+            .find(|slot| self.world.players.values().all(|p| p.spawn_slot != *slot))
+            .unwrap_or(count)
     }
 
     /// 진영을 정하는 곳은 이 함수 하나입니다. 협동 모드는 모두를 같은 편으로 둡니다.
@@ -217,7 +231,7 @@ impl Sim {
     }
 }
 
-/// `slot`번째 플레이어가 나타날 위치입니다. 등장 지점을 돌아가며 씁니다.
+/// 등장 순서가 `slot`인 플레이어가 나타날 위치입니다. 순서가 등장 지점의 수를 넘으면 처음부터 다시 돌아가며 씁니다.
 fn spawn_point(map: &MapSpec, slot: usize) -> Vec2 {
     map.player_spawns
         .get(slot % map.player_spawns.len().max(1))

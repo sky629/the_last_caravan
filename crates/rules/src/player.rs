@@ -14,6 +14,8 @@ use crate::world::{Ctx, Hit, Target, World};
 pub struct Player {
     pub id: PlayerId,
     pub team: Team,
+    /// 이 플레이어가 쓰는 등장 지점의 순서입니다. 방에 있는 동안 바뀌지 않고, 새 원정은 이 순서의 등장 지점으로 돌려놓습니다.
+    pub(crate) spawn_slot: usize,
     pub pos: Vec2,
     /// 마지막으로 조준한 방향입니다. 근접 공격의 부채꼴이 이 방향을 향합니다.
     pub facing: Vec2,
@@ -76,10 +78,17 @@ pub enum Interaction {
 
 impl Player {
     /// 최대 HP의 살아 있는 플레이어를 `pos`에 만듭니다.
-    pub(crate) fn new(id: PlayerId, team: Team, pos: Vec2, t: &Tuning) -> Player {
+    pub(crate) fn new(
+        id: PlayerId,
+        team: Team,
+        spawn_slot: usize,
+        pos: Vec2,
+        t: &Tuning,
+    ) -> Player {
         Player {
             id,
             team,
+            spawn_slot,
             pos,
             facing: Vec2::new(1.0, 0.0),
             life: Life::Alive {
@@ -96,7 +105,7 @@ impl Player {
     /// 입력의 순서 번호는 원정이 바뀌어도 이어집니다.
     pub(crate) fn reset(&mut self, pos: Vec2, t: &Tuning) {
         let seq = self.last_input_seq;
-        *self = Player::new(self.id, self.team, pos, t);
+        *self = Player::new(self.id, self.team, self.spawn_slot, pos, t);
         self.last_input_seq = seq;
     }
 

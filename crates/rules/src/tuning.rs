@@ -192,7 +192,7 @@ pub struct MapSpec {
     /// 원정이 시작될 때 놓여 있는 시설입니다. 번호는 이 목록의 순서대로 붙습니다.
     pub structures: Vec<StructurePlacement>,
     pub obstacles: Vec<Rect>,
-    /// 플레이어가 나타나는 위치입니다. 입장한 순서대로 하나씩 씁니다.
+    /// 플레이어가 나타나는 위치입니다. 플레이어마다 자기 등장 순서의 지점을 쓰고, 입장할 때는 방에 있는 플레이어가 쓰지 않는 가장 앞의 순서를 받습니다.
     pub player_spawns: Vec<Vec2>,
     /// 맵 가장자리의 등장 지점입니다. 무리 N은 `monster_spawns[(N - 1) % 개수]`에서 등장합니다.
     pub monster_spawns: Vec<Vec2>,
