@@ -1,7 +1,7 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
 //! 왼쪽 위에 내 HP, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원이 있고,
-//! 아래 가운데에 건설의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
+//! 아래 가운데에 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 방 코드가 있고, 화면 가운데에 원정의 결과나 접속 문제가 크게 나옵니다.
 
 use bevy::prelude::*;
@@ -166,7 +166,7 @@ pub fn setup(mut commands: Commands) {
         })
         .add_children(&[day, timer, expedition, stash, carry]);
 
-    // 아래 가운데: 출혈 시간, 건설의 거절 이유, 부활이나 수리나 건설의 진행 막대.
+    // 아래 가운데: 출혈 시간, 건설과 수리의 거절 이유, 부활이나 수리나 건설의 진행 막대.
     let bleed = text_node(&mut commands, 24.0, BLEED);
     let refusal = text_node(&mut commands, 24.0, BLEED);
     let action = meter_node(&mut commands, ACTION_WIDTH);

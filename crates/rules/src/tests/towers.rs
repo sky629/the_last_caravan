@@ -1,4 +1,4 @@
-//! 감시탑의 사격, 피해와 파괴, 수리를 확인합니다.
+//! 감시탑의 사격, 피해와 파괴, 수리와 수리의 비용을 확인합니다.
 //!
 //! 시나리오의 감시탑은 테스트가 놓은 타일 (1, 17)이고, 사각형은 (1, 17)에서 (2, 18)까지, 중심은 (1.5, 17.5)입니다.
 
@@ -206,29 +206,39 @@ fn a_tower_can_be_built_again_where_one_was_destroyed() {
     assert_eq!(tower.tile, crate::world::Tile::new(1, 17));
 }
 
+fn tower_repair_pulse(s: &Scenario) -> u32 {
+    s.ticks(s.sim.tuning().structures.watchtower.repair.heal.pulse_secs)
+}
+
 #[test]
-fn holding_f_next_to_a_damaged_tower_repairs_it_in_pulses() {
+fn holding_f_next_to_a_damaged_tower_repairs_it_in_pulses_and_each_pulse_costs_one() {
     let (mut s, a) = repairer_at_a_damaged_tower();
-    let pulse = s.ticks(s.sim.tuning().structures.watchtower.repair.pulse_secs);
+    let pulse = tower_repair_pulse(&s);
+    let stash = s.sim.stash();
 
     s.run_ticks(pulse - 1);
     assert_eq!(s.tower().hp(), 100, "no HP before the first pulse");
+    assert_eq!(s.sim.stash(), stash, "and nothing is paid before it");
 
     s.run_ticks(1);
-    assert_eq!(s.tower().hp(), 110, "10 HP per pulse");
+    assert_eq!(s.tower().hp(), 130, "30 HP per pulse");
+    assert_eq!(s.sim.stash(), stash - 1, "paid with 1 resource");
     s.run_ticks(pulse);
-    assert_eq!(s.tower().hp(), 120);
+    assert_eq!(s.tower().hp(), 160);
+    assert_eq!(s.sim.stash(), stash - 2);
     assert!(s.player(a).interaction().is_some());
 }
 
 #[test]
-fn a_repair_ends_at_full_hp_and_never_goes_above_it() {
+fn a_repair_ends_at_full_hp_and_never_goes_above_it_and_the_short_last_pulse_costs_one() {
     let (mut s, a) = repairer_at_a_damaged_tower();
     s.set_tower_hp(295);
+    let stash = s.sim.stash();
 
     s.run_ticks(s.ticks(2.0));
 
     assert_eq!(s.tower().hp(), 300);
+    assert_eq!(s.sim.stash(), stash - 1);
     assert!(
         s.player(a).interaction().is_none(),
         "nothing left to repair"
@@ -236,19 +246,37 @@ fn a_repair_ends_at_full_hp_and_never_goes_above_it() {
 }
 
 #[test]
+fn a_tower_repaired_from_almost_nothing_to_full_costs_what_building_one_costs() {
+    let (mut s, _) = repairer_at_a_damaged_tower();
+    s.set_tower_hp(1);
+    s.set_stash(100);
+    let pulse = tower_repair_pulse(&s);
+    let build_cost = s.sim.tuning().structures.watchtower.build_cost;
+
+    let elapsed = s.run_until(pulse * 20, |sim| {
+        sim.towers().all(|tower| tower.hp() == 300)
+    });
+
+    assert_eq!(elapsed, 10 * pulse, "299 HP in pulses of 30 is 10 pulses");
+    assert_eq!(100 - s.sim.stash(), build_cost);
+}
+
+#[test]
 fn releasing_f_stops_the_repair_and_keeps_the_hp_restored_so_far() {
     let (mut s, a) = repairer_at_a_damaged_tower();
-    s.run_ticks(25);
-    assert_eq!(s.tower().hp(), 120);
+    s.run_ticks(2 * tower_repair_pulse(&s) + 5);
+    assert_eq!(s.tower().hp(), 160);
+    let stash = s.sim.stash();
 
     s.hold(a, PlayerInput::default());
     s.run_ticks(60);
 
     assert_eq!(
         s.tower().hp(),
-        120,
+        160,
         "the restored HP stays and nothing more arrives"
     );
+    assert_eq!(s.sim.stash(), stash, "and nothing more is paid");
 }
 
 #[test]
@@ -298,36 +326,45 @@ fn the_repair_stops_when_the_repairer_goes_down() {
 }
 
 #[test]
-fn several_repairers_add_up() {
+fn several_repairers_add_up_and_each_pays_for_its_own_pulse() {
     let (mut s, _) = repairer_at_a_damaged_tower();
     let b = s.player_at(2.5, 17.0);
     s.hold(b, press_f());
-    let pulse = s.ticks(s.sim.tuning().structures.watchtower.repair.pulse_secs);
+    let stash = s.sim.stash();
 
-    s.run_ticks(pulse);
+    s.run_ticks(tower_repair_pulse(&s));
 
-    assert_eq!(s.tower().hp(), 100 + 2 * 10);
+    assert_eq!(s.tower().hp(), 100 + 2 * 30);
+    assert_eq!(s.sim.stash(), stash - 2);
 }
 
 #[test]
-fn a_repair_needs_no_resource_and_a_far_player_cannot_repair() {
+fn a_tower_pulse_the_stash_cannot_pay_does_not_heal() {
+    let (mut s, a) = repairer_at_a_damaged_tower();
+    s.set_stash(0);
+
+    s.run_ticks(3 * tower_repair_pulse(&s));
+
+    assert_eq!(s.tower().hp(), 100);
+    assert!(s.player(a).interaction().is_some(), "still repairing");
+    assert!(s.sim.lacks_stash_to_repair(a));
+}
+
+#[test]
+fn a_far_player_cannot_repair_and_a_near_player_can() {
     let mut s = field_with_tower();
     let near = s.player_at(2.5, 17.5);
     let far = s.player_at(6.0, 17.5);
     s.set_tower_hp(100);
     s.hold(far, press_f());
 
-    s.run_ticks(40);
+    s.run_ticks(2 * tower_repair_pulse(&s));
     assert_eq!(s.tower().hp(), 100, "out of the repair range");
     assert!(s.player(far).interaction().is_none());
 
     s.hold(near, press_f());
-    s.run_ticks(10);
-    assert_eq!(
-        s.tower().hp(),
-        110,
-        "a player in range repairs with no cost"
-    );
+    s.run_ticks(tower_repair_pulse(&s));
+    assert_eq!(s.tower().hp(), 130, "a player in range repairs");
 }
 
 #[test]

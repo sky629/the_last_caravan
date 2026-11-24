@@ -198,16 +198,50 @@ fn a_healing_pulse_needs_a_length_and_a_reach() {
     assert!(t.validate().is_err(), "a recovery that never happens");
 
     let mut t = Tuning::default();
-    t.wagon.repair.pulse_secs = f32::NAN;
+    t.wagon.repair.heal.pulse_secs = f32::NAN;
     assert!(t.validate().is_err());
 
     let mut t = Tuning::default();
-    t.structures.watchtower.repair.pulse_secs = -1.0;
+    t.structures.watchtower.repair.heal.pulse_secs = -1.0;
     assert!(t.validate().is_err());
 
     let mut t = Tuning::default();
     t.wagon.recovery.range = -1.0;
     assert!(t.validate().is_err());
+}
+
+#[test]
+fn a_repair_that_costs_nothing_is_rejected_and_the_reason_names_it() {
+    let mut t = Tuning::default();
+    t.wagon.repair.cost_per_pulse = 0;
+    let why = t.validate().expect_err("a free wagon repair");
+    assert!(why.contains("wagon repair cost_per_pulse"), "{why}");
+
+    let mut t = Tuning::default();
+    t.structures.watchtower.repair.cost_per_pulse = 0;
+    let why = t.validate().expect_err("a free tower repair");
+    assert!(why.contains("Watchtower repair cost_per_pulse"), "{why}");
+}
+
+#[test]
+fn the_default_repairs_heal_20_hp_a_second_and_a_full_repair_costs_10_for_a_tower_and_17_for_the_wagon()
+ {
+    let t = Tuning::default();
+    let rate = |heal: &crate::tuning::HealTuning| heal.hp_per_pulse as f32 / heal.pulse_secs;
+    assert_eq!(rate(&t.wagon.repair.heal), 20.0);
+    assert_eq!(rate(&t.structures.watchtower.repair.heal), 20.0);
+
+    let pulses = |max_hp: u32, heal: &crate::tuning::HealTuning| max_hp.div_ceil(heal.hp_per_pulse);
+    let tower = t.structures.watchtower.clone();
+    assert_eq!(
+        pulses(tower.max_hp, &tower.repair.heal) * tower.repair.cost_per_pulse,
+        tower.build_cost,
+        "a full tower repair costs what building the tower costs"
+    );
+    assert_eq!(
+        pulses(t.wagon.max_hp, &t.wagon.repair.heal) * t.wagon.repair.cost_per_pulse,
+        17
+    );
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! 마차 곁의 회복과 마차의 수리, 그리고 F의 대상 순서를 확인합니다.
+//! 마차 곁의 회복과 마차의 수리, 수리의 비용, 그리고 F의 대상 순서를 확인합니다.
 //!
 //! 시나리오는 20 x 20 맵이고 마차는 (17, 17)에서 (19, 19)까지입니다. 마차의 서쪽 곁 (16.5, 18.5)에 서면 마차의 가장자리까지 0.15타일입니다.
 
@@ -159,7 +159,7 @@ fn the_pulse_follows_the_clock_of_the_room_so_everyone_heals_on_the_same_tick() 
 
 // 마차의 수리
 
-/// 마차의 서쪽 곁에서 F를 누르고 있는 플레이어와 HP가 300인 마차입니다.
+/// 마차의 서쪽 곁에서 F를 누르고 있는 플레이어와 HP가 300인 마차입니다. 보관함에는 시작 자원이 있습니다.
 fn repairer_at_a_damaged_wagon() -> (Scenario, PlayerId) {
     let mut s = Scenario::open_field();
     let a = s.player_at(BESIDE_THE_WAGON.0, BESIDE_THE_WAGON.1);
@@ -169,17 +169,18 @@ fn repairer_at_a_damaged_wagon() -> (Scenario, PlayerId) {
 }
 
 fn repair_pulse(s: &Scenario) -> u32 {
-    s.ticks(s.sim.tuning().wagon.repair.pulse_secs)
+    s.ticks(s.sim.tuning().wagon.repair.heal.pulse_secs)
 }
 
 #[test]
-fn holding_f_beside_a_damaged_wagon_repairs_it_in_pulses_and_costs_nothing() {
+fn holding_f_beside_a_damaged_wagon_repairs_it_in_pulses_and_each_pulse_costs_one() {
     let (mut s, a) = repairer_at_a_damaged_wagon();
     let pulse = repair_pulse(&s);
     let stash = s.sim.stash();
 
     s.run_ticks(pulse - 1);
     assert_eq!(s.sim.wagon().hp, 300, "no HP before the first pulse");
+    assert_eq!(s.sim.stash(), stash, "and nothing is paid before it");
     assert!(matches!(
         s.player(a).interaction(),
         Some(Interaction::Repairing {
@@ -189,10 +190,11 @@ fn holding_f_beside_a_damaged_wagon_repairs_it_in_pulses_and_costs_nothing() {
     ));
 
     s.run_ticks(1);
-    assert_eq!(s.sim.wagon().hp, 310, "10 HP for each pulse");
+    assert_eq!(s.sim.wagon().hp, 330, "30 HP for each pulse");
+    assert_eq!(s.sim.stash(), stash - 1, "paid with 1 resource");
     s.run_ticks(pulse);
-    assert_eq!(s.sim.wagon().hp, 320);
-    assert_eq!(s.sim.stash(), stash, "a repair spends no resource");
+    assert_eq!(s.sim.wagon().hp, 360);
+    assert_eq!(s.sim.stash(), stash - 2);
 }
 
 #[test]
@@ -210,14 +212,41 @@ fn a_wagon_repair_ends_at_the_maximum_and_never_goes_above_it() {
 }
 
 #[test]
+fn a_pulse_that_heals_less_than_a_full_pulse_still_costs_one() {
+    let (mut s, _) = repairer_at_a_damaged_wagon();
+    s.set_wagon_hp(495);
+    let stash = s.sim.stash();
+
+    s.run_ticks(repair_pulse(&s));
+
+    assert_eq!(s.sim.wagon().hp, 500);
+    assert_eq!(s.sim.stash(), stash - 1, "5 HP cost as much as 30 HP");
+}
+
+#[test]
+fn repairing_a_wagon_from_almost_nothing_to_full_takes_17_pulses_and_costs_17() {
+    let (mut s, _) = repairer_at_a_damaged_wagon();
+    s.set_wagon_hp(1);
+    s.set_stash(100);
+    let pulse = repair_pulse(&s);
+
+    let elapsed = s.run_until(pulse * 30, |sim| sim.wagon().hp == 500);
+
+    assert_eq!(elapsed, 17 * pulse, "499 HP in pulses of 30 is 17 pulses");
+    assert_eq!(s.sim.stash(), 100 - 17);
+}
+
+#[test]
 fn a_full_wagon_is_not_repaired() {
     let mut s = Scenario::open_field();
     let a = s.player_at(BESIDE_THE_WAGON.0, BESIDE_THE_WAGON.1);
     s.hold_interact(a);
+    let stash = s.sim.stash();
 
     s.run_ticks(5);
 
     assert!(s.player(a).interaction().is_none());
+    assert_eq!(s.sim.stash(), stash);
 }
 
 #[test]
@@ -244,26 +273,30 @@ fn a_wagon_repairer_can_neither_move_nor_attack() {
 }
 
 #[test]
-fn releasing_f_keeps_the_hp_restored_so_far() {
+fn releasing_f_keeps_the_hp_restored_so_far_and_pays_nothing_more() {
     let (mut s, a) = repairer_at_a_damaged_wagon();
-    s.run_ticks(25);
-    assert_eq!(s.sim.wagon().hp, 320);
+    s.run_ticks(repair_pulse(&s) + 5);
+    assert_eq!(s.sim.wagon().hp, 330);
+    let stash = s.sim.stash();
 
     s.hold(a, PlayerInput::default());
     s.run_ticks(60);
 
-    assert_eq!(s.sim.wagon().hp, 320);
+    assert_eq!(s.sim.wagon().hp, 330);
+    assert_eq!(s.sim.stash(), stash);
 }
 
 #[test]
-fn several_wagon_repairers_add_up() {
+fn several_wagon_repairers_add_up_and_each_pays_for_its_own_pulse() {
     let (mut s, _) = repairer_at_a_damaged_wagon();
     let b = s.player_at(16.5, 17.5);
     s.hold_interact(b);
+    let stash = s.sim.stash();
 
     s.run_ticks(repair_pulse(&s));
 
-    assert_eq!(s.sim.wagon().hp, 300 + 2 * 10);
+    assert_eq!(s.sim.wagon().hp, 300 + 2 * 30);
+    assert_eq!(s.sim.stash(), stash - 2);
 }
 
 #[test]
@@ -294,6 +327,126 @@ fn a_wagon_with_no_hp_left_is_not_a_repair_target_and_the_expedition_fails() {
             ..
         }
     ));
+}
+
+// 수리의 비용
+
+/// 수리하는 플레이어 둘이 한 Tick에 수리의 한 번씩을 합니다. 하나는 HP가 100인 감시탑 곁에, 하나는 HP가 300인 마차 곁에 서고,
+/// 번호가 작은 플레이어가 마차 곁에 서는지는 `first_at_the_wagon`이 정합니다. 보관함에는 자원이 1뿐입니다.
+fn two_repairers_and_one_resource(first_at_the_wagon: bool) -> Scenario {
+    let mut s = Scenario::open_field();
+    s.tower_at(1, 17);
+    s.set_tower_hp(100);
+    s.set_wagon_hp(300);
+    s.set_stash(1);
+    let at_the_tower = (2.5, 17.5);
+    let (first, second) = if first_at_the_wagon {
+        (BESIDE_THE_WAGON, at_the_tower)
+    } else {
+        (at_the_tower, BESIDE_THE_WAGON)
+    };
+    let first = s.player_at(first.0, first.1);
+    let second = s.player_at(second.0, second.1);
+    s.hold_interact(first);
+    s.hold_interact(second);
+    s.run_ticks(repair_pulse(&s));
+    s
+}
+
+#[test]
+fn when_the_stash_can_pay_for_one_pulse_only_the_lower_player_number_is_served() {
+    let s = two_repairers_and_one_resource(true);
+    assert_eq!(s.sim.wagon().hp, 330, "the first player repaired the wagon");
+    assert_eq!(s.tower().hp(), 100, "and the second could not pay");
+    assert_eq!(s.sim.stash(), 0);
+
+    let s = two_repairers_and_one_resource(false);
+    assert_eq!(s.tower().hp(), 130, "the first player repaired the tower");
+    assert_eq!(s.sim.wagon().hp, 300, "and the second could not pay");
+    assert_eq!(s.sim.stash(), 0);
+}
+
+#[test]
+fn the_stash_never_goes_below_zero_however_many_repairers_pulse_at_once() {
+    let (mut s, _) = repairer_at_a_damaged_wagon();
+    for y in [17.5, 18.0] {
+        let id = s.player_at(16.5, y);
+        s.hold_interact(id);
+    }
+    s.set_stash(2);
+
+    s.run_ticks(repair_pulse(&s));
+
+    assert_eq!(s.sim.stash(), 0);
+    assert_eq!(s.sim.wagon().hp, 300 + 2 * 30, "two of the three were paid");
+}
+
+#[test]
+fn a_pulse_the_stash_cannot_pay_does_not_heal_and_the_repairer_keeps_repairing() {
+    let (mut s, a) = repairer_at_a_damaged_wagon();
+    s.set_stash(0);
+
+    s.run_ticks(repair_pulse(&s) * 3);
+
+    assert_eq!(s.sim.wagon().hp, 300);
+    assert_eq!(s.sim.stash(), 0);
+    assert!(
+        matches!(
+            interaction_of(&s, a),
+            Some(Interaction::Repairing {
+                target: RepairTarget::Wagon,
+                ..
+            })
+        ),
+        "the player stays on the repair, got {:?}",
+        interaction_of(&s, a)
+    );
+}
+
+#[test]
+fn a_pulse_that_could_not_be_paid_is_not_retried_before_the_next_pulse() {
+    let (mut s, _) = repairer_at_a_damaged_wagon();
+    let pulse = repair_pulse(&s);
+    s.set_stash(0);
+    s.run_ticks(pulse);
+    s.set_stash(5);
+
+    s.run_ticks(pulse - 1);
+    assert_eq!(s.sim.wagon().hp, 300, "the missed pulse is gone");
+
+    s.run_ticks(1);
+    assert_eq!(s.sim.wagon().hp, 330);
+    assert_eq!(s.sim.stash(), 4);
+}
+
+#[test]
+fn a_repairer_is_told_while_the_stash_cannot_pay_the_next_pulse() {
+    let (mut s, a) = repairer_at_a_damaged_wagon();
+    let bystander = s.player_at(2.0, 2.0);
+    let pulse = repair_pulse(&s);
+    s.set_stash(0);
+
+    s.run_ticks(1);
+    assert!(
+        s.sim.lacks_stash_to_repair(a),
+        "told at once, not only after a missed pulse"
+    );
+    assert!(!s.sim.lacks_stash_to_repair(bystander), "nobody else is");
+
+    s.set_stash(1);
+    s.run_ticks(1);
+    assert!(!s.sim.lacks_stash_to_repair(a), "one resource pays a pulse");
+
+    s.run_ticks(pulse - 2);
+    assert_eq!(s.sim.stash(), 0, "the pulse took it");
+    assert!(s.sim.lacks_stash_to_repair(a), "and the next one is short");
+
+    s.hold(a, PlayerInput::default());
+    s.run_ticks(1);
+    assert!(
+        !s.sim.lacks_stash_to_repair(a),
+        "no repair, nothing to tell"
+    );
 }
 
 // F의 대상 순서
@@ -366,6 +519,30 @@ fn f_picks_a_downed_ally_then_a_damaged_tower_then_the_wagon_then_a_node() {
         "after the wagon: the node, got {:?}",
         interaction_of(&s, a)
     );
+}
+
+#[test]
+fn f_stays_on_a_repair_the_stash_cannot_pay_and_does_not_fall_through_to_a_node() {
+    let (mut s, a, downed) = everything_in_reach();
+    s.kill(downed);
+    s.set_stash(0);
+
+    s.run_ticks(s.ticks(5.0));
+
+    assert!(
+        matches!(
+            interaction_of(&s, a),
+            Some(Interaction::Repairing {
+                target: RepairTarget::Tower(_),
+                ..
+            })
+        ),
+        "still on the tower, got {:?}",
+        interaction_of(&s, a)
+    );
+    assert!(s.sim.lacks_stash_to_repair(a));
+    assert_eq!(s.player(a).carried(), 0, "nothing was gathered");
+    assert!(s.sim.nodes().all(|node| node.amount == 15));
 }
 
 #[test]

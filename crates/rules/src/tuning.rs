@@ -124,8 +124,8 @@ pub struct WagonTuning {
     pub start_stash: u32,
     /// 마차 곁에 있는 살아 있는 플레이어가 HP를 회복하는 속도입니다. 거리는 플레이어의 가장자리에서 마차의 가장자리까지 잽니다.
     pub recovery: HealTuning,
-    /// 플레이어가 F를 눌러서 마차의 HP를 수리하는 속도입니다. 자원은 들지 않습니다.
-    pub repair: HealTuning,
+    /// 플레이어가 F를 눌러서 마차의 HP를 수리하는 속도와 비용입니다.
+    pub repair: RepairTuning,
 }
 
 /// HP를 회복시키는 규칙의 수치입니다.
@@ -136,6 +136,16 @@ pub struct HealTuning {
     pub pulse_secs: f32,
     /// 회복시키는 쪽의 가장자리에서 회복되는 쪽의 가장자리까지 잰, 회복이 닿는 거리입니다.
     pub range: f32,
+}
+
+/// 수리의 수치입니다. 수리는 HP를 회복시키는 규칙(`heal`)에, 한 번마다 보관함의 자원을 내는 비용이 더해진 것입니다.
+/// 마차 곁의 회복처럼 자원을 내지 않는 회복은 `HealTuning`만 가지므로, 비용이 없다는 사실이 타입에 드러납니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RepairTuning {
+    pub heal: HealTuning,
+    /// 수리의 한 번마다 보관함에서 내는 자원의 양입니다. 그 한 번이 회복시키는 HP가 `hp_per_pulse`보다 적어도 같은 양을 냅니다.
+    /// 보관함이 낼 수 없으면 그 한 번은 회복시키지 않습니다. 1 이상이어야 합니다.
+    pub cost_per_pulse: u32,
 }
 
 /// 마차와 그 둘레에 세우는 시설, 곧 마을의 수치입니다.
@@ -187,8 +197,8 @@ pub struct StructureTuning {
     pub range: f32,
     pub damage: u32,
     pub cooldown_secs: f32,
-    /// 플레이어가 F를 눌러서 시설의 HP를 수리하는 속도입니다. 거리는 플레이어의 가장자리에서 시설의 가장자리까지 잽니다.
-    pub repair: HealTuning,
+    /// 플레이어가 F를 눌러서 시설의 HP를 수리하는 속도와 비용입니다. 거리는 플레이어의 가장자리에서 시설의 가장자리까지 잽니다.
+    pub repair: RepairTuning,
     /// 건설을 시작할 때 보관함에서 내는 자원의 양입니다.
     pub build_cost: u32,
     /// 건설 키를 끊지 않고 눌러야 하는 시간입니다.
@@ -453,9 +463,9 @@ impl Tuning {
             check_not_negative(&format!("{kind:?} build_secs"), build_secs)?;
         }
         check_heal("wagon recovery", &self.wagon.recovery)?;
-        check_heal("wagon repair", &self.wagon.repair)?;
+        check_repair("wagon repair", &self.wagon.repair)?;
         for kind in StructureKind::ALL {
-            check_heal(
+            check_repair(
                 &format!("{kind:?} repair"),
                 &self.structures.get(kind).repair,
             )?;
@@ -598,6 +608,15 @@ fn check_heal(name: &str, heal: &HealTuning) -> Result<(), String> {
     check_not_negative(&format!("{name} range"), heal.range)
 }
 
+/// 수리는 회복의 조건을 모두 지켜야 하고, 비용이 1 이상이어야 합니다. 비용이 0이면 수리가 자원을 쓰지 않습니다.
+fn check_repair(name: &str, repair: &RepairTuning) -> Result<(), String> {
+    check_heal(name, &repair.heal)?;
+    if repair.cost_per_pulse == 0 {
+        return Err(format!("{name} cost_per_pulse must be at least 1"));
+    }
+    Ok(())
+}
+
 /// 등장 지점이 있고, 모두 맵 안에서 막힌 타일과 겹치지 않는지 검사합니다.
 fn check_spawns(
     name: &str,
@@ -669,10 +688,14 @@ impl Default for Tuning {
                     pulse_secs: 0.2,
                     range: 3.0,
                 },
-                repair: HealTuning {
-                    hp_per_pulse: 10,
-                    pulse_secs: 0.5,
-                    range: 1.0,
+                // 1초에 20 HP이고, 마차를 최대 HP까지 모두 수리하면 자원 17이 듭니다.
+                repair: RepairTuning {
+                    heal: HealTuning {
+                        hp_per_pulse: 30,
+                        pulse_secs: 1.5,
+                        range: 1.0,
+                    },
+                    cost_per_pulse: 1,
                 },
             },
             structures: StructureTable {
@@ -681,10 +704,14 @@ impl Default for Tuning {
                     range: 6.0,
                     damage: 15,
                     cooldown_secs: 0.8,
-                    repair: HealTuning {
-                        hp_per_pulse: 10,
-                        pulse_secs: 0.5,
-                        range: 1.0,
+                    // 1초에 20 HP이고, 감시탑을 최대 HP까지 모두 수리하면 건설 비용(10)과 같은 자원이 듭니다.
+                    repair: RepairTuning {
+                        heal: HealTuning {
+                            hp_per_pulse: 30,
+                            pulse_secs: 1.5,
+                            range: 1.0,
+                        },
+                        cost_per_pulse: 1,
                     },
                     build_cost: 10,
                     build_secs: 3.0,

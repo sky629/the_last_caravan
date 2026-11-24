@@ -227,6 +227,18 @@ impl Sim {
         self.world.stash
     }
 
+    /// `id`가 수리하는 중인데 보관함의 자원이 수리의 비용보다 적어서 다음 수리가 회복시키지 못하면 참입니다.
+    /// 이벤트가 아니라 상태이고, 수리하는 대상(`Interaction`)과 보관함에서 그때그때 구하므로 따로 저장하는 값이 없고 둘과 어긋날 수 없습니다.
+    pub fn lacks_stash_to_repair(&self, id: PlayerId) -> bool {
+        let Some(Interaction::Repairing { target, .. }) =
+            self.player(id).and_then(Player::interaction)
+        else {
+            return false;
+        };
+        player::repair_spec(&self.world, *target, &self.tuning)
+            .is_some_and(|spec| self.world.stash < spec.cost_per_pulse)
+    }
+
     /// `downed`를 부활시키는 플레이어가 있으면 부활의 진행도(0.0 이상 1.0 이하)를 돌려줍니다.
     /// 진행도는 부활시키는 플레이어의 `Interaction`에서 계산하며, 쓰러진 플레이어는 아무 값도 저장하지 않습니다.
     pub fn revive_progress(&self, downed: PlayerId) -> Option<f32> {

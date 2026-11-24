@@ -168,6 +168,8 @@ pub enum WireInteraction {
     },
     Repairing {
         target: WireRepairTarget,
+        /// 보관함의 자원이 수리의 비용보다 적어서 다음 수리가 회복시키지 못합니다. 이벤트가 아니라 상태이고, 자원이 생기면 곧바로 거짓이 됩니다.
+        stash_short: bool,
     },
     Building {
         /// 짓고 있는 감시탑의 번호입니다. 진행도는 스냅샷의 그 감시탑에 있습니다.
@@ -375,7 +377,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
             carried: *carried,
             interaction: interaction
                 .as_ref()
-                .map(|interaction| wire_interaction(sim, interaction)),
+                .map(|interaction| wire_interaction(sim, player, interaction)),
             build_refusal: build_refusal.as_ref().map(WireBuildRefusal::of),
         },
         Life::Downed { bleed_left_ticks } => WireLife::Downed {
@@ -395,7 +397,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
     }
 }
 
-fn wire_interaction(sim: &Sim, interaction: &Interaction) -> WireInteraction {
+fn wire_interaction(sim: &Sim, player: &Player, interaction: &Interaction) -> WireInteraction {
     match interaction {
         Interaction::Reviving { target, .. } => WireInteraction::Reviving {
             target: target.0,
@@ -408,6 +410,7 @@ fn wire_interaction(sim: &Sim, interaction: &Interaction) -> WireInteraction {
                 RepairTarget::Tower(tower) => WireRepairTarget::Tower { tower: tower.0 },
                 RepairTarget::Wagon => WireRepairTarget::Wagon,
             },
+            stash_short: sim.lacks_stash_to_repair(player.id),
         },
         Interaction::Gathering { node, .. } => WireInteraction::Gathering { node: node.0 },
         Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },

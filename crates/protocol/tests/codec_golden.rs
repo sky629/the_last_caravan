@@ -379,6 +379,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             3,
             Some(WireInteraction::Repairing {
                 target: WireRepairTarget::Tower { tower: 1 },
+                stash_short: false,
             }),
             None,
         ),
@@ -396,6 +397,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             8,
             Some(WireInteraction::Repairing {
                 target: WireRepairTarget::Wagon,
+                stash_short: true,
             }),
             None,
         ),
@@ -419,7 +421,8 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x06, // players: 길이 6
             0x03, 0x00, 0x00, 0x00, 0x00, // id 3, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
-            0x01, 0x01, 0x00, 0x01, // interaction: 있음, Repairing, Tower, tower 1
+            0x01, 0x01, 0x00, 0x01,
+            0x00, // interaction: 있음, Repairing, Tower, tower 1, stash_short 거짓
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x04, 0x00, 0x00, 0x00, 0x00, // id 4, team, pos 0 0, facing 0
@@ -439,7 +442,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x08, 0x00, 0x00, 0x00, 0x00, // id 8, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, // Alive, hp 100, max_hp 100, carried 3
-            0x01, 0x01, 0x01, // interaction: 있음, Repairing, Wagon
+            0x01, 0x01, 0x01, 0x01, // interaction: 있음, Repairing, Wagon, stash_short 참
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack_tick 없음
             0x06, 0x00, 0x00, 0x00, 0x00, // id 6, team, pos 0 0, facing 0

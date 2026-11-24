@@ -36,7 +36,7 @@ pub struct Hud {
     pub action: Option<Meter>,
     /// 쓰러진 동안의 출혈 시간 안내입니다.
     pub bleed: Option<String>,
-    /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다.
+    /// 건설 키를 누르고 있지만 세울 수 없을 때, 또는 수리하는 중인데 보관함이 비용을 낼 수 없을 때의 이유입니다.
     pub refusal: Option<String>,
 }
 
@@ -128,12 +128,15 @@ impl Hud {
             hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
                 carried,
+                interaction,
                 build_refusal,
                 ..
             } = me.life
             {
                 hud.carry = Some(carry_text(carried, joined.welcome.world.carry_capacity));
-                hud.refusal = build_refusal.map(refusal_text);
+                hud.refusal = build_refusal
+                    .map(refusal_text)
+                    .or_else(|| repair_refusal_text(interaction));
             }
             if let WireLife::Downed {
                 bleed_secs_left,
@@ -289,6 +292,7 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
             interaction:
                 Some(WireInteraction::Repairing {
                     target: WireRepairTarget::Wagon,
+                    ..
                 }),
             ..
         } => Some(Meter {
@@ -303,6 +307,7 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
             interaction:
                 Some(WireInteraction::Repairing {
                     target: WireRepairTarget::Tower { tower },
+                    ..
                 }),
             ..
         } => {
@@ -378,6 +383,18 @@ fn refusal_text(refusal: WireBuildRefusal) -> String {
         WireCannotBuild::WouldBlockPath => "IT WOULD BLOCK THE WAY TO THE WAGON",
     };
     format!("CANNOT BUILD: {why}")
+}
+
+/// 수리하는 중인데 보관함의 자원이 수리의 비용보다 적을 때 알리는 문구입니다.
+fn repair_refusal_text(interaction: Option<WireInteraction>) -> Option<String> {
+    matches!(
+        interaction,
+        Some(WireInteraction::Repairing {
+            stash_short: true,
+            ..
+        })
+    )
+    .then(|| "CANNOT REPAIR: NOT ENOUGH IN THE STASH".to_string())
 }
 
 /// 막대의 채움 비율입니다. 화면에 막대를 그리는 곳은 모두 이 함수로 비율을 구합니다.
@@ -679,6 +696,7 @@ mod tests {
                 carried: 0,
                 interaction: Some(WireInteraction::Repairing {
                     target: WireRepairTarget::Tower { tower: 1 },
+                    stash_short: false,
                 }),
                 build_refusal: None,
             },
@@ -701,6 +719,7 @@ mod tests {
                 carried: 0,
                 interaction: Some(WireInteraction::Repairing {
                     target: WireRepairTarget::Wagon,
+                    stash_short: false,
                 }),
                 build_refusal: None,
             },
@@ -713,6 +732,56 @@ mod tests {
         let action = Hud::of(&session, Some(&frame)).action.unwrap();
         assert_eq!(action.label, "REPAIRING WAGON  300 / 500");
         assert!((action.fraction - 0.6).abs() < 1e-6);
+    }
+
+    fn repairer_of_the_wagon(stash_short: bool) -> PlayerView {
+        player(
+            YOU,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 0,
+                interaction: Some(WireInteraction::Repairing {
+                    target: WireRepairTarget::Wagon,
+                    stash_short,
+                }),
+                build_refusal: None,
+            },
+        )
+    }
+
+    #[test]
+    fn a_repair_the_stash_cannot_pay_says_so_and_keeps_showing_the_repair() {
+        let session = session_in_room();
+        let hud = Hud::of(&session, Some(&frame(vec![repairer_of_the_wagon(true)])));
+
+        assert_eq!(
+            hud.refusal.as_deref(),
+            Some("CANNOT REPAIR: NOT ENOUGH IN THE STASH")
+        );
+        assert_eq!(
+            hud.action.map(|action| action.label).as_deref(),
+            Some("REPAIRING WAGON  400 / 500"),
+            "the bar still says what the player is trying to do"
+        );
+    }
+
+    #[test]
+    fn a_repair_the_stash_can_pay_shows_no_refusal() {
+        let session = session_in_room();
+        let hud = Hud::of(&session, Some(&frame(vec![repairer_of_the_wagon(false)])));
+        assert_eq!(hud.refusal, None);
+    }
+
+    #[test]
+    fn a_repair_refusal_of_another_player_is_not_shown_to_me() {
+        let session = session_in_room();
+        let other = PlayerView {
+            id: 2,
+            ..repairer_of_the_wagon(true)
+        };
+        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100)), other])));
+        assert_eq!(hud.refusal, None);
     }
 
     #[test]

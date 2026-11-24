@@ -44,7 +44,7 @@ pub use sim::{JoinError, Sim};
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
     CycleTuning, GuardTuning, HealTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan,
-    NightTuning, PlayerTuning, ResourceTuning, ReviveTuning, StructureTable, StructureTuning,
-    Tuning, VillageTuning, WagonTuning, WavePlan,
+    NightTuning, PlayerTuning, RepairTuning, ResourceTuning, ReviveTuning, StructureTable,
+    StructureTuning, Tuning, VillageTuning, WagonTuning, WavePlan,
 };
 pub use world::Tile;

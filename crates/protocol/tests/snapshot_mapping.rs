@@ -3,7 +3,7 @@
 
 use caravan_protocol::{
     Snapshot, Welcome, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
-    WireMonsterKind, WireOutcome, WirePhase, WirePos, WireTile, WireTowerState,
+    WireMonsterKind, WireOutcome, WirePhase, WirePos, WireRepairTarget, WireTile, WireTowerState,
 };
 use caravan_rules::{
     AimDir, MonsterKind, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2, WavePlan,
@@ -479,4 +479,64 @@ fn a_gatherer_the_load_it_carries_and_a_dropped_pile_show_on_the_wire() {
     };
     assert_eq!((pile.id, pile.amount), (1, 1));
     assert_eq!(pile.pos, WirePos::from_tiles(at));
+}
+
+#[test]
+fn a_repairer_is_marked_while_the_stash_cannot_pay_the_next_pulse() {
+    // 몬스터가 마차를 한 번 때려서 HP가 400이 되고(쿨다운이 길어서 다시 때리지 않습니다), 플레이어는 마차의 북쪽 곁에서 F를 누르고 있습니다.
+    // 보관함에는 수리의 한 번을 낼 자원 1뿐입니다.
+    let mut sim = sim_with(|t| {
+        a_monster_right_beside_the_wagon(t);
+        t.map.player_spawns = vec![Vec2::new(32.0, 30.5)];
+        t.monsters.grunt.attack_damage = 100;
+        t.monsters.grunt.attack_cooldown_secs = 100.0;
+        t.monsters.grunt.aggro_range = 0.1;
+        t.wagon.start_stash = 1;
+    });
+    let repairer = sim.add_player().unwrap();
+    let holding = PlayerInputs::from([(
+        repairer,
+        PlayerInput {
+            interact: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    let repairing = |sim: &Sim| match Snapshot::from_sim(sim).players[0].life {
+        WireLife::Alive {
+            interaction:
+                Some(WireInteraction::Repairing {
+                    target,
+                    stash_short,
+                }),
+            ..
+        } => Some((target, stash_short)),
+        _ => None,
+    };
+
+    let mut first = None;
+    for _ in 0..200 {
+        sim.step(&holding);
+        first = repairing(&sim);
+        if first.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        first,
+        Some((WireRepairTarget::Wagon, false)),
+        "one resource pays the first pulse"
+    );
+
+    let pulse = sim
+        .tuning()
+        .ticks(sim.tuning().wagon.repair.heal.pulse_secs);
+    step(&mut sim, &holding, pulse);
+    let snapshot = Snapshot::from_sim(&sim);
+    assert_eq!(snapshot.stash, 0, "the pulse paid with it");
+    assert_eq!(snapshot.wagon.hp, 430, "and healed 30 HP");
+    assert_eq!(
+        repairing(&sim),
+        Some((WireRepairTarget::Wagon, true)),
+        "the next pulse cannot be paid"
+    );
 }
