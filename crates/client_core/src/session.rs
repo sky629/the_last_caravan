@@ -2,10 +2,11 @@
 //!
 //! ```text
 //! Connecting --Connected--> Joining --Welcome--> InRoom
-//!                              |
-//!                              +--JoinRejected--> Rejected
-//!                              +--(상한을 넘은 Welcome)--> Failed
-//! (모든 상태) --Disconnected--> Disconnected   (Rejected와 Failed는 사유를 유지합니다)
+//!     |                        |
+//!     |                        +--JoinRejected--> Rejected
+//!     |                        +--(상한을 넘은 Welcome)--> Failed
+//!     +--Disconnected--> Unreachable   (접속이 한 번도 열리지 않았습니다)
+//! (그 밖의 모든 상태) --Disconnected--> Disconnected   (Rejected, Failed, Unreachable는 사유를 유지합니다)
 //! ```
 //!
 //! 방에 들어간 뒤에 필요한 값(입장 안내, 스냅샷, 입력 순서 번호)은 `InRoom`에만 있습니다.
@@ -22,8 +23,10 @@ use crate::interp::{Frame, SnapshotBuffer};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Session {
+    /// 접속이 열리기를 기다립니다. 열리지 않고 끝나면 어느 서버에 접속하려 했는지 알려야 하므로 `server`를 가집니다.
     Connecting {
         room: RoomCode,
+        server: String,
     },
     /// `Join`을 보내고 `Welcome`이나 `JoinRejected`를 기다립니다.
     Joining {
@@ -33,9 +36,14 @@ pub enum Session {
     Rejected {
         reason: RejectReason,
     },
-    /// 접속이 끝났습니다. 1단계에는 자동 재접속이 없습니다.
+    /// 열려 있던 접속이 끝났습니다. 1단계에는 자동 재접속이 없습니다.
     Disconnected {
         reason: String,
+    },
+    /// 접속이 한 번도 열리지 않고 끝났습니다. 서버가 꺼져 있거나 주소가 틀린 경우입니다.
+    /// 브라우저는 이 경우 이유를 알려 주지 않고 접속 방식이 일반적인 문구를 채우므로, 이유 대신 시도한 서버 주소를 보여 줍니다.
+    Unreachable {
+        server: String,
     },
     /// 실행 인자가 잘못되었거나 접속을 시작하지 못했습니다.
     Failed {
@@ -65,14 +73,14 @@ impl Joined {
 }
 
 impl Session {
-    pub fn new(room: RoomCode) -> Session {
-        Session::Connecting { room }
+    pub fn new(room: RoomCode, server: String) -> Session {
+        Session::Connecting { room, server }
     }
 
     /// 이벤트 하나를 처리합니다. 서버에 답으로 보낼 메시지가 있으면 돌려줍니다.
     pub fn on_event(&mut self, event: ClientEvent) -> Option<ClientMsg> {
         match (&mut *self, event) {
-            (Session::Connecting { room }, ClientEvent::Connected) => {
+            (Session::Connecting { room, .. }, ClientEvent::Connected) => {
                 let join = ClientMsg::Join {
                     version: PROTOCOL_VERSION,
                     room: room.as_str().to_string(),
@@ -98,8 +106,14 @@ impl Session {
                 joined.snapshots.push(snapshot);
                 None
             }
+            (Session::Connecting { server, .. }, ClientEvent::Disconnected { .. }) => {
+                *self = Session::Unreachable {
+                    server: server.clone(),
+                };
+                None
+            }
             (
-                Session::Rejected { .. } | Session::Failed { .. },
+                Session::Rejected { .. } | Session::Failed { .. } | Session::Unreachable { .. },
                 ClientEvent::Disconnected { .. },
             ) => None,
             (_, ClientEvent::Disconnected { reason }) => {
@@ -111,11 +125,14 @@ impl Session {
         }
     }
 
-    /// 입장이 거절되었거나, 접속이 끊겼거나, 시작하지 못해서 더 할 일이 없는 상태입니다. 이때 접속 방식을 닫아도 됩니다.
+    /// 입장이 거절되었거나, 접속이 끊겼거나, 접속하지 못했거나, 시작하지 못해서 더 할 일이 없는 상태입니다. 이때 접속 방식을 닫아도 됩니다.
     pub fn is_over(&self) -> bool {
         matches!(
             self,
-            Session::Rejected { .. } | Session::Disconnected { .. } | Session::Failed { .. }
+            Session::Rejected { .. }
+                | Session::Disconnected { .. }
+                | Session::Unreachable { .. }
+                | Session::Failed { .. }
         )
     }
 
@@ -161,7 +178,7 @@ impl Session {
             .map(ClientMsg::Input)
     }
 
-    /// 입장하지 못했거나 접속이 끊겼을 때, 그 이유를 화면에 크게 보여 주는 데 쓰는 값입니다. 그 밖의 상태에서는 없습니다.
+    /// 입장하지 못했거나 접속하지 못했거나 접속이 끊겼을 때, 그 이유를 화면에 크게 보여 주는 데 쓰는 값입니다. 그 밖의 상태에서는 없습니다.
     pub fn problem(&self) -> Option<Problem> {
         match self {
             Session::Rejected { reason } => Some(Problem {
@@ -180,6 +197,10 @@ impl Session {
                 heading: "Disconnected",
                 reason: reason.clone(),
             }),
+            Session::Unreachable { server } => Some(Problem {
+                heading: "Cannot reach the server",
+                reason: format!("{server} did not answer. Is the server running?"),
+            }),
             Session::Failed { reason } => Some(Problem {
                 heading: "Cannot start",
                 reason: reason.clone(),
@@ -192,14 +213,14 @@ impl Session {
     pub fn status_text(&self) -> String {
         match (self, self.problem()) {
             (_, Some(Problem { heading, reason })) => format!("{heading}: {reason}"),
-            (Session::Connecting { room }, None) => format!("Connecting... (room {room})"),
+            (Session::Connecting { room, .. }, None) => format!("Connecting... (room {room})"),
             (Session::Joining { room }, None) => format!("Joining room {room}..."),
             _ => "Connected".to_string(),
         }
     }
 }
 
-/// 접속하지 못한 이유입니다. `heading`은 짧은 제목이고 `reason`은 서버나 접속 방식이 알려 준 이유입니다.
+/// 접속하지 못한 이유입니다. `heading`은 짧은 제목이고 `reason`은 서버나 접속 방식이 알려 준 이유, 또는 사용자가 확인할 내용입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Problem {
     pub heading: &'static str,
@@ -214,6 +235,12 @@ mod tests {
 
     fn room() -> RoomCode {
         RoomCode::parse("test").unwrap()
+    }
+
+    const SERVER: &str = "ws://127.0.0.1:7777";
+
+    fn connecting() -> Session {
+        Session::new(room(), SERVER.to_string())
     }
 
     fn snapshot(tick: u64) -> Snapshot {
@@ -236,7 +263,7 @@ mod tests {
     }
 
     fn in_room() -> Session {
-        let mut session = Session::new(room());
+        let mut session = connecting();
         session.on_event(ClientEvent::Connected);
         session.on_event(message(welcome(3)));
         session
@@ -251,7 +278,7 @@ mod tests {
 
     #[test]
     fn connecting_sends_join_with_the_room_code_and_protocol_version() {
-        let mut session = Session::new(room());
+        let mut session = connecting();
         assert_eq!(
             session.on_event(ClientEvent::Connected),
             Some(ClientMsg::Join {
@@ -283,7 +310,7 @@ mod tests {
 
     #[test]
     fn a_welcome_over_a_limit_fails_the_session_with_a_reason() {
-        let mut session = Session::new(room());
+        let mut session = connecting();
         session.on_event(ClientEvent::Connected);
         let ServerMsg::Welcome(mut hostile) = welcome(3) else {
             unreachable!("welcome() builds a Welcome");
@@ -308,8 +335,56 @@ mod tests {
     }
 
     #[test]
+    fn a_link_that_closes_before_it_opens_names_the_server_that_was_tried() {
+        let mut session = connecting();
+        // 브라우저가 이유를 알려 주지 않을 때 접속 방식이 채우는 문구입니다.
+        session.on_event(ClientEvent::Disconnected {
+            reason: "Unknown error".to_string(),
+        });
+
+        assert_eq!(
+            session,
+            Session::Unreachable {
+                server: SERVER.to_string()
+            }
+        );
+        assert!(session.is_over());
+        assert_eq!(
+            session.problem(),
+            Some(Problem {
+                heading: "Cannot reach the server",
+                reason: "ws://127.0.0.1:7777 did not answer. Is the server running?".to_string(),
+            })
+        );
+        assert_eq!(
+            session.status_text(),
+            "Cannot reach the server: ws://127.0.0.1:7777 did not answer. Is the server running?"
+        );
+
+        // 이어서 닫힘이 다시 알려져도 안내가 바뀌지 않습니다.
+        session.on_event(ClientEvent::Disconnected {
+            reason: "closed".to_string(),
+        });
+        assert!(matches!(session, Session::Unreachable { .. }));
+    }
+
+    #[test]
+    fn a_link_that_closes_after_it_opened_keeps_the_reason_it_gave() {
+        let mut waiting_for_welcome = connecting();
+        waiting_for_welcome.on_event(ClientEvent::Connected);
+        waiting_for_welcome.on_event(ClientEvent::Disconnected {
+            reason: "the server closed the connection".to_string(),
+        });
+
+        assert_eq!(
+            waiting_for_welcome.status_text(),
+            "Disconnected: the server closed the connection"
+        );
+    }
+
+    #[test]
     fn only_a_finished_session_is_over() {
-        assert!(!Session::new(room()).is_over());
+        assert!(!connecting().is_over());
         assert!(!in_room().is_over());
         let mut disconnected = in_room();
         disconnected.on_event(ClientEvent::Disconnected {
@@ -337,7 +412,7 @@ mod tests {
 
     #[test]
     fn a_snapshot_before_welcome_is_ignored() {
-        let mut session = Session::new(room());
+        let mut session = connecting();
         session.on_event(ClientEvent::Connected);
         assert_eq!(
             session.on_event(message(ServerMsg::Snapshot(snapshot(1)))),
@@ -349,7 +424,7 @@ mod tests {
 
     #[test]
     fn a_rejection_stays_on_screen_after_the_server_closes() {
-        let mut session = Session::new(room());
+        let mut session = connecting();
         session.on_event(ClientEvent::Connected);
         let reason = RejectReason::RoomFull { capacity: 4 };
         session.on_event(message(ServerMsg::JoinRejected { reason }));
@@ -403,7 +478,7 @@ mod tests {
     #[test]
     fn inputs_are_sent_only_in_the_room_one_per_server_tick() {
         let idle = Controls::default();
-        let mut session = Session::new(room());
+        let mut session = connecting();
         assert_eq!(session.input_due(0.0, &idle, None), None);
         session.on_event(ClientEvent::Connected);
         session.on_event(message(welcome(3)));
