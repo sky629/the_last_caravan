@@ -35,7 +35,10 @@ const RATE_WINDOW: Duration = Duration::from_secs(1);
 pub struct WsServer {
     inbound: mpsc::Receiver<Inbound>,
     outboxes: HashMap<LinkId, mpsc::Sender<Vec<u8>>>,
-    /// 게임 스레드가 스스로 알아낸 이벤트입니다. 네트워크 스레드의 알림보다 먼저 `poll`이 돌려줍니다.
+    /// 송신 대기열이 가득 차서 게임 스레드가 보내는 끝을 버린 접속과 그 이유입니다.
+    /// 그 접속의 `Closed`가 오면 `LimitReached`로 바꿔서 알립니다. 그때까지 도착한 `Message`가 먼저 나가야 하기 때문입니다.
+    full_outboxes: HashMap<LinkId, String>,
+    /// 방금 돌려준 `LimitReached` 바로 뒤에 돌려줄 `Disconnected`입니다.
     pending: VecDeque<ServerEvent>,
     local_addr: SocketAddr,
     /// 네트워크 스레드에 끝내라고 알리는 신호입니다. `Drop`이 보냅니다.
@@ -83,6 +86,7 @@ impl WsServer {
         Ok(WsServer {
             inbound,
             outboxes: HashMap::new(),
+            full_outboxes: HashMap::new(),
             pending: VecDeque::new(),
             local_addr,
             shutdown: Some(shutdown),
@@ -118,10 +122,20 @@ impl ServerTransport for WsServer {
                 Some(ServerEvent::Connected(link))
             }
             Inbound::Message(link, msg) => Some(ServerEvent::Message(link, msg)),
-            Inbound::LimitReached(link, reason) => Some(ServerEvent::LimitReached(link, reason)),
+            Inbound::LimitReached(link, reason) => {
+                // 이유는 접속마다 한 번만 알립니다. 접속 작업이 알려 온 이유가 있으면 그것을 씁니다.
+                self.full_outboxes.remove(&link);
+                Some(ServerEvent::LimitReached(link, reason))
+            }
             Inbound::Closed(link) => {
                 self.outboxes.remove(&link);
-                Some(ServerEvent::Disconnected(link))
+                match self.full_outboxes.remove(&link) {
+                    Some(reason) => {
+                        self.pending.push_back(ServerEvent::Disconnected(link));
+                        Some(ServerEvent::LimitReached(link, reason))
+                    }
+                    None => Some(ServerEvent::Disconnected(link)),
+                }
             }
         }
     }
@@ -131,16 +145,16 @@ impl ServerTransport for WsServer {
             return;
         };
         // 대기열이 가득 찼거나 작업이 끝났습니다. 보내는 끝을 버리면 작업이 남은 메시지를 보낸 뒤 접속을 닫고,
-        // 게임 스레드는 곧 `Disconnected`를 받습니다. 가득 차서 닫는 접속은 그 이유를 먼저 알립니다.
+        // 게임 스레드는 곧 `Closed`를 받습니다. 가득 차서 닫는 접속은 그때 이유를 `Disconnected` 바로 앞에서 알립니다.
         if let Err(err) = outbox.try_send(encode_server(msg)) {
             if matches!(err, TrySendError::Full(_)) {
-                self.pending.push_back(ServerEvent::LimitReached(
+                self.full_outboxes.insert(
                     link,
                     format!(
                         "more than {} outgoing messages are waiting; the client reads too slowly",
                         outbox.max_capacity()
                     ),
-                ));
+                );
             }
             self.outboxes.remove(&link);
         }

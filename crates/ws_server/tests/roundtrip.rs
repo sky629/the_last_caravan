@@ -149,6 +149,52 @@ async fn a_client_that_stops_reading_is_disconnected() {
     assert!(reason.contains("reads too slowly"), "{reason}");
 }
 
+/// 클라이언트가 보낸 입력 메시지 하나입니다.
+fn input_frame(seq: u32) -> Message {
+    Message::binary(encode_client(&ClientMsg::Input(InputMsg {
+        seq,
+        ..InputMsg::default()
+    })))
+}
+
+#[tokio::test]
+async fn a_full_outbox_reports_its_limit_after_the_messages_already_received_from_that_link() {
+    let limits = ServerLimits {
+        outbox_capacity: 1,
+        ..ServerLimits::default()
+    };
+    let mut server = WsServer::bind("127.0.0.1:0", limits).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+    let (mut client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    let link = connected_link(&mut server).await;
+    for seq in 1..=3 {
+        client.send(input_frame(seq)).await.unwrap();
+    }
+    // 세 메시지가 게임 스레드에 도착해 있지만 아직 `poll`로 꺼내지 않은 상태에서 대기열을 채웁니다.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    for _ in 0..1000 {
+        server.send(link, &some_server_msg());
+    }
+
+    let mut messages = 0;
+    let reason = loop {
+        match next_event(&mut server, Duration::from_secs(5)).await {
+            ServerEvent::Message(from, _) if from == link => messages += 1,
+            ServerEvent::LimitReached(from, reason) if from == link => break reason,
+            other => panic!("unexpected event {other:?}"),
+        }
+    };
+    assert_eq!(
+        messages, 3,
+        "every message received before the limit comes first"
+    );
+    assert!(reason.contains("reads too slowly"), "{reason}");
+    assert!(matches!(
+        next_event(&mut server, Duration::from_secs(5)).await,
+        ServerEvent::Disconnected(gone) if gone == link
+    ));
+}
+
 #[tokio::test]
 async fn a_link_that_sends_faster_than_the_rate_limit_is_disconnected() {
     let limits = ServerLimits {
