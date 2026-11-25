@@ -219,6 +219,26 @@ fn a_chest_blocks_its_tile_for_a_walking_player() {
 }
 
 #[test]
+fn after_nightfall_a_player_walks_onto_the_tile_the_chest_stood_on() {
+    let mut s = Scenario::with_cycle(|t| {
+        t.cycle.day_secs = 0.5;
+        t.nights.plans = nights(&[&[1], &[1]]);
+        chest_tuning(t, WeaponKind::Spear, 0);
+    });
+    s.run_until(200, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    let a = s.player_at(2.5, 4.5);
+    s.hold_move(a, 0.0, -1.0);
+
+    s.run_ticks(40);
+
+    assert!(
+        s.player(a).pos.y < 3.0,
+        "the player walked onto the freed tile, at {:?}",
+        s.player(a).pos
+    );
+}
+
+#[test]
 fn a_player_standing_on_a_site_when_the_day_starts_is_pushed_off_the_chest() {
     let mut s = Scenario::with_cycle(|t| {
         t.cycle.day_secs = 0.5;
