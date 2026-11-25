@@ -4,8 +4,9 @@
 //! 모든 값은 지금 그리는 `Frame`에서 오므로, 막대는 그 피해를 일으킨 공격이 화면에 나타난 뒤에 줄어듭니다.
 
 use caravan_protocol::{
-    WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireLoadout, WireNightStep,
-    WireOutcome, WirePhase, WirePrompt, WireRepairTarget, WireTowerState, WireWeaponKind,
+    PROTOCOL_VERSION, RejectReason, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
+    WireLoadout, WireNightStep, WireOutcome, WirePhase, WirePrompt, WireRepairTarget,
+    WireTowerState, WireWeaponKind,
 };
 use caravan_rules::Team;
 
@@ -548,6 +549,18 @@ fn repair_refusal_text(interaction: Option<WireInteraction>) -> Option<String> {
     .then(|| "CANNOT REPAIR: NOT ENOUGH IN THE STASH".to_string())
 }
 
+/// 입장이 거절된 이유를 시작 화면의 한 줄로 바꿉니다. `match`가 모든 이유를 다루므로, 이유를 추가하면 여기서 컴파일 오류가 납니다.
+pub fn reject_text(reason: RejectReason) -> String {
+    match reason {
+        RejectReason::RoomFull { capacity } => format!("Room is full ({capacity} / {capacity})"),
+        RejectReason::BadRoomCode => "That room code is not valid".to_string(),
+        RejectReason::BadName => "Name must be 1-12 letters, digits, spaces, - or _".to_string(),
+        RejectReason::VersionMismatch { server } => format!(
+            "Update or reload: the server speaks protocol {server}, this game speaks {PROTOCOL_VERSION}"
+        ),
+    }
+}
+
 /// 막대의 채움 비율입니다. 화면에 막대를 그리는 곳은 모두 이 함수로 비율을 구합니다.
 /// 서버가 보낸 최댓값이 0이어도 나누지 않고 빈 막대(0)로 돌려주며, 값이 최댓값을 넘으면 가득 찬 막대(1)입니다.
 pub fn bar_fraction(value: u32, max: u32) -> f32 {
@@ -578,11 +591,15 @@ mod tests {
 
     use crate::interp::PlayerView;
     use crate::launch::DEFAULT_SERVER;
+    use crate::start::JoinRequest;
 
     const YOU: u32 = 1;
 
-    fn name() -> PlayerName {
-        PlayerName::parse("KANG").unwrap()
+    fn request(room: &str) -> JoinRequest {
+        JoinRequest {
+            name: PlayerName::parse("KANG").unwrap(),
+            room: Some(RoomCode::parse(room).unwrap()),
+        }
     }
 
     fn session_in_room() -> Session {
@@ -591,7 +608,7 @@ mod tests {
         let room = RoomCode::parse("test").unwrap();
         let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room);
         welcome.you = YOU;
-        let mut session = Session::new(room, name(), DEFAULT_SERVER.to_string());
+        let mut session = Session::new(request("test"), DEFAULT_SERVER.to_string());
         session.on_event(ClientEvent::Connected);
         session.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
         session
@@ -1454,12 +1471,26 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_join_shows_the_reason() {
-        let mut session = Session::new(
-            RoomCode::parse("test").unwrap(),
-            name(),
-            DEFAULT_SERVER.to_string(),
+    fn every_reason_a_join_can_be_refused_has_a_line_for_the_start_screen() {
+        assert_eq!(
+            reject_text(RejectReason::RoomFull { capacity: 4 }),
+            "Room is full (4 / 4)"
         );
+        assert_eq!(
+            reject_text(RejectReason::BadRoomCode),
+            "That room code is not valid"
+        );
+        assert!(reject_text(RejectReason::BadName).starts_with("Name must be"));
+        let old = reject_text(RejectReason::VersionMismatch { server: 9 });
+        assert!(
+            old.contains("Update or reload") && old.contains('9'),
+            "{old}"
+        );
+    }
+
+    #[test]
+    fn a_refused_join_shows_the_reason() {
+        let mut session = Session::new(request("test"), DEFAULT_SERVER.to_string());
         session.on_event(ClientEvent::Connected);
         session.on_event(ClientEvent::Message(ServerMsg::JoinRejected {
             reason: RejectReason::RoomFull { capacity: 4 },
@@ -1467,10 +1498,7 @@ mod tests {
         let hud = Hud::of(&session, None);
         let banner = hud.banner.unwrap();
         assert_eq!(banner.title, "JOIN REJECTED");
-        assert_eq!(
-            banner.detail.as_deref(),
-            Some("the room is full (4 players)")
-        );
+        assert_eq!(banner.detail.as_deref(), Some("Room is full (4 / 4)"));
         assert_eq!(banner.tone, BannerTone::Bad);
         assert_eq!(hud.me, None);
     }
@@ -1499,11 +1527,7 @@ mod tests {
 
     #[test]
     fn a_server_that_cannot_be_reached_is_named_with_a_hint() {
-        let mut session = Session::new(
-            RoomCode::parse("test").unwrap(),
-            name(),
-            "ws://192.168.0.7:7777".to_string(),
-        );
+        let mut session = Session::new(request("test"), "ws://192.168.0.7:7777".to_string());
         session.on_event(ClientEvent::Disconnected {
             reason: "Unknown error".to_string(),
         });
@@ -1524,11 +1548,7 @@ mod tests {
 
     #[test]
     fn before_the_room_and_before_the_first_snapshot_a_waiting_notice_is_shown() {
-        let connecting = Session::new(
-            RoomCode::parse("test").unwrap(),
-            name(),
-            DEFAULT_SERVER.to_string(),
-        );
+        let connecting = Session::new(request("test"), DEFAULT_SERVER.to_string());
         let banner = Hud::of(&connecting, None).banner.unwrap();
         assert_eq!(banner.title, "Connecting... (room test)");
         assert_eq!(banner.tone, BannerTone::Info);

@@ -1,6 +1,6 @@
 //! Bevy 시스템 테스트가 함께 쓰는 도구입니다. 화면과 GPU 없이 입장을 마친 세션을 만듭니다.
 
-use caravan_client_core::{DEFAULT_SERVER, Session};
+use caravan_client_core::{DEFAULT_SERVER, JoinRequest, Session};
 use caravan_protocol::{ClientEvent, PlayerName, RoomCode, ServerMsg, Welcome};
 use caravan_rules::{Seed, Sim, Tuning};
 
@@ -16,8 +16,11 @@ pub fn joined_session() -> ClientSession {
     let room = RoomCode::parse("test").unwrap();
     let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room);
     welcome.you = YOU;
-    let name = PlayerName::parse("KANG").unwrap();
-    let mut session = Session::new(room, name, DEFAULT_SERVER.to_string());
+    let request = JoinRequest {
+        name: PlayerName::parse("KANG").unwrap(),
+        room: Some(room),
+    };
+    let mut session = Session::new(request, DEFAULT_SERVER.to_string());
     session.on_event(ClientEvent::Connected);
     session.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
     ClientSession(session)

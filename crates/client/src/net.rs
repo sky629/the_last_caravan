@@ -2,7 +2,7 @@
 //! 재생 시각을 앞으로 보내서 화면에 그릴 `Frame`을 만들고, 입력을 서버 Tick마다 하나씩 보냅니다.
 
 use bevy::prelude::*;
-use caravan_client_core::{Frame, LaunchError, LaunchOptions, Session};
+use caravan_client_core::{Frame, JoinRequest, LaunchError, LaunchOptions, Session};
 use caravan_protocol::{ClientEvent, ClientTransport, PlayerName, ServerMsg};
 use caravan_ws_client::WsClient;
 
@@ -60,7 +60,8 @@ fn open(launch: Result<LaunchOptions, LaunchError>) -> (Session, Option<Net>) {
     };
     info!(
         "connecting to {} (room {})",
-        options.server_url, options.room
+        options.server_url,
+        options.room.as_ref().map_or("new", |room| room.as_str())
     );
     match WsClient::connect(&options.server_url) {
         Ok(client) => {
@@ -68,10 +69,11 @@ fn open(launch: Result<LaunchOptions, LaunchError>) -> (Session, Option<Net>) {
                 transport: Box::new(client),
                 debug_net: options.debug_net,
             };
-            (
-                Session::new(options.room, name, options.server_url),
-                Some(net),
-            )
+            let request = JoinRequest {
+                name,
+                room: options.room,
+            };
+            (Session::new(request, options.server_url), Some(net))
         }
         Err(reason) => (Session::Failed { reason }, None),
     }

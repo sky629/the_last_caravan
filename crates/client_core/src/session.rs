@@ -9,30 +9,31 @@
 //! (그 밖의 모든 상태) --Disconnected--> Disconnected   (Rejected, Failed, Unreachable는 사유를 유지합니다)
 //! ```
 //!
-//! 방에 들어간 뒤에 필요한 값(입장 안내, 스냅샷, 입력 순서 번호)은 `InRoom`에만 있습니다.
+//! 방에 들어간 뒤에 필요한 값(입장 안내, 명단, 스냅샷, 입력 순서 번호)은 `InRoom`에만 있습니다.
 //! 그래서 입장하기 전에 스냅샷을 그리거나 입력을 보내는 일은 값이 없어서 일어날 수 없습니다.
+//! 끝난 상태(Rejected, Disconnected, Unreachable, Failed)가 되면 `Flow`가 접속을 버리고 시작 화면으로 돌아갑니다.
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, ServerMsg,
-    Snapshot, Welcome, check_welcome,
+    Snapshot, Welcome, WireMember, check_welcome,
 };
 use caravan_rules::Vec2;
 
+use crate::hud::reject_text;
 use crate::input::{Controls, InputSender};
 use crate::interp::{Frame, SnapshotBuffer};
+use crate::start::JoinRequest;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Session {
     /// 접속이 열리기를 기다립니다. 열리지 않고 끝나면 어느 서버에 접속하려 했는지 알려야 하므로 `server`를 가집니다.
     Connecting {
-        room: RoomCode,
-        name: PlayerName,
+        request: JoinRequest,
         server: String,
     },
     /// `Join`을 보내고 `Welcome`이나 `JoinRejected`를 기다립니다.
     Joining {
-        room: RoomCode,
-        name: PlayerName,
+        request: JoinRequest,
     },
     /// 방에 들어간 뒤의 값은 다른 상태보다 훨씬 크므로 `Box`에 둡니다. 상태 하나를 옮길 때마다 가장 큰 상태의 크기를 복사하지 않게 합니다.
     InRoom(Box<Joined>),
@@ -59,17 +60,23 @@ pub enum Session {
 /// 방에 들어간 뒤의 상태입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Joined {
+    /// 들어간 방의 코드입니다. 방 코드를 비우고 입장했으면 서버가 만든 코드이므로, 입장 안내에서 읽습니다.
     pub room: RoomCode,
+    pub name: PlayerName,
     /// 서버가 입장할 때 알려 준 값입니다. 내 플레이어 번호, 진영, Tick 속도, 고정된 세계가 들어 있습니다.
     pub welcome: Welcome,
+    /// 방에 있는 사람입니다. 서버가 `Roster`를 보낼 때마다 바뀝니다.
+    pub roster: Vec<WireMember>,
     snapshots: SnapshotBuffer,
     inputs: InputSender,
 }
 
 impl Joined {
-    fn new(room: RoomCode, welcome: Welcome) -> Joined {
+    fn new(room: RoomCode, name: PlayerName, welcome: Welcome) -> Joined {
         Joined {
             room,
+            name,
+            roster: Vec::new(),
             snapshots: SnapshotBuffer::new(welcome.tick_hz),
             inputs: InputSender::new(welcome.tick_hz),
             welcome,
@@ -78,29 +85,30 @@ impl Joined {
 }
 
 impl Session {
-    pub fn new(room: RoomCode, name: PlayerName, server: String) -> Session {
-        Session::Connecting { room, name, server }
+    pub fn new(request: JoinRequest, server: String) -> Session {
+        Session::Connecting { request, server }
     }
 
     /// 이벤트 하나를 처리합니다. 서버에 답으로 보낼 메시지가 있으면 돌려줍니다.
     pub fn on_event(&mut self, event: ClientEvent) -> Option<ClientMsg> {
         match (&mut *self, event) {
-            (Session::Connecting { room, name, .. }, ClientEvent::Connected) => {
+            (Session::Connecting { request, .. }, ClientEvent::Connected) => {
                 let join = ClientMsg::Join {
                     version: PROTOCOL_VERSION,
-                    room: Some(room.as_str().to_string()),
-                    name: name.as_str().to_string(),
+                    room: request.room.as_ref().map(|room| room.as_str().to_string()),
+                    name: request.name.as_str().to_string(),
                 };
                 *self = Session::Joining {
-                    room: room.clone(),
-                    name: name.clone(),
+                    request: request.clone(),
                 };
                 Some(join)
             }
-            (Session::Joining { room, .. }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
+            (Session::Joining { request }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
                 // 서버가 보낸 값을 처음 믿기 전에 확인합니다. 여기를 통과한 값은 화면 코드가 다시 확인하지 않습니다.
-                *self = match check_welcome(&welcome) {
-                    Ok(()) => Session::InRoom(Box::new(Joined::new(room.clone(), welcome))),
+                *self = match checked_room(&welcome) {
+                    Ok(room) => {
+                        Session::InRoom(Box::new(Joined::new(room, request.name.clone(), welcome)))
+                    }
                     Err(reason) => Session::Failed {
                         reason: format!("the server sent an unusable welcome: {reason}"),
                     },
@@ -113,6 +121,10 @@ impl Session {
             }
             (Session::InRoom(joined), ClientEvent::Message(ServerMsg::Snapshot(snapshot))) => {
                 joined.snapshots.push(*snapshot);
+                None
+            }
+            (Session::InRoom(joined), ClientEvent::Message(ServerMsg::Roster(members))) => {
+                joined.roster = members;
                 None
             }
             (Session::Connecting { server, .. }, ClientEvent::Disconnected { reason }) => {
@@ -193,16 +205,7 @@ impl Session {
         match self {
             Session::Rejected { reason } => Some(Problem {
                 heading: "Join rejected",
-                reason: match reason {
-                    RejectReason::RoomFull { capacity } => {
-                        format!("the room is full ({capacity} players)")
-                    }
-                    RejectReason::BadRoomCode => "bad room code".to_string(),
-                    RejectReason::BadName => "bad name".to_string(),
-                    RejectReason::VersionMismatch { server } => format!(
-                        "server protocol {server}, client protocol {PROTOCOL_VERSION}. Update or reload."
-                    ),
-                },
+                reason: reject_text(*reason),
             }),
             Session::Disconnected { reason } => Some(Problem {
                 heading: "Disconnected",
@@ -231,11 +234,23 @@ impl Session {
     pub fn status_text(&self) -> String {
         match (self, self.problem()) {
             (_, Some(Problem { heading, reason })) => format!("{heading}: {reason}"),
-            (Session::Connecting { room, .. }, None) => format!("Connecting... (room {room})"),
-            (Session::Joining { room, .. }, None) => format!("Joining room {room}..."),
+            (Session::Connecting { request, .. }, None) => match &request.room {
+                Some(room) => format!("Connecting... (room {room})"),
+                None => "Connecting... (new room)".to_string(),
+            },
+            (Session::Joining { request }, None) => match &request.room {
+                Some(room) => format!("Joining room {room}..."),
+                None => "Creating a room...".to_string(),
+            },
             _ => "Connected".to_string(),
         }
     }
+}
+
+/// 입장 안내를 처음 믿기 전에 하는 확인입니다. 통과하면 서버가 알려 준 방 코드를 돌려줍니다.
+fn checked_room(welcome: &Welcome) -> Result<RoomCode, String> {
+    check_welcome(welcome)?;
+    RoomCode::parse(&welcome.room).map_err(|err| format!("room code: {err}"))
 }
 
 /// 접속 방식이 알려 준 이유 중 사용자에게 도움이 되는 것만 남깁니다.
@@ -268,12 +283,15 @@ mod tests {
 
     const SERVER: &str = "ws://127.0.0.1:7777";
 
-    fn name() -> PlayerName {
-        PlayerName::parse("KANG").unwrap()
+    fn request() -> JoinRequest {
+        JoinRequest {
+            name: PlayerName::parse("KANG").unwrap(),
+            room: Some(room()),
+        }
     }
 
     fn connecting() -> Session {
-        Session::new(room(), name(), SERVER.to_string())
+        Session::new(request(), SERVER.to_string())
     }
 
     fn snapshot(tick: u64) -> Snapshot {
@@ -320,13 +338,7 @@ mod tests {
                 name: "KANG".to_string(),
             })
         );
-        assert_eq!(
-            session,
-            Session::Joining {
-                room: room(),
-                name: name()
-            }
-        );
+        assert_eq!(session, Session::Joining { request: request() });
     }
 
     #[test]
@@ -478,13 +490,7 @@ mod tests {
             session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(1))))),
             None
         );
-        assert_eq!(
-            session,
-            Session::Joining {
-                room: room(),
-                name: name()
-            }
-        );
+        assert_eq!(session, Session::Joining { request: request() });
         assert!(session.newest_snapshot().is_none());
     }
 
@@ -498,21 +504,15 @@ mod tests {
             reason: "closed".to_string(),
         });
         assert_eq!(session, Session::Rejected { reason });
-        assert_eq!(
-            session.status_text(),
-            "Join rejected: the room is full (4 players)"
-        );
+        assert_eq!(session.status_text(), "Join rejected: Room is full (4 / 4)");
     }
 
     #[test]
     fn every_rejection_reason_is_explained_on_screen() {
         for (reason, expected) in [
-            (RejectReason::BadRoomCode, "bad room code"),
-            (RejectReason::BadName, "bad name"),
-            (
-                RejectReason::VersionMismatch { server: 9 },
-                "server protocol 9",
-            ),
+            (RejectReason::BadRoomCode, "room code is not valid"),
+            (RejectReason::BadName, "Name must be"),
+            (RejectReason::VersionMismatch { server: 9 }, "protocol 9"),
         ] {
             let text = Session::Rejected { reason }.status_text();
             assert!(text.contains(expected), "{text}");
