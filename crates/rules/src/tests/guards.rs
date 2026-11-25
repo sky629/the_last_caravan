@@ -268,9 +268,7 @@ fn every_new_day_places_the_guards_again_exactly_once() {
 fn a_new_expedition_starts_with_its_guards_too() {
     let mut s = two_short_days();
     s.player_at(10.0, 10.0);
-    s.set_wagon_hp(0);
-
-    s.run_until(2000, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
     s.run_ticks(3);
 
     assert_eq!(guards(&s).len(), 2, "two, not four");

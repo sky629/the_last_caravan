@@ -329,6 +329,7 @@ pub enum WireCannotBuild {
     OutsideVillage,
     TileTaken,
     WouldBlockPath,
+    InCamp,
 }
 
 impl WireCannotBuild {
@@ -340,6 +341,7 @@ impl WireCannotBuild {
             CannotBuild::OutsideVillage => WireCannotBuild::OutsideVillage,
             CannotBuild::TileTaken => WireCannotBuild::TileTaken,
             CannotBuild::WouldBlockPath => WireCannotBuild::WouldBlockPath,
+            CannotBuild::InCamp => WireCannotBuild::InCamp,
         }
     }
 }
@@ -433,10 +435,17 @@ fn wire_outcome(outcome: Outcome) -> WireOutcome {
 
 fn wire_stage(stage: &Stage, tuning: &Tuning) -> WirePhase {
     match stage {
-        Stage::Camp(_) => WirePhase::Camp {
-            ready: Vec::new(),
-            starting_in: None,
-            struck: Vec::new(),
+        Stage::Camp(camp) => WirePhase::Camp {
+            ready: camp.ready().map(|id| id.0).collect(),
+            starting_in: camp.countdown().map(|ticks| secs(ticks, tuning)),
+            struck: camp
+                .struck()
+                .map(|(monster, struck)| WireStruck {
+                    monster: monster.0,
+                    tick: struck.tick,
+                    amount: struck.amount,
+                })
+                .collect(),
         },
         Stage::Expedition(phase) => wire_phase(*phase, tuning),
         Stage::Debrief(debrief) => WirePhase::Debrief {

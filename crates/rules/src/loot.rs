@@ -7,6 +7,7 @@
 //!   상자 --(밤이 시작됨)--> 사라짐(몬스터는 마차를 향함)
 //!   바닥의 무기 --(F를 누른 순간)--> 플레이어의 빈 칸, 또는 든 무기와 맞바꿈(이전 무기가 그 자리에 놓임, 시작 무기와 같은 종류는 사라짐)
 //!   바닥의 무기 --(원정이 끝남)--> 사라짐
+//!   진열대(야영지) --(F를 누른 순간)--> 플레이어의 빈 칸, 또는 든 무기와 맞바꿈(내준 무기는 사라짐). 진열대는 그대로 남음
 //! ```
 //!
 //! 상자를 여는 일은 부활, 수리, 채집과 같이 F를 누르고 있는 동안의 행동(`Interaction::Opening`)이고, 진행도는 여는 플레이어에게만 있습니다.
@@ -57,11 +58,19 @@ pub struct GroundWeapon {
     pub kind: WeaponKind,
 }
 
-/// 야영지의 무기 진열대입니다. 무기 종류마다 하나이고, 원정이 시작되면 사라집니다.
+/// 야영지의 무기 진열대입니다. 무기 종류마다 하나이고, 집어도 진열은 그대로 남습니다.
+/// 진열대에서 무기를 집으며 내준 무기는 바닥에 놓이지 않고 사라지므로, 야영지의 바닥에는 무기가 쌓이지 않습니다. 원정이 시작되면 진열대는 사라집니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rack {
     pub kind: WeaponKind,
     pub pos: Vec2,
+}
+
+/// F를 한 번 눌러서 무기를 집는 곳입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pickup {
+    Ground(GroundWeaponId),
+    Rack(WeaponKind),
 }
 
 /// F를 누르면 무엇을 하게 되는지 화면에 알리는 안내입니다. 부활, 수리, 채집은 따로 안내하지 않습니다.
@@ -69,7 +78,7 @@ pub struct Rack {
 pub enum Prompt {
     /// F를 누르고 있으면 가까운 상자를 엽니다.
     OpenChest,
-    /// F를 한 번 누르면 가까운 바닥의 무기를 줍습니다.
+    /// F를 한 번 누르면 가까운 바닥의 무기나 진열대의 무기를 줍습니다.
     TakeWeapon(WeaponKind),
 }
 
@@ -211,24 +220,36 @@ pub(crate) fn finish_openings(world: &mut World, t: &Tuning) {
     }
 }
 
-/// `me`가 F를 한 번 누르면 줍게 되는 가장 가까운 바닥의 무기입니다. 거리가 같으면 번호가 작은 무기입니다.
-pub(crate) fn nearest_ground_weapon(
+/// `me`가 F를 한 번 누르면 집게 되는 가장 가까운 무기와 그 종류입니다. 바닥의 무기와 진열대를 함께 보고, 거리가 같으면 바닥의 무기가 먼저이고 그 안에서는 번호가 작은 무기입니다.
+/// 진열대에서는 이미 가진 종류의 무기를 집지 않습니다.
+pub(crate) fn nearest_pickup(
     world: &World,
     me: &Player,
     t: &Tuning,
-) -> Option<GroundWeaponId> {
-    let mut nearest: Option<(f32, GroundWeaponId)> = None;
-    for weapon in &world.ground_weapons {
-        let point = Body::Circle {
-            center: weapon.pos,
+) -> Option<(Pickup, WeaponKind)> {
+    let gap_to = |pos: Vec2| {
+        Body::Circle {
+            center: pos,
             radius: 0.0,
-        };
-        let gap = point.gap_from(me.pos, t.player.radius);
-        if gap <= t.loot.take_reach && nearest.is_none_or(|(best, _)| gap < best) {
-            nearest = Some((gap, weapon.id));
+        }
+        .gap_from(me.pos, t.player.radius)
+    };
+    let ground = world
+        .ground_weapons
+        .iter()
+        .map(|weapon| (gap_to(weapon.pos), Pickup::Ground(weapon.id), weapon.kind));
+    let racks = world
+        .racks
+        .iter()
+        .filter(|rack| !me.loadout.holds(rack.kind))
+        .map(|rack| (gap_to(rack.pos), Pickup::Rack(rack.kind), rack.kind));
+    let mut nearest: Option<(f32, Pickup, WeaponKind)> = None;
+    for (gap, pickup, kind) in ground.chain(racks) {
+        if gap <= t.loot.take_reach && nearest.is_none_or(|(best, _, _)| gap < best) {
+            nearest = Some((gap, pickup, kind));
         }
     }
-    nearest.map(|(_, id)| id)
+    nearest.map(|(_, pickup, kind)| (pickup, kind))
 }
 
 /// 이번 Tick에 F를 눌러서 바닥의 무기를 줍는 플레이어들을 플레이어 번호 순서로 처리합니다.
@@ -237,9 +258,19 @@ pub(crate) fn nearest_ground_weapon(
 /// 입장하는 플레이어마다 새로 받는 무기이므로, 바닥에 놓이면 입장과 퇴장을 되풀이해서 바닥의 무기를 끝없이 늘릴 수 있기 때문입니다.
 /// 그래서 바닥의 무기는 모두 상자에서 나온 것입니다.
 /// 같은 Tick에 두 명이 같은 무기를 노리면 번호가 작은 플레이어가 줍고, 다른 플레이어의 F는 아무 일도 하지 않습니다.
-pub(crate) fn apply_pickups(world: &mut World, pickups: &[(PlayerId, GroundWeaponId)], t: &Tuning) {
+/// 진열대에서 집으면 진열대는 그대로이고, 내준 무기는 바닥에 놓이지 않고 사라집니다. 여럿이 같은 진열대에서 같은 Tick에 집어도 모두 집습니다.
+pub(crate) fn apply_pickups(world: &mut World, pickups: &[(PlayerId, Pickup)], t: &Tuning) {
     let mut taken: BTreeSet<GroundWeaponId> = BTreeSet::new();
-    for &(player_id, weapon_id) in pickups {
+    for &(player_id, pickup) in pickups {
+        let weapon_id = match pickup {
+            Pickup::Ground(id) => id,
+            Pickup::Rack(kind) => {
+                if let Some(player) = world.players.get_mut(&player_id) {
+                    player.loadout.take(kind);
+                }
+                continue;
+            }
+        };
         if !taken.insert(weapon_id) {
             continue;
         }

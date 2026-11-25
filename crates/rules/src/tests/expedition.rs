@@ -144,9 +144,7 @@ fn a_new_expedition_returns_each_player_to_their_own_spawn_point_after_someone_l
     let third = s.player_at(5.0, 5.0);
     s.sim.remove_player(first);
 
-    s.set_wagon_hp(0);
-    s.run_ticks(1);
-    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 1);
+    s.restart_expedition();
 
     assert_eq!(s.sim.expedition_number(), 2);
     assert_eq!(s.player(second).pos, spawns[1]);
@@ -196,9 +194,7 @@ fn players_beyond_the_spawn_points_are_spread_evenly_when_they_join() {
 fn a_new_expedition_does_not_stack_two_players_on_one_point_while_another_is_free() {
     let (mut s, spawns, staying) = five_players_on_four_points_after_one_left();
 
-    s.set_wagon_hp(0);
-    s.run_ticks(1);
-    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 1);
+    s.restart_expedition();
 
     assert_eq!(s.sim.expedition_number(), 2);
     let mut positions: Vec<_> = staying.iter().map(|&id| s.player(id).pos).collect();
@@ -290,8 +286,7 @@ fn a_new_expedition_restores_the_players_the_wagon_and_the_field() {
     let old_monster_count = s.sim.monsters().count();
     assert_eq!(old_monster_count, 1);
 
-    let restart = s.ticks(s.sim.tuning().camp.debrief_secs);
-    s.run_ticks(restart + 1);
+    s.restart_expedition();
 
     assert_eq!(s.sim.expedition_number(), 2);
     assert_eq!(s.sim.wagon().hp, 500);
@@ -311,9 +306,7 @@ fn each_expedition_has_its_own_seed_and_a_room_seed_always_gives_the_same_ones()
     let mut s = Scenario::open_field();
     let first = s.sim.expedition_seed();
     s.player_at(2.0, 2.0);
-    s.set_wagon_hp(0);
-    s.run_ticks(1);
-    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 1);
+    s.restart_expedition();
     assert_eq!(s.sim.expedition_number(), 2);
     let second = s.sim.expedition_seed();
 
@@ -335,9 +328,8 @@ fn monster_ids_are_not_reused_in_a_new_expedition() {
     let mut s = Scenario::with_cycle(|t| t.cycle.day_secs = 1.0);
     s.run_until(400, |sim| sim.monsters().count() > 0);
     let old_ids: Vec<_> = s.sim.monsters().map(|m| m.id).collect();
-    s.sim.world_mut().wagon.hp = 0;
     s.player_at(2.0, 2.0);
-    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 2);
+    s.restart_expedition();
     assert_eq!(s.sim.expedition_number(), 2);
 
     s.run_until(400, |sim| sim.monsters().count() > 0);
@@ -372,6 +364,8 @@ fn play_a_scripted_expedition() -> String {
                     build: phase % 4 == 3,
                     sprint: phase % 3 != 1,
                     switch_weapon: tick % 90 == 45,
+                    toggle_ready: false,
+                    confirm: false,
                 },
             );
         }

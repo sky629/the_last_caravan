@@ -4,11 +4,11 @@
 use caravan_protocol::{
     Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
     WireDelivery, WireInteraction, WireLife, WireLoadout, WireMonsterKind, WireOutcome, WirePhase,
-    WirePos, WirePrompt, WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
+    WirePos, WirePrompt, WireRepairTarget, WireStruck, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
-    AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Tile,
-    Tuning, Vec2, WavePlan, WeaponKind,
+    AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Start,
+    Tile, Tuning, Vec2, WavePlan, WeaponKind,
 };
 
 fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
@@ -369,6 +369,116 @@ fn a_refused_build_shows_the_reason_and_the_tile_on_the_wire() {
             tile: WireTile { x: 32, y: 35 },
             why: WireCannotBuild::NotEnoughStash
         })
+    );
+}
+
+/// 야영지에서 시작하는 방입니다. 허수아비 하나가 플레이어의 등장 지점 (32, 29.5)의 동쪽 1.5타일 (33.5, 29.5)에 섭니다.
+fn camp_with_a_scarecrow_beside_the_start() -> Sim {
+    sim_with(|t| {
+        t.camp.start = Start::WhenReady;
+        t.map.camp.scarecrows = vec![Vec2::new(33.5, 29.5)];
+    })
+}
+
+fn press(input: PlayerInput, id: caravan_rules::PlayerId) -> PlayerInputs {
+    PlayerInputs::from([(id, input)])
+}
+
+#[test]
+fn a_camp_maps_who_is_ready_and_the_seconds_until_the_expedition_starts() {
+    let mut sim = camp_with_a_scarecrow_beside_the_start();
+    let a = sim.add_player().unwrap();
+    let b = sim.add_player().unwrap();
+    let ready = PlayerInput {
+        toggle_ready: true,
+        ..PlayerInput::default()
+    };
+    assert_eq!(Snapshot::from_sim(&sim).expedition, 0);
+
+    step(&mut sim, &press(ready, a), 1);
+    let snapshot = Snapshot::from_sim(&sim);
+    assert_eq!(
+        snapshot.phase,
+        WirePhase::Camp {
+            ready: vec![a.0],
+            starting_in: None,
+            struck: vec![]
+        },
+        "one ready player does not start the countdown"
+    );
+
+    step(&mut sim, &press(ready, b), 1);
+    assert_eq!(
+        Snapshot::from_sim(&sim).phase,
+        WirePhase::Camp {
+            ready: vec![a.0, b.0],
+            starting_in: Some(3.0),
+            struck: vec![]
+        },
+        "countdown_secs is 3, shown as seconds"
+    );
+
+    step(&mut sim, &PlayerInputs::new(), 20);
+    assert_eq!(
+        Snapshot::from_sim(&sim).phase,
+        WirePhase::Camp {
+            ready: vec![a.0, b.0],
+            starting_in: Some(2.0),
+            struck: vec![]
+        }
+    );
+}
+
+#[test]
+fn a_scarecrow_that_was_hit_is_on_the_wire_with_the_tick_and_the_damage() {
+    let mut sim = camp_with_a_scarecrow_beside_the_start();
+    let fighter = sim.add_player().unwrap();
+    let scarecrow = sim.monsters().next().expect("the camp has a scarecrow").id;
+    let swing = PlayerInput {
+        aim: AimDir::new(1.0, 0.0),
+        attack: true,
+        ..PlayerInput::default()
+    };
+
+    step(&mut sim, &press(swing, fighter), 1);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let WirePhase::Camp { struck, .. } = snapshot.phase else {
+        panic!("the room is in the camp");
+    };
+    assert_eq!(
+        struck,
+        vec![WireStruck {
+            monster: scarecrow.0,
+            tick: snapshot.tick,
+            amount: sim.tuning().weapons.sword.damage
+        }]
+    );
+    assert_eq!(
+        snapshot.monsters[0].hp,
+        sim.tuning().monsters.scarecrow.max_hp
+    );
+}
+
+#[test]
+fn building_in_the_camp_shows_the_camp_as_the_reason_on_the_wire() {
+    let mut sim = camp_with_a_scarecrow_beside_the_start();
+    let builder = sim.add_player().unwrap();
+    let building = PlayerInput {
+        build: true,
+        aim: AimDir::new(0.0, -1.0),
+        ..PlayerInput::default()
+    };
+
+    step(&mut sim, &press(building, builder), 3);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let WireLife::Alive { build_refusal, .. } = snapshot.players[0].life else {
+        panic!("alive");
+    };
+    assert_eq!(
+        build_refusal.map(|refusal| refusal.why),
+        Some(WireCannotBuild::InCamp)
     );
 }
 

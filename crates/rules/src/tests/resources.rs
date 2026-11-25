@@ -464,9 +464,8 @@ fn a_new_expedition_starts_with_full_nodes_and_no_piles() {
     s.set_carried(a, 6);
     s.pile_at(5.0, 5.0, 4);
     s.set_node_amount(NODE, 1);
-    s.set_wagon_hp(0);
 
-    s.run_until(2000, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
 
     assert_eq!(node_amount(&s), s.sim.tuning().resources.node_amount);
     assert_eq!(s.sim.piles().count(), 0);

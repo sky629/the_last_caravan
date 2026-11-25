@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
-use crate::ids::{ChestId, GroundWeaponId, NodeId, PlayerId, Team, TowerId};
+use crate::ids::{ChestId, NodeId, PlayerId, Team, TowerId};
 use crate::kind::WeaponKind;
 use crate::loadout::Loadout;
-use crate::loot::{self, Prompt};
+use crate::loot::{self, Pickup, Prompt};
 use crate::math::Vec2;
 use crate::resources;
 use crate::stamina::Stamina;
@@ -335,7 +335,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let mut repairs: Vec<RepairTarget> = Vec::new();
     let mut gathers: Vec<(PlayerId, NodeId)> = Vec::new();
     let mut build_requests: Vec<PlayerId> = Vec::new();
-    let mut pickups: Vec<(PlayerId, GroundWeaponId)> = Vec::new();
+    let mut pickups: Vec<(PlayerId, Pickup)> = Vec::new();
     for player in world.players.values() {
         if let Some(Interaction::Reviving {
             target,
@@ -389,9 +389,9 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
         };
         if target.is_none()
             && pressed(player.id)
-            && let Some(weapon) = loot::nearest_ground_weapon(world, player, t)
+            && let Some((pickup, _)) = loot::nearest_pickup(world, player, t)
         {
-            pickups.push((player.id, weapon));
+            pickups.push((player.id, pickup));
         }
         let mut chosen = if holding(player.id) { target } else { None };
         match chosen {
@@ -500,9 +500,7 @@ pub(crate) fn prompt(world: &World, me: &Player, t: &Tuning) -> Option<Prompt> {
     match choose_interaction(world, me, &claimed, t) {
         Some(Interaction::Opening { .. }) => Some(Prompt::OpenChest),
         Some(_) => None,
-        None => loot::nearest_ground_weapon(world, me, t)
-            .and_then(|id| world.ground_weapons.iter().find(|weapon| weapon.id == id))
-            .map(|weapon| Prompt::TakeWeapon(weapon.kind)),
+        None => loot::nearest_pickup(world, me, t).map(|(_, kind)| Prompt::TakeWeapon(kind)),
     }
 }
 

@@ -1,6 +1,7 @@
 //! 테스트에서만 쓰는 상황 구성 도구입니다. 개체를 필요한 자리에 놓은 뒤,
 //! 서버가 하는 것과 같은 방식(누르고 있는 입력과 `step`)으로 게임을 진행합니다.
 
+use crate::camp::Camp;
 use crate::expedition::{Outcome, Phase};
 use crate::ids::{MonsterId, NodeId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
@@ -12,9 +13,10 @@ use crate::math::{Rect, Vec2};
 use crate::monster::{Monster, Order};
 use crate::player::{Life, Player};
 use crate::sim::Sim;
+use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
-    CampLayout, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan,
+    CampLayout, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Start, Tuning, WavePlan,
 };
 use crate::world::Tile;
 
@@ -48,36 +50,7 @@ impl Scenario {
     /// 낮과 밤이 정해진 시간에 저절로 흐르는 시나리오입니다. `open_field`의 맵을 쓰고, 밤의 몬스터는 마차에서 12타일 떨어진 곳에 나타납니다.
     /// 낮의 몬스터는 없습니다. 원정의 진행을 확인하는 테스트가 씁니다.
     pub fn with_cycle(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
-        let defaults = Tuning::default();
-        Scenario::started(
-            Tuning {
-                map: MapSpec {
-                    width: 20.0,
-                    height: 20.0,
-                    wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
-                    obstacles: vec![],
-                    nodes: vec![],
-                    chest_sites: vec![],
-                    player_spawns: vec![Vec2::new(10.0, 10.0)],
-                    spatial_cell: 2.0,
-                    camp: without_camp(Vec2::new(10.0, 10.0)),
-                },
-                nights: NightTuning {
-                    spawn_distance: 12.0,
-                    ..defaults.nights.clone()
-                },
-                guards: GuardTuning {
-                    per_node: 0,
-                    ..defaults.guards.clone()
-                },
-                loot: LootTuning {
-                    chests_per_day: 0,
-                    ..defaults.loot.clone()
-                },
-                ..defaults
-            },
-            adjust,
-        )
+        Scenario::started(open_field_tuning(), adjust)
     }
 
     /// `open_field`의 맵에 후보 자리 (2, 2) 하나가 있고, 그 자리에 `contents`가 든 상자가 놓여 있는 시나리오입니다.
@@ -91,21 +64,56 @@ impl Scenario {
         Scenario::started(Tuning::default(), adjust)
     }
 
-    /// 원정을 시험하는 테스트는 야영지를 보지 않으므로, 테스트가 어떤 벽을 세워도 수치 검사를 통과하도록 야영지를 비웁니다.
-    fn started(mut tuning: Tuning, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+    /// 원정이 이미 시작된 시나리오입니다. 야영지를 거치지 않고, 준비가 끝났을 때와 같은 함수(`Sim::begin_expedition`)로 첫날을 시작합니다.
+    /// 원정을 시험하는 테스트는 야영지를 보지 않으므로, 테스트가 어떤 벽을 세워도 수치 검사를 통과하도록 허수아비를 두지 않고 진열대를 첫 등장 지점에 모읍니다.
+    fn started(tuning: Tuning, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+        let mut scenario = Scenario::in_camp(tuning, |t| {
+            adjust(t);
+            let first_spawn = t.map.player_spawns.first().copied().unwrap_or(Vec2::ZERO);
+            t.map.camp = without_camp(first_spawn);
+        });
+        scenario.sim.begin_expedition();
+        scenario
+    }
+
+    /// `open_field`의 맵에서 야영지에 있는 시나리오입니다. 허수아비 셋이 (12.5, 5.0)부터 동쪽으로 한 줄로 서고,
+    /// 진열대 여섯이 (4, 15)부터 동쪽으로 2타일 간격으로 섭니다(검, 활, 대검, 창, 석궁, 소총의 순서).
+    pub fn camp(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+        let mut tuning = open_field_tuning();
+        tuning.map.camp = CampLayout {
+            scarecrows: vec![
+                Vec2::new(12.5, 5.0),
+                Vec2::new(13.5, 5.0),
+                Vec2::new(14.5, 5.0),
+            ],
+            first_rack: Vec2::new(4.0, 15.0),
+            rack_step: Vec2::new(2.0, 0.0),
+        };
+        Scenario::in_camp(tuning, adjust)
+    }
+
+    fn in_camp(mut tuning: Tuning, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+        tuning.camp.start = Start::WhenReady;
         adjust(&mut tuning);
-        let first_spawn = tuning
-            .map
-            .player_spawns
-            .first()
-            .copied()
-            .unwrap_or(Vec2::ZERO);
-        tuning.map.camp = without_camp(first_spawn);
         assert_eq!(tuning.validate(), Ok(()), "the scenario's tuning is valid");
         Scenario {
             sim: Sim::new(tuning, SEED),
             held: PlayerInputs::new(),
         }
+    }
+
+    /// 지금 누르고 있는 입력은 그대로 두고, 준비 키(R)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.
+    pub fn tap_ready(&mut self, id: PlayerId) {
+        let mut inputs = self.held.clone();
+        inputs.entry(id).or_default().toggle_ready = true;
+        self.sim.step(&inputs);
+    }
+
+    /// 지금 누르고 있는 입력은 그대로 두고, 확인 키(Enter)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.
+    pub fn tap_confirm(&mut self, id: PlayerId) {
+        let mut inputs = self.held.clone();
+        inputs.entry(id).or_default().confirm = true;
+        self.sim.step(&inputs);
     }
 
     pub fn player_at(&mut self, x: f32, y: f32) -> PlayerId {
@@ -385,6 +393,38 @@ pub(crate) fn chest_tuning(t: &mut Tuning, contents: WeaponKind, guards: u32) {
     }
 }
 
+/// 장애물과 채집 지점이 없는 20 x 20 맵의 수치입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
+/// 낮의 몬스터와 무기 상자도 없고, 밤의 몬스터는 마차에서 12타일 떨어진 곳에 나타납니다.
+fn open_field_tuning() -> Tuning {
+    let defaults = Tuning::default();
+    Tuning {
+        map: MapSpec {
+            width: 20.0,
+            height: 20.0,
+            wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
+            obstacles: vec![],
+            nodes: vec![],
+            chest_sites: vec![],
+            player_spawns: vec![Vec2::new(10.0, 10.0)],
+            spatial_cell: 2.0,
+            camp: without_camp(Vec2::new(10.0, 10.0)),
+        },
+        nights: NightTuning {
+            spawn_distance: 12.0,
+            ..defaults.nights.clone()
+        },
+        guards: GuardTuning {
+            per_node: 0,
+            ..defaults.guards.clone()
+        },
+        loot: LootTuning {
+            chests_per_day: 0,
+            ..defaults.loot.clone()
+        },
+        ..defaults
+    }
+}
+
 /// 허수아비도 진열대도 없는 야영지의 배치입니다. 진열대는 모두 `spot`에 놓입니다.
 fn without_camp(spot: Vec2) -> CampLayout {
     CampLayout {
@@ -419,6 +459,19 @@ pub(crate) fn gathered_total(sim: &Sim) -> u32 {
 /// 원정이 끝나서 결과 화면이면 그 결과입니다.
 pub(crate) fn outcome(sim: &Sim) -> Option<Outcome> {
     sim.debrief().map(|debrief| debrief.outcome())
+}
+
+/// 방이 야영지에 있는지 봅니다.
+pub(crate) fn in_camp(sim: &Sim) -> bool {
+    matches!(sim.stage(), Stage::Camp(_))
+}
+
+/// 야영지에 있는 방의 야영지 상태입니다. 야영지가 아니면 테스트가 실패합니다.
+pub(crate) fn camp_of(sim: &Sim) -> &Camp {
+    match sim.stage() {
+        Stage::Camp(camp) => camp,
+        other => panic!("the room is not in the camp: {other:?}"),
+    }
 }
 
 /// 원정 중인 방의 단계입니다. 원정 중이 아니면 테스트가 실패합니다.

@@ -441,6 +441,7 @@ fn refusal_text(refusal: WireBuildRefusal) -> String {
         WireCannotBuild::OutsideVillage => "TOO FAR FROM THE WAGON",
         WireCannotBuild::TileTaken => "THE TILE IS TAKEN",
         WireCannotBuild::WouldBlockPath => "IT WOULD BLOCK THE WAY TO THE WAGON",
+        WireCannotBuild::InCamp => "NOTHING CAN BE BUILT IN THE CAMP",
     };
     format!("CANNOT BUILD: {why}")
 }
@@ -1149,6 +1150,7 @@ mod tests {
                 WireCannotBuild::WouldBlockPath,
                 "IT WOULD BLOCK THE WAY TO THE WAGON",
             ),
+            (WireCannotBuild::InCamp, "NOTHING CAN BE BUILT IN THE CAMP"),
         ];
         let mut texts = Vec::new();
         for (why, expected) in reasons {

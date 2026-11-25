@@ -174,11 +174,10 @@ fn chest_ids_are_not_reused_on_the_next_day() {
 #[test]
 fn a_new_expedition_draws_its_own_chests_and_repeats_for_the_same_room_seed() {
     let second_expedition = || {
-        let mut s = Scenario::default_game(|t| t.camp.debrief_secs = 0.1);
+        let mut s = Scenario::default_game(|_| {});
         let first = layout(&s.sim);
         s.player_at(32.0, 29.5);
-        s.set_wagon_hp(0);
-        s.run_until(200, |sim| sim.expedition_number() == 2);
+        s.restart_expedition();
         (first, layout(&s.sim))
     };
 
@@ -192,12 +191,11 @@ fn a_new_expedition_draws_its_own_chests_and_repeats_for_the_same_room_seed() {
 
 #[test]
 fn a_new_expedition_removes_the_old_chests_and_places_new_ones_with_new_ids() {
-    let mut s = Scenario::default_game(|t| t.camp.debrief_secs = 0.1);
+    let mut s = Scenario::default_game(|_| {});
     let old: Vec<_> = s.sim.chests().map(|chest| chest.id).collect();
     s.player_at(32.0, 29.5);
-    s.set_wagon_hp(0);
 
-    s.run_until(200, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
 
     let new: Vec<_> = s.sim.chests().map(|chest| chest.id).collect();
     assert_eq!(old.len(), 3);

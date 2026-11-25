@@ -288,6 +288,8 @@ pub(crate) struct Ctx<'a> {
     pub inputs: &'a PlayerInputs,
     pub grid: &'a MonsterGrid,
     pub tick: u64,
+    /// 야영지의 Tick이면 참입니다. 건설 요청을 받지 않습니다(`build::start_builds`).
+    pub practice: bool,
 }
 
 /// 피해를 받거나 쫓기는 대상입니다.

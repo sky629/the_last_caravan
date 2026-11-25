@@ -379,7 +379,9 @@ pub enum Start {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CampTuning {
     pub start: Start,
-    /// 결과 화면을 보여 주는 시간입니다. 이 시간이 지나면 다음 단계로 넘어갑니다.
+    /// 모두가 준비한 뒤 원정이 시작되기까지의 시간입니다.
+    pub countdown_secs: f32,
+    /// 결과 화면을 보여 주는 가장 긴 시간입니다. 모두가 확인하면 더 일찍 끝납니다.
     pub debrief_secs: f32,
 }
 
@@ -665,6 +667,7 @@ impl Tuning {
         for (name, value) in [
             ("day_secs", self.cycle.day_secs),
             ("dawn_secs", self.cycle.dawn_secs),
+            ("camp countdown_secs", self.camp.countdown_secs),
             ("first_wave_delay_secs", self.nights.first_wave_delay_secs),
             ("between_waves_secs", self.nights.between_waves_secs),
             ("spawn_interval_secs", self.nights.spawn_interval_secs),
@@ -1213,6 +1216,7 @@ impl Default for Tuning {
             },
             camp: CampTuning {
                 start: Start::AtOnce,
+                countdown_secs: 3.0,
                 debrief_secs: 5.0,
             },
             nights: NightTuning {

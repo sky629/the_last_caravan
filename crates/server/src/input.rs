@@ -13,7 +13,7 @@ pub(crate) struct MemberInput {
     newest_seq: Option<u32>,
     /// 지난 Tick 이후 받아들인 입력을 하나로 합친 값입니다. 새 입력이 없었으면 `None`입니다.
     merged: Option<PlayerInput>,
-    /// 가장 최근에 받아들인 입력에서 누른 순간(`switch_weapon`, `interact_pressed`)을 지운 것입니다. 새 입력이 없는 Tick에 다시 사용합니다.
+    /// 가장 최근에 받아들인 입력에서 누른 순간(`switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`)을 지운 것입니다. 새 입력이 없는 Tick에 다시 사용합니다.
     held: PlayerInput,
     /// 새 입력 없이 지나간 Tick의 수입니다.
     silent_ticks: u32,
@@ -82,18 +82,22 @@ fn to_rules(msg: &InputMsg) -> PlayerInput {
         build: msg.build,
         sprint: msg.sprint,
         switch_weapon: msg.switch_weapon,
+        toggle_ready: msg.toggle_ready,
+        confirm: msg.confirm,
     }
 }
 
 /// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동, 조준, `interact`, `build`, `sprint`는 더 새로운 입력을 따릅니다.
 /// `interact`와 `build`와 `sprint`는 누르고 있는 동안 이어지는 상태이므로, Tick 안에서 눌렀다 뗐다면 뗀 것으로 봅니다.
-/// `attack`, `switch_weapon`, `interact_pressed`는 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭과 키가 사라지지 않게 합니다.
+/// `attack`, `switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`은 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭과 키가 사라지지 않게 합니다.
 /// 누른 순간인 조작을 더하면 `PlayerInput::held`가 그 값을 지우게 하고, 여기에도 `||`를 한 줄 더합니다.
 fn merge(older: PlayerInput, newer: PlayerInput) -> PlayerInput {
     PlayerInput {
         attack: older.attack || newer.attack,
         switch_weapon: older.switch_weapon || newer.switch_weapon,
         interact_pressed: older.interact_pressed || newer.interact_pressed,
+        toggle_ready: older.toggle_ready || newer.toggle_ready,
+        confirm: older.confirm || newer.confirm,
         ..newer
     }
 }
@@ -292,6 +296,71 @@ mod tests {
         input.accept(&f(5));
 
         assert!(!input.for_tick(10).interact_pressed);
+    }
+
+    fn r(seq: u32) -> InputMsg {
+        InputMsg {
+            seq,
+            toggle_ready: true,
+            ..InputMsg::default()
+        }
+    }
+
+    fn enter(seq: u32) -> InputMsg {
+        InputMsg {
+            seq,
+            confirm: true,
+            ..InputMsg::default()
+        }
+    }
+
+    #[test]
+    fn a_press_of_r_and_a_press_of_enter_each_reach_the_rules_in_exactly_one_tick_and_only_as_themselves()
+     {
+        let mut input = MemberInput::new();
+        input.accept(&r(1));
+        let first = input.for_tick(10);
+        assert!(first.toggle_ready && !first.confirm);
+        let second = input.for_tick(10);
+        assert!(
+            !second.toggle_ready,
+            "a tick without a message does not press it again"
+        );
+
+        input.accept(&enter(2));
+        let third = input.for_tick(10);
+        assert!(third.confirm && !third.toggle_ready);
+        assert!(
+            !input.for_tick(10).confirm,
+            "a tick without a message does not press it again"
+        );
+    }
+
+    #[test]
+    fn a_press_of_r_or_enter_followed_by_another_input_in_the_same_tick_is_kept() {
+        let mut input = MemberInput::new();
+        input.accept(&r(1));
+        input.accept(&enter(2));
+        input.accept(&msg(3, false, false));
+
+        let tick = input.for_tick(10);
+
+        assert!(tick.toggle_ready && tick.confirm);
+        let next = input.for_tick(10);
+        assert!(!next.toggle_ready && !next.confirm);
+    }
+
+    #[test]
+    fn a_late_or_repeated_message_with_r_or_enter_does_not_press_it() {
+        let mut input = MemberInput::new();
+        input.accept(&msg(5, false, false));
+        input.for_tick(10);
+
+        input.accept(&r(3));
+        input.accept(&enter(5));
+
+        let tick = input.for_tick(10);
+        assert!(!tick.toggle_ready && !tick.confirm);
     }
 
     #[test]

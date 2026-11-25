@@ -30,6 +30,10 @@ pub struct Controls {
     pub sprint: bool,
     /// Q 키를 누르기 시작한 프레임에서만 참입니다. 누르고 있는 상태가 아니라 누른 순간이고, 키를 누르고 있어도 무기가 계속 바뀌지 않습니다.
     pub switch_weapon: bool,
+    /// R 키를 누르기 시작한 프레임에서만 참입니다. 누르고 있는 상태가 아니라 누른 순간이고, 키를 누르고 있어도 준비가 계속 바뀌지 않습니다.
+    pub toggle_ready: bool,
+    /// Enter 키를 누르기 시작한 프레임에서만 참입니다. 결과 화면에서 확인을 켭니다.
+    pub confirm: bool,
 }
 
 impl Controls {
@@ -52,6 +56,8 @@ impl Controls {
             build: self.build,
             sprint: self.sprint,
             switch_weapon: self.switch_weapon,
+            toggle_ready: self.toggle_ready,
+            confirm: self.confirm,
         }
     }
 }
@@ -75,6 +81,10 @@ pub struct InputSender {
     switch_latched: bool,
     /// F 키를 누른 프레임이 있었는데 아직 입력에 싣지 않았는지 기억합니다. 입력에 한 번 실으면 지웁니다.
     interact_latched: bool,
+    /// R 키를 누른 프레임이 있었는데 아직 입력에 싣지 않았는지 기억합니다. 입력에 한 번 실으면 지웁니다.
+    ready_latched: bool,
+    /// Enter 키를 누른 프레임이 있었는데 아직 입력에 싣지 않았는지 기억합니다. 입력에 한 번 실으면 지웁니다.
+    confirm_latched: bool,
 }
 
 impl InputSender {
@@ -86,13 +96,15 @@ impl InputSender {
             attack_latched: false,
             switch_latched: false,
             interact_latched: false,
+            ready_latched: false,
+            confirm_latched: false,
         }
     }
 
     /// 프레임마다 부릅니다. 보낼 때가 되었으면 입력 메시지를 돌려줍니다.
     ///
     /// 프레임은 입력보다 자주 돌므로, 두 입력 사이에 눌렸다가 떼어진 클릭도 다음 입력에 공격으로 실어서 잃지 않게 합니다.
-    /// 무기 전환 키와 F를 누른 프레임도 같은 방식으로 기억해서 다음 입력에 한 번만 싣습니다.
+    /// 무기 전환 키와 F와 R과 Enter를 누른 프레임도 같은 방식으로 기억해서 다음 입력에 한 번만 싣습니다.
     pub fn poll(
         &mut self,
         now_secs: f64,
@@ -102,6 +114,8 @@ impl InputSender {
         self.attack_latched |= controls.attack;
         self.switch_latched |= controls.switch_weapon;
         self.interact_latched |= controls.interact_pressed;
+        self.ready_latched |= controls.toggle_ready;
+        self.confirm_latched |= controls.confirm;
         if now_secs < self.next_at {
             return None;
         }
@@ -115,6 +129,8 @@ impl InputSender {
             attack: self.attack_latched,
             switch_weapon: self.switch_latched,
             interact_pressed: self.interact_latched,
+            toggle_ready: self.ready_latched,
+            confirm: self.confirm_latched,
             ..*controls
         };
         let input = held.to_input(self.next_seq, me);
@@ -122,6 +138,8 @@ impl InputSender {
         self.attack_latched = false;
         self.switch_latched = false;
         self.interact_latched = false;
+        self.ready_latched = false;
+        self.confirm_latched = false;
         Some(input)
     }
 }
@@ -190,11 +208,14 @@ mod tests {
             sprint: true,
             switch_weapon: true,
             interact_pressed: true,
+            toggle_ready: true,
+            confirm: true,
             ..Controls::default()
         };
         let input = controls.to_input(1, None);
         assert!(input.attack && input.interact && input.build && input.sprint);
         assert!(input.switch_weapon && input.interact_pressed);
+        assert!(input.toggle_ready && input.confirm);
     }
 
     #[test]
@@ -330,5 +351,65 @@ mod tests {
         };
         let still_held = sender.poll(1.18, &held, None).unwrap();
         assert!(still_held.interact && !still_held.interact_pressed);
+    }
+
+    #[test]
+    fn a_press_of_r_that_ended_between_two_inputs_is_sent_once_and_does_not_confirm() {
+        let mut sender = InputSender::new(20);
+        let idle = Controls::default();
+        let press = Controls {
+            toggle_ready: true,
+            ..Controls::default()
+        };
+        sender.poll(1.00, &idle, None);
+
+        assert_eq!(sender.poll(1.01, &press, None), None);
+        assert_eq!(sender.poll(1.02, &idle, None), None);
+        let sent = sender.poll(1.06, &idle, None).unwrap();
+        assert!(
+            sent.toggle_ready,
+            "the press that already ended is not lost"
+        );
+        assert!(!sent.confirm);
+        let next = sender.poll(1.12, &idle, None).unwrap();
+        assert!(!next.toggle_ready, "and it is sent only once");
+    }
+
+    #[test]
+    fn a_press_of_enter_that_ended_between_two_inputs_is_sent_once_and_does_not_get_ready() {
+        let mut sender = InputSender::new(20);
+        let idle = Controls::default();
+        let press = Controls {
+            confirm: true,
+            ..Controls::default()
+        };
+        sender.poll(1.00, &idle, None);
+
+        assert_eq!(sender.poll(1.01, &press, None), None);
+        assert_eq!(sender.poll(1.02, &idle, None), None);
+        let sent = sender.poll(1.06, &idle, None).unwrap();
+        assert!(sent.confirm, "the press that already ended is not lost");
+        assert!(!sent.toggle_ready);
+        let next = sender.poll(1.12, &idle, None).unwrap();
+        assert!(!next.confirm, "and it is sent only once");
+    }
+
+    #[test]
+    fn two_presses_of_r_before_one_input_are_sent_as_one() {
+        let mut sender = InputSender::new(20);
+        let idle = Controls::default();
+        let press = Controls {
+            toggle_ready: true,
+            ..Controls::default()
+        };
+        sender.poll(1.00, &idle, None);
+
+        sender.poll(1.01, &press, None);
+        sender.poll(1.02, &idle, None);
+        sender.poll(1.03, &press, None);
+        let sent = sender.poll(1.06, &idle, None).unwrap();
+
+        assert!(sent.toggle_ready);
+        assert!(!sender.poll(1.12, &idle, None).unwrap().toggle_ready);
     }
 }

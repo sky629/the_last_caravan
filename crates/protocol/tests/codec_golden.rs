@@ -47,7 +47,7 @@ fn join_is_variant_zero_then_version_then_room_text() {
 }
 
 #[test]
-fn input_is_the_sequence_number_two_vectors_and_six_buttons() {
+fn input_is_the_sequence_number_two_vectors_and_eight_buttons() {
     assert_client_wire(
         ClientMsg::Input(InputMsg {
             seq: 300,
@@ -59,6 +59,8 @@ fn input_is_the_sequence_number_two_vectors_and_six_buttons() {
             build: true,
             sprint: true,
             switch_weapon: true,
+            toggle_ready: true,
+            confirm: true,
         }),
         &[
             0x01, // Input 변형
@@ -73,6 +75,8 @@ fn input_is_the_sequence_number_two_vectors_and_six_buttons() {
             0x01, // build
             0x01, // sprint
             0x01, // switch_weapon
+            0x01, // toggle_ready
+            0x01, // confirm
         ],
     );
 }

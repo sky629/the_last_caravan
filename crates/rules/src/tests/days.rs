@@ -199,7 +199,7 @@ fn the_next_day_keeps_the_village_and_restores_every_player() {
 }
 
 #[test]
-fn clearing_every_night_is_a_victory_and_a_new_expedition_starts_on_the_first_day() {
+fn clearing_every_night_is_a_victory() {
     let mut s = short_days(&[&[1], &[1]]);
     s.player_at(2.0, 2.0);
     defeat_the_current_wave(&mut s);
@@ -208,21 +208,12 @@ fn clearing_every_night_is_a_victory_and_a_new_expedition_starts_on_the_first_da
 
     defeat_the_current_wave(&mut s);
 
-    let restart = s.ticks(s.sim.tuning().camp.debrief_secs);
     assert_eq!(outcome(&s.sim), Some(Outcome::Victory));
-    s.run_ticks(restart - 2);
-    assert_eq!(
-        s.sim.expedition_number(),
-        1,
-        "the result is still on the screen"
-    );
-    s.run_ticks(2);
-    assert_eq!(s.sim.expedition_number(), 2);
-    assert!(matches!(phase(&s.sim), Phase::Day { day: 1, .. }));
+    assert_eq!(s.sim.expedition_number(), 1);
 }
 
 #[test]
-fn a_failure_by_day_starts_a_new_expedition_on_the_first_day() {
+fn a_failure_by_day_ends_the_expedition() {
     let mut s = short_days(&[&[1], &[1]]);
     s.player_at(2.0, 2.0);
     defeat_the_current_wave(&mut s);
@@ -230,11 +221,8 @@ fn a_failure_by_day_starts_a_new_expedition_on_the_first_day() {
 
     s.set_wagon_hp(0);
     s.run_ticks(1);
-    assert_eq!(outcome(&s.sim), Some(Outcome::Defeat));
 
-    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 1);
-    assert_eq!(s.sim.expedition_number(), 2);
-    assert!(matches!(phase(&s.sim), Phase::Day { day: 1, .. }));
+    assert_eq!(outcome(&s.sim), Some(Outcome::Defeat));
 }
 
 #[test]

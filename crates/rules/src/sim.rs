@@ -79,7 +79,8 @@ impl Sim {
 
     /// 새 플레이어를 최대 HP의 살아 있는 상태로 등장 지점에 추가하고 번호를 돌려줍니다.
     /// 등장 지점은 방에 있는 플레이어가 가장 적게 쓰는 지점 중 가장 앞의 것으로 정하므로, 먼저 나간 플레이어의 자리를 새 플레이어가 이어받습니다.
-    /// 원정이 진행되는 도중에도 곧바로 참가합니다. 방이 가득 차 있으면 거절합니다.
+    /// 원정이 진행되는 도중에도 곧바로 참가하고, 야영지에서는 준비하지 않은 상태로, 결과 화면에서는 확인하지 않은 상태로 들어옵니다.
+    /// 방이 가득 차 있으면 거절합니다.
     pub fn add_player(&mut self) -> Result<PlayerId, JoinError> {
         if self.world.players.len() >= self.tuning.max_players {
             return Err(JoinError::RoomFull {
@@ -97,6 +98,9 @@ impl Sim {
         let team = self.team_for_new_player();
         let player = Player::new(id, team, slot, spawn, &self.tuning);
         self.world.players.insert(id, player);
+        if let Stage::Camp(camp) = &mut self.stage {
+            camp.settle(&self.world);
+        }
         Ok(id)
     }
 
@@ -122,9 +126,14 @@ impl Sim {
     /// 가진 무기도 그 자리에 떨어지지만, 시작 무기와 같은 종류의 무기는 떨어지지 않습니다.
     /// 야영지와 결과 화면에서는 아무것도 떨어지지 않습니다. 이 단계의 것은 다음 단계로 이어지지 않기 때문입니다.
     pub fn remove_player(&mut self, id: PlayerId) {
-        match &self.stage {
+        match &mut self.stage {
             Stage::Expedition(_) => self.world.remove_player(id, &self.tuning),
-            Stage::Camp(_) | Stage::Debrief(_) => {
+            Stage::Camp(camp) => {
+                self.world.players.remove(&id);
+                camp.settle(&self.world);
+            }
+            Stage::Debrief(debrief) => {
+                debrief.forget(id);
                 self.world.players.remove(&id);
             }
         }
@@ -132,24 +141,53 @@ impl Sim {
 
     /// 게임을 Tick 하나만큼 진행합니다. `inputs`는 이번 Tick의 플레이어별 입력이고,
     /// 목록에 없는 플레이어는 아무것도 누르지 않은 것으로 봅니다. 단계마다 하는 일이 다릅니다.
-    /// 야영지에서는 아무 일도 하지 않습니다.
     pub fn step(&mut self, inputs: &PlayerInputs) {
         self.tick += 1;
         match &self.stage {
-            Stage::Camp(_) => {}
+            Stage::Camp(_) => self.practice(inputs),
             Stage::Expedition(_) => self.simulate(inputs),
-            Stage::Debrief(_) => self.show_result(),
+            Stage::Debrief(_) => self.wait_for_confirmations(inputs),
         }
     }
 
-    /// 결과 화면의 Tick입니다. 세계는 멈춰 있고 남은 시간만 줄어듭니다.
+    /// 야영지의 Tick입니다. 준비와 카운트다운을 먼저 정하고, 원정이 시작되지 않으면 플레이어가 움직이고 무기를 써 봅니다.
+    /// 야영지에서는 아무것도 피해를 받지 않습니다. 공격이 허수아비에 닿은 피해는 화면에 보여 주려고 적기만 합니다.
+    /// 몬스터(허수아비)와 감시탑은 행동하지 않고, 건설은 거절됩니다.
+    fn practice(&mut self, inputs: &PlayerInputs) {
+        let Stage::Camp(camp) = &mut self.stage else {
+            return;
+        };
+        if camp.advance(&self.world, inputs, &self.tuning) {
+            self.begin_expedition();
+            return;
+        }
+        self.monster_grid.rebuild(&self.world.monsters);
+        let ctx = Ctx {
+            t: &self.tuning,
+            inputs,
+            grid: &self.monster_grid,
+            tick: self.tick,
+            practice: true,
+        };
+        let mut hits = Vec::new();
+        player::update_interactions(&mut self.world, &ctx);
+        player::update_sprint(&mut self.world, &ctx);
+        player::move_players(&mut self.world, &ctx);
+        weapon::use_weapons(&mut self.world, &ctx, &mut hits);
+        projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
+        if let Stage::Camp(camp) = &mut self.stage {
+            camp.note_strikes(&hits, self.tick);
+        }
+    }
+
+    /// 결과 화면의 Tick입니다. 세계는 멈춰 있고, 확인 키와 남은 시간만 봅니다.
     /// 날던 탄환은 그 자리에 멈추고, 끝난 탄환은 스냅샷에 한 번 실렸으므로 지웁니다.
-    fn show_result(&mut self) {
+    fn wait_for_confirmations(&mut self, inputs: &PlayerInputs) {
         projectile::remove_landed(&mut self.world);
         let Stage::Debrief(debrief) = &mut self.stage else {
             return;
         };
-        if debrief.advance() {
+        if debrief.advance(&self.world, inputs) {
             match self.tuning.camp.start {
                 Start::WhenReady => self.enter_camp(),
                 Start::AtOnce => self.begin_expedition(),
@@ -178,6 +216,7 @@ impl Sim {
             inputs,
             grid: &self.monster_grid,
             tick: self.tick,
+            practice: false,
         };
         let mut hits = Vec::new();
         player::update_interactions(&mut self.world, &ctx);

@@ -32,7 +32,8 @@ pub enum Session {
     Joining {
         room: RoomCode,
     },
-    InRoom(Joined),
+    /// 방에 들어간 뒤의 값은 다른 상태보다 훨씬 크므로 `Box`에 둡니다. 상태 하나를 옮길 때마다 가장 큰 상태의 크기를 복사하지 않게 합니다.
+    InRoom(Box<Joined>),
     Rejected {
         reason: RejectReason,
     },
@@ -93,7 +94,7 @@ impl Session {
             (Session::Joining { room }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
                 // 서버가 보낸 값을 처음 믿기 전에 확인합니다. 여기를 통과한 값은 화면 코드가 다시 확인하지 않습니다.
                 *self = match check_welcome(&welcome) {
-                    Ok(()) => Session::InRoom(Joined::new(room.clone(), welcome)),
+                    Ok(()) => Session::InRoom(Box::new(Joined::new(room.clone(), welcome))),
                     Err(reason) => Session::Failed {
                         reason: format!("the server sent an unusable welcome: {reason}"),
                     },
@@ -142,7 +143,7 @@ impl Session {
     /// 방에 들어갔을 때의 상태입니다.
     pub fn joined(&self) -> Option<&Joined> {
         match self {
-            Session::InRoom(joined) => Some(joined),
+            Session::InRoom(joined) => Some(joined.as_ref()),
             _ => None,
         }
     }

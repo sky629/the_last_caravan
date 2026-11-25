@@ -195,6 +195,8 @@ fn run(options: &Options) -> Result<(), String> {
                     build: false,
                     sprint: false,
                     switch_weapon,
+                    toggle_ready: false,
+                    confirm: false,
                 }),
             )?;
             next_input += tick_period;
