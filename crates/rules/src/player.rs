@@ -260,7 +260,7 @@ impl Player {
         }
     }
 
-    /// 공격할 수 있는 상태입니다. 살아 있고, 부활, 수리, 채집, 건설을 하고 있지 않습니다.
+    /// 공격할 수 있는 상태입니다. 살아 있고, 부활, 수리, 채집, 건설, 상자 열기를 하고 있지 않습니다.
     pub(crate) fn is_free_to_act(&self) -> bool {
         matches!(
             self.life,
