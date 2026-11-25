@@ -49,6 +49,8 @@ pub const GROUND_WEAPON_RADII: Vec2 = Vec2::new(13.0, 6.5);
 pub const RACK_LABEL_LIFT: f32 = RACK_HEIGHT + 14.0;
 /// 진열대는 1.2타일 간격이라 이름이 서로 닿으므로, 번호가 홀수인 진열대는 이름을 위가 아니라 아래(진열대의 바닥 중심에서 이만큼 아래)에 둡니다.
 pub const RACK_LABEL_BELOW: f32 = -14.0;
+/// 진열대의 이름을 진열대의 발 위치보다 앞에 그리려고 더하는 z입니다. 이웃한 진열대(1.2타일 앞)의 블록이 이름을 가리지 않습니다.
+pub const RACK_LABEL_Z_LIFT: f32 = 2.0;
 /// 허수아비가 맞은 피해의 숫자입니다. 맞은 Tick부터 이 시간 동안 허수아비 위로 떠오르며 사라집니다.
 pub const STRIKE_TICKS: f64 = 24.0;
 /// 숫자가 떠오르는 높이(픽셀)와 글자 크기, 처음의 색입니다. 숫자가 나타나는 처음 높이는 허수아비의 키보다 조금 위입니다.

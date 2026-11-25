@@ -6,6 +6,7 @@ use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 use bevy::text::{Justify, TextLayout};
 use bevy::window::PrimaryWindow;
+use caravan_client_core::Setting;
 use caravan_client_core::camera::{self, ViewRect};
 
 use crate::config;
@@ -13,9 +14,9 @@ use crate::convert;
 use crate::net::CurrentFrame;
 use crate::view::Scene;
 
-/// 카메라가 마지막으로 따라간 원정의 번호입니다. 번호가 바뀌면 새 원정이므로 카메라를 곧바로 옮깁니다.
+/// 카메라가 마지막으로 따라간 세계의 모습입니다. 값이 바뀌면 세계가 다시 놓여서 캐릭터가 등장 지점으로 돌아간 것이므로 카메라를 곧바로 옮깁니다.
 #[derive(Default)]
-pub struct FollowedExpedition(Option<u32>);
+pub struct FollowedSetting(Option<Setting>);
 
 /// 화면 가장자리의 마차 표시입니다.
 #[derive(Component)]
@@ -56,13 +57,13 @@ pub fn setup(mut commands: Commands) {
     ));
 }
 
-/// 카메라의 중심을 내 캐릭터의 화면 위치 쪽으로 옮깁니다. 첫 프레임과 새 원정이 시작된 프레임에는 곧바로 옮깁니다.
+/// 카메라의 중심을 내 캐릭터의 화면 위치 쪽으로 옮깁니다. 첫 프레임과 세계가 다시 놓인 프레임(원정의 시작, 야영지로 돌아옴)에는 곧바로 옮깁니다.
 pub fn follow(
     time: Res<Time>,
     frame: Res<CurrentFrame>,
     scene: Res<Scene>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
-    mut followed: Local<FollowedExpedition>,
+    mut followed: Local<FollowedSetting>,
 ) {
     let Some(frame) = &frame.0 else {
         return;
@@ -72,9 +73,9 @@ pub fn follow(
     };
     // 발이 아니라 몸통의 가운데가 화면의 가운데에 오게 합니다.
     let target = convert::screen_pos(me.pos) + Vec2::new(0.0, config::PLAYER_BODY.y * 0.5);
-    let current = (followed.0 == Some(frame.expedition))
+    let current = (followed.0 == Some(frame.setting()))
         .then(|| convert::to_rules(camera.translation.truncate()));
-    followed.0 = Some(frame.expedition);
+    followed.0 = Some(frame.setting());
 
     let center = convert::from_rules(camera::follow(
         current,
@@ -244,6 +245,27 @@ mod tests {
         show(&mut app, 2, 28.0, 30.0);
 
         assert!(camera_at(&mut app).distance(body_center(28.0, 30.0)) < 1e-3);
+    }
+
+    #[test]
+    fn coming_back_to_the_camp_puts_the_camera_on_the_character_at_once() {
+        let mut app = app();
+        show(&mut app, 1, 40.0, 30.0);
+
+        if let Some(frame) = &mut app.world_mut().resource_mut::<CurrentFrame>().0 {
+            frame.phase = WirePhase::Camp {
+                ready: Vec::new(),
+                starting_in: None,
+                struck: Vec::new(),
+            };
+            frame.players[0].pos = Ground::new(32.0, 30.0);
+        }
+        app.update();
+
+        assert!(
+            camera_at(&mut app).distance(body_center(32.0, 30.0)) < 1e-3,
+            "the expedition number is the same, but the world was laid out again"
+        );
     }
 
     #[test]

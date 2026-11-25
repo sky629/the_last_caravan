@@ -107,7 +107,7 @@ pub fn sync_racks(
                         ..default()
                     },
                     TextColor(config::GROUND_WEAPON_LABEL),
-                    Transform::from_xyz(0.0, rack_label_lift(index), config::PART_Z_STEP),
+                    Transform::from_xyz(0.0, rack_label_lift(index), config::RACK_LABEL_Z_LIFT),
                 ))
                 .id();
             let entity = commands

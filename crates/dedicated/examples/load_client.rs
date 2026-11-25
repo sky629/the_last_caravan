@@ -130,6 +130,8 @@ fn run(options: &Options) -> Result<(), String> {
     let mut latest: Option<Snapshot> = None;
     // 활로 바꾼 원정의 번호입니다. 새 원정은 무기를 검으로 돌려놓으므로, 원정마다 한 번씩 다시 바꿉니다.
     let mut bow_expedition: Option<u32> = None;
+    let mut you: Option<u32> = None;
+    let mut ready_pressed_at: Option<u64> = None;
 
     while started.elapsed() < run_for {
         let wait = next_input.saturating_duration_since(Instant::now());
@@ -138,6 +140,7 @@ fn run(options: &Options) -> Result<(), String> {
             Ok(Message::Binary(bytes)) => match decode_server(&bytes) {
                 Ok(ServerMsg::Welcome(welcome)) => {
                     tick_period = Duration::from_secs(1) / welcome.tick_hz;
+                    you = Some(welcome.you);
                     eprintln!(
                         "joined room {} as player {} (tick {} Hz, capacity {})",
                         options.room, welcome.you, welcome.tick_hz, welcome.capacity
@@ -183,6 +186,8 @@ fn run(options: &Options) -> Result<(), String> {
             if switch_weapon {
                 bow_expedition = expedition;
             }
+            let (toggle_ready, confirm) =
+                unattended_keys(latest.as_ref(), you, &mut ready_pressed_at);
             send(
                 &mut socket,
                 &ClientMsg::Input(InputMsg {
@@ -195,8 +200,8 @@ fn run(options: &Options) -> Result<(), String> {
                     build: false,
                     sprint: false,
                     switch_weapon,
-                    toggle_ready: false,
-                    confirm: false,
+                    toggle_ready,
+                    confirm,
                 }),
             )?;
             next_input += tick_period;
@@ -245,6 +250,35 @@ fn report_line(elapsed: Duration, window: &Window, latest: Option<&Snapshot>) ->
         expedition,
         phase
     )
+}
+
+/// 준비 키를 누른 결과가 스냅샷에 실려 돌아오기를 기다리는 Tick의 수입니다.
+const READY_ANSWER_TICKS: u64 = 20;
+
+/// 사람이 누를 준비 키와 확인 키를 대신 정해서 `(toggle_ready, confirm)`으로 돌려줍니다.
+/// 야영지에서 준비하지 않은 상태이면 준비 키를, 결과 화면에서 확인하지 않은 상태이면 확인 키를 누릅니다. 그래서 사람의 조작 없이 원정이 되풀이됩니다.
+/// 준비 키는 누를 때마다 준비를 켜고 끄므로, 누른 결과가 스냅샷에 보일 때까지는 다시 누르지 않습니다. 확인은 끌 수 없으므로 되풀이해도 결과가 같습니다.
+fn unattended_keys(
+    latest: Option<&Snapshot>,
+    you: Option<u32>,
+    ready_pressed_at: &mut Option<u64>,
+) -> (bool, bool) {
+    let (Some(snapshot), Some(you)) = (latest, you) else {
+        return (false, false);
+    };
+    match &snapshot.phase {
+        WirePhase::Camp { ready, .. } => {
+            let answered =
+                ready_pressed_at.is_none_or(|tick| snapshot.tick >= tick + READY_ANSWER_TICKS);
+            let press = !ready.contains(&you) && answered;
+            if press {
+                *ready_pressed_at = Some(snapshot.tick);
+            }
+            (press, false)
+        }
+        WirePhase::Debrief { confirmed, .. } => (false, !confirmed.contains(&you)),
+        WirePhase::Day { .. } | WirePhase::Night { .. } | WirePhase::Dawn { .. } => (false, false),
+    }
 }
 
 fn phase_name(snapshot: &Snapshot) -> String {

@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 use caravan_client_core::{Frame, PlayerView, ProjectileView, build_preview, effect_progress};
-use caravan_protocol::{WireDelivery, WireLife, WireTowerState, WireWeaponKind};
+use caravan_protocol::{WireDelivery, WireLife, WirePhase, WireTowerState, WireWeaponKind};
 use caravan_rules::{Tile, Vec2 as Ground};
 
 use crate::config;
@@ -54,7 +54,12 @@ pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Giz
     {
         draw_tile_outline(&mut gizmos, refusal.tile.to_tile(), config::REFUSAL);
     }
-    if let Some(tile) = build_preview(me, scene.map_size) {
+    // 야영지에서는 건설이 거절되고 결과 화면에서는 세계가 멈춰 있으므로, 미리 보기는 원정 중에만 그립니다.
+    let in_expedition = !matches!(
+        frame.phase,
+        WirePhase::Camp { .. } | WirePhase::Debrief { .. }
+    );
+    if in_expedition && let Some(tile) = build_preview(me, scene.map_size) {
         draw_tile_outline(&mut gizmos, tile, config::PREVIEW);
     }
 }

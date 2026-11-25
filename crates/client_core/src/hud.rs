@@ -166,8 +166,12 @@ impl Hud {
         if let Some(me) = frame.player(you) {
             hud.me = Some(my_meter(me));
             hud.weapon = Some(weapon_text(me.loadout));
-            hud.hint = me.prompt.map(prompt_text);
             hud.stamina = stamina_meter(me);
+            // 결과 화면에서는 세계가 멈춰 있고 F와 B를 처리하지 않습니다. 그래서 원정이 끝난 순간에 멈춘 안내(F의 안내, 진행 막대, 거절 이유, 출혈 시간)는 보여 주지 않습니다.
+            if matches!(frame.phase, WirePhase::Debrief { .. }) {
+                return hud;
+            }
+            hud.hint = me.prompt.map(prompt_text);
             hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
                 carried,
@@ -1413,6 +1417,36 @@ mod tests {
         assert_eq!(won.title, "EXPEDITION SUCCESS");
         assert_eq!(won.tone, BannerTone::Good);
         assert_eq!(Hud::of(&session, Some(&frame)).day, None);
+    }
+
+    #[test]
+    fn the_result_hides_what_the_expedition_left_frozen() {
+        let session = session_in_room();
+        let debrief = WirePhase::Debrief {
+            outcome: WireOutcome::Defeat,
+            secs_left: 50.0,
+            confirmed: vec![],
+        };
+        let mut downed = frame(vec![player(
+            YOU,
+            WireLife::Downed {
+                bleed_secs_left: 20.0,
+                revive_progress: None,
+            },
+        )]);
+        assert!(Hud::of(&session, Some(&downed)).bleed.is_some());
+        downed.phase = debrief.clone();
+        assert_eq!(Hud::of(&session, Some(&downed)).bleed, None);
+
+        let mut me = player(YOU, alive(100));
+        me.prompt = Some(WirePrompt::OpenChest);
+        let mut beside_a_chest = frame(vec![me]);
+        assert!(Hud::of(&session, Some(&beside_a_chest)).hint.is_some());
+        beside_a_chest.phase = debrief;
+        let hud = Hud::of(&session, Some(&beside_a_chest));
+        assert_eq!(hud.hint, None);
+        assert_eq!(hud.action, None);
+        assert!(hud.me.is_some(), "my own meter stays");
     }
 
     #[test]

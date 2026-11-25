@@ -25,6 +25,24 @@ const MAX_DRIFT_TICKS: f64 = 5.0;
 /// 재생 시각이 목표를 향해 초당 이 비율만큼 다가갑니다. 스냅샷이 도착하는 간격의 흔들림을 부드럽게 흡수합니다.
 const EASE_PER_SEC: f64 = 4.0;
 
+/// 세계가 놓인 모습을 가리키는 값입니다. 원정이 시작될 때와 야영지로 돌아갈 때 세계가 다시 놓이고 플레이어가 등장 지점으로 돌아가는데,
+/// 그때마다 이 값이 바뀝니다. 원정이 시작되면 원정의 번호가 바뀌고, 결과 화면에서 야영지로 돌아가면 번호는 그대로이고 야영지 여부가 바뀝니다.
+/// 값이 다른 두 시각의 위치는 이어지지 않으므로, 보간과 카메라는 그 사이를 섞지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Setting {
+    expedition: u32,
+    camp: bool,
+}
+
+impl Setting {
+    pub fn of(expedition: u32, phase: &WirePhase) -> Setting {
+        Setting {
+            expedition,
+            camp: matches!(phase, WirePhase::Camp { .. }),
+        }
+    }
+}
+
 /// 지금 화면에 그릴 방의 모습입니다. 위치와 방향만 섞은 값이고, 나머지는 이전 스냅샷의 값입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
@@ -49,6 +67,12 @@ pub struct Frame {
     pub monsters: Vec<MonsterView>,
     /// 날아가는 탄환과 한 Tick 전에 끝난 탄환입니다. 끝난 탄환은 끝난 자리에 그려집니다.
     pub projectiles: Vec<ProjectileView>,
+}
+
+impl Frame {
+    pub fn setting(&self) -> Setting {
+        Setting::of(self.expedition, &self.phase)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -175,8 +199,10 @@ impl SnapshotBuffer {
         let span = (newer.tick - older.tick) as f64;
         let progress = ((tick - older.tick as f64) / span).clamp(0.0, 1.0);
         let shown_tick = older.tick as f64 + progress * span;
-        // 새 원정이 시작되면 플레이어가 시작 위치로 돌아가므로, 두 원정 사이를 섞으면 맵을 가로지르는 모습이 나옵니다.
-        let blend_with = (older.expedition == newer.expedition).then_some(newer);
+        // 세계가 다시 놓이면 플레이어가 등장 지점으로 돌아가므로, 그 앞뒤를 섞으면 맵을 가로지르는 모습이 나옵니다.
+        let same_setting = Setting::of(older.expedition, &older.phase)
+            == Setting::of(newer.expedition, &newer.phase);
+        let blend_with = same_setting.then_some(newer);
         Some(frame_of(older, blend_with, progress as f32, shown_tick))
     }
 }
@@ -589,6 +615,32 @@ mod tests {
         let after = buffer.sample_at(11.0).unwrap();
         assert_eq!(after.expedition, 2);
         assert!(close(after.players[0].pos, Vec2::new(20.0, 20.0)));
+    }
+
+    #[test]
+    fn positions_are_never_blended_from_the_result_into_the_camp() {
+        let mut older = snapshot(10);
+        older.phase = WirePhase::Debrief {
+            outcome: caravan_protocol::WireOutcome::Defeat,
+            secs_left: 1.0,
+            confirmed: vec![1],
+        };
+        older.players = vec![player(1, 40.0, 29.5, 100)];
+        let mut newer = snapshot(11);
+        newer.phase = WirePhase::Camp {
+            ready: Vec::new(),
+            starting_in: None,
+            struck: Vec::new(),
+        };
+        newer.players = vec![player(1, 32.0, 29.5, 100)];
+        assert_eq!(older.expedition, newer.expedition);
+        let buffer = buffer_with(vec![older, newer]);
+
+        let middle = buffer.sample_at(10.5).unwrap();
+        assert!(close(middle.players[0].pos, Vec2::new(40.0, 29.5)));
+
+        let after = buffer.sample_at(11.0).unwrap();
+        assert!(close(after.players[0].pos, Vec2::new(32.0, 29.5)));
     }
 
     #[test]
