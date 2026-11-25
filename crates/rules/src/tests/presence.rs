@@ -149,6 +149,63 @@ fn away_players_do_not_hold_up_the_ready_or_the_confirmation_and_still_count_for
     );
 }
 
+fn camp_of(sim: &crate::sim::Sim) -> &crate::camp::Camp {
+    let Stage::Camp(camp) = sim.stage() else {
+        panic!("expected the camp");
+    };
+    camp
+}
+
+#[test]
+fn withdrawing_the_ready_of_an_away_player_keeps_the_countdown_for_the_others_and_cancels_it_when_the_player_is_back()
+ {
+    let mut s = Scenario::camp(|_| {});
+    let a = s.sim.add_player().unwrap();
+    let b = s.sim.add_player().unwrap();
+    s.tap_ready(a);
+    s.tap_ready(b);
+    assert!(camp_of(&s.sim).countdown().is_some(), "both are ready");
+
+    s.sim.set_presence(b, Presence::Away);
+    s.sim.withdraw_ready(b);
+    assert!(!camp_of(&s.sim).is_ready(b));
+    assert!(
+        camp_of(&s.sim).countdown().is_some(),
+        "the one who is here is ready, so the countdown goes on"
+    );
+
+    s.sim.set_presence(b, Presence::Here);
+    assert!(
+        camp_of(&s.sim).countdown().is_none(),
+        "back and not ready: the countdown is cancelled"
+    );
+}
+
+#[test]
+fn withdrawing_the_ready_of_someone_who_is_not_ready_or_not_in_the_room_changes_nothing() {
+    let mut s = Scenario::camp(|_| {});
+    let a = s.sim.add_player().unwrap();
+    let b = s.sim.add_player().unwrap();
+    s.tap_ready(a);
+    let before = camp_of(&s.sim).clone();
+
+    s.sim.withdraw_ready(b);
+    s.sim.withdraw_ready(crate::ids::PlayerId(99));
+
+    assert_eq!(*camp_of(&s.sim), before);
+}
+
+#[test]
+fn withdrawing_the_ready_outside_the_camp_does_nothing() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(2.0, 2.0);
+
+    s.sim.withdraw_ready(a);
+
+    assert!(matches!(s.sim.stage(), Stage::Expedition(_)));
+    assert_eq!(s.player(a).presence, Presence::Here);
+}
+
 #[test]
 fn presence_carries_over_into_a_new_expedition() {
     let mut s = Scenario::open_field();

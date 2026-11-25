@@ -10,7 +10,7 @@ use caravan_protocol::{
     InputMsg, LinkId, PlayerName, RoomCode, SeatToken, ServerMsg, Snapshot, Welcome, WireMember,
     WireRoster,
 };
-use caravan_rules::{JoinError, PlayerId, PlayerInputs, Presence, Seed, Sim, Tuning};
+use caravan_rules::{JoinError, PlayerId, PlayerInputs, Presence, Seed, Sim, Stage, Tuning};
 
 use crate::hub::Out;
 use crate::seat::Seat;
@@ -22,6 +22,8 @@ pub(crate) struct RoomTimes {
     pub input_stale_ticks: u32,
     /// 입력 없이 이 Tick 수가 지나면 자리를 비운 것으로 봅니다.
     pub away_ticks: u32,
+    /// 야영지에서 조작 없이 이 Tick 수가 지나면 자리를 비운 것으로 봅니다.
+    pub camp_idle_ticks: u32,
     /// 입력 없이 이 Tick 수가 지나면 자리를 내놓습니다.
     pub hold_ticks: u32,
 }
@@ -154,14 +156,17 @@ impl Room {
     pub fn submit_input(&mut self, player: PlayerId, msg: &InputMsg) {
         if let Some(seat) = self.seats.get_mut(&player) {
             seat.heard();
-            seat.input.accept(msg);
+            if seat.input.accept(msg) {
+                seat.operated();
+            }
         }
     }
 
     /// 서버 Tick 하나입니다. 순서는 다음과 같습니다.
     /// 1. 모든 자리의 시간이 흐릅니다. 방이 멈춘 Tick에도 흐르므로, 혼자 하던 사람이 돌아오지 않으면 자리가 끝납니다.
     /// 2. 시간이 다 된 자리를 내보냅니다(퇴장과 같습니다).
-    /// 3. 자리에 있는지를 규칙에 알리고, 바뀐 명단을 보냅니다.
+    /// 3. 야영지에서 조작 없이 한도를 넘긴 사람을 자리를 비운 것으로 하고, 자리에 있는지를 규칙에 알리고, 바뀐 명단을 보냅니다.
+    ///    조작이 없어 자리를 비운 사람은 준비도 풀립니다. 돌아올 때 준비하지 않은 상태여야 하기 때문입니다.
     /// 4. 자리에 있는 사람이 없으면 여기서 끝냅니다. 게임을 진행하지 않으므로 Tick 번호와 세계가 그대로이고 스냅샷도 보내지 않습니다.
     /// 5. 플레이어마다 입력을 하나씩 정해서 게임을 Tick 하나만큼 진행하고, 같은 스냅샷을 접속이 있는 모든 자리에 보냅니다.
     pub fn tick(&mut self) -> RoomTick {
@@ -184,7 +189,11 @@ impl Room {
                 });
             }
         }
+        let dozed = self.doze_off_in_camp();
         self.sync_presence();
+        for player in dozed {
+            self.sim.withdraw_ready(player);
+        }
         let mut outs = self.publish_roster(None);
         if !self.anyone_here() {
             return RoomTick { outs, ended };
@@ -202,6 +211,18 @@ impl Room {
                 .map(|link| Out::Send(link, ServerMsg::Snapshot(Box::new(snapshot.clone()))))
         }));
         RoomTick { outs, ended }
+    }
+
+    /// 야영지이면 조작 없이 `camp_idle_ticks`가 지난 자리를 자리를 비운 것으로 하고, 그 Tick에 처음 그렇게 된 플레이어를 돌려줍니다.
+    fn doze_off_in_camp(&mut self) -> Vec<PlayerId> {
+        if !matches!(self.sim.stage(), Stage::Camp(_)) {
+            return Vec::new();
+        }
+        let idle = self.times.camp_idle_ticks;
+        self.seats
+            .iter_mut()
+            .filter_map(|(&player, seat)| seat.doze_off(idle).then_some(player))
+            .collect()
     }
 
     fn anyone_here(&self) -> bool {

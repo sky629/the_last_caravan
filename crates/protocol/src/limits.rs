@@ -46,6 +46,10 @@ pub struct ServerLimits {
     /// 자리의 입력이 이 시간 동안 오지 않으면, 접속이 열려 있어도 자리를 비운 것으로 봅니다. 캐릭터는 그때부터 보호를 받습니다.
     /// 같은 접속에서 입력이 다시 오면 곧바로 자리에 있는 것으로 돌아갑니다. 서버는 시작할 때 `seat_hold`보다 짧은지 확인합니다.
     pub away_after: Duration,
+    /// 야영지에서 이 시간 동안 조작(이동, 조준, 버튼의 변화)이 없는 사람은 「모두 준비」의 대상에서 빠지고 자리를 비운 것으로 보입니다.
+    /// 자리는 내놓지 않습니다. 접속이 열려 있고 입력이 계속 오기 때문입니다. 조작이 다시 오면 준비하지 않은 상태로 곧바로 돌아옵니다.
+    /// 클라이언트는 가만히 있어도 Tick마다 입력을 보내므로, 입력이 오는지가 아니라 입력의 내용이 바뀌는지를 봅니다.
+    pub camp_idle: Duration,
     /// 자리의 마지막 메시지부터 이 시간이 지나면 자리를 내놓습니다. 처리는 스스로 나간 것과 같습니다(든 자원과 상자에서 얻은 무기가 떨어집니다).
     /// 접속이 끊긴 자리와 입력이 멈춘 자리에 같습니다. 방이 멈춘 동안에도 셉니다.
     pub seat_hold: Duration,
@@ -71,6 +75,7 @@ impl Default for ServerLimits {
             join_deadline: Duration::from_secs(5),
             idle_timeout: Duration::from_secs(30),
             away_after: Duration::from_secs(3),
+            camp_idle: Duration::from_secs(60),
             seat_hold: Duration::from_secs(60),
             input_stale_ticks: 10,
         }

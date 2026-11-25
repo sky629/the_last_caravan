@@ -98,6 +98,7 @@ impl Hub {
         let times = RoomTimes {
             input_stale_ticks: limits.input_stale_ticks,
             away_ticks: ticks_of(limits.away_after, tuning.tick_hz),
+            camp_idle_ticks: ticks_of(limits.camp_idle, tuning.tick_hz),
             hold_ticks: ticks_of(limits.seat_hold, tuning.tick_hz),
         };
         Hub {

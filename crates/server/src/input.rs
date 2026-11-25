@@ -32,17 +32,23 @@ impl MemberInput {
 
     /// 입력 메시지 하나를 받습니다. 이미 받아들인 순서 번호보다 크지 않은 입력은 버립니다.
     /// 접속 방식에 따라 입력의 도착 순서가 바뀔 수 있으므로, 늦게 도착한 옛 입력이 새 입력을 덮어쓰면 안 됩니다.
-    pub fn accept(&mut self, msg: &InputMsg) {
+    ///
+    /// 받아들인 입력이 사람의 조작이면 참을 돌려줍니다. 조작은 앞서 받아들인 입력에서 이동, 조준, 버튼 가운데 무엇이든 바뀐 것입니다.
+    /// 클라이언트는 가만히 있어도 Tick마다 입력을 보내므로, 입력이 왔다는 사실만으로는 조작을 알 수 없습니다.
+    /// 키를 누르고 있기만 한 입력도 내용이 바뀌지 않으므로 조작이 아닙니다.
+    pub fn accept(&mut self, msg: &InputMsg) -> bool {
         if self.newest_seq.is_some_and(|newest| msg.seq <= newest) {
-            return;
+            return false;
         }
         self.newest_seq = Some(msg.seq);
         let input = to_rules(msg);
+        let operated = without_seq(input) != without_seq(self.held);
         self.merged = Some(match self.merged {
             Some(older) => merge(older, input),
             None => input,
         });
         self.held = input.held();
+        operated
     }
 
     /// 이번 Tick에 규칙에 넘길 입력을 정하고, 다음 Tick을 위해 모은 입력을 비웁니다.
@@ -68,6 +74,11 @@ impl MemberInput {
             self.held
         }
     }
+}
+
+/// 순서 번호를 뺀 입력입니다. 두 입력의 내용이 같은지 볼 때 씁니다.
+fn without_seq(input: PlayerInput) -> PlayerInput {
+    PlayerInput { seq: 0, ..input }
 }
 
 /// 메시지의 값을 규칙이 받는 값으로 바꿉니다. 믿을 수 없는 값(NaN, 무한대, 너무 긴 방향)은 여기서 고쳐집니다.
@@ -113,6 +124,51 @@ mod tests {
             interact,
             ..InputMsg::default()
         }
+    }
+
+    #[test]
+    fn an_input_is_an_operation_only_when_it_differs_from_the_one_before() {
+        let mut input = MemberInput::new();
+        let right = |seq| InputMsg {
+            seq,
+            move_dir: caravan_protocol::WireVec2::new(1.0, 0.0),
+            ..InputMsg::default()
+        };
+
+        assert!(!input.accept(&msg(1, false, false)), "nothing is pressed");
+        assert!(!input.accept(&msg(2, false, false)), "still nothing");
+        assert!(input.accept(&right(3)), "started to move");
+        assert!(
+            !input.accept(&right(4)),
+            "holding the same key is no change"
+        );
+        assert!(
+            input.accept(&InputMsg {
+                aim: caravan_protocol::WireVec2::new(0.0, 1.0),
+                ..right(5)
+            }),
+            "the aim changed"
+        );
+        assert!(
+            input.accept(&InputMsg {
+                aim: caravan_protocol::WireVec2::new(0.0, 1.0),
+                toggle_ready: true,
+                ..right(6)
+            }),
+            "a key press is a change"
+        );
+        assert!(
+            !input.accept(&InputMsg {
+                aim: caravan_protocol::WireVec2::new(0.0, 1.0),
+                ..right(7)
+            }),
+            "after the press nothing differs from what is held"
+        );
+        assert!(
+            !input.accept(&msg(3, false, false)),
+            "a late old input is dropped"
+        );
+        assert!(input.accept(&msg(8, true, false)), "the click is a change");
     }
 
     #[test]

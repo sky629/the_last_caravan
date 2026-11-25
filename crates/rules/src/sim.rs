@@ -153,6 +153,14 @@ impl Sim {
         }
     }
 
+    /// 야영지에서 플레이어의 준비를 끕니다. 야영지가 아니거나 준비하지 않은 플레이어이면 아무 일도 하지 않습니다.
+    /// 야영지에서 조작이 없어 자리를 비운 사람은 돌아올 때 준비하지 않은 상태여야 하므로, 서버가 그 사람을 `Away`로 알린 뒤에 부릅니다.
+    pub fn withdraw_ready(&mut self, id: PlayerId) {
+        if let Stage::Camp(camp) = &mut self.stage {
+            camp.withdraw(id, &self.world);
+        }
+    }
+
     /// 게임을 Tick 하나만큼 진행합니다. `inputs`는 이번 Tick의 플레이어별 입력이고,
     /// 목록에 없는 플레이어는 아무것도 누르지 않은 것으로 봅니다. 단계마다 하는 일이 다릅니다.
     pub fn step(&mut self, inputs: &PlayerInputs) {

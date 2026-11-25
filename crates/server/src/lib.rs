@@ -197,6 +197,12 @@ fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerErro
         )));
     }
 
+    if ticks_of(limits.camp_idle, tuning.tick_hz) == 0 {
+        return Err(ServerError::InvalidLimits(format!(
+            "camp_idle {:?} must be at least one tick",
+            limits.camp_idle
+        )));
+    }
     if limits.max_rooms == 0 {
         return Err(ServerError::InvalidLimits(
             "max_rooms must be at least 1".to_string(),
@@ -233,6 +239,7 @@ fn first_welcome(tuning: &Tuning, limits: &ServerLimits) -> Welcome {
     let times = RoomTimes {
         input_stale_ticks: limits.input_stale_ticks,
         away_ticks: 1,
+        camp_idle_ticks: 1,
         hold_ticks: 2,
     };
     let mut room = Room::new(code, tuning.clone(), Seed(0), times);

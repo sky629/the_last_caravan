@@ -98,6 +98,12 @@ impl Camp {
         }
     }
 
+    /// 플레이어의 준비를 끕니다. 자리에 있는 사람 가운데 준비하지 않은 사람이 생기면 카운트다운이 취소됩니다.
+    pub(crate) fn withdraw(&mut self, id: PlayerId, world: &World) {
+        self.ready.remove(&id);
+        self.settle(world);
+    }
+
     fn everyone_ready(&self, world: &World) -> bool {
         let mut needed = who_must_agree(world).peekable();
         needed.peek().is_some() && needed.all(|player| self.ready.contains(&player.id))
