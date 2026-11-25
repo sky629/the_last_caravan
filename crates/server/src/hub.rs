@@ -33,6 +33,10 @@ enum LinkState {
         player: PlayerId,
         deadline: Instant,
     },
+    /// 입장을 거절한 접속입니다. 서버는 거절의 이유를 보낸 뒤 접속을 닫지 않고, 클라이언트가 이유를 읽고 닫기를 `deadline`까지 기다립니다.
+    /// 서버가 이유를 보내자마자 닫으면, 브라우저는 닫힘을 그 메시지보다 먼저 알릴 수 있어서 이유가 화면에 나오지 않습니다.
+    /// 닫히기 전에 도착하는 메시지는 무시합니다.
+    Rejected { deadline: Instant },
     /// 서버가 닫기로 한 접속입니다. 닫히기 전에 도착하는 메시지는 무시하고 `Disconnected`를 기다립니다.
     Closing,
 }
@@ -104,7 +108,7 @@ impl Hub {
     }
 
     /// `deadline`이 지나도록 메시지를 보내지 않은 접속을 닫습니다.
-    /// 입장하지 않은 접속과, 입장한 뒤 멈춘 접속이 여기에 해당합니다.
+    /// 입장하지 않은 접속, 입장한 뒤 멈춘 접속, 거절된 뒤에도 닫지 않은 접속이 여기에 해당합니다.
     pub fn close_silent_links(&mut self, now: Instant) -> Vec<Out> {
         let silent: Vec<(LinkId, String)> = self
             .links
@@ -117,6 +121,13 @@ impl Hub {
                 LinkState::InRoom { deadline, .. } if now >= *deadline => {
                     Some((link, format!("no message for {:?}", self.idle_timeout)))
                 }
+                LinkState::Rejected { deadline } if now >= *deadline => Some((
+                    link,
+                    format!(
+                        "still open {:?} after its Join was rejected",
+                        self.join_deadline
+                    ),
+                )),
                 _ => None,
             })
             .collect();
@@ -176,7 +187,7 @@ impl Hub {
             (Some(LinkState::InRoom { .. }), ClientMsg::Join { .. }) => {
                 self.close_link(link, "sent Join again after joining".to_string())
             }
-            (Some(LinkState::Closing) | None, _) => Vec::new(),
+            (Some(LinkState::Rejected { .. } | LinkState::Closing) | None, _) => Vec::new(),
         }
     }
 
@@ -206,10 +217,10 @@ impl Hub {
                 outs
             }
             Err(reason) => {
-                self.links.insert(link, LinkState::Closing);
+                let deadline = now + self.join_deadline;
+                self.links.insert(link, LinkState::Rejected { deadline });
                 vec![
                     Out::Send(link, ServerMsg::JoinRejected { reason }),
-                    Out::Close(link),
                     Out::Notice(Notice::Rejected { reason }),
                 ]
             }

@@ -324,7 +324,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 14. `crates/server/src/clock.rs`는 고정 간격의 Tick 일정과 밀린 Tick의 상한을 다루며, 현재 시각을 인자로 받으므로 테스트가 가짜 시각을 쓸 수 있습니다.
 15. `crates/server/src/lib.rs`의 `GameServer`는 접속 방식을 `Box<dyn ServerTransport>`로 가지는 트레이트 객체의 예입니다.
 16. `crates/ws_server/src/lib.rs`에서는 tokio의 async와 await, `tokio::select!`, 크기가 정해진 채널, 그리고 값이 버려질 때 접속 자리를 돌려주는 `Drop` 구현(`Seat`)을 봅니다.
-17. `crates/ws_client/src/lib.rs`는 외부 라이브러리(ewebsock)를 이 프로젝트의 트레이트 뒤에 감싸는 어댑터이고, PC와 웹에서 같은 코드가 동작합니다. 브라우저에서는 ewebsock이 이진 메시지를 비동기로 읽어서 서버가 마지막 메시지(입장 거절의 이유)를 보내고 바로 닫으면 닫힘이 먼저 도착할 수 있으므로, 어댑터는 닫힘을 몇 프레임 늦춰서 늦게 오는 메시지를 먼저 전달합니다.
+17. `crates/ws_client/src/lib.rs`는 외부 라이브러리(ewebsock)를 이 프로젝트의 트레이트 뒤에 감싸는 어댑터이고, PC와 웹에서 같은 코드가 동작합니다. 브라우저에서는 ewebsock이 이진 메시지를 비동기로 읽어서, 서버가 메시지를 보내고 바로 닫으면 닫힘이 그 메시지보다 먼저 도착할 수 있습니다. 그래서 서버는 입장을 거절한 뒤 접속을 닫지 않고, 이유를 읽은 클라이언트가 닫기를 기다립니다(`crates/server/src/hub.rs`의 `LinkState::Rejected`). 입장 기한만큼 지나도 닫지 않은 접속은 서버가 닫습니다.
 18. `crates/dedicated/src/main.rs`는 실행 인자를 해석하고, 다른 트레이트 객체를 감싸서 메시지를 기록하는 `DebugTransport`를 끼운 뒤, `pump`를 부르고 쉬는 서버의 반복을 실행합니다.
 19. `crates/client_core/src/session.rs`의 `Session`은 열거형으로 만든 상태 기계이며, 방에 들어간 뒤에만 필요한 값을 `InRoom(Joined)` 안에만 둡니다.
 20. `crates/client_core/src/interp.rs`에서는 스냅샷을 보관하고 일정한 지연을 두고 두 스냅샷 사이를 보간(interpolation)하는 방법을 배웁니다. 탄환은 번호로 앞뒤 스냅샷의 같은 탄환을 찾아서 위치를 섞고, 앞쪽 스냅샷에만 있는 탄환(끝난 탄환)은 끝난 자리에 그립니다.

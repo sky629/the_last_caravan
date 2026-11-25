@@ -13,8 +13,7 @@ use caravan_rules::{PlayerId, Seed, Sim, Tuning};
 use caravan_server::{GameServer, Notice, RoomSeeds, ServerError, ServerStats};
 use common::{
     NAME, SECRET, assert_near, drain, input, input_with, join_msg, last_snapshot, player,
-    player_ids, position, press_ready, rig, rig_in_expedition, rig_with, rig_with_limits,
-    snapshots, ticks,
+    player_ids, position, press_ready, rig, rig_in_expedition, rig_with_limits, snapshots, ticks,
 };
 
 #[test]
@@ -69,11 +68,17 @@ fn room_codes_ignore_case() {
 }
 
 #[test]
-fn a_full_room_rejects_with_its_capacity_and_closes_the_link() {
-    let mut rig = rig_with(Tuning {
-        max_players: 2,
-        ..Tuning::default()
-    });
+fn a_full_room_rejects_with_its_capacity_and_leaves_the_closing_to_the_client() {
+    let mut rig = rig_with_limits(
+        Tuning {
+            max_players: 2,
+            ..Tuning::default()
+        },
+        ServerLimits {
+            join_deadline: Duration::from_secs(5),
+            ..ServerLimits::default()
+        },
+    );
     let _a = rig.join_ok("test");
     let _b = rig.join_ok("test");
 
@@ -84,10 +89,28 @@ fn a_full_room_rejects_with_its_capacity_and_closes_the_link() {
             reason: RejectReason::RoomFull { capacity: 2 }
         }
     );
+    assert!(
+        drain(&mut c).is_empty(),
+        "the link stays open so that the reason is read before the close"
+    );
+
+    c.send(&input(1));
+    rig.run_ticks(1);
+    assert!(
+        drain(&mut c).is_empty(),
+        "a rejected link is not in the room, so it gets no snapshot"
+    );
+
+    rig.now += Duration::from_secs(5);
+    let notices = rig.pump();
     assert!(matches!(
         drain(&mut c)[..],
         [ClientEvent::Disconnected { .. }]
     ));
+    assert!(
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("after its Join was rejected")),
+        "a client that never closes is closed by the server: {notices:?}"
+    );
 }
 
 #[test]
@@ -100,10 +123,7 @@ fn a_bad_room_code_or_another_protocol_version_is_rejected() {
             reason: RejectReason::BadRoomCode
         }
     );
-    assert!(matches!(
-        drain(&mut bad_code)[..],
-        [ClientEvent::Disconnected { .. }]
-    ));
+    assert!(drain(&mut bad_code).is_empty());
 
     let (_old_build, answer) = rig.join_with_version("test", PROTOCOL_VERSION + 1);
     assert_eq!(

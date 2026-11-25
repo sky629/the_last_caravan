@@ -55,8 +55,8 @@ fn a_name_that_is_empty_too_long_or_has_a_forbidden_character_is_refused() {
             "name {name:?}"
         );
         assert!(
-            matches!(drain(&mut client)[..], [ClientEvent::Disconnected { .. }]),
-            "the link is closed for {name:?}"
+            drain(&mut client).is_empty(),
+            "the link stays open until the client has read the reason ({name:?})"
         );
         assert_eq!(
             rig.server.stats().rooms,

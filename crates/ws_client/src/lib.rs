@@ -12,17 +12,12 @@ use ewebsock::{Options, WsEvent, WsMessage, WsReceiver, WsSender};
 /// PC에서는 ewebsock이 이 크기를 넘는 프레임을 읽지 않고 접속을 끊고, 브라우저에서는 ewebsock이 이 설정을 무시하므로 받은 뒤에 크기를 확인합니다.
 pub const MAX_SERVER_MESSAGE_BYTES: usize = 256 * 1024;
 
-/// 닫힘을 받은 뒤 `Disconnected`를 알리기 전에, 아무것도 오지 않은 `poll`을 이만큼 더 기다립니다.
-/// 브라우저에서는 ewebsock이 첫 송신부터 이진 메시지를 Blob으로 받고, Blob은 비동기로 읽습니다.
-/// 서버가 마지막 메시지(입장 거절의 이유 등)를 보내고 바로 닫으면 닫힘이 그 메시지보다 먼저 도착할 수 있으므로, 늦게 오는 메시지를 기다립니다.
-/// `poll`은 프레임마다 읽을 것이 없어질 때까지 부르므로, 이 횟수는 프레임의 수입니다.
-const CLOSE_GRACE_POLLS: u32 = 3;
-
-const CLOSED: &str = "the server closed the connection";
-
 pub struct WsClient {
     sender: WsSender,
-    inbox: Inbox,
+    receiver: WsReceiver,
+    /// ewebsock은 오류 뒤에 닫힘을 다시 알리기도 하고 알리지 않기도 합니다.
+    /// 약속대로 `Disconnected`를 한 번만 돌려주기 위해 끝난 상태를 기억합니다.
+    finished: bool,
 }
 
 impl WsClient {
@@ -35,66 +30,25 @@ impl WsClient {
         let (sender, receiver) = ewebsock::connect(url, options)?;
         Ok(WsClient {
             sender,
-            inbox: Inbox::new(receiver),
+            receiver,
+            finished: false,
         })
+    }
+
+    fn finish(&mut self, reason: String) -> Option<ClientEvent> {
+        self.finished = true;
+        self.sender.close();
+        Some(ClientEvent::Disconnected { reason })
     }
 }
 
 impl ClientTransport for WsClient {
     fn poll(&mut self) -> Option<ClientEvent> {
-        let event = self.inbox.poll();
-        if matches!(event, Some(ClientEvent::Disconnected { .. })) {
-            self.sender.close();
-        }
-        event
-    }
-
-    fn send(&mut self, msg: &ClientMsg) {
-        if !self.inbox.finished {
-            self.sender.send(WsMessage::Binary(encode_client(msg)));
-        }
-    }
-}
-
-/// ewebsock이 알려 준 일을 `ClientEvent`로 바꿉니다. 접속과 따로 시험하려고 `WsClient`에서 나눴습니다.
-struct Inbox {
-    receiver: WsReceiver,
-    /// ewebsock은 오류 뒤에 닫힘을 다시 알리기도 하고 알리지 않기도 합니다.
-    /// 약속대로 `Disconnected`를 한 번만 돌려주기 위해 끝난 상태를 기억합니다.
-    finished: bool,
-    /// 닫힘을 받은 뒤에 `Disconnected`를 알리기까지 남은, 아무것도 오지 않은 `poll`의 횟수입니다. 닫힘을 받기 전에는 없습니다.
-    closing: Option<u32>,
-}
-
-impl Inbox {
-    fn new(receiver: WsReceiver) -> Inbox {
-        Inbox {
-            receiver,
-            finished: false,
-            closing: None,
-        }
-    }
-
-    fn finish(&mut self, reason: String) -> Option<ClientEvent> {
-        self.finished = true;
-        Some(ClientEvent::Disconnected { reason })
-    }
-
-    fn poll(&mut self) -> Option<ClientEvent> {
         if self.finished {
             return None;
         }
         loop {
-            let Some(event) = self.receiver.try_recv() else {
-                // 읽을 것이 없습니다. 닫힘을 받았다면 늦게 올 메시지를 기다릴 횟수가 줄어듭니다.
-                let left = self.closing.as_mut()?;
-                if *left == 0 {
-                    return self.finish(CLOSED.to_string());
-                }
-                *left -= 1;
-                return None;
-            };
-            match event {
+            match self.receiver.try_recv()? {
                 WsEvent::Opened => return Some(ClientEvent::Connected),
                 WsEvent::Message(WsMessage::Binary(bytes)) => {
                     if bytes.len() > MAX_SERVER_MESSAGE_BYTES {
@@ -112,103 +66,15 @@ impl Inbox {
                 WsEvent::Message(_) => {}
                 WsEvent::Error(err) => return self.finish(err),
                 WsEvent::Closed => {
-                    self.closing.get_or_insert(CLOSE_GRACE_POLLS);
+                    return self.finish("the server closed the connection".to_string());
                 }
             }
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use std::ops::ControlFlow;
-
-    use caravan_protocol::{RejectReason, ServerMsg, encode_server};
-
-    use super::*;
-
-    type Push = Box<dyn Send + Fn(WsEvent) -> ControlFlow<()>>;
-
-    fn inbox() -> (Inbox, Push) {
-        let (receiver, push) = WsReceiver::new();
-        (Inbox::new(receiver), push)
-    }
-
-    fn rejection() -> WsEvent {
-        let reason = RejectReason::RoomFull { capacity: 4 };
-        WsEvent::Message(WsMessage::Binary(encode_server(&ServerMsg::JoinRejected {
-            reason,
-        })))
-    }
-
-    /// `ClientEvent`는 같은지 비교할 수 없으므로 글자로 바꿔서 비교합니다.
-    fn shown(event: Option<ClientEvent>) -> String {
-        format!("{event:?}")
-    }
-
-    fn rejected() -> String {
-        shown(Some(ClientEvent::Message(ServerMsg::JoinRejected {
-            reason: RejectReason::RoomFull { capacity: 4 },
-        })))
-    }
-
-    fn disconnected() -> String {
-        shown(Some(ClientEvent::Disconnected {
-            reason: CLOSED.to_string(),
-        }))
-    }
-
-    #[test]
-    fn a_message_before_the_close_comes_out_first_and_the_disconnect_last() {
-        let (mut inbox, push) = inbox();
-        let _ = push(rejection());
-        let _ = push(WsEvent::Closed);
-
-        assert_eq!(shown(inbox.poll()), rejected());
-        for _ in 0..CLOSE_GRACE_POLLS {
-            assert_eq!(shown(inbox.poll()), "None");
+    fn send(&mut self, msg: &ClientMsg) {
+        if !self.finished {
+            self.sender.send(WsMessage::Binary(encode_client(msg)));
         }
-        assert_eq!(shown(inbox.poll()), disconnected());
-        assert_eq!(shown(inbox.poll()), "None", "reported only once");
-    }
-
-    #[test]
-    fn a_message_that_arrives_after_the_close_is_still_delivered_before_the_disconnect() {
-        let (mut inbox, push) = inbox();
-        let _ = push(WsEvent::Closed);
-        assert_eq!(shown(inbox.poll()), "None", "the close is held back");
-
-        let _ = push(rejection());
-
-        assert_eq!(shown(inbox.poll()), rejected());
-        // 닫힘을 받고 기다린 `poll`이 하나 지났으므로 나머지만 기다립니다.
-        for _ in 1..CLOSE_GRACE_POLLS {
-            assert_eq!(shown(inbox.poll()), "None");
-        }
-        assert_eq!(shown(inbox.poll()), disconnected());
-        assert_eq!(shown(inbox.poll()), "None");
-    }
-
-    #[test]
-    fn a_close_with_nothing_late_ends_after_the_grace() {
-        let (mut inbox, push) = inbox();
-        let _ = push(WsEvent::Closed);
-        for _ in 0..CLOSE_GRACE_POLLS {
-            assert_eq!(shown(inbox.poll()), "None");
-        }
-        assert_eq!(shown(inbox.poll()), disconnected());
-    }
-
-    #[test]
-    fn an_error_ends_at_once_without_the_grace() {
-        let (mut inbox, push) = inbox();
-        let _ = push(WsEvent::Error("refused".to_string()));
-        assert_eq!(
-            shown(inbox.poll()),
-            shown(Some(ClientEvent::Disconnected {
-                reason: "refused".to_string()
-            }))
-        );
-        assert_eq!(shown(inbox.poll()), "None");
     }
 }
