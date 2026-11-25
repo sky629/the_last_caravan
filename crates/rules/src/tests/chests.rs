@@ -253,7 +253,7 @@ fn a_player_standing_on_a_site_when_the_day_starts_is_pushed_off_the_chest() {
     s.run_ticks(10);
     assert!(
         (s.player(a).pos.x - 2.5).abs() < 1e-3 && (s.player(a).pos.y - 2.5).abs() < 1e-3,
-        "the tile is free at night, so nothing moves the player"
+        "a player who gives no input stays where they stand at night"
     );
     while !matches!(s.sim.phase(), Phase::Day { day: 2, .. }) {
         s.clear_monsters();

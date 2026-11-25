@@ -1,4 +1,4 @@
-//! 바닥의 무기를 확인합니다: 줍기와 맞바꾸기, 가진 무기가 사라지지도 늘지도 않는 것, 쓰러짐과 퇴장과 새 날과 새 원정에서의 무기, F의 우선순위와 안내.
+//! 바닥의 무기를 확인합니다: 줍기와 맞바꾸기, 상자에서 나온 무기가 사라지지도 늘지도 않는 것, 시작 무기가 바닥에 놓이지 않는 것, 쓰러짐과 퇴장과 새 날과 새 원정에서의 무기, F의 우선순위와 안내.
 //!
 //! 시험하는 것은 `&Sim`이 공개하는 값(바닥의 무기, 가진 무기, 안내)뿐입니다.
 
@@ -52,7 +52,7 @@ fn one_press_of_f_puts_the_weapon_in_the_empty_slot_and_removes_it_from_the_grou
 fn with_both_slots_full_a_press_swaps_the_held_weapon_with_the_one_on_the_ground() {
     let mut s = Scenario::open_field();
     let a = weapon_beside(&mut s, WeaponKind::Greatsword);
-    s.arm(a, WeaponKind::Sword, Some(WeaponKind::Bow));
+    s.arm(a, WeaponKind::Spear, Some(WeaponKind::Bow));
     let before = s.sim.ground_weapons().next().unwrap().clone();
 
     s.press_interact_key(a);
@@ -69,41 +69,81 @@ fn with_both_slots_full_a_press_swaps_the_held_weapon_with_the_one_on_the_ground
     );
     assert_eq!(
         (left[0].id, left[0].pos, left[0].kind),
-        (before.id, before.pos, WeaponKind::Sword),
-        "the sword lies where the greatsword lay"
+        (before.id, before.pos, WeaponKind::Spear),
+        "the spear lies where the greatsword lay"
     );
 }
 
 #[test]
-fn the_sword_can_be_swapped_away_like_any_other_weapon() {
+fn a_starting_weapon_that_is_swapped_away_vanishes_instead_of_lying_on_the_ground() {
     let mut s = Scenario::open_field();
     let a = weapon_beside(&mut s, WeaponKind::Spear);
     s.arm(a, WeaponKind::Sword, Some(WeaponKind::Bow));
 
     s.press_interact_key(a);
 
-    assert!(
-        !s.player(a)
-            .loadout
-            .weapons()
-            .any(|kind| kind == WeaponKind::Sword),
-        "the sword is on the ground now"
+    assert_eq!(
+        s.player(a).loadout,
+        Loadout::new(WeaponKind::Spear, Some(WeaponKind::Bow))
     );
+    assert!(
+        weapons_on_the_ground(&s).is_empty(),
+        "the sword every joining player is given does not lie on the ground"
+    );
+}
+
+#[test]
+fn what_vanishes_in_a_swap_is_what_the_start_loadout_gives_not_the_sword_by_name() {
+    let mut s = Scenario::with_tuning(|t| {
+        t.player.start_loadout = Loadout::new(WeaponKind::Bow, None);
+    });
+    let a = weapon_beside(&mut s, WeaponKind::Spear);
+    s.arm(a, WeaponKind::Sword, Some(WeaponKind::Bow));
+
+    s.press_interact_key(a);
+
     assert_eq!(weapons_on_the_ground(&s), [WeaponKind::Sword]);
+}
+
+#[test]
+fn joining_taking_two_weapons_and_leaving_over_and_over_adds_no_weapon_to_the_ground() {
+    let mut s = Scenario::open_field();
+    s.weapon_at(10.5, 10.0, WeaponKind::Greatsword);
+    s.weapon_at(10.0, 10.5, WeaponKind::Spear);
+
+    for round in 0..50 {
+        let a = s.player_at(10.0, 10.0);
+        s.press_interact_key(a);
+        s.press_interact_key(a);
+        assert!(
+            weapons_on_the_ground(&s).is_empty(),
+            "the joiner holds both weapons and the sword is gone"
+        );
+        s.sim.remove_player(a);
+
+        let mut left = weapons_on_the_ground(&s);
+        left.sort();
+        assert_eq!(
+            left,
+            [WeaponKind::Greatsword, WeaponKind::Spear],
+            "the ground holds the same two weapons after {} rounds",
+            round + 1
+        );
+    }
 }
 
 #[test]
 fn holding_f_takes_the_weapon_once_and_does_not_swap_back() {
     let mut s = Scenario::open_field();
     let a = weapon_beside(&mut s, WeaponKind::Greatsword);
-    s.arm(a, WeaponKind::Sword, Some(WeaponKind::Bow));
+    s.arm(a, WeaponKind::Spear, Some(WeaponKind::Bow));
 
     s.press_interact_key(a);
     s.hold_interact(a);
     s.run_ticks(40);
 
     assert_eq!(s.player(a).weapon(), WeaponKind::Greatsword);
-    assert_eq!(weapons_on_the_ground(&s), [WeaponKind::Sword]);
+    assert_eq!(weapons_on_the_ground(&s), [WeaponKind::Spear]);
 }
 
 #[test]

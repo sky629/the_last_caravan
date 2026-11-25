@@ -183,7 +183,7 @@ impl World {
         if let Some(player) = self.players.remove(&id) {
             self.add_pile(player.pos, player.carried());
             for kind in player.loadout.weapons() {
-                if !t.player.start_loadout.weapons().any(|given| given == kind) {
+                if !t.player.start_loadout.holds(kind) {
                     self.drop_weapon(player.pos, kind);
                 }
             }

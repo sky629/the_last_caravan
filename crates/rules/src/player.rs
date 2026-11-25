@@ -459,7 +459,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     }
     apply_repairs(world, &repairs, t);
     resources::apply_gathers(world, &gathers, t);
-    loot::apply_pickups(world, &pickups);
+    loot::apply_pickups(world, &pickups, t);
     build::start_builds(world, ctx, &build_requests);
 }
 

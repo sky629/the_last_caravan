@@ -5,7 +5,7 @@
 //!   낮이 시작됨 --> 상자(자리와 내용이 씨앗에서 정해짐) + 그 둘레의 몬스터 3마리
 //!   상자 --(F를 1.5초 끊지 않고 누름)--> 사라지고, 그 타일의 중심에 상자 안의 무기가 바닥의 무기로 놓임
 //!   상자 --(밤이 시작됨)--> 사라짐(몬스터는 마차를 향함)
-//!   바닥의 무기 --(F를 누른 순간)--> 플레이어의 빈 칸, 또는 든 무기와 맞바꿈(이전 무기가 그 자리에 놓임)
+//!   바닥의 무기 --(F를 누른 순간)--> 플레이어의 빈 칸, 또는 든 무기와 맞바꿈(이전 무기가 그 자리에 놓임, 시작 무기와 같은 종류는 사라짐)
 //!   바닥의 무기 --(원정이 끝남)--> 사라짐
 //! ```
 //!
@@ -226,8 +226,11 @@ pub(crate) fn nearest_ground_weapon(
 
 /// 이번 Tick에 F를 눌러서 바닥의 무기를 줍는 플레이어들을 플레이어 번호 순서로 처리합니다.
 /// 빈 칸이 있으면 무기가 빈 칸에 들어가고 바닥에서 사라집니다. 빈 칸이 없으면 든 무기와 바뀌어서, 이전에 든 무기가 바닥의 그 자리에 놓입니다.
+/// 다만 이전에 든 무기가 시작 무기(`PlayerTuning::start_loadout`)와 같은 종류이면 바닥에 놓이지 않고 사라집니다.
+/// 입장하는 플레이어마다 새로 받는 무기이므로, 바닥에 놓이면 입장과 퇴장을 되풀이해서 바닥의 무기를 끝없이 늘릴 수 있기 때문입니다.
+/// 그래서 바닥의 무기는 모두 상자에서 나온 것입니다.
 /// 같은 Tick에 두 명이 같은 무기를 노리면 번호가 작은 플레이어가 줍고, 다른 플레이어의 F는 아무 일도 하지 않습니다.
-pub(crate) fn apply_pickups(world: &mut World, pickups: &[(PlayerId, GroundWeaponId)]) {
+pub(crate) fn apply_pickups(world: &mut World, pickups: &[(PlayerId, GroundWeaponId)], t: &Tuning) {
     let mut taken: BTreeSet<GroundWeaponId> = BTreeSet::new();
     for &(player_id, weapon_id) in pickups {
         if !taken.insert(weapon_id) {
@@ -240,10 +243,12 @@ pub(crate) fn apply_pickups(world: &mut World, pickups: &[(PlayerId, GroundWeapo
             continue;
         };
         match player.loadout.take(world.ground_weapons[index].kind) {
-            None => {
+            Some(left_behind) if !t.player.start_loadout.holds(left_behind) => {
+                world.ground_weapons[index].kind = left_behind;
+            }
+            None | Some(_) => {
                 world.ground_weapons.remove(index);
             }
-            Some(left_behind) => world.ground_weapons[index].kind = left_behind,
         }
     }
 }

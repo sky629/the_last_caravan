@@ -53,10 +53,16 @@ impl Sim {
         let mut world = World::new(&tuning);
         let spawns = SpawnPlan::new(&world.tiles, &tuning)
             .expect("a validated tuning has a spot where night monsters appear");
-        expedition::begin_day(&mut world, &spawns, seed_of_expedition(seed, 1), 1, &tuning);
+        expedition::begin_day(
+            &mut world,
+            &spawns,
+            seed_of_expedition(seed, FIRST_EXPEDITION),
+            1,
+            &tuning,
+        );
         Sim {
             seed,
-            expedition: 1,
+            expedition: FIRST_EXPEDITION,
             phase: expedition::opening_phase(&tuning),
             paths: Paths::new(&world, &tuning),
             monster_grid: MonsterGrid::new(world.tiles.bounds(), tuning.map.spatial_cell),
@@ -386,6 +392,9 @@ impl Sim {
             .spawn_monster(kind, crate::monster::Order::Raid, pos, &self.tuning)
     }
 }
+
+/// 방이 만들어질 때 시작하는 원정의 번호입니다.
+const FIRST_EXPEDITION: u32 = 1;
 
 /// 방의 `expedition`번째 원정의 씨앗입니다. 방의 씨앗에서 원정의 번호로 이어 간 씨앗이라서, 원정마다 다르고 같은 방의 같은 원정은 언제나 같습니다.
 fn seed_of_expedition(room: Seed, expedition: u32) -> Seed {
