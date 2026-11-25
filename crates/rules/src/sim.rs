@@ -3,7 +3,7 @@
 use crate::expedition::{self, Advance, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
-use crate::loot::{Chest, GroundWeapon, Prompt, Seed};
+use crate::loot::{self, Chest, GroundWeapon, Prompt, Seed};
 use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
@@ -169,6 +169,7 @@ impl Sim {
         self.world.apply_hits(&hits, &self.tuning);
         player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);
+        loot::finish_openings(&mut self.world, &self.tuning);
         expedition::settle_outcome(&mut self.phase, &self.world, &self.tuning);
     }
 
@@ -308,6 +309,18 @@ impl Sim {
         };
         player::repair_spec(&self.world, *target, &self.tuning)
             .is_some_and(|spec| self.world.stash < spec.cost_per_pulse)
+    }
+
+    /// `opener`가 상자를 열고 있으면 열기의 진행도(0.0 이상 1.0 이하)를 돌려줍니다.
+    /// 진행도는 여는 플레이어의 `Interaction`에서 계산하며, 상자는 아무 값도 저장하지 않습니다.
+    pub fn open_progress(&self, opener: PlayerId) -> Option<f32> {
+        let required = self.tuning.ticks(self.tuning.loot.open_secs);
+        match self.world.players.get(&opener)?.interaction() {
+            Some(Interaction::Opening { elapsed_ticks, .. }) => {
+                Some((*elapsed_ticks as f32 / required as f32).min(1.0))
+            }
+            _ => None,
+        }
     }
 
     /// `downed`를 부활시키는 플레이어가 있으면 부활의 진행도(0.0 이상 1.0 이하)를 돌려줍니다.

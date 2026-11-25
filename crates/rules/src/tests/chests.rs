@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, chest_tuning, nights};
 use crate::expedition::Phase;
 use crate::input::PlayerInputs;
 use crate::kind::WeaponKind;
@@ -52,24 +52,6 @@ fn layouts_of_days(mut sim: Sim, days: u32) -> Vec<Layout> {
         found.push(layout(&sim));
     }
     found
-}
-
-/// 후보 자리 (2, 2) 하나에 상자 하나가 놓이고, 상자는 `contents`만 나올 수 있습니다. 상자를 지키는 몬스터는 없습니다.
-fn one_chest(contents: WeaponKind) -> Scenario {
-    Scenario::with_tuning(|t| {
-        t.map.chest_sites = vec![Tile::new(2, 2)];
-        t.loot.chests_per_day = 1;
-        t.guards.per_chest = 0;
-        for kind in WeaponKind::ALL {
-            let weight = u32::from(kind == contents);
-            match kind {
-                WeaponKind::Sword => t.weapons.sword.chest_weight = weight,
-                WeaponKind::Bow => t.weapons.bow.chest_weight = weight,
-                WeaponKind::Greatsword => t.weapons.greatsword.chest_weight = weight,
-                WeaponKind::Spear => t.weapons.spear.chest_weight = weight,
-            }
-        }
-    })
 }
 
 fn post_of(monster: &Monster) -> Tile {
@@ -222,7 +204,7 @@ fn a_new_expedition_removes_the_old_chests_and_places_new_ones_with_new_ids() {
 
 #[test]
 fn a_chest_blocks_its_tile_for_a_walking_player() {
-    let mut s = one_chest(WeaponKind::Spear);
+    let mut s = Scenario::with_chest(WeaponKind::Spear, 0);
     let a = s.player_at(2.5, 4.5);
     s.hold_move(a, 0.0, -1.0);
 
@@ -241,9 +223,7 @@ fn a_player_standing_on_a_site_when_the_day_starts_is_pushed_off_the_chest() {
     let mut s = Scenario::with_cycle(|t| {
         t.cycle.day_secs = 0.5;
         t.nights.plans = nights(&[&[1], &[1]]);
-        t.map.chest_sites = vec![Tile::new(2, 2)];
-        t.loot.chests_per_day = 1;
-        t.guards.per_chest = 0;
+        chest_tuning(t, WeaponKind::Spear, 0);
     });
     s.run_until(200, |sim| matches!(sim.phase(), Phase::Night { .. }));
     assert_eq!(s.sim.chests().count(), 0, "the chest left at nightfall");

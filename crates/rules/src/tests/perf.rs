@@ -343,3 +343,70 @@ fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_over_a_hundred_arro
         interval / 10,
     );
 }
+
+#[test]
+fn perf_the_tick_pair_around_opening_a_chest_with_the_tower_cap_and_300_monsters_fits_inside_one_interval()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let mut s = Scenario::default_game(|t| {
+        // 상자를 여는 플레이어를 지키는 몬스터가 막지 않게 하고, 측정하는 것은 상자가 열리는 Tick의 계산입니다.
+        t.guards.per_chest = 0;
+        t.village.start_towers = t.spread_tower_sites(t.village.tower_limit);
+        t.structures.watchtower.max_hp = u32::MAX;
+        t.structures.watchtower.damage = 0;
+        t.wagon.max_hp = u32::MAX;
+        t.player.max_hp = u32::MAX;
+    });
+    assert_eq!(standing_towers(&s), cap, "the village starts at the cap");
+    // 낮에는 채집 지점을 지키는 몬스터만 있으므로, 나머지를 마차로 향하는 몬스터로 채워서 300마리로 맞춥니다.
+    let guards = s.sim.monsters().count();
+    for i in 0..(300 - guards) {
+        s.monster_at(52.5 + (i % 10) as f32, 10.5 + (i / 10) as f32);
+    }
+    assert_eq!(s.sim.monsters().count(), 300);
+
+    // 상자의 상하좌우 이웃 가운데 빈 타일에 서서 F를 누르고 있습니다.
+    let chest = s.sim.chests().next().expect("the day has chests").tile;
+    let stand = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        .into_iter()
+        .filter_map(|(dx, dy)| chest.step(dx, dy))
+        .find(|tile| s.sim.world_mut().tiles.is_free(*tile))
+        .expect("a chest site has a free side tile");
+    let opener = s.player_at(stand.center().x, stand.center().y);
+    s.hold_interact(opener);
+
+    let chests_before = s.sim.chests().count();
+    let mut ticks: Vec<(Duration, usize)> = Vec::new();
+    for _ in 0..60 {
+        let took = timed_tick(&mut s);
+        ticks.push((took, s.sim.chests().count()));
+    }
+    assert_eq!(s.sim.monsters().count(), 300, "300 monsters the whole time");
+    let opened_at = ticks
+        .iter()
+        .position(|(_, chests)| *chests < chests_before)
+        .expect("the chest was opened");
+    assert_eq!(
+        s.sim.ground_weapons().count(),
+        1,
+        "the opening left one weapon"
+    );
+
+    // 상자가 열린 Tick의 이동 경로 계산은 다음 Tick의 처음에 일어나므로, 두 Tick 가운데 느린 쪽을 열기의 시간으로 칩니다.
+    let pair = ticks[opened_at].0.max(
+        ticks
+            .get(opened_at + 1)
+            .map_or(Duration::ZERO, |next| next.0),
+    );
+    let slowest_of_all = ticks
+        .iter()
+        .map(|(took, _)| *took)
+        .max()
+        .unwrap_or_default();
+    let interval = Duration::from_secs_f32(defaults.dt());
+    println!(
+        "{cap} towers and 300 monsters; one chest opened in 60 ticks; slowest of all 60 ticks: {slowest_of_all:?}"
+    );
+    check_limit("tick pair around the chest opening", pair, interval);
+}

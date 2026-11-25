@@ -329,7 +329,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0xAC, 0x02, // last_input_seq 300
             0x01, 0x78, 0x00, // last_attack: 있음, tick 120, 공격한 무기 Sword
             0x01, 0x01, 0x00, // loadout: 든 무기 Bow, 다른 칸 있음 Sword
-            0x01, 0x00, 0x03, // prompt: 있음, TakeWeapon, Spear
+            0x01, 0x01, 0x03, // prompt: 있음, TakeWeapon(변형 1), Spear
             // 플레이어 2: 쓰러졌고 25%까지 부활됨
             0x02, 0x00, // id, team
             0x80, 0x0C, 0xC0, 0x0E, // pos 1536, 1856
@@ -437,7 +437,8 @@ fn every_phase_matches_golden_bytes() {
 }
 
 #[test]
-fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_golden_bytes() {
+fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_player_match_golden_bytes()
+ {
     let mut snapshot = quiet_snapshot(WirePhase::Night {
         day: 1,
         wave_count: 3,
@@ -479,14 +480,17 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             }),
             None,
         ),
-        alive(
-            4,
-            None,
-            Some(WireBuildRefusal {
-                tile: WireTile { x: 4, y: 5 },
-                why: WireCannotBuild::WouldBlockPath,
-            }),
-        ),
+        WirePlayer {
+            prompt: Some(WirePrompt::OpenChest),
+            ..alive(
+                4,
+                None,
+                Some(WireBuildRefusal {
+                    tile: WireTile { x: 4, y: 5 },
+                    why: WireCannotBuild::WouldBlockPath,
+                }),
+            )
+        },
         alive(5, Some(WireInteraction::Building { tower: 1 }), None),
         alive(7, Some(WireInteraction::Gathering { node: 2 }), None),
         alive(
@@ -494,6 +498,14 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             Some(WireInteraction::Repairing {
                 target: WireRepairTarget::Wagon,
                 stash_short: true,
+            }),
+            None,
+        ),
+        alive(
+            9,
+            Some(WireInteraction::Opening {
+                chest: 3,
+                progress: 0.5,
             }),
             None,
         ),
@@ -518,7 +530,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x00, 0x00, 0x00, 0x00, 0x3F, // Building, progress 0.5
             0x00, // nodes: 길이 0
             0x00, // piles: 길이 0
-            0x06, // players: 길이 6
+            0x07, // players: 길이 7
             0x03, 0x00, 0x00, 0x00, 0x00, // id 3, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x01, 0x00, 0x01,
@@ -533,7 +545,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x01, 0x04, 0x05, 0x04, // build_refusal: 있음, tile 4 5, WouldBlockPath
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
-            0x00, // prompt: 없음
+            0x01, 0x00, // prompt: 있음, OpenChest
             0x05, 0x00, 0x00, 0x00, 0x00, // id 5, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x02, 0x01, // interaction: 있음, Building, tower 1
@@ -551,6 +563,14 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x08, 0x00, 0x00, 0x00, 0x00, // id 8, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x01, 0x01, 0x01, // interaction: 있음, Repairing, Wagon, stash_short 참
+            0x00, // build_refusal: 없음
+            0x00, 0x00, // last_input_seq 0, last_attack 없음
+            0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
+            0x00, // prompt: 없음
+            0x09, 0x00, 0x00, 0x00, 0x00, // id 9, team, pos 0 0, facing 0
+            0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
+            0x01, 0x04, 0x03, 0x00, 0x00, 0x00,
+            0x3F, // interaction: 있음, Opening, chest 3, progress 0.5
             0x00, // build_refusal: 없음
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음

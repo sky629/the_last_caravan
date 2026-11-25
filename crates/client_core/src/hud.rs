@@ -300,7 +300,7 @@ fn ally_meter(ally: &PlayerView) -> Meter {
     }
 }
 
-/// 내가 부활, 수리, 채집, 건설을 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
+/// 내가 부활, 수리, 채집, 건설, 상자 열기를 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
 /// 수리에는 진행도가 따로 없으므로, 수리하는 감시탑이나 마차의 HP가 차오르는 모습을 진행도로 보여 줍니다.
 /// 채집도 마찬가지로 채집하는 지점의 남은 자원(`node_amount`가 가득 찬 양)이 줄어드는 모습을 보여 줍니다.
 fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Meter> {
@@ -377,6 +377,14 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
                 tone: Tone::Progress,
             })
         }
+        WireLife::Alive {
+            interaction: Some(WireInteraction::Opening { progress, .. }),
+            ..
+        } => Some(Meter {
+            label: "OPENING CHEST".to_string(),
+            fraction: progress,
+            tone: Tone::Progress,
+        }),
         WireLife::Downed {
             revive_progress: Some(progress),
             ..
@@ -399,6 +407,7 @@ fn weapon_text(loadout: WireLoadout) -> String {
 /// F를 누르면 하게 되는 일의 안내 문구입니다. `match`가 모든 안내를 다루므로, 안내를 추가하면 여기서 컴파일 오류가 납니다.
 fn prompt_text(prompt: WirePrompt) -> String {
     match prompt {
+        WirePrompt::OpenChest => "F  OPEN CHEST".to_string(),
         WirePrompt::TakeWeapon(kind) => format!("F  TAKE {}", weapon_name(kind)),
     }
 }
@@ -719,6 +728,11 @@ mod tests {
         let hud = Hud::of(&session, Some(&frame(vec![me, ally])));
         assert_eq!(hud.hint.as_deref(), Some("F  TAKE SPEAR"));
 
+        let mut at_a_chest = player(YOU, alive(100));
+        at_a_chest.prompt = Some(WirePrompt::OpenChest);
+        let hud = Hud::of(&session, Some(&frame(vec![at_a_chest])));
+        assert_eq!(hud.hint.as_deref(), Some("F  OPEN CHEST"));
+
         let quiet = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
         assert_eq!(quiet.hint, None, "nothing to do with F");
         assert_eq!(Hud::of(&session, None).hint, None);
@@ -1013,6 +1027,32 @@ mod tests {
             .unwrap();
         assert_eq!(action.label, "GATHERING  9 / 15");
         assert!((action.fraction - 9.0 / 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn opening_a_chest_shows_how_far_the_opening_has_come() {
+        let session = session_in_room();
+        let opener = player(
+            YOU,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 0,
+                stamina: 100,
+                interaction: Some(WireInteraction::Opening {
+                    chest: 3,
+                    progress: 0.4,
+                }),
+                build_refusal: None,
+            },
+        );
+
+        let action = Hud::of(&session, Some(&frame(vec![opener])))
+            .action
+            .unwrap();
+
+        assert_eq!(action.label, "OPENING CHEST");
+        assert_eq!(action.fraction, 0.4);
     }
 
     #[test]

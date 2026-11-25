@@ -4,7 +4,7 @@
 use caravan_protocol::{
     Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
     WireDelivery, WireInteraction, WireLife, WireLoadout, WireMonsterKind, WireOutcome, WirePhase,
-    WirePos, WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
+    WirePos, WirePrompt, WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
     AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Tile,
@@ -129,6 +129,66 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
         amounts,
         (1..=8).map(|id| (id, 15)).collect::<Vec<_>>(),
         "eight full nodes, numbered from 1"
+    );
+}
+
+#[test]
+fn a_chest_its_prompt_and_the_opening_progress_reach_the_snapshot_and_the_weapon_comes_out() {
+    let mut sim = sim_with(|t| {
+        t.map.chest_sites = vec![Tile::new(47, 32)];
+        t.loot.chests_per_day = 1;
+        t.guards.per_chest = 0;
+        // 상자의 남쪽 타일에 섭니다. 플레이어의 가장자리에서 상자의 가장자리까지 0.25타일입니다.
+        t.map.player_spawns = vec![Vec2::new(47.5, 33.6)];
+    });
+    let id = sim.add_player().unwrap();
+
+    let snapshot = Snapshot::from_sim(&sim);
+    assert_eq!(snapshot.chests.len(), 1);
+    assert_eq!(
+        snapshot.chests[0].tile,
+        WireTile { x: 47, y: 32 },
+        "the chest says where it stands and nothing about what is inside"
+    );
+    assert_eq!(snapshot.players[0].prompt, Some(WirePrompt::OpenChest));
+
+    let holding = PlayerInputs::from([(
+        id,
+        PlayerInput {
+            interact: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    let open_ticks = sim.tuning().ticks(sim.tuning().loot.open_secs);
+    step(&mut sim, &holding, open_ticks / 2);
+    let snapshot = Snapshot::from_sim(&sim);
+    let WireLife::Alive {
+        interaction: Some(WireInteraction::Opening { chest, progress }),
+        ..
+    } = snapshot.players[0].life
+    else {
+        panic!("the player is opening, got {:?}", snapshot.players[0].life);
+    };
+    assert_eq!(chest, snapshot.chests[0].id);
+    assert!((progress - 0.5).abs() < 0.05, "about half way: {progress}");
+    assert_eq!(snapshot.players[0].prompt, None, "the bar shows instead");
+
+    step(&mut sim, &holding, open_ticks - open_ticks / 2);
+    let snapshot = Snapshot::from_sim(&sim);
+    assert!(snapshot.chests.is_empty(), "the chest is open");
+    let [weapon] = snapshot.ground_weapons[..] else {
+        panic!("one weapon lies there, got {:?}", snapshot.ground_weapons);
+    };
+    assert_eq!(weapon.pos.to_tiles(), Vec2::new(47.5, 32.5));
+    assert_ne!(
+        weapon.kind,
+        WireWeaponKind::Sword,
+        "a chest never holds the sword"
+    );
+    assert_eq!(
+        snapshot.players[0].prompt,
+        Some(WirePrompt::TakeWeapon(weapon.kind)),
+        "F now takes the weapon"
     );
 }
 

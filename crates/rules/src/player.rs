@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
-use crate::ids::{GroundWeaponId, NodeId, PlayerId, Team, TowerId};
+use crate::ids::{ChestId, GroundWeaponId, NodeId, PlayerId, Team, TowerId};
 use crate::kind::WeaponKind;
 use crate::loadout::Loadout;
 use crate::loot::{self, Prompt};
@@ -107,6 +107,14 @@ pub enum Interaction {
     },
     /// `tower`는 이 플레이어가 짓고 있는 감시탑입니다.
     Building { tower: TowerId },
+    /// 무기 상자를 엽니다. 진행도는 이 값에만 있고, 상자는 열릴 때까지 아무것도 기억하지 않습니다.
+    /// F를 놓거나 상자가 사라지거나 닿는 거리 밖으로 벗어나거나 피해를 받으면 값을 통째로 버리므로 진행도가 처음으로 돌아갑니다.
+    /// 닿는 거리 안에서 동료가 쓰러져도 이어지고, 다 연 뒤에 F를 누르고 있으면 그때 부활이 시작됩니다.
+    Opening {
+        chest: ChestId,
+        /// 키를 끊지 않고 누른 Tick 수입니다. 누르기 시작한 Tick을 포함합니다.
+        elapsed_ticks: u32,
+    },
 }
 
 /// 수리하는 대상입니다. 감시탑은 번호로 가리키고, 마차는 방마다 하나뿐이므로 번호가 없습니다.
@@ -264,13 +272,23 @@ impl Player {
     }
 
     /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고, 이때 하고 있던 상호작용이 함께 사라집니다.
+    /// 상자를 열고 있었다면 HP가 남아도 열기가 취소됩니다. 부활, 수리, 채집, 건설은 HP가 남으면 이어집니다.
     /// 쓰러졌거나 사망한 플레이어는 피해를 받지 않습니다.
     ///
     /// 쓰러지면서 잃은 든 자원의 양을 돌려주므로, 부르는 쪽이 그 자리에 떨어뜨립니다. 쓰러지지 않았으면 0입니다.
     pub(crate) fn take_damage(&mut self, amount: u32, t: &Tuning) -> u32 {
-        let Life::Alive { hp, carried, .. } = &mut self.life else {
+        let Life::Alive {
+            hp,
+            carried,
+            interaction,
+            ..
+        } = &mut self.life
+        else {
             return 0;
         };
+        if matches!(interaction, Some(Interaction::Opening { .. })) {
+            *interaction = None;
+        }
         *hp = hp.saturating_sub(amount);
         if *hp > 0 {
             return 0;
@@ -344,6 +362,22 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
             next.insert(player.id, Some(Interaction::Building { tower: *tower }));
             continue;
         }
+        if let Some(Interaction::Opening {
+            chest,
+            elapsed_ticks,
+        }) = player.interaction()
+            && holding(player.id)
+            && loot::opening_still_valid(world, player, *chest, t)
+        {
+            next.insert(
+                player.id,
+                Some(Interaction::Opening {
+                    chest: *chest,
+                    elapsed_ticks: elapsed_ticks + 1,
+                }),
+            );
+            continue;
+        }
         // F를 한 번 두드리기만 해도 더 높은 순위의 대상이 있으면 줍기를 막습니다. 하지만 일을 시작하는 것은 누르고 있을 때뿐입니다.
         let target = if holding(player.id) || pressed(player.id) {
             choose_interaction(world, player, &claimed, t)
@@ -399,7 +433,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
                     since_pulse_ticks,
                 });
             }
-            Some(Interaction::Building { .. }) | None => {}
+            Some(Interaction::Building { .. }) | Some(Interaction::Opening { .. }) | None => {}
         }
         if chosen.is_none() && holding_build(player.id) {
             build_requests.push(player.id);
@@ -430,7 +464,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
 }
 
 /// 새로 시작할 상호작용을 고릅니다. 범위 안에 있는 것 가운데 다음 순서로 고르고, 같은 종류 안에서는 가장 가까운 것입니다.
-/// 쓰러진 동료의 부활, 손상된 감시탑의 수리, 손상된 마차의 수리, 채집 지점의 채집.
+/// 쓰러진 동료의 부활, 손상된 감시탑의 수리, 손상된 마차의 수리, 채집 지점의 채집, 무기 상자 열기.
 /// 이 뒤에 바닥의 무기 줍기가 있지만, 줍기는 시간이 걸리는 일이 아니라서 `Interaction`이 아니고 `update_interactions`가 따로 처리합니다.
 fn choose_interaction(
     world: &World,
@@ -442,11 +476,12 @@ fn choose_interaction(
         .or_else(|| nearest_damaged_tower(world, me, t))
         .or_else(|| damaged_wagon_in_reach(world, me, t))
         .or_else(|| resources::nearest_gatherable_node(world, me, t))
+        .or_else(|| loot::nearest_openable_chest(world, me, t))
 }
 
 /// 살아 있고 하는 일이 없는 `me`가 지금 F를 누르면 하게 되는 일이 화면에 안내할 만한 것이면 그 안내입니다.
 /// 서버가 F를 처리할 때와 같은 우선순위(`choose_interaction`, 그 뒤에 줍기)로 정하므로 안내가 서버의 판정과 어긋나지 않습니다.
-/// 부활, 수리, 채집이 우선하면 안내가 없습니다. 다른 플레이어가 이미 부활시키는 동료는 서버처럼 고르지 않습니다.
+/// 부활, 수리, 채집이 우선하면 안내가 없고, 상자를 열 수 있으면 바닥의 무기보다 상자의 안내가 앞섭니다. 다른 플레이어가 이미 부활시키는 동료는 서버처럼 고르지 않습니다.
 pub(crate) fn prompt(world: &World, me: &Player, t: &Tuning) -> Option<Prompt> {
     if !me.is_free_to_act() {
         return None;
@@ -460,6 +495,7 @@ pub(crate) fn prompt(world: &World, me: &Player, t: &Tuning) -> Option<Prompt> {
         })
         .collect();
     match choose_interaction(world, me, &claimed, t) {
+        Some(Interaction::Opening { .. }) => Some(Prompt::OpenChest),
         Some(_) => None,
         None => loot::nearest_ground_weapon(world, me, t)
             .and_then(|id| world.ground_weapons.iter().find(|weapon| weapon.id == id))

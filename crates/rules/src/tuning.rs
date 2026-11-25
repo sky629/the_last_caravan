@@ -293,6 +293,10 @@ pub struct GuardTuning {
 pub struct LootTuning {
     /// 낮이 시작될 때마다 놓이는 상자의 수입니다. `MapSpec::chest_sites`의 수 이하입니다. 상자는 후보 자리 가운데 서로 다른 곳에 놓입니다.
     pub chests_per_day: u32,
+    /// 상자를 열려면 F를 끊지 않고 눌러야 하는 시간입니다. 누르는 동안 피해를 받으면 처음부터 다시 눌러야 합니다.
+    pub open_secs: f32,
+    /// 플레이어의 가장자리에서 상자의 가장자리까지 잰, 상자를 열 수 있는 거리입니다.
+    pub open_reach: f32,
     /// 플레이어의 가장자리에서 바닥의 무기까지 잰, 무기를 주울 수 있는 거리입니다.
     pub take_reach: f32,
 }
@@ -735,7 +739,13 @@ impl Tuning {
     /// - 상자는 후보 자리의 수보다 많이 놓이지 않고, 상자가 놓이는 맵이면 상자에서 나오는 무기의 비중을 더한 값이 1 이상입니다.
     fn validate_chest_sites(&self, tiles: &TileMap, wagon_tiles: &[Tile]) -> Result<(), String> {
         let loot = &self.loot;
-        check_not_negative("loot take_reach", loot.take_reach)?;
+        for (name, value) in [
+            ("loot open_secs", loot.open_secs),
+            ("loot open_reach", loot.open_reach),
+            ("loot take_reach", loot.take_reach),
+        ] {
+            check_not_negative(name, value)?;
+        }
         let sites = &self.map.chest_sites;
         if loot.chests_per_day as usize > sites.len() {
             return Err(format!(
@@ -1033,6 +1043,8 @@ impl Default for Tuning {
             },
             loot: LootTuning {
                 chests_per_day: 3,
+                open_secs: 1.5,
+                open_reach: 1.0,
                 take_reach: 1.0,
             },
             resources: ResourceTuning {

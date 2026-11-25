@@ -77,6 +77,12 @@ impl Scenario {
         )
     }
 
+    /// `open_field`의 맵에 후보 자리 (2, 2) 하나가 있고, 그 자리에 `contents`가 든 상자가 놓여 있는 시나리오입니다.
+    /// 상자를 지키는 몬스터가 `guards`마리이고, 지키는 자리는 동쪽 (3, 2), 서쪽 (1, 2), 남쪽 (2, 3) 순서입니다.
+    pub fn with_chest(contents: WeaponKind, guards: u32) -> Scenario {
+        Scenario::with_tuning(|t| chest_tuning(t, contents, guards))
+    }
+
     /// 기본 맵과 기본 수치로 흐르는 시나리오입니다. 수치만 `adjust`로 바꿉니다.
     pub fn default_game(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
         Scenario::started(Tuning::default(), adjust)
@@ -324,6 +330,23 @@ impl Scenario {
 
     pub fn player(&self, id: PlayerId) -> &Player {
         self.sim.player(id).expect("the player exists")
+    }
+}
+
+/// `open_field`의 맵에서 하루에 상자 하나가 후보 자리 (2, 2)에 놓이고, 상자에서 나올 수 있는 무기가 `contents` 하나뿐이도록 수치를 바꿉니다.
+/// 상자를 지키는 몬스터는 `guards`마리입니다. 후보 자리 (2, 2)는 마차의 중심에서 21타일 떨어져 있어서 마을의 범위(10타일) 밖입니다.
+pub(crate) fn chest_tuning(t: &mut Tuning, contents: WeaponKind, guards: u32) {
+    t.map.chest_sites = vec![Tile::new(2, 2)];
+    t.loot.chests_per_day = 1;
+    t.guards.per_chest = guards;
+    for kind in WeaponKind::ALL {
+        let weight = u32::from(kind == contents);
+        match kind {
+            WeaponKind::Sword => t.weapons.sword.chest_weight = weight,
+            WeaponKind::Bow => t.weapons.bow.chest_weight = weight,
+            WeaponKind::Greatsword => t.weapons.greatsword.chest_weight = weight,
+            WeaponKind::Spear => t.weapons.spear.chest_weight = weight,
+        }
     }
 }
 

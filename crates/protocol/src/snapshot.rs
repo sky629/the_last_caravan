@@ -174,6 +174,9 @@ pub struct WirePlayer {
 /// F를 누르면 하게 되는 일입니다. 부활, 수리, 채집은 안내하지 않습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WirePrompt {
+    /// F를 누르고 있으면 가까운 상자를 엽니다.
+    OpenChest,
+    /// F를 한 번 누르면 가까운 바닥의 무기를 줍습니다.
     TakeWeapon(WireWeaponKind),
 }
 
@@ -181,6 +184,7 @@ impl WirePrompt {
     /// `match`가 모든 안내를 다루므로, 규칙에 안내를 추가하면 여기서 컴파일 오류가 납니다.
     fn of(prompt: Prompt) -> WirePrompt {
         match prompt {
+            Prompt::OpenChest => WirePrompt::OpenChest,
             Prompt::TakeWeapon(kind) => WirePrompt::TakeWeapon(WireWeaponKind::of(kind)),
         }
     }
@@ -265,6 +269,12 @@ pub enum WireInteraction {
     Gathering {
         /// 채집하는 지점의 번호입니다. 남은 양은 스냅샷의 그 지점에 있습니다.
         node: u32,
+    },
+    Opening {
+        /// 여는 상자의 번호입니다.
+        chest: u32,
+        /// 열기의 진행도(0.0에서 1.0)입니다. 진행도는 상자가 아니라 여는 플레이어에게 있습니다.
+        progress: f32,
     },
 }
 
@@ -536,6 +546,11 @@ fn wire_interaction(sim: &Sim, player: &Player, interaction: &Interaction) -> Wi
         },
         Interaction::Gathering { node, .. } => WireInteraction::Gathering { node: node.0 },
         Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },
+        Interaction::Opening { chest, .. } => WireInteraction::Opening {
+            chest: chest.0,
+            // 진행도는 여는 플레이어에게 있으므로 `Sim`이 그 플레이어의 열기에서 계산합니다.
+            progress: sim.open_progress(player.id).map_or(0.0, clamp_progress),
+        },
     }
 }
 
