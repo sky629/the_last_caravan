@@ -46,7 +46,7 @@ pub struct PlayerTuning {
     pub speed: f32,
     /// 쓰러진 상태에서 기어가는 속도입니다.
     pub crawl_speed: f32,
-    /// 플레이어가 입장할 때와 새 원정이 시작될 때 가지는 무기입니다.
+    /// 플레이어가 입장할 때와 새 원정이 시작될 때 가지는 무기입니다. 플레이어가 방에서 나갈 때는 이 무기와 같은 종류의 무기가 바닥에 떨어지지 않습니다.
     pub start_loadout: Loadout,
 }
 

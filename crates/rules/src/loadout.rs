@@ -33,7 +33,7 @@ impl Loadout {
         self.spare
     }
 
-    /// 가진 무기를 든 무기부터 차례로 돌려줍니다. 플레이어가 방에서 나갈 때 바닥에 놓을 무기를 셉니다.
+    /// 가진 무기를 든 무기부터 차례로 돌려줍니다. 플레이어가 방에서 나갈 때 바닥에 놓을 무기를 고르는 데 씁니다.
     pub fn weapons(&self) -> impl Iterator<Item = WeaponKind> {
         std::iter::once(self.held).chain(self.spare)
     }

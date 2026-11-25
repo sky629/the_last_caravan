@@ -264,30 +264,106 @@ fn passing_weapons_around_neither_makes_nor_loses_any() {
     }
 }
 
+/// 바닥에 놓인 무기를 종류와 자리로 모으고 종류 순서로 정렬합니다.
+fn ground_with_places(s: &Scenario) -> Vec<(WeaponKind, f32, f32)> {
+    let mut found: Vec<_> = s
+        .sim
+        .ground_weapons()
+        .map(|weapon| (weapon.kind, weapon.pos.x, weapon.pos.y))
+        .collect();
+    found.sort_by_key(|(kind, ..)| *kind);
+    found
+}
+
 #[test]
-fn a_player_who_leaves_drops_both_weapons_where_they_stood() {
+fn a_player_who_leaves_drops_the_weapons_from_chests_where_they_stood() {
     let mut s = Scenario::open_field();
     let a = s.player_at(6.0, 7.0);
     s.arm(a, WeaponKind::Bow, Some(WeaponKind::Spear));
 
     s.sim.remove_player(a);
 
-    let mut dropped: Vec<_> = s
-        .sim
-        .ground_weapons()
-        .map(|weapon| (weapon.kind, weapon.pos.x, weapon.pos.y))
-        .collect();
-    dropped.sort_by_key(|(kind, ..)| *kind);
     assert_eq!(
-        dropped,
+        ground_with_places(&s),
         [(WeaponKind::Bow, 6.0, 7.0), (WeaponKind::Spear, 6.0, 7.0)]
     );
 }
 
 #[test]
-fn a_player_who_leaves_with_one_weapon_drops_one_and_a_teammate_can_take_it() {
+fn a_player_who_leaves_keeps_the_sword_the_start_loadout_gives_in_either_slot() {
+    let mut s = Scenario::open_field();
+    let held = s.player_at(6.0, 7.0);
+    s.arm(held, WeaponKind::Sword, Some(WeaponKind::Spear));
+    let spare = s.player_at(12.0, 7.0);
+    s.arm(spare, WeaponKind::Greatsword, Some(WeaponKind::Sword));
+
+    s.sim.remove_player(held);
+    s.sim.remove_player(spare);
+
+    assert_eq!(
+        ground_with_places(&s),
+        [
+            (WeaponKind::Greatsword, 12.0, 7.0),
+            (WeaponKind::Spear, 6.0, 7.0)
+        ],
+        "only the weapons the start loadout does not give are left behind"
+    );
+}
+
+#[test]
+fn what_stays_with_a_leaver_is_what_the_start_loadout_gives_not_the_sword_by_name() {
+    let mut s = Scenario::with_tuning(|t| {
+        t.player.start_loadout = Loadout::new(WeaponKind::Bow, Some(WeaponKind::Greatsword));
+    });
+    let a = s.player_at(6.0, 7.0);
+    s.arm(a, WeaponKind::Sword, Some(WeaponKind::Bow));
+    let b = s.player_at(12.0, 7.0);
+    s.arm(b, WeaponKind::Greatsword, Some(WeaponKind::Bow));
+
+    s.sim.remove_player(a);
+    s.sim.remove_player(b);
+
+    assert_eq!(
+        ground_with_places(&s),
+        [(WeaponKind::Sword, 6.0, 7.0)],
+        "the sword is not given by this start loadout, the bow and the greatsword are"
+    );
+}
+
+#[test]
+fn a_player_who_leaves_with_only_the_starting_sword_leaves_no_weapon() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(10.0, 10.0);
+
+    s.sim.remove_player(a);
+
+    assert!(weapons_on_the_ground(&s).is_empty());
+}
+
+#[test]
+fn joining_and_leaving_over_and_over_with_the_start_loadout_never_puts_a_weapon_on_the_ground() {
+    let mut s = Scenario::open_field();
+    for round in 0..50 {
+        let crowd: Vec<PlayerId> = (0..4)
+            .map(|_| s.sim.add_player().expect("the room has space"))
+            .collect();
+        s.run_ticks(3);
+        for id in crowd {
+            s.sim.remove_player(id);
+        }
+        assert!(
+            weapons_on_the_ground(&s).is_empty(),
+            "a weapon lies on the ground after {} joins and leaves",
+            round + 1
+        );
+    }
+}
+
+#[test]
+fn a_teammate_can_take_the_weapon_a_leaver_dropped() {
     let mut s = Scenario::open_field();
     let leaver = s.player_at(10.0, 10.0);
+    s.arm(leaver, WeaponKind::Sword, Some(WeaponKind::Spear));
     let stays = s.player_at(10.4, 10.0);
     s.sim.remove_player(leaver);
 
@@ -295,8 +371,7 @@ fn a_player_who_leaves_with_one_weapon_drops_one_and_a_teammate_can_take_it() {
 
     assert_eq!(
         s.player(stays).loadout,
-        Loadout::new(WeaponKind::Sword, Some(WeaponKind::Sword)),
-        "the sword the leaver dropped is a weapon like any other"
+        Loadout::new(WeaponKind::Sword, Some(WeaponKind::Spear))
     );
     assert!(weapons_on_the_ground(&s).is_empty());
 }

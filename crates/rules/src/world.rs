@@ -176,12 +176,16 @@ impl World {
         Some(tower)
     }
 
-    /// 플레이어를 방에서 내보냅니다. 든 자원과 가진 무기는 그 자리에 떨어집니다. 없는 번호는 무시합니다.
-    pub fn remove_player(&mut self, id: PlayerId) {
+    /// 플레이어를 방에서 내보냅니다. 든 자원은 그 자리에 떨어집니다. 가진 무기도 그 자리에 떨어지지만,
+    /// 시작 무기(`PlayerTuning::start_loadout`)에 있는 종류의 무기는 떨어지지 않습니다. 입장하는 플레이어가 공짜로 받는 무기이기 때문입니다.
+    /// 없는 번호는 무시합니다.
+    pub fn remove_player(&mut self, id: PlayerId, t: &Tuning) {
         if let Some(player) = self.players.remove(&id) {
             self.add_pile(player.pos, player.carried());
             for kind in player.loadout.weapons() {
-                self.drop_weapon(player.pos, kind);
+                if !t.player.start_loadout.weapons().any(|given| given == kind) {
+                    self.drop_weapon(player.pos, kind);
+                }
             }
         }
     }
