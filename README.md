@@ -150,6 +150,13 @@ trunk serve
 
 피해량은 정상 값(검 25, 대검 45, 창 30, 활 15, 석궁 20, 소총 60)에 테스트용 배율 4(`PLAYTEST_DAMAGE_MULTIPLIER`)를 곱한 값입니다. 서비스하기 전에 이 배율을 1로 내려야 하고, 무시된 시험 `before_a_release_the_damage_is_the_normal_damage`가 정상 값을 확인합니다. 몬스터(`Grunt`)의 HP는 60입니다.
 
+석궁의 탄환과 소총의 선이 몬스터를 맞히는 규칙은 다음과 같습니다. 두 무기는 몬스터를 앞에서부터 찾는 함수(`sweep::monsters_along`)를 함께 씁니다.
+
+- 석궁의 탄환은 한 Tick에 지나간 선분 위에서 닿는 몬스터를 닿는 순서대로 최대 네 마리까지 맞힙니다. 네 마리 모두 같은 피해를 받고, 한 몬스터는 한 번만 맞습니다. 네 마리째를 맞힌 탄환과 사거리의 끝에 이른 탄환은 사라집니다. 활은 같은 규칙에서 맞힐 수 있는 수가 한 마리입니다.
+- 막힌 타일은 탄환과 소총의 선을 막습니다. 몬스터가 막힌 타일과 같은 거리에 있으면 그 몬스터를 먼저 맞힙니다. 탄환과 소총의 선은 플레이어를 지나가고, 맞히는 것은 몬스터뿐입니다.
+- 소총은 누른 Tick에 조준한 방향으로 사거리 12타일의 선을 긋고, 선 위에서 처음 닿는 몬스터 한 마리만 맞힙니다. 선의 굵기가 0이므로 선이 몬스터의 몸(반지름 0.4타일)을 지나갈 때만 맞습니다. 막힌 타일 뒤와 사거리 밖의 몬스터는 맞지 않습니다.
+- 소총의 선이 끝난 자리(몬스터의 가장자리, 막힌 타일, 사거리의 끝 가운데 가장 가까운 곳)는 서버가 플레이어의 마지막 공격(`LastAttack::trace_end`)에 적고 스냅샷에 싣습니다. 선의 시작은 보내지 않으므로, 클라이언트는 쏜 플레이어가 지금 서 있는 자리에서 그 끝까지 흰 선을 그리고, 이 선은 6 Tick(0.3초) 동안 흐려지다가 사라집니다.
+
 무기를 얻고 가지는 규칙은 다음과 같습니다.
 
 1. 상자는 낮이 시작될 때마다 세 개가 놓입니다. 후보 자리 여덟 곳(`MapSpec::chest_sites`) 가운데 서로 다른 세 곳이 뽑히고, 마을의 범위 밖입니다. 상자 안의 무기는 상자마다 따로, 검을 뺀 무기 가운데 같은 확률로 하나가 정해집니다. 그래서 같은 무기가 두 상자에 들어 있을 수도 있습니다. 어느 자리에 어떤 무기가 든 상자가 놓이는지는 방의 씨앗이 정하므로, 같은 씨앗이면 같고(`--seed`), 화면에는 상자의 안이 보이지 않습니다.
@@ -193,12 +200,14 @@ cd crates/client && trunk build
 - `cargo test --workspace`는 게임 규칙, 프로토콜, 서버, 클라이언트 로직을 시험합니다. 대부분의 테스트는 화면과 네트워크 없이 실행되고, `crates/dedicated/tests/real_socket.rs`, `crates/ws_server/tests/roundtrip.rs`, `crates/ws_client/tests/message_limit.rs`만 `127.0.0.1`의 실제 소켓을 씁니다.
 - `sh scripts/check-deps.sh`는 계층 사이의 금지된 의존이 없는지 검사하고, 통과하면 `dependency rules hold`를 출력합니다.
 - `trunk build`는 웹 클라이언트를 `crates/client/dist`에 빌드합니다.
-- 감시탑이 상한만큼 서 있고 몬스터가 300마리 있을 때 Tick 하나의 계산 시간은 릴리스 빌드에서만 한계를 확인합니다. 평균은 Tick 간격(50ms)의 10% 이하, 감시탑을 짓거나 부순 Tick과 상자가 열리는 Tick은 한 간격 이하여야 합니다. `cargo test --release -p caravan_rules perf -- --nocapture`가 시간을 출력하고, 일반 `cargo test`는 이 상황이 말한 대로 만들어졌는지만 확인합니다. 활을 든 플레이어 넷이 쏘는 상황과 탄환 144개가 동시에 날아다니는 상황의 시간도 같은 명령이 출력하고, 이때 날아다니는 탄환의 평균과 최대 수가 함께 출력됩니다. 스냅샷의 크기는 `crates/protocol/tests/snapshot_size.rs`와 `crates/server/tests/load.rs`가 확인합니다.
-- 측정한 값은 다음과 같습니다. 컴퓨터는 macOS(Mac16,8, 14코어)이고, 릴리스 빌드이며, 같은 명령을 세 번 실행한 값을 실행한 순서대로 적었습니다.
-  - Tick 하나의 평균(감시탑 40개, 몬스터 300마리, 1000 Tick)은 224.7µs, 226.1µs, 223.2µs입니다. 활을 든 플레이어 넷이 쏘면 227.5µs, 228.8µs, 229.6µs이고, 탄환 144개가 날아다니면 235.9µs, 236.0µs, 237.3µs입니다. 한계는 5ms입니다.
-  - 상자가 열리는 Tick(열린 Tick과 다음 Tick 가운데 느린 쪽)은 1.72ms, 1.67ms, 1.64ms입니다. 한계는 50ms입니다. 평균보다 긴 원인은 확인하지 않았습니다.
-  - 스냅샷 하나는 `snapshot_size.rs`의 상황(몬스터 300마리, 감시탑 40개, 플레이어 4명, 바닥의 무기 4개)에서 3,421바이트입니다. 플레이어 한 명이 있는 `load.rs`의 실제 규칙 상태에서는 3,362바이트입니다.
-  - 전용 서버와 부하 시험용 클라이언트 하나를 실제 소켓으로 150초 실행했을 때(`--stress --waves 100,200,300 --stats`) 몬스터는 최대 267마리였고 가장 큰 스냅샷은 3,220바이트였습니다. 1초 구간의 Tick 평균은 중앙값 0.17ms, 가장 큰 구간이 1.26ms였습니다. 구간 안의 가장 느린 Tick은 한 번 16.52ms였고 원인은 확인하지 않았습니다.
+- 감시탑이 상한만큼 서 있고 몬스터가 300마리 있을 때 Tick 하나의 계산 시간은 릴리스 빌드에서만 한계를 확인합니다. 평균은 Tick 간격(50ms)의 10% 이하, 감시탑을 짓거나 부순 Tick과 상자가 열리는 Tick은 한 간격 이하여야 합니다. `cargo test --release -p caravan_rules perf -- --nocapture`가 시간을 출력하고, 일반 `cargo test`는 이 상황이 말한 대로 만들어졌는지만 확인합니다. 활을 든 플레이어 넷이 쏘는 상황, 탄환 144개가 동시에 날아다니는 상황, 석궁을 든 플레이어 넷이 무리를 꿰뚫는 상황, 소총을 든 플레이어 넷이 쏘는 상황(쿨다운대로, 그리고 한 Tick마다)의 시간도 같은 명령이 출력합니다. 석궁의 상황은 탄환 하나가 몬스터를 평균 몇 번 맞혔는지도 출력하고, 1.5번을 넘지 못하면 시험이 실패합니다. 스냅샷의 크기는 `crates/protocol/tests/snapshot_size.rs`와 `crates/server/tests/load.rs`가 확인합니다.
+- 측정한 값은 다음과 같습니다. 컴퓨터는 macOS(Mac16,8, 14코어)이고, 릴리스 빌드이며, 같은 명령을 세 번 실행한 값을 실행한 순서대로 적었습니다. 측정하는 동안 컴퓨터에는 다른 작업이 돌고 있었습니다(`uptime`의 부하 평균 약 6).
+  - Tick 하나의 평균(감시탑 40개, 몬스터 300마리, 1000 Tick)은 148.2µs, 137.6µs, 130.6µs입니다. 활을 든 플레이어 넷이 쏘면 148.9µs, 151.4µs, 137.6µs이고, 탄환 144개가 날아다니면 157.7µs, 147.7µs, 141.4µs입니다. 석궁을 든 플레이어 넷이 쏘면 104.7µs, 104.0µs, 94.1µs이고(탄환 220개가 몬스터를 880번 맞혀서 탄환마다 4.00번), 소총을 든 플레이어 넷이 쏘면 105.2µs, 104.1µs, 93.5µs이고, 소총 넷이 한 Tick마다 쏘면 108.0µs, 106.3µs, 97.3µs입니다(한 Tick에 네 발, 1000 Tick에 4000번 맞힙니다). 한계는 5ms입니다.
+  - 석궁과 소총의 상황이 활과 기본 상황보다 짧은 것은 무기 때문이 아닙니다. 네 무기(검, 활, 석궁, 소총)를 같은 자리에 세우고 같은 방법으로 다섯 번씩 재면(저장소에 넣지 않은 임시 시험) 어느 무기든 95µs에서 109µs 사이이고 무기에 따른 순서가 없습니다. 상황마다 짧아지는 원인은 플레이어를 어디에 세우는가로 보이지만, 그 이유까지는 확인하지 않았습니다.
+  - 새 무기가 기존 상황의 시간을 바꾸지 않았는지는 같은 컴퓨터에서 `main`과 이 브랜치의 같은 시험을 번갈아 다섯 번씩 실행해서 비교했습니다. 기본 상황의 중앙값은 `main` 132.4µs와 이 브랜치 136.0µs, 활 넷은 139.4µs와 139.7µs, 탄환 144개는 144.9µs와 147.8µs이고, 각 값의 다섯 번 사이의 흔들림(최소와 최대의 차이 8µs에서 18µs)이 두 중앙값의 차이보다 크거나 비슷합니다.
+  - 상자가 열리는 Tick(열린 Tick과 다음 Tick 가운데 느린 쪽)은 1.17ms, 1.13ms, 1.04ms입니다. 한계는 50ms입니다. 평균보다 긴 원인은 확인하지 않았습니다.
+  - 스냅샷 하나는 `snapshot_size.rs`의 상황(몬스터 300마리, 감시탑 40개, 플레이어 4명, 바닥의 무기 4개)에서 3,421바이트입니다. 소총의 사격 선이 있는 플레이어 넷과 바닥의 무기 아홉 개를 더한 가장 나쁜 경우는 3,467바이트이고, 여기에 탄환 8개를 더하면 3,523바이트입니다(한도 3,600바이트). 플레이어 한 명이 있는 `load.rs`의 실제 규칙 상태에서는 3,362바이트입니다.
+  - 전용 서버와 부하 시험용 클라이언트 하나를 실제 소켓으로 150초 실행했을 때(`--stress --waves 100,200,300 --stats`) 몬스터는 최대 267마리였고 가장 큰 스냅샷은 3,221바이트였습니다. 1초 구간의 Tick 평균은 중앙값 0.25ms, 가장 큰 구간이 0.48ms였고, 구간 안의 가장 느린 Tick은 5.0ms였습니다. 같은 실행을 `main`에서 한 번 한 값은 중앙값 0.21ms, 가장 큰 구간 2.68ms, 가장 느린 Tick 47.85ms(한 번)였고, 두 실행이 한 번씩이라서 이 값으로 둘의 차이를 가리지는 못합니다. 이 실행의 플레이어는 검과 활을 들고 있어서 석궁과 소총은 실제 소켓에서 쏘지 않았습니다.
 
 ## 구조
 
@@ -279,11 +288,11 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 
 1. `crates/rules/src/tuning.rs`에서는 게임의 모든 수치가 한 구조체에 모인 모습과, `Default` 트레이트 구현, 그리고 초를 정수 Tick으로 바꾸는 `Tuning::ticks`를 봅니다.
 2. `crates/rules/src/sim.rs`의 `Sim::step`은 Tick 하나의 처리 순서를 나열하며, `world`만 가변 참조로 넘기고 `tuning`과 `paths` 같은 다른 필드는 `Ctx`에 공유 참조로 빌려 주는 방식이 구조체 필드를 따로 빌리는 소유권 규칙의 첫 예입니다.
-3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다. `crates/rules/src/loadout.rs`의 `Loadout`은 무기 두 칸을 타입으로 표현합니다. 든 무기(`held`)가 `Option`이 아니라서 「칸이 둘 다 빈 상태」를 만들 수 없고, 필드가 비공개라서 상태를 바꾸는 방법이 `swap`(`Q`)과 `take`(`F`로 줍기) 둘뿐입니다. `crates/rules/src/weapon.rs`는 공격을 두 단계(`decide`가 공격을 모으고, `deliver`가 `Delivery`의 값에 따라 전달합니다)로 나누고, 무기마다 다른 수치는 `crates/rules/src/tuning.rs`의 무기 표(`WeaponTable`) 한 행에 둡니다. `crates/rules/src/projectile.rs`는 탄환을 쏜 플레이어와 따로 세계의 개체 목록에 두고, `crates/rules/src/sweep.rs`는 한 Tick에 움직인 선분 전체를 검사해서 빠른 탄환이 얇은 몬스터를 건너뛰지 못하게 합니다. `crates/rules/src/stamina.rs`의 `Stamina`는 정수 하나를 새 타입(newtype)으로 감싸서, 달리기 게이지를 소수 없이 정수 점수로 세는 방법을 한 곳에 모읍니다.
+3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다. `crates/rules/src/loadout.rs`의 `Loadout`은 무기 두 칸을 타입으로 표현합니다. 든 무기(`held`)가 `Option`이 아니라서 「칸이 둘 다 빈 상태」를 만들 수 없고, 필드가 비공개라서 상태를 바꾸는 방법이 `swap`(`Q`)과 `take`(`F`로 줍기) 둘뿐입니다. `crates/rules/src/weapon.rs`는 공격을 두 단계(`decide`가 공격을 모으고, `deliver`가 `Delivery`의 값에 따라 전달합니다)로 나누고, 무기마다 다른 수치는 `crates/rules/src/tuning.rs`의 무기 표(`WeaponTable`) 한 행에 둡니다. `crates/rules/src/projectile.rs`는 탄환을 쏜 플레이어와 따로 세계의 개체 목록에 두고, `crates/rules/src/sweep.rs`는 한 Tick에 움직인 선분 전체를 검사해서 빠른 탄환이 얇은 몬스터를 건너뛰지 못하게 하고, 탄환과 소총의 선이 몬스터를 앞에서부터 찾는 순서(`monsters_along`)를 정합니다. 소총은 `weapon.rs`의 `shoot`가 누른 Tick에 이 함수와 막힌 타일 검사를 한 번씩 부릅니다. `crates/rules/src/stamina.rs`의 `Stamina`는 정수 하나를 새 타입(newtype)으로 감싸서, 달리기 게이지를 소수 없이 정수 점수로 세는 방법을 한 곳에 모읍니다.
 4. `crates/rules/src/world/tiles.rs`의 `TileMap`은 어디가 막혔는지 아는 유일한 곳이고, `crates/rules/src/build.rs`는 감시탑을 놓을 수 있는 조건을 한 함수(`check_site`)로 판정합니다. `crates/rules/src/expedition.rs`는 낮, 밤, 새벽, 결과 화면의 단계를 열거형(`Phase`)으로 두고 단계를 바꾸는 곳을 두 함수로 모았으며, 낮이 시작될 때 일어나는 일은 `begin_day` 하나에 있습니다. `crates/rules/src/loot.rs`는 무기 상자와 바닥의 무기를 다루고, 규칙에서 난수를 쓰는 곳은 이 모듈의 `dice` 하나입니다(상자의 자리와 내용을 씨앗에서 뽑습니다). `Chest`의 내용(`contents`)은 규칙 크레이트 안에서만 보이므로, 프로토콜 크레이트가 상자 안의 무기를 읽어서 스냅샷에 실으면 컴파일되지 않습니다. `crates/rules/src/resources.rs`는 자원이 채집 지점, 플레이어의 손, 땅, 보관함 가운데 한 곳에만 있도록 옮기는 규칙입니다. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 명령(`Order`: 낮에는 자리를 지키고 밤에는 마차로 향합니다), 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
 5. `crates/rules/src/tests/support.rs`와 같은 폴더의 테스트는 화면과 네트워크 없이 개체를 원하는 자리에 놓고 `step`을 반복해서 규칙을 시험하는 방법을 보여 줍니다. 상자는 `chests.rs`(자리와 내용, 씨앗, 지키는 몬스터)와 `opening.rs`(여는 일)가, 바닥의 무기는 `loot.rs`가 시험합니다.
 6. `crates/protocol/src/messages.rs`의 `ClientMsg`와 `ServerMsg`는 serde의 derive로 직렬화하는 열거형이며, 클라이언트가 보낼 수 있는 게임 정보가 입력뿐이라는 서버 권위 방식이 이 타입에 드러납니다.
-7. `crates/protocol/src/snapshot.rs`의 `Snapshot::from_sim`은 게임 상태를 전송 형식으로 바꾸는 유일한 함수이며, 규칙의 상태 타입과 전송용 타입을 분리한 모습을 보여 줍니다.
+7. `crates/protocol/src/snapshot.rs`의 `Snapshot::from_sim`은 게임 상태를 전송 형식으로 바꾸는 유일한 함수이며, 규칙의 상태 타입과 전송용 타입을 분리한 모습을 보여 줍니다. 소총의 사격 선은 `WireAttack::trace_end`에 끝점 하나만 싣고, 선의 시작은 보내지 않습니다.
 8. `crates/protocol/src/units.rs`는 실수 좌표를 1/128 타일 단위의 정수로 줄이는 양자화(quantization)로 스냅샷의 크기를 줄입니다.
 9. `crates/protocol/src/transport.rs`의 `ServerTransport`와 `ClientTransport`는 접속 방식을 트레이트로 정의한 인터페이스이고, 구현이 지켜야 하는 약속이 문서 주석에 있습니다.
 10. `crates/protocol/src/codec.rs`의 `decode_exact`는 트레이트 경계(`T: DeserializeOwned`)를 가진 제네릭 함수의 예입니다.
@@ -301,7 +310,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭과 `Q`와 `F`를 잃지 않도록 기억하고 입력에 한 번만 싣습니다.
 23. `crates/client/src/main.rs`에서는 Bevy의 `App`, 플러그인, `.chain()`으로 순서를 고정한 시스템 목록, 그리고 `#[cfg(target_arch = "wasm32")]`로 PC와 웹의 코드를 나누는 조건부 컴파일을 봅니다.
 24. `crates/client/src/net.rs`는 Bevy의 리소스와 시스템 매개변수(`Res`, `ResMut`, `NonSendMut`)의 예이고, 다른 스레드로 옮길 수 없는 웹의 WebSocket을 non-send 리소스로 보관합니다.
-25. `crates/client/src/loot.rs`는 상자와 바닥의 무기를 스냅샷의 번호 목록에 맞춰 도형으로 만들고 갱신합니다. `crates/client/src/effects.rs`는 부채꼴 공격과 탄환과 감시탑의 사격을 상태에서 선으로 그리고, 부채꼴의 거리와 각도는 입장 안내의 무기 표에서 읽습니다. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/supplies.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
+25. `crates/client/src/loot.rs`는 상자와 바닥의 무기를 스냅샷의 번호 목록에 맞춰 도형으로 만들고 갱신합니다. `crates/client/src/effects.rs`는 부채꼴 공격과 탄환과 소총의 사격 선과 감시탑의 사격을 상태에서 선으로 그리고, 부채꼴의 거리와 각도는 입장 안내의 무기 표에서 읽습니다. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/supplies.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.
 26. `crates/client/src/hud.rs`는 `caravan_client_core::Hud`가 정한 내용(무기 두 칸, `F`의 안내, 상자를 여는 진행 막대)을 Bevy UI 노드에 옮깁니다.
 
 ## 현재의 한계
@@ -316,5 +325,5 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 - 로비 화면이 없으므로 방 코드는 실행할 때 지정합니다.
 - 맵은 64 x 64 타일 하나이고, 몬스터는 한 종류, 시설은 감시탑 하나, 자원은 한 종류입니다.
 - 화면의 문구는 영어입니다. Bevy의 기본 글꼴이 한글을 표시하지 못하기 때문입니다. 무기의 이름도 영어입니다.
-- 탄환과 공격 효과는 선으로 그리고, 상자와 바닥의 무기는 단순한 도형으로 그립니다.
+- 탄환과 공격 효과와 소총의 사격 선은 선으로 그리고, 상자와 바닥의 무기는 단순한 도형으로 그립니다.
 - `trunk serve`와 `trunk build`는 최적화하지 않은 디버그 빌드를 만들므로 wasm 파일이 약 110MB입니다.

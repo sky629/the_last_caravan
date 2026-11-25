@@ -115,9 +115,14 @@ fn draw_swing(
 }
 
 /// 소총의 사격 선입니다. 쏜 플레이어의 지금 위치에서 서버가 정한 끝까지 가슴 높이에 긋고, 시간이 갈수록 옅어집니다.
+/// 쿨다운이 긴 무기의 한 발이 0.3초만 보이므로, 위아래로 어긋난 선 둘을 더해서 효과 선(3픽셀) 하나보다 굵게 그립니다.
 fn draw_trace(gizmos: &mut Gizmos, player: &PlayerView, end: Ground, progress: f32) {
     let (from, to) = trace_line(player, end);
-    gizmos.line_2d(from, to, config::TRACE.with_alpha(1.0 - progress));
+    let color = config::TRACE.with_alpha(1.0 - progress);
+    for spread in [-config::TRACE_SPREAD_PX, 0.0, config::TRACE_SPREAD_PX] {
+        let shift = Vec2::new(0.0, spread);
+        gizmos.line_2d(from + shift, to + shift, color);
+    }
 }
 
 /// 사격 선의 화면 좌표(시작, 끝)입니다. 둘 다 가슴 높이입니다. 선의 시작은 서버가 보내지 않고 쏜 플레이어의 위치에서 긋습니다.

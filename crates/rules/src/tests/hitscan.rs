@@ -78,6 +78,24 @@ fn a_wall_between_stops_the_shot_and_the_line_ends_at_the_wall() {
 }
 
 #[test]
+fn a_monster_the_line_touches_at_the_same_distance_as_a_wall_is_hit() {
+    // 선이 벽에 닿는 거리와 몬스터(반지름 0.25)에 닿는 거리가 같도록, 몬스터를 벽의 안쪽 4분의 1타일에 놓습니다.
+    let mut s = quiet_field(|t| {
+        t.map.obstacles = vec![Rect::new(6.0, 9.0, 7.0, 11.0)];
+        t.monsters.grunt.radius = 0.25;
+    });
+    let a = rifleman(&mut s);
+    let at_the_wall = s.monster_at(6.25, 10.0);
+    let damage = s.sim.tuning().weapons.rifle.damage;
+
+    s.run_ticks(1);
+
+    assert_eq!(hp_of(&s, at_the_wall), 1000 - damage);
+    let end = trace_end_of(&s, a).expect("the shot left a line");
+    assert!(close(end.x, 6.0), "{end:?}");
+}
+
+#[test]
 fn a_monster_beyond_the_range_is_not_hit_and_the_line_ends_at_the_range() {
     let mut s = quiet_field(|_| {});
     let a = rifleman(&mut s);

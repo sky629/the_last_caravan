@@ -209,6 +209,29 @@ fn a_wall_in_the_same_tick_protects_the_monsters_behind_it_too() {
 }
 
 #[test]
+fn a_monster_the_projectile_touches_at_the_same_distance_as_a_wall_is_hit_before_the_wall() {
+    // 탄환(반지름 0.125)이 벽에 닿는 거리와 몬스터(반지름 0.25)에 닿는 거리가 같도록, 몬스터를 벽의 안쪽 4분의 1타일에 놓습니다.
+    // 소수로 정확히 나타낼 수 있는 값만 쓰므로 두 거리는 한 치도 다르지 않습니다.
+    let mut s = quiet_field(4, |t| {
+        t.map.obstacles = vec![Rect::new(6.0, 9.0, 7.0, 11.0)];
+        t.monsters.grunt.radius = 0.25;
+        if let Delivery::Projectile(spec) = &mut t.weapons.bow.delivery {
+            spec.radius = 0.125;
+            spec.speed = 100.0;
+        }
+    });
+    let at_the_wall = s.monster_at(6.25, 10.0);
+    let damage = bow_damage(&s);
+
+    shoot_once(&mut s, 0);
+
+    assert_eq!(hp_of(&s, at_the_wall), 1000 - damage);
+    let shot = only_projectile(&s);
+    assert_eq!(shot.flight, Flight::Landed);
+    assert!(close(shot.pos.x, 6.0 - 0.125), "{:?}", shot.pos);
+}
+
+#[test]
 fn a_projectile_with_hits_left_ends_at_the_end_of_its_range() {
     let mut s = quiet_field(4, |_| {});
     let in_reach = s.monster_at(6.0, 10.0);
