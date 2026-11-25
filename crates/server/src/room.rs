@@ -131,6 +131,14 @@ impl Room {
             .is_some_and(|seat| seat.close_link(link, peer))
     }
 
+    /// 접속이 닫혀서 유지 중인 이 방의 자리의 수입니다.
+    pub fn held_count(&self) -> usize {
+        self.seats
+            .values()
+            .filter(|seat| seat.held_by.is_some())
+            .count()
+    }
+
     /// `peer`가 유지시키고 있는 이 방의 자리의 수입니다.
     pub fn held_from(&self, peer: PeerKey) -> usize {
         self.seats

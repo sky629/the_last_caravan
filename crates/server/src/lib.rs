@@ -214,6 +214,15 @@ fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerErro
     let one_peer_can_hold = limits
         .max_links_per_ip
         .saturating_add(limits.max_held_seats_per_ip);
+    // 서버 전체의 한도는 한 상대의 한도 이상이어야 그 한도가 의미가 있고, 방의 한도보다 작아야 끊긴 자리만으로는 방의 한도를 채우지 못합니다.
+    if limits.max_held_seats < limits.max_held_seats_per_ip
+        || limits.max_held_seats >= limits.max_rooms
+    {
+        return Err(ServerError::InvalidLimits(format!(
+            "max_held_seats {} must be at least max_held_seats_per_ip {} and smaller than max_rooms {}",
+            limits.max_held_seats, limits.max_held_seats_per_ip, limits.max_rooms
+        )));
+    }
     if limits.max_rooms <= one_peer_can_hold {
         return Err(ServerError::InvalidLimits(format!(
             "max_rooms {} must be larger than max_links_per_ip {} plus max_held_seats_per_ip {}",

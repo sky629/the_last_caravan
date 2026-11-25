@@ -115,8 +115,8 @@ fn a_connection_carries_the_address_of_its_peer_and_its_debug_text_hides_it() {
     }
 
     assert_eq!(peers.len(), 3);
-    assert_eq!(peers[0], PeerKey::new(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-    assert_eq!(peers[1], PeerKey::new(home));
+    assert_eq!(peers[0], PeerKey::of(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+    assert_eq!(peers[1], PeerKey::of(home));
     assert_eq!(peers[1], peers[2], "the same address is the same peer");
     assert_ne!(peers[0], peers[1]);
     let shown = format!(

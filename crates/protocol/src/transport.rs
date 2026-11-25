@@ -5,7 +5,7 @@
 //! WebSocket 외의 접속 방식(Steam, 프로세스 내부)도 이 트레이트를 구현하면 서버와 클라이언트를 고치지 않고 연결됩니다.
 
 use std::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 
 use crate::messages::{ClientMsg, ServerMsg};
 
@@ -13,14 +13,27 @@ use crate::messages::{ClientMsg, ServerMsg};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LinkId(pub u64);
 
-/// 접속의 상대를 구분하는 값입니다. 같은 사람이 여는 접속은 같은 값이 되도록 접속 방식이 정합니다(IP 주소, IPv6는 같은 /64 대역을 하나로 봅니다).
-/// 서버는 이 값으로 상대마다 유지하는 자리의 수를 셉니다. 주소는 개인 정보이므로 로그에 남지 않게 `Debug`가 값을 보여 주지 않습니다.
+/// 접속의 상대를 구분하는 값입니다. 접속 방식이 접속한 IP 주소로 `PeerKey::of`를 불러서 만들고, 한 사람이 여는 접속은 같은 값이 됩니다.
+/// 서버는 이 값으로 상대마다 유지하는 자리의 수를 세고, 접속 방식은 상대마다 열려 있는 접속의 수를 셉니다.
+/// 주소는 개인 정보이므로 로그에 남지 않게 `Debug`가 값을 보여 주지 않습니다.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PeerKey(IpAddr);
 
 impl PeerKey {
-    pub const fn new(address: IpAddr) -> PeerKey {
-        PeerKey(address)
+    /// 주소에서 상대를 구분하는 값을 만듭니다. IPv4는 주소 전체로 구분합니다.
+    /// IPv6 호스트 하나는 보통 /64 대역(주소의 앞 64비트가 같은 주소 전체)을 받으므로, 주소마다 세면 한 호스트가 주소를 바꿔 가며 한도를 여러 번 채울 수 있습니다.
+    /// 그래서 IPv6 주소는 뒤 64비트를 0으로 바꿔서 같은 /64 대역을 하나로 구분합니다.
+    /// IPv4를 IPv6 형식으로 표현한 주소(`::ffff:a.b.c.d`)는 먼저 IPv4 주소로 바꾸므로, 같은 IPv4 주소와 같은 값입니다.
+    pub fn of(address: IpAddr) -> PeerKey {
+        match address.to_canonical() {
+            IpAddr::V4(v4) => PeerKey(IpAddr::V4(v4)),
+            IpAddr::V6(v6) => {
+                let s = v6.segments();
+                PeerKey(IpAddr::V6(Ipv6Addr::new(
+                    s[0], s[1], s[2], s[3], 0, 0, 0, 0,
+                )))
+            }
+        }
     }
 }
 
@@ -76,4 +89,37 @@ pub enum ClientEvent {
 pub trait ClientTransport {
     fn poll(&mut self) -> Option<ClientEvent>;
     fn send(&mut self, msg: &ClientMsg);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    fn peer(text: &str) -> PeerKey {
+        PeerKey::of(text.parse().unwrap())
+    }
+
+    #[test]
+    fn an_ipv4_address_is_told_apart_by_the_whole_address() {
+        assert_eq!(peer("203.0.113.7"), peer("203.0.113.7"));
+        assert_ne!(peer("203.0.113.7"), peer("203.0.113.8"));
+    }
+
+    #[test]
+    fn an_ipv4_mapped_ipv6_address_is_the_same_peer_as_its_ipv4_address() {
+        let mapped = IpAddr::V6(Ipv4Addr::new(203, 0, 113, 7).to_ipv6_mapped());
+        assert_eq!(PeerKey::of(mapped), peer("203.0.113.7"));
+    }
+
+    #[test]
+    fn ipv6_addresses_are_the_same_peer_exactly_when_they_share_a_64_bit_prefix() {
+        let first = peer("2001:db8:1:2::1");
+        assert_eq!(first, peer("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+        assert_eq!(first, peer("2001:db8:1:2::"));
+        assert_ne!(first, peer("2001:db8:1:3::1"), "another /64");
+        assert_ne!(first, peer("2001:db8:2:2::1"), "another /64");
+        assert_ne!(first, peer("203.0.113.7"));
+    }
 }

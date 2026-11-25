@@ -29,6 +29,7 @@ fn small_server(max_players: usize, held: usize, max_rooms: usize) -> common::Ri
         max_rooms,
         max_links_per_ip: 1,
         max_held_seats_per_ip: held,
+        max_held_seats: max_rooms - 1,
         ..ServerLimits::default()
     };
     rig_with_limits(tuning, limits)
@@ -299,7 +300,7 @@ fn a_link_the_transport_closed_for_passing_a_limit_gives_up_its_seat_at_once() {
     let now = Instant::now();
     let link = LinkId(1);
     events.borrow_mut().extend([
-        ServerEvent::Connected(link, PeerKey::new(IpAddr::V4(Ipv4Addr::LOCALHOST))),
+        ServerEvent::Connected(link, PeerKey::of(IpAddr::V4(Ipv4Addr::LOCALHOST))),
         ServerEvent::Message(link, join_msg(PROTOCOL_VERSION, Some("night"), "KANG")),
     ]);
     server.pump(now);
@@ -344,57 +345,139 @@ fn a_silent_link_the_server_closed_keeps_its_seat() {
     drop(kang);
 }
 
-/// 방의 수와 상대마다 유지하는 자리의 수는 서로 맞아야 서버가 시작합니다.
+/// 상대마다 유지하는 자리의 수, 서버 전체의 유지하는 자리의 수, 방의 수는 서로 맞아야 서버가 시작합니다.
 #[test]
 fn a_server_refuses_to_start_when_the_held_seat_and_room_limits_do_not_fit_together() {
-    let try_start = |max_players: usize, held: usize, max_links_per_ip: usize, max_rooms: usize| {
-        let (transport, _connector) = caravan_protocol::loopback();
-        GameServer::new(
-            Box::new(transport),
-            Tuning {
-                max_players,
-                ..Tuning::default()
-            },
-            ServerLimits {
-                max_held_seats_per_ip: held,
-                max_links_per_ip,
-                max_rooms,
-                ..ServerLimits::default()
-            },
-            RoomSeeds::Fixed(Seed(1)),
-            common::random(),
-            Instant::now(),
-        )
-        .map(|_| ())
+    // 사람이 `max_players`명인 방에서, 한 상대의 접속은 `links`개, 한 상대가 유지하는 자리는 `per_ip`개, 서버 전체는 `total`개, 방은 `rooms`개입니다.
+    let try_start =
+        |max_players: usize, links: usize, per_ip: usize, total: usize, rooms: usize| {
+            let (transport, _connector) = caravan_protocol::loopback();
+            GameServer::new(
+                Box::new(transport),
+                Tuning {
+                    max_players,
+                    ..Tuning::default()
+                },
+                ServerLimits {
+                    max_links_per_ip: links,
+                    max_held_seats_per_ip: per_ip,
+                    max_held_seats: total,
+                    max_rooms: rooms,
+                    ..ServerLimits::default()
+                },
+                RoomSeeds::Fixed(Seed(1)),
+                common::random(),
+                Instant::now(),
+            )
+            .map(|_| ())
+        };
+    let refused_for = |result: Result<(), ServerError>, what: &str| match result {
+        Err(ServerError::InvalidLimits(why)) => assert!(why.contains(what), "{why}"),
+        other => panic!("expected a refusal about {what}, got {other:?}"),
     };
 
-    assert_eq!(try_start(4, 4, 16, 21), Ok(()));
-    assert!(
-        matches!(
-            try_start(4, 3, 16, 100),
-            Err(ServerError::InvalidLimits(why)) if why.contains("max_held_seats_per_ip")
-        ),
-        "a whole room of one address must fit"
-    );
-    for (links, rooms) in [(16, 20), (16, 5), (0, 0)] {
-        assert!(
-            matches!(
-                try_start(4, 4, links, rooms),
-                Err(ServerError::InvalidLimits(why)) if why.contains("max_rooms")
-            ),
-            "{links} links and 4 held seats against {rooms} rooms"
-        );
-    }
+    assert_eq!(try_start(4, 16, 4, 10, 21), Ok(()));
+    refused_for(try_start(4, 16, 3, 10, 100), "max_held_seats_per_ip");
+    // 한 상대가 열린 접속과 유지시킨 자리로 방을 모두 차지할 수 있습니다(16 + 4 = 20).
+    refused_for(try_start(4, 16, 4, 10, 20), "max_rooms");
+    refused_for(try_start(4, 16, 4, 3, 100), "max_held_seats");
+    // 끊긴 자리만으로 방의 한도를 채울 수 있습니다.
+    refused_for(try_start(4, 16, 4, 100, 100), "max_held_seats");
+    refused_for(try_start(4, 16, 4, 101, 100), "max_held_seats");
+    assert_eq!(try_start(4, 16, 4, 99, 100), Ok(()));
+    let defaults = ServerLimits::default();
     assert_eq!(
         try_start(
             4,
-            ServerLimits::default().max_held_seats_per_ip,
-            16,
-            ServerLimits::default().max_rooms
+            defaults.max_links_per_ip,
+            defaults.max_held_seats_per_ip,
+            defaults.max_held_seats,
+            defaults.max_rooms
         ),
         Ok(()),
         "the defaults pass their own check"
     );
+}
+
+/// IPv6 주소는 같은 /64 대역이면 한 상대로 세어지고, 다른 /64 대역은 따로 세어집니다.
+#[test]
+fn ipv6_addresses_of_one_64_bit_prefix_count_as_one_address() {
+    let mut rig = small_server(1, 1, 6);
+    let v6 = |text: &str| -> IpAddr { text.parse().unwrap() };
+
+    let (client, _) = rig.join_welcomed_from(v6("2001:db8:1:2::1"), None, "KANG", None);
+    assert_eq!(held_count(&rig.drop_link(client)), 1);
+    let (client, _) = rig.join_welcomed_from(v6("2001:db8:1:2:ffff::7"), None, "MIRO", None);
+    assert_eq!(
+        left_count(&rig.drop_link(client)),
+        1,
+        "another address of the same /64 is the same peer, which already holds one seat"
+    );
+    let (client, _) = rig.join_welcomed_from(v6("2001:db8:1:3::1"), None, "JUNE", None);
+    assert_eq!(
+        held_count(&rig.drop_link(client)),
+        1,
+        "another /64 is counted on its own"
+    );
+}
+
+/// 서버 전체의 끊긴 자리가 한도에 닿으면 새로 끊긴 자리는 곧바로 없어지고, 이미 유지 중인 자리는 그대로여서 돌아올 수 있습니다.
+/// 한도에 닿아도 새 방의 입장은 받아들여집니다.
+#[test]
+fn a_server_at_its_held_seat_limit_gives_up_new_drops_keeps_the_held_ones_and_still_admits_new_rooms()
+ {
+    let tuning = Tuning {
+        max_players: 1,
+        ..Tuning::default()
+    };
+    let limits = ServerLimits {
+        max_rooms: 6,
+        max_links_per_ip: 1,
+        max_held_seats_per_ip: 1,
+        max_held_seats: 2,
+        ..ServerLimits::default()
+    };
+    let mut rig = rig_with_limits(tuning, limits);
+    let mut seats = Vec::new();
+    for (index, room) in ["first", "second"].into_iter().enumerate() {
+        let (client, welcome) =
+            rig.join_welcomed_from(address(index as u8 + 1), Some(room), "KANG", None);
+        assert_eq!(held_count(&rig.drop_link(client)), 1);
+        seats.push((room, welcome));
+    }
+    let (client, _) = rig.join_welcomed_from(address(3), Some("third"), "MIRO", None);
+    assert_eq!(
+        left_count(&rig.drop_link(client)),
+        1,
+        "another address, but the server holds as many as it may"
+    );
+    assert_eq!(rig.server.stats().members, 2, "the held two stayed");
+
+    // 한도에 닿아 있어도 새 방에 들어갈 수 있습니다. 끊긴 자리만으로는 방의 한도를 채우지 못합니다.
+    let mut open = Vec::new();
+    for index in 0..4 {
+        let (client, welcome) = rig.join_welcomed_from(address(10 + index), None, "JUNE", None);
+        open.push((client, welcome));
+    }
+    assert_eq!(rig.server.stats().rooms, 6);
+    let (_refused, answer) = rig.join_as(None, "LAST");
+    assert!(
+        matches!(
+            answer,
+            ServerMsg::JoinRejected {
+                reason: RejectReason::ServerFull
+            }
+        ),
+        "only now the rooms are all in use: {answer:?}"
+    );
+
+    // 유지 중이던 자리는 돌아올 수 있고, 돌아오면 한 자리가 비어서 새로 끊긴 자리가 다시 유지됩니다.
+    let (room, welcome) = &seats[0];
+    let (back, again) = rig.join_welcomed_from(address(1), Some(room), "KANG", Some(welcome.token));
+    assert_eq!((again.you, again.token), (welcome.you, welcome.token));
+    let (client, _) = open.remove(0);
+    assert_eq!(held_count(&rig.drop_link(client)), 1);
+    drop(back);
 }
 
 /// 정해 둔 이벤트를 차례로 돌려주는 접속 방식입니다. 접속 방식이 한도를 넘은 접속을 닫는 일처럼 가짜 접속으로 만들 수 없는 이벤트에 씁니다.

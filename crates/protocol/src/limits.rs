@@ -24,10 +24,14 @@ pub struct ServerLimits {
     /// 한 상대에게서 이 수보다 많은 자리가 동시에 끊기면 넘친 자리는 유지하지 않고 곧바로 내놓습니다.
     /// 리버스 프록시 뒤에서는 모든 접속이 주소 하나로 보이므로 `max_links_per_ip`처럼 이 값도 올려야 합니다.
     pub max_held_seats_per_ip: usize,
-    /// 서버가 한꺼번에 둘 수 있는 방의 수입니다. 접속이 열려 있는 방의 수는 `max_links`가, 접속자가 없는 방의 수는 상대마다 `max_held_seats_per_ip`가 묶으므로,
-    /// 정상적인 사용으로는 닿지 않는 값입니다. 그래도 상대가 많을 때 서버의 메모리를 끝까지 지키는 마지막 한도입니다.
+    /// 서버 전체에서 한꺼번에 유지할 수 있는 끊긴 자리의 수입니다. 여러 주소를 쓰는 상대가 주소마다의 한도(`max_held_seats_per_ip`)를 하나씩 채워도,
+    /// 접속자가 없는 방이 이 수를 넘어 쌓이지 않습니다. 이 한도에 닿아 있는 동안 새로 끊기는 자리는 유지하지 않고 곧바로 내놓고, 이미 유지 중인 자리는 그대로 둡니다.
+    /// 서버는 시작할 때 이 값이 `max_held_seats_per_ip` 이상이고 `max_rooms`보다 작은지 확인합니다. 그래서 끊긴 자리만으로는 방의 한도를 채우지 못하고, 새 방을 만드는 입장은 막히지 않습니다.
+    pub max_held_seats: usize,
+    /// 서버가 한꺼번에 둘 수 있는 방의 수입니다. 접속이 열려 있는 방의 수는 `max_links`가, 접속자가 없는 방의 수는 `max_held_seats`가 묶으므로,
+    /// 정상적인 사용으로는 닿지 않는 값입니다. 그래도 서버의 메모리를 끝까지 지키는 마지막 한도입니다.
     /// 넘으면 새 방을 만드는 입장을 거절하고(`RejectReason::ServerFull`), 있는 방에 들어가는 입장은 받습니다.
-    /// 서버는 시작할 때 이 값이 한 상대가 차지할 수 있는 방의 수(`max_links_per_ip + max_held_seats_per_ip`)보다 큰지 확인합니다.
+    /// 서버는 시작할 때 이 값이 한 상대가 차지할 수 있는 방의 수(`max_links_per_ip + max_held_seats_per_ip`)와 `max_held_seats`보다 큰지 확인합니다.
     pub max_rooms: usize,
     /// 네트워크 스레드가 게임 스레드에 넘기고 아직 처리되지 않은 이벤트의 최대 수입니다 (모든 접속 합계).
     /// 가득 차면 읽기 작업이 기다리고, 그동안 소켓을 읽지 않으므로 보내는 쪽이 느려집니다. 메모리가 끝없이 늘지 않습니다.
@@ -75,6 +79,7 @@ impl Default for ServerLimits {
             max_links: 64,
             max_links_per_ip: 16,
             max_held_seats_per_ip: 8,
+            max_held_seats: 128,
             max_rooms: 256,
             inbound_capacity: 1024,
             max_messages_per_sec: 100,

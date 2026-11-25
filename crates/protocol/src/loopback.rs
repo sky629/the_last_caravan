@@ -105,7 +105,7 @@ impl LoopbackConnector {
         let (outbox, inbox) = channel();
         let _ = self
             .to_server
-            .send(ToServer::Open(link, PeerKey::new(address), outbox));
+            .send(ToServer::Open(link, PeerKey::of(address), outbox));
         LoopbackClient {
             link,
             to_server: self.to_server.clone(),

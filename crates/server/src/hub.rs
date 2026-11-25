@@ -75,6 +75,8 @@ pub(crate) struct Hub {
     max_rooms: usize,
     /// 같은 상대가 유지시킬 수 있는 끊긴 자리의 수입니다.
     max_held_per_peer: usize,
+    /// 서버 전체에서 유지할 수 있는 끊긴 자리의 수입니다.
+    max_held_total: usize,
     times: RoomTimes,
     seeds: RoomSeeds,
     /// 방 코드를 비우고 입장한 사람의 방 코드와, 새 자리의 표식을 만듭니다.
@@ -111,6 +113,7 @@ impl Hub {
             idle_timeout: limits.idle_timeout,
             max_rooms: limits.max_rooms,
             max_held_per_peer: limits.max_held_seats_per_ip,
+            max_held_total: limits.max_held_seats,
             times,
             seeds,
             mint: Mint::new(random),
@@ -431,8 +434,9 @@ impl Hub {
 
     /// `link`가 닫혔으니 자리를 유지합니다. 자리는 방에 남고, 시간이 다 되면 끝납니다.
     /// 이미 다른 접속이 이어받은 자리이면 아무 일도 하지 않습니다.
-    /// 같은 상대가 이미 유지시키는 자리가 한도(`max_held_per_peer`)에 닿아 있으면 이 자리는 유지하지 않고 곧바로 내놓습니다.
-    /// 접속이 없는 자리는 접속 수의 한도에 들지 않으므로, 이 한도가 한 상대가 접속자 없는 방을 쌓는 것을 막습니다.
+    /// 같은 상대가 이미 유지시키는 자리가 한도(`max_held_per_peer`)에 닿아 있거나, 서버 전체의 끊긴 자리가 한도(`max_held_total`)에 닿아 있으면
+    /// 이 자리는 유지하지 않고 곧바로 내놓습니다. 이미 유지 중인 자리는 건드리지 않습니다.
+    /// 접속이 없는 자리는 접속 수의 한도에 들지 않으므로, 이 두 한도가 접속자 없는 방이 쌓이는 것을 막습니다.
     fn hold_seat(&mut self, code: RoomCode, player: PlayerId, link: LinkId) -> Vec<Out> {
         // 열린 접속은 모두 `Connected`로 상대가 알려졌으므로, 상대를 모르는 접속은 없습니다.
         let Some(peer) = self.peers.get(&link).copied() else {
@@ -445,10 +449,16 @@ impl Hub {
         if !held {
             return Vec::new();
         }
-        if self.held_from(peer) > self.max_held_per_peer {
+        if self.held_from(peer) > self.max_held_per_peer || self.held_total() > self.max_held_total
+        {
             return self.give_up_seat(code, player);
         }
         vec![Out::Notice(Notice::Held { room: code, player })]
+    }
+
+    /// 서버 전체에서 지금 유지 중인 끊긴 자리의 수입니다.
+    fn held_total(&self) -> usize {
+        self.rooms.values().map(Room::held_count).sum()
     }
 
     /// `peer`가 지금 유지시키고 있는 끊긴 자리의 수입니다. 자리가 끝나거나 사람이 돌아오면 줄어듭니다.

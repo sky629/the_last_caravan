@@ -470,7 +470,7 @@ async fn a_new_link_reports_the_key_of_its_peer() {
     match next_event(&mut server, Duration::from_secs(5)).await {
         ServerEvent::Connected(_, peer) => assert_eq!(
             peer,
-            PeerKey::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+            PeerKey::of(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
         ),
         other => panic!("expected Connected, got {other:?}"),
     }

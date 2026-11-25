@@ -127,7 +127,10 @@ mod tests {
 
     const AWAY: u32 = 60;
     const HOLD: u32 = 1200;
-    const PEER: PeerKey = PeerKey::new(IpAddr::V4(Ipv4Addr::LOCALHOST));
+
+    fn peer() -> PeerKey {
+        PeerKey::of(IpAddr::V4(Ipv4Addr::LOCALHOST))
+    }
 
     fn seat() -> Seat {
         Seat::new(
@@ -165,7 +168,7 @@ mod tests {
     fn a_seat_without_a_link_is_away_at_once_and_ends_by_the_clock_of_the_last_message() {
         let mut seat = seat();
         pass(&mut seat, 10);
-        assert!(seat.close_link(LinkId(1), PEER));
+        assert!(seat.close_link(LinkId(1), peer()));
         assert_eq!(seat.presence(AWAY), Presence::Away);
 
         pass(&mut seat, HOLD - 11);
@@ -213,8 +216,8 @@ mod tests {
         let mut seat = seat();
         assert_eq!(seat.held_by, None, "a link is open");
 
-        assert!(seat.close_link(LinkId(1), PEER));
-        assert_eq!(seat.held_by, Some(PEER));
+        assert!(seat.close_link(LinkId(1), peer()));
+        assert_eq!(seat.held_by, Some(peer()));
 
         seat.take_over(LinkId(2), PlayerName::parse("KANG").unwrap());
         assert_eq!(seat.held_by, None, "back with a link, nobody holds it");
@@ -227,7 +230,7 @@ mod tests {
         assert_eq!(old, Some(LinkId(1)));
 
         assert!(
-            !seat.close_link(LinkId(1), PEER),
+            !seat.close_link(LinkId(1), peer()),
             "the old link was already replaced"
         );
         assert_eq!(seat.link, Some(LinkId(2)));
@@ -243,7 +246,7 @@ mod tests {
         });
         pass(&mut seat, 500);
         assert!(seat.doze_off(500), "it had been away in the camp");
-        seat.close_link(LinkId(1), PEER);
+        seat.close_link(LinkId(1), peer());
 
         let old = seat.take_over(LinkId(7), PlayerName::parse("MIRO").unwrap());
 
