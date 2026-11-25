@@ -16,7 +16,7 @@ use crate::session::Session;
 /// 한 프레임에 표시할 모든 것입니다. 없는 값은 `None`이거나 비어 있고, Bevy 쪽은 그 칸을 숨깁니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hud {
-    /// 접속 상태 한 줄입니다. 언제나 있습니다.
+    /// 접속 상태 한 줄입니다. 시작 화면에서는 비어 있습니다.
     pub connection: String,
     pub room: Option<String>,
     pub expedition: Option<String>,
@@ -32,7 +32,7 @@ pub struct Hud {
     pub weapon: Option<String>,
     /// F를 누르면 하게 되는 일의 안내입니다. 서버가 정해서 스냅샷에 실어 보내고, 내 캐릭터의 것만 표시합니다.
     pub hint: Option<String>,
-    /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
+    /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과와, 접속과 첫 스냅샷을 기다리는 안내가 여기에 나옵니다.
     pub banner: Option<Banner>,
     /// 야영지에서 화면 오른쪽에 띄우는 준비 목록입니다. 야영지일 때만 있습니다.
     pub camp: Option<CampPanel>,

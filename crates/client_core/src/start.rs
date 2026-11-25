@@ -82,6 +82,18 @@ impl TextField {
     }
 }
 
+/// 방 코드 칸에 붙여 넣은 글자에서 방 코드로 쓸 부분입니다. 초대 링크(`...?room=k7m2q&server=...`)이면 `room=`의 값이고, 아니면 글자 전체입니다.
+/// 링크를 통째로 넣으면 칸이 받는 글자만 남아서 엉뚱한 코드가 되고, 없는 코드는 새 방이 되므로 친구의 방이 아닌 빈 방에 들어가게 됩니다.
+fn room_in_invite(pasted: &str) -> &str {
+    match pasted.split_once("room=") {
+        Some((_, rest)) => rest
+            .split(|c: char| c == '&' || c == '#' || c.is_whitespace())
+            .next()
+            .unwrap_or(rest),
+        None => pasted,
+    }
+}
+
 /// 입장을 요청하는 값입니다. 시작 화면이 검사를 마친 값만 담습니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoinRequest {
@@ -141,6 +153,10 @@ impl StartForm {
             }
             FormKey::Paste(text) => {
                 self.notice = None;
+                let text = match self.focus {
+                    Field::Name => text.as_str(),
+                    Field::Room => room_in_invite(&text),
+                };
                 text.chars().for_each(|c| self.focused().push(c));
             }
             FormKey::Backspace => self.focused().backspace(),
@@ -188,6 +204,29 @@ mod tests {
         for c in text.chars() {
             form.press(FormKey::Char(c));
         }
+    }
+
+    #[test]
+    fn pasting_an_invite_link_into_the_room_field_takes_only_its_room_code() {
+        let mut form = StartForm::new("KANG", "", None);
+        assert_eq!(form.focus, Field::Room);
+        form.press(FormKey::Paste(
+            "http://127.0.0.1:8080/?room=K7m2q&server=ws://10.0.0.5:7777".to_string(),
+        ));
+        assert_eq!(form.room.text(), "k7m2q");
+
+        let mut plain = StartForm::new("KANG", "", None);
+        plain.press(FormKey::Paste("k7m2q".to_string()));
+        assert_eq!(plain.room.text(), "k7m2q", "a bare code is taken as it is");
+
+        let mut name = StartForm::new("", "", None);
+        assert_eq!(name.focus, Field::Name);
+        name.press(FormKey::Paste("room=abc".to_string()));
+        assert_eq!(
+            name.name.text(),
+            "roomabc",
+            "the name field takes what it is given"
+        );
     }
 
     #[test]
