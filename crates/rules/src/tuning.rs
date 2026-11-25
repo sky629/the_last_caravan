@@ -1215,9 +1215,9 @@ impl Default for Tuning {
                 dawn_secs: 4.0,
             },
             camp: CampTuning {
-                start: Start::AtOnce,
+                start: Start::WhenReady,
                 countdown_secs: 3.0,
-                debrief_secs: 5.0,
+                debrief_secs: 60.0,
             },
             nights: NightTuning {
                 plans: vec![

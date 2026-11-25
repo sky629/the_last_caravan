@@ -24,9 +24,16 @@ fn layout(sim: &Sim) -> Layout {
         .collect()
 }
 
-/// 기본 맵과 기본 수치의 방을 씨앗 `seed`로 만듭니다.
+/// 야영지를 거치지 않고 첫날이 시작된 방입니다. 야영지에 상자가 없으므로, 상자를 시험하려면 원정을 시작해야 합니다.
+fn started(tuning: Tuning, seed: u64) -> Sim {
+    let mut sim = Sim::new(tuning, Seed(seed));
+    sim.begin_expedition();
+    sim
+}
+
+/// 기본 맵과 기본 수치로 첫날이 시작된 방을 씨앗 `seed`로 만듭니다.
 fn default_sim(seed: u64) -> Sim {
-    Sim::new(Tuning::default(), Seed(seed))
+    started(Tuning::default(), seed)
 }
 
 /// 낮이 1초이고 밤마다 몬스터가 하나인 기본 맵의 방입니다.
@@ -34,7 +41,7 @@ fn quick_days(seed: u64) -> Sim {
     let mut tuning = Tuning::default();
     tuning.cycle.day_secs = 1.0;
     tuning.nights.plans = nights(&[&[1], &[1], &[1]]);
-    Sim::new(tuning, Seed(seed))
+    started(tuning, seed)
 }
 
 /// 밤마다 몬스터를 모두 처치하면서 `days`일째 낮까지 진행하고, 날마다 낮이 시작된 때의 상자를 모읍니다.
@@ -132,7 +139,7 @@ fn the_sites_do_not_depend_on_the_weapon_table() {
 
         assert_eq!(
             sites(&default_sim(seed)),
-            sites(&Sim::new(other, Seed(seed))),
+            sites(&started(other, seed)),
             "seed {seed}"
         );
     }

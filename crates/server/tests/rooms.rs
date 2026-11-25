@@ -12,8 +12,8 @@ use caravan_protocol::{
 use caravan_rules::{PlayerId, Seed, Sim, Tuning};
 use caravan_server::{GameServer, Notice, RoomSeeds, ServerError, ServerStats};
 use common::{
-    assert_near, drain, input, input_with, last_snapshot, player, player_ids, position, rig,
-    rig_with, rig_with_limits, snapshots, ticks,
+    assert_near, drain, input, input_with, last_snapshot, player, player_ids, position,
+    press_ready, rig, rig_in_expedition, rig_with, rig_with_limits, snapshots, ticks,
 };
 
 #[test]
@@ -436,7 +436,7 @@ fn the_welcome_reports_the_players_id_the_capacity_and_the_tick_rate_from_the_tu
 fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
     let mut tuning = Tuning::default();
     tuning.cycle.day_secs = 0.1;
-    let mut rig = rig_with(tuning);
+    let mut rig = rig_in_expedition(tuning);
     let (mut a, _) = rig.join_ok("test");
     // 낮은 0.1초(2 Tick), 첫 무리는 그 뒤 3초(60 Tick)에 나타나므로 3.2초를 기다리면 싸우는 중입니다.
     rig.run_ticks(64);
@@ -474,6 +474,64 @@ fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
             build_refusal: None
         }
     );
+}
+
+#[test]
+fn a_player_who_joins_a_room_in_the_camp_is_not_ready_and_cancels_the_countdown() {
+    let mut rig = rig();
+    let (mut a, a_id) = rig.join_ok("test");
+    a.send(&press_ready(1));
+    rig.run_ticks(1);
+    let counting = last_snapshot(&mut a);
+    assert_eq!(
+        counting.phase,
+        WirePhase::Camp {
+            ready: vec![a_id],
+            starting_in: Some(3.0),
+            struck: vec![]
+        },
+        "a lone ready player starts the countdown"
+    );
+
+    let (mut b, b_id) = rig.join_ok("test");
+    rig.run_ticks(1);
+
+    let seen_by_b = last_snapshot(&mut b);
+    assert_eq!(seen_by_b.expedition, 0, "the room is still in the camp");
+    assert_eq!(
+        seen_by_b.phase,
+        WirePhase::Camp {
+            ready: vec![a_id],
+            starting_in: None,
+            struck: vec![]
+        },
+        "the newcomer is not ready and the countdown is gone"
+    );
+    assert_eq!(player_ids(&seen_by_b), [a_id, b_id]);
+}
+
+#[test]
+fn a_player_who_joins_a_room_whose_expedition_has_started_joins_it_at_once() {
+    let mut rig = rig();
+    let (mut a, a_id) = rig.join_ok("test");
+    a.send(&press_ready(1));
+    // 카운트다운은 3초(60 Tick)이고, 준비한 Tick에 시작해서 60 Tick 뒤에 원정이 시작됩니다.
+    rig.run_ticks(61);
+    let started = last_snapshot(&mut a);
+    assert_eq!(started.expedition, 1);
+    assert!(matches!(started.phase, WirePhase::Day { day: 1, .. }));
+
+    let (mut b, b_id) = rig.join_ok("test");
+    rig.run_ticks(1);
+
+    let first_seen = last_snapshot(&mut b);
+    assert_eq!(first_seen.expedition, 1, "no new expedition starts");
+    assert!(matches!(first_seen.phase, WirePhase::Day { day: 1, .. }));
+    assert_eq!(player_ids(&first_seen), [a_id, b_id]);
+    assert!(matches!(
+        player(&first_seen, b_id).life,
+        WireLife::Alive { hp: 100, .. }
+    ));
 }
 
 #[test]
@@ -733,7 +791,7 @@ fn a_server_refuses_to_start_with_numbers_that_break_the_rules() {
 fn the_stats_count_rooms_members_monsters_and_ticks() {
     let mut tuning = Tuning::default();
     tuning.cycle.day_secs = 0.1;
-    let mut rig = rig_with(tuning);
+    let mut rig = rig_in_expedition(tuning);
     let (_a1, _) = rig.join_ok("a");
     let (_a2, _) = rig.join_ok("a");
     let (b, _) = rig.join_ok("b");

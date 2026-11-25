@@ -9,9 +9,10 @@ use caravan_protocol::{
     ClientMsg, ClientTransport, InputMsg, ServerLimits, Snapshot, WireLife, WirePhase, WireVec2,
     WireWeaponKind,
 };
-use caravan_rules::{Loadout, Start, Tuning, WeaponKind as RulesWeapon};
+use caravan_rules::{Loadout, Tuning, WeaponKind as RulesWeapon};
 use common::{
-    assert_near, input_with, last_snapshot, player, position, rig, rig_with, rig_with_limits,
+    assert_near, input_with, last_snapshot, player, position, press_ready, rig, rig_with,
+    rig_with_limits,
 };
 
 /// 한 Tick에 움직이는 거리(타일)입니다.
@@ -346,27 +347,12 @@ fn a_late_or_repeated_input_with_q_does_not_switch_the_weapon() {
     );
 }
 
-/// 야영지에서 시작하는 수치입니다. 준비 키와 확인 키는 야영지와 결과 화면에서만 뜻이 있습니다.
-fn camp_start() -> Tuning {
-    let mut tuning = Tuning::default();
-    tuning.camp.start = Start::WhenReady;
-    tuning
-}
-
 /// 마차가 곧바로 부서져서 결과 화면이 빨리 열리는 수치입니다. 낮이 거의 없고 마차의 HP가 1입니다.
 fn quick_defeat() -> Tuning {
-    let mut tuning = camp_start();
+    let mut tuning = Tuning::default();
     tuning.cycle.day_secs = 0.05;
     tuning.wagon.max_hp = 1;
     tuning
-}
-
-fn press_r(seq: u32) -> ClientMsg {
-    ClientMsg::Input(InputMsg {
-        seq,
-        toggle_ready: true,
-        ..InputMsg::default()
-    })
 }
 
 fn press_enter(seq: u32) -> ClientMsg {
@@ -394,11 +380,11 @@ fn confirmed_ids(snapshot: &Snapshot) -> Vec<u32> {
 #[test]
 fn one_press_of_r_makes_the_player_ready_once_and_the_ticks_without_a_message_do_not_press_it_again()
  {
-    let mut rig = rig_with(camp_start());
+    let mut rig = rig();
     let (mut a, a_id) = rig.join_ok("test");
     let (mut b, _) = rig.join_ok("test");
 
-    a.send(&press_r(1));
+    a.send(&press_ready(1));
     rig.run_ticks(1);
     assert_eq!(ready_ids(&last_snapshot(&mut b)), vec![a_id]);
 
@@ -413,11 +399,11 @@ fn one_press_of_r_makes_the_player_ready_once_and_the_ticks_without_a_message_do
 
 #[test]
 fn an_r_pressed_and_released_between_two_ticks_still_makes_the_player_ready() {
-    let mut rig = rig_with(camp_start());
+    let mut rig = rig();
     let (mut a, a_id) = rig.join_ok("test");
     let (_b, _) = rig.join_ok("test");
 
-    a.send(&press_r(1));
+    a.send(&press_ready(1));
     a.send(&input_with(2, (0.0, 0.0), false));
     rig.run_ticks(1);
 
@@ -429,8 +415,8 @@ fn the_enter_key_confirms_the_result_once_and_the_ticks_without_a_message_do_not
     let mut rig = rig_with(quick_defeat());
     let (mut a, a_id) = rig.join_ok("test");
     let (mut b, _) = rig.join_ok("test");
-    a.send(&press_r(1));
-    b.send(&press_r(1));
+    a.send(&press_ready(1));
+    b.send(&press_ready(1));
     let mut result = None;
     for _ in 0..120 {
         rig.run_ticks(20);

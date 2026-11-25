@@ -40,7 +40,8 @@ pub struct Pile {
 }
 
 /// 맵에 적힌 채집 지점을 가득 찬 상태로 만듭니다. 번호는 맵의 순서대로 1부터 붙습니다.
-pub(crate) fn nodes_of(t: &Tuning) -> Vec<GatherNode> {
+/// 야영지의 세계에는 채집 지점이 없으므로, 어느 단계에 있는 방이든 원정의 채집 지점을 알려면 이 함수를 부릅니다.
+pub fn nodes_of(t: &Tuning) -> Vec<GatherNode> {
     t.map
         .nodes
         .iter()

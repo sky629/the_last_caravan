@@ -5,8 +5,8 @@
 use caravan_protocol::{
     ServerMsg, Snapshot, WireAngle, WireAttack, WireGroundWeapon, WireInteraction, WireLife,
     WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode, WirePhase, WirePile,
-    WirePlayer, WirePos, WireProjectile, WirePrompt, WireShot, WireTile, WireTower, WireTowerState,
-    WireWagon, WireWeaponKind, encode_server,
+    WirePlayer, WirePos, WireProjectile, WirePrompt, WireShot, WireStruck, WireTile, WireTower,
+    WireTowerState, WireWagon, WireWeaponKind, encode_server,
 };
 
 /// 몬스터와 탄환의 번호가 `first_id`부터 이어지는 스냅샷입니다. 모든 좌표 값은 2바이트로 기록되는 크기(128 이상)입니다.
@@ -264,4 +264,50 @@ fn a_rifle_trace_costs_four_bytes_more_than_an_attack_without_one() {
     });
 
     assert_eq!(encoded_len(snapshot) - without, 4);
+}
+
+/// 야영지의 스냅샷입니다. 플레이어 넷이 모두 준비해서 카운트다운이 돌고, 허수아비 셋이 모두 막 맞은 가장 큰 경우입니다.
+fn camp_snapshot() -> Snapshot {
+    let mut snapshot = crowded_snapshot(1, 3, 0);
+    snapshot.phase = WirePhase::Camp {
+        ready: vec![1, 2, 3, 4],
+        starting_in: Some(2.5),
+        struck: (1..=3)
+            .map(|monster| WireStruck {
+                monster,
+                tick: 100_000,
+                amount: 100,
+            })
+            .collect(),
+    };
+    snapshot.towers = vec![];
+    snapshot.nodes = vec![];
+    snapshot.piles = vec![];
+    for monster in &mut snapshot.monsters {
+        monster.kind = WireMonsterKind::Scarecrow;
+    }
+    snapshot
+}
+
+#[test]
+fn a_camp_snapshot_with_four_ready_players_and_three_struck_scarecrows_stays_far_under_the_bound() {
+    let size = encoded_len(camp_snapshot());
+    println!(
+        "camp: 4 ready players, 3 struck scarecrows: {size} bytes per snapshot, {} bytes per second at 20 Hz",
+        size * 20
+    );
+    assert!(size < BOUND_BYTES / 4, "{size} bytes");
+}
+
+#[test]
+fn a_result_snapshot_with_four_confirmed_players_stays_under_the_bound() {
+    let mut snapshot = crowded_snapshot(10_000, 300, 0);
+    snapshot.phase = WirePhase::Debrief {
+        outcome: caravan_protocol::WireOutcome::Defeat,
+        secs_left: 59.5,
+        confirmed: vec![1, 2, 3, 4],
+    };
+    let size = encoded_len(snapshot);
+    println!("result: 300 monsters, 40 towers, 4 confirmed players: {size} bytes per snapshot");
+    assert!(size < BOUND_BYTES, "{size} bytes");
 }

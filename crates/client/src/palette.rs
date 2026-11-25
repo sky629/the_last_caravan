@@ -23,6 +23,7 @@ pub struct Palette {
     pub site_block: Handle<Mesh>,
     pub node_block: Handle<Mesh>,
     pub chest_block: Handle<Mesh>,
+    pub rack_block: Handle<Mesh>,
 
     /// 지면 메시의 꼭짓점 색이 그대로 보이게 하는 흰색 재질입니다.
     pub ground: Handle<ColorMaterial>,
@@ -42,6 +43,7 @@ pub struct Palette {
     pub downed: Handle<ColorMaterial>,
     pub dead: Handle<ColorMaterial>,
     pub monster: Handle<ColorMaterial>,
+    pub scarecrow: Handle<ColorMaterial>,
     pub nose_player: Handle<ColorMaterial>,
     pub nose_monster: Handle<ColorMaterial>,
     pub bar_back: Handle<ColorMaterial>,
@@ -108,6 +110,7 @@ pub fn setup_palette(
         downed: paint(config::DOWNED),
         dead: paint(config::DEAD),
         monster: paint(config::MONSTER),
+        scarecrow: paint(config::SCARECROW),
         nose_player: paint(config::NOSE_PLAYER),
         nose_monster: paint(config::NOSE_MONSTER),
         bar_back: paint(config::BAR_BACK),
@@ -125,6 +128,7 @@ pub fn setup_palette(
         site_block: meshes.add(block_mesh(config::SITE_HEIGHT)),
         node_block: meshes.add(block_mesh(config::NODE_HEIGHT)),
         chest_block: meshes.add(block_mesh(config::CHEST_HEIGHT)),
+        rack_block: meshes.add(block_mesh(config::RACK_HEIGHT)),
     };
     commands.insert_resource(palette);
 }
@@ -132,7 +136,7 @@ pub fn setup_palette(
 /// 타일 하나 위에 서 있는 높이 `height`의 상자입니다. 원점은 바닥 마름모의 중심입니다.
 ///
 /// 보이는 세 면(윗면, 왼쪽 앞면, 오른쪽 앞면)을 한 메시에 담고, 면마다 꼭짓점 색의 밝기를 달리해서 입체로 보이게 합니다.
-/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑, 공사터, 채집 지점, 무기 상자의 색을 모두 냅니다.
+/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑, 공사터, 채집 지점, 무기 상자, 무기 진열대의 색을 모두 냅니다.
 fn block_mesh(height: f32) -> Mesh {
     let half_w = TILE_WIDTH_PX / 2.0;
     let half_h = TILE_HEIGHT_PX / 2.0;

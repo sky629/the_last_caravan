@@ -28,10 +28,14 @@ pub const NODE_HEIGHT: f32 = 22.0;
 pub const CHEST_HEIGHT: f32 = 16.0;
 /// 짓는 중인 감시탑(공사터)입니다.
 pub const SITE_HEIGHT: f32 = 24.0;
+/// 야영지의 무기 진열대입니다. 무기 상자보다 높아서 서 있는 선반처럼 보입니다.
+pub const RACK_HEIGHT: f32 = 26.0;
 
 // 캐릭터의 몸통입니다. 발 위치에서 위로 서 있는 직사각형이고, 그림자는 규칙이 쓰는 충돌 원을 지면에 그린 타원입니다.
 pub const PLAYER_BODY: Vec2 = Vec2::new(14.0, 30.0);
 pub const MONSTER_BODY: Vec2 = Vec2::new(12.0, 20.0);
+/// 야영지의 허수아비입니다. 몬스터보다 키가 크고 막대기에 걸린 모습이라 가늘어서, 몬스터와 한눈에 구분됩니다.
+pub const SCARECROW_BODY: Vec2 = Vec2::new(10.0, 34.0);
 /// 쓰러진 플레이어는 누워 있는 것처럼 낮게 그립니다.
 pub const DOWNED_BODY_HEIGHT: f32 = 10.0;
 pub const DEAD_BODY_HEIGHT: f32 = 5.0;
@@ -41,6 +45,18 @@ pub const NOSE_RADIUS: f32 = 3.0;
 pub const PILE_RADII: Vec2 = Vec2::new(9.0, 4.5);
 /// 바닥에 놓인 무기를 나타내는 납작한 원의 가로와 세로 반지름입니다. 자원 더미보다 크게 그려서 멀리서도 구분됩니다.
 pub const GROUND_WEAPON_RADII: Vec2 = Vec2::new(13.0, 6.5);
+/// 진열대 위에 진열된 무기의 이름이 떠 있는 높이(픽셀)입니다. 글자 크기와 색은 바닥의 무기와 같습니다.
+pub const RACK_LABEL_LIFT: f32 = RACK_HEIGHT + 14.0;
+/// 진열대는 1.2타일 간격이라 이름이 서로 닿으므로, 번호가 홀수인 진열대는 이름을 위가 아니라 아래(진열대의 바닥 중심에서 이만큼 아래)에 둡니다.
+pub const RACK_LABEL_BELOW: f32 = -14.0;
+/// 허수아비가 맞은 피해의 숫자입니다. 맞은 Tick부터 이 시간 동안 허수아비 위로 떠오르며 사라집니다.
+pub const STRIKE_TICKS: f64 = 24.0;
+/// 숫자가 떠오르는 높이(픽셀)와 글자 크기, 처음의 색입니다. 숫자가 나타나는 처음 높이는 허수아비의 키보다 조금 위입니다.
+pub const STRIKE_RISE: f32 = 28.0;
+pub const STRIKE_SIZE: f32 = 22.0;
+/// 숫자를 허수아비의 발 위치보다 앞에 그리려고 더하는 z입니다. 발 위치가 타일 둘 앞에 있는 개체까지 숫자 뒤로 갑니다.
+pub const STRIKE_Z_LIFT: f32 = 2.0;
+pub const STRIKE: Color = Color::srgb(1.00, 0.92, 0.45);
 /// 바닥에 놓인 무기의 이름이 원 위에 떠 있는 높이(픽셀)와 글자 크기입니다.
 pub const GROUND_WEAPON_LABEL_LIFT: f32 = 16.0;
 pub const GROUND_WEAPON_LABEL_SIZE: f32 = 13.0;
@@ -90,6 +106,8 @@ pub const HOSTILE_PLAYER: Color = Color::srgb(0.72, 0.38, 0.92);
 pub const DOWNED: Color = Color::srgb(0.95, 0.45, 0.15);
 pub const DEAD: Color = Color::srgb(0.40, 0.40, 0.42);
 pub const MONSTER: Color = Color::srgb(0.85, 0.22, 0.28);
+/// 허수아비는 몬스터(빨강)와 달리 밀짚색이어서, 때려도 되는 과녁임을 알 수 있습니다.
+pub const SCARECROW: Color = Color::srgb(0.82, 0.70, 0.40);
 pub const NOSE_PLAYER: Color = Color::srgb(1.00, 1.00, 1.00);
 pub const NOSE_MONSTER: Color = Color::srgb(1.00, 0.80, 0.30);
 pub const BAR_BACK: Color = Color::srgb(0.06, 0.06, 0.06);

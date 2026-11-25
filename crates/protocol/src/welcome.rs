@@ -5,7 +5,7 @@
 //!
 //! 이 파일은 게임 상태가 아니라 고정된 설정을 전송 형식으로 바꿉니다. 게임 상태를 바꾸는 곳은 `Snapshot::from_sim` 하나입니다.
 
-use caravan_rules::{Delivery, MonsterKind, Player, Sim, Vec2, WeaponKind};
+use caravan_rules::{Delivery, MonsterKind, Player, Sim, Vec2, WeaponKind, nodes_of};
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::{WireMonsterKind, WireWeaponKind};
@@ -40,6 +40,7 @@ pub struct WorldInfo {
     /// 채집 지점이 낮마다 가득 찼을 때 가지는 자원의 양입니다. 지점의 막대를 그리는 기준입니다.
     pub node_amount: u32,
     /// 채집 지점의 위치입니다. 번호가 작은 지점부터이고, 원정 동안 바뀌지 않습니다. 남은 양은 스냅샷에 실립니다.
+    /// 야영지에는 채집 지점이 없지만, 야영지에서 입장한 클라이언트도 원정이 시작될 때 그릴 수 있게 원정의 지점을 싣습니다.
     pub nodes: Vec<NodeInfo>,
     /// 플레이어를 그리는 원의 반지름(타일)입니다.
     pub player_radius: f32,
@@ -47,6 +48,8 @@ pub struct WorldInfo {
     pub monster_kinds: Vec<MonsterKindInfo>,
     /// 무기 종류마다 하나씩입니다. 클라이언트가 공격 효과를 수치표의 값으로 그리게 하려고 보냅니다. 새 무기가 생기면 항목이 늘어납니다.
     pub weapons: Vec<WeaponInfo>,
+    /// 야영지의 무기 진열대입니다. 무기 종류마다 하나이고, `WeaponKind::ALL`의 순서입니다. 진열대는 야영지에만 서 있으므로 클라이언트는 스냅샷이 야영지일 때만 그립니다.
+    pub racks: Vec<RackInfo>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +64,13 @@ pub struct MonsterKindInfo {
     /// 몬스터를 그리는 원의 반지름(타일)입니다.
     pub radius: f32,
     pub max_hp: u32,
+}
+
+/// 진열대 하나의 자리와 진열한 무기입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RackInfo {
+    pub kind: WireWeaponKind,
+    pub pos: WirePos,
 }
 
 /// 무기 하나가 화면에 그려지는 데 필요한 것입니다.
@@ -117,8 +127,8 @@ impl Welcome {
                 tower_limit: tuning.village.tower_limit,
                 carry_capacity: tuning.resources.carry_capacity,
                 node_amount: tuning.resources.node_amount,
-                nodes: sim
-                    .nodes()
+                nodes: nodes_of(tuning)
+                    .iter()
                     .map(|node| NodeInfo {
                         id: node.id.0,
                         tile: WireTile::from_tile(node.tile),
@@ -141,6 +151,14 @@ impl Welcome {
                     .map(|&kind| WeaponInfo {
                         kind: WireWeaponKind::of(kind),
                         delivery: WireDelivery::of(tuning.weapons.get(kind).delivery),
+                    })
+                    .collect(),
+                racks: map
+                    .camp
+                    .racks()
+                    .map(|(kind, pos)| RackInfo {
+                        kind: WireWeaponKind::of(kind),
+                        pos: WirePos::from_tiles(pos),
                     })
                     .collect(),
             },

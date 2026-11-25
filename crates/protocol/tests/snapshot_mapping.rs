@@ -41,14 +41,41 @@ fn a_monster_right_beside_the_wagon(t: &mut Tuning) {
 /// 규칙이 `Tuning::validate`를 통과하는 수치만 받으므로, 바꾼 수치도 같은 검사를 거칩니다.
 fn sim_with(adjust: impl FnOnce(&mut Tuning)) -> Sim {
     let mut tuning = Tuning::default();
+    tuning.camp.start = Start::AtOnce;
     adjust(&mut tuning);
     tuning.validate().expect("the adjusted numbers are valid");
     Sim::new(tuning, Seed(1))
 }
 
 #[test]
-fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
+fn a_fresh_room_is_the_camp_with_the_scarecrows_and_nobody_ready() {
     let mut sim = Sim::new(Tuning::default(), Seed(1));
+    sim.add_player().unwrap();
+    let snapshot = Snapshot::from_sim(&sim);
+
+    assert_eq!(snapshot.expedition, 0, "no expedition has started");
+    assert_eq!(
+        snapshot.phase,
+        WirePhase::Camp {
+            ready: vec![],
+            starting_in: None,
+            struck: vec![]
+        }
+    );
+    let kinds: Vec<WireMonsterKind> = snapshot.monsters.iter().map(|m| m.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![WireMonsterKind::Scarecrow; 3],
+        "three scarecrows"
+    );
+    assert!(snapshot.monsters.iter().all(|m| m.hp == 60));
+    assert!(snapshot.chests.is_empty() && snapshot.nodes.is_empty());
+    assert_eq!(snapshot.stash, 0);
+}
+
+#[test]
+fn a_fresh_expedition_maps_to_the_numbers_in_the_tuning_table() {
+    let mut sim = sim_with(|_| {});
     sim.add_player().unwrap();
     let snapshot = Snapshot::from_sim(&sim);
 
@@ -606,6 +633,7 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
 fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_camp() {
     // 몬스터가 마차 바로 옆에서 나타나고, 플레이어를 쫓지 않으므로 마차만 공격합니다. 플레이어가 있어야 실패로 판정됩니다.
     let mut sim = sim_with(|t| {
+        t.camp.debrief_secs = 5.0;
         t.wagon.max_hp = 1;
         t.monsters.grunt.aggro_range = 0.1;
         a_monster_right_beside_the_wagon(t);
@@ -942,6 +970,51 @@ fn a_shot_arrow_is_on_the_wire_with_its_position_and_direction_and_is_gone_when_
         Snapshot::from_sim(&sim).projectiles.is_empty(),
         "an arrow that ended is removed from the snapshot"
     );
+}
+
+#[test]
+fn the_welcome_lists_one_rack_for_each_weapon_in_whichever_stage_the_room_is() {
+    let expected: Vec<(WireWeaponKind, Vec2)> = Tuning::default()
+        .map
+        .camp
+        .racks()
+        .map(|(kind, pos)| (WireWeaponKind::of(kind), pos))
+        .collect();
+    assert_eq!(expected.len(), WeaponKind::ALL.len());
+
+    for start in [Start::WhenReady, Start::AtOnce] {
+        let mut sim = sim_with(|t| t.camp.start = start);
+        let first = sim.add_player().unwrap();
+
+        let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
+
+        let racks: Vec<(WireWeaponKind, Vec2)> = welcome
+            .world
+            .racks
+            .iter()
+            .map(|rack| (rack.kind, rack.pos.to_tiles()))
+            .collect();
+        assert_eq!(racks.len(), expected.len(), "{start:?}");
+        for ((kind, pos), (want_kind, want_pos)) in racks.iter().zip(&expected) {
+            assert_eq!(kind, want_kind, "{start:?}");
+            assert!(
+                (pos.x - want_pos.x).abs() <= WirePos::MAX_ERROR_TILES
+                    && (pos.y - want_pos.y).abs() <= WirePos::MAX_ERROR_TILES,
+                "{start:?}: {pos:?} for {want_pos:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_welcome_lists_the_nodes_of_the_expedition_even_while_the_room_is_in_the_camp() {
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
+    assert_eq!(sim.nodes().count(), 0, "the camp has no gather nodes");
+    let first = sim.add_player().unwrap();
+
+    let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
+
+    assert_eq!(welcome.world.nodes.len(), Tuning::default().map.nodes.len());
 }
 
 #[test]

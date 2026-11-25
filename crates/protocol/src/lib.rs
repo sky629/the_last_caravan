@@ -35,5 +35,7 @@ pub use snapshot::{
 };
 pub use transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};
 pub use units::{WireAngle, WirePos, WireRect, WireTile};
-pub use welcome::{MonsterKindInfo, NodeInfo, WeaponInfo, Welcome, WireDelivery, WorldInfo};
+pub use welcome::{
+    MonsterKindInfo, NodeInfo, RackInfo, WeaponInfo, Welcome, WireDelivery, WorldInfo,
+};
 pub use welcome_check::check_welcome;

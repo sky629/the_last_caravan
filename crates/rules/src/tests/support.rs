@@ -16,7 +16,7 @@ use crate::sim::Sim;
 use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
-    CampLayout, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Start, Tuning, WavePlan,
+    CampLayout, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan,
 };
 use crate::world::Tile;
 
@@ -93,7 +93,6 @@ impl Scenario {
     }
 
     fn in_camp(mut tuning: Tuning, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
-        tuning.camp.start = Start::WhenReady;
         adjust(&mut tuning);
         assert_eq!(tuning.validate(), Ok(()), "the scenario's tuning is valid");
         Scenario {

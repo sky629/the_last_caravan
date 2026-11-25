@@ -19,7 +19,7 @@ pub struct Hud {
     pub connection: String,
     pub room: Option<String>,
     pub expedition: Option<String>,
-    /// 「DAY 1 / 3」이나 「NIGHT 2 / 3」처럼 지금이 몇 번째 날의 낮인지 밤인지입니다. 결과를 보여 주는 동안에는 없습니다.
+    /// 「DAY 1 / 3」이나 「NIGHT 2 / 3」처럼 지금이 몇 번째 날의 낮인지 밤인지입니다. 야영지에서는 `CAMP`이고, 결과를 보여 주는 동안에는 없습니다.
     pub day: Option<String>,
     /// 낮의 남은 시간, 밤의 무리 번호, 새벽이 끝나기까지의 시간입니다. 결과를 보여 주는 동안에는 없습니다.
     pub timer: Option<String>,
@@ -33,6 +33,8 @@ pub struct Hud {
     pub hint: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
     pub banner: Option<Banner>,
+    /// 야영지에서 화면 오른쪽에 띄우는 준비 목록입니다. 야영지일 때만 있습니다.
+    pub camp: Option<CampPanel>,
     pub me: Option<Meter>,
     /// 내 달리기 게이지입니다. 살아 있을 때만 있습니다.
     pub stamina: Option<Meter>,
@@ -44,6 +46,17 @@ pub struct Hud {
     pub bleed: Option<String>,
     /// 건설 키를 누르고 있지만 세울 수 없을 때, 또는 수리하는 중인데 보관함이 비용을 낼 수 없을 때의 이유입니다.
     pub refusal: Option<String>,
+}
+
+/// 야영지의 준비 목록입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CampPanel {
+    /// 방에 있는 플레이어마다 한 줄이고 번호 순서입니다. 내 줄에는 `(YOU)`가 붙고, 준비한 플레이어는 `READY`, 아니면 `...`입니다.
+    pub rows: Vec<String>,
+    /// 내가 R을 누르면 하게 되는 일입니다. 준비하지 않았으면 `R  READY`, 준비했으면 `R  CANCEL READY`입니다.
+    pub hint: String,
+    /// 모두가 준비해서 카운트다운이 도는 동안의 남은 시간입니다.
+    pub countdown: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,6 +107,7 @@ impl Hud {
             weapon: None,
             hint: None,
             banner: None,
+            camp: None,
             me: None,
             stamina: None,
             wagon: None,
@@ -112,14 +126,30 @@ impl Hud {
         };
         let you = joined.welcome.you;
         let my_team = Team(joined.welcome.team);
-        hud.expedition = Some(format!("EXPEDITION {}", frame.expedition));
         (hud.day, hud.timer) = phase_text(&frame.phase, joined.welcome.world.day_count);
-        hud.stash = Some(format!("STASH  {}", frame.stash));
-        if let WirePhase::Debrief {
-            outcome, secs_left, ..
-        } = frame.phase
-        {
-            hud.banner = Some(result_banner(outcome, secs_left));
+        match &frame.phase {
+            WirePhase::Camp {
+                ready, starting_in, ..
+            } => hud.camp = Some(camp_panel(&frame.players, you, ready, *starting_in)),
+            phase => {
+                // 보관함은 원정의 것이므로 야영지에서는 보이지 않습니다.
+                hud.expedition = Some(format!("EXPEDITION {}", frame.expedition));
+                hud.stash = Some(format!("STASH  {}", frame.stash));
+                if let WirePhase::Debrief {
+                    outcome,
+                    secs_left,
+                    confirmed,
+                } = phase
+                {
+                    hud.banner = Some(result_banner(
+                        *outcome,
+                        *secs_left,
+                        confirmed,
+                        you,
+                        frame.players.len(),
+                    ));
+                }
+            }
         }
         hud.wagon = Some(Meter {
             label: format!("WAGON  {} / {}", frame.wagon.hp, frame.wagon.max_hp),
@@ -146,7 +176,10 @@ impl Hud {
                 ..
             } = me.life
             {
-                hud.carry = Some(carry_text(carried, joined.welcome.world.carry_capacity));
+                // 든 자원은 원정의 것이므로 야영지에서는 보이지 않습니다.
+                if !matches!(frame.phase, WirePhase::Camp { .. }) {
+                    hud.carry = Some(carry_text(carried, joined.welcome.world.carry_capacity));
+                }
                 hud.refusal = build_refusal
                     .map(refusal_text)
                     .or_else(|| repair_refusal_text(interaction));
@@ -193,15 +226,67 @@ fn session_banner(session: &Session, frame: Option<&Frame>) -> Option<Banner> {
     }
 }
 
-fn result_banner(outcome: WireOutcome, secs_left: f32) -> Banner {
+/// 원정의 결과입니다. 둘째 줄은 확인한 사람의 수이고, 내가 확인했으면 Enter를 누르라는 안내 대신 기다리라는 안내가 나옵니다.
+/// 셋째 줄은 모두가 확인하지 않아도 야영지로 돌아가기까지 남은 시간입니다.
+fn result_banner(
+    outcome: WireOutcome,
+    secs_left: f32,
+    confirmed: &[u32],
+    you: u32,
+    players: usize,
+) -> Banner {
     let (title, tone) = match outcome {
         WireOutcome::Victory => ("EXPEDITION SUCCESS", BannerTone::Good),
         WireOutcome::Defeat => ("EXPEDITION FAILED", BannerTone::Bad),
     };
+    let count = format!("({} / {players})", confirmed.len());
+    let action = if confirmed.contains(&you) {
+        format!("WAITING FOR THE OTHERS  {count}")
+    } else {
+        format!("ENTER  BACK TO CAMP  {count}")
+    };
     Banner {
         title: title.to_string(),
-        detail: Some(format!("Next expedition in {}s", whole_secs(secs_left))),
+        detail: Some(format!(
+            "{action}\nBACK TO CAMP IN {}s",
+            whole_secs(secs_left)
+        )),
         tone,
+    }
+}
+
+/// 야영지의 준비 목록입니다. 목록은 방에 있는 모든 플레이어이고, 카운트다운은 모두가 준비한 동안만 있습니다.
+fn camp_panel(
+    players: &[PlayerView],
+    you: u32,
+    ready: &[u32],
+    starting_in: Option<f32>,
+) -> CampPanel {
+    let rows = players
+        .iter()
+        .map(|player| {
+            let name = if player.id == you {
+                format!("PLAYER {}  (YOU)", player.id)
+            } else {
+                format!("PLAYER {}", player.id)
+            };
+            let state = if ready.contains(&player.id) {
+                "READY"
+            } else {
+                "..."
+            };
+            format!("{name}  {state}")
+        })
+        .collect();
+    let hint = if ready.contains(&you) {
+        "R  CANCEL READY"
+    } else {
+        "R  READY"
+    };
+    CampPanel {
+        rows,
+        hint: hint.to_string(),
+        countdown: starting_in.map(|secs| format!("STARTING IN {}", whole_secs(secs))),
     }
 }
 
@@ -236,7 +321,8 @@ fn phase_text(phase: &WirePhase, day_count: u32) -> (Option<String>, Option<Stri
             "DAWN".to_string(),
             format!("DAY {next_day} / {day_count} IN {}s", whole_secs(secs_left)),
         ),
-        WirePhase::Camp { .. } | WirePhase::Debrief { .. } => return (None, None),
+        WirePhase::Camp { .. } => return (Some("CAMP".to_string()), None),
+        WirePhase::Debrief { .. } => return (None, None),
     };
     (Some(day), Some(timer))
 }
@@ -633,8 +719,8 @@ mod tests {
                 starting_in: None,
                 struck: vec![]
             }),
-            (None, None),
-            "the camp has no day"
+            (Some("CAMP".to_string()), None),
+            "the camp has a name instead of a day"
         );
     }
 
@@ -1202,25 +1288,127 @@ mod tests {
         assert_eq!(hud.refusal, None);
     }
 
+    fn camp_frame(ready: Vec<u32>, starting_in: Option<f32>) -> Frame {
+        let mut frame = frame(vec![
+            player(YOU, alive(100)),
+            player(2, alive(100)),
+            player(3, alive(100)),
+        ]);
+        frame.expedition = 0;
+        frame.phase = WirePhase::Camp {
+            ready,
+            starting_in,
+            struck: vec![],
+        };
+        frame
+    }
+
     #[test]
-    fn the_result_is_shown_with_the_time_until_the_next_expedition() {
+    fn the_camp_lists_every_player_with_who_is_ready_and_what_r_does() {
         let session = session_in_room();
-        let mut frame = frame(vec![player(YOU, alive(100))]);
+
+        let none_ready = Hud::of(&session, Some(&camp_frame(vec![], None)));
+        let panel = none_ready.camp.expect("the camp shows the list");
+        assert_eq!(
+            panel.rows,
+            ["PLAYER 1  (YOU)  ...", "PLAYER 2  ...", "PLAYER 3  ..."]
+        );
+        assert_eq!(panel.hint, "R  READY");
+        assert_eq!(panel.countdown, None);
+
+        let two_ready = Hud::of(&session, Some(&camp_frame(vec![1, 3], None)));
+        let panel = two_ready.camp.unwrap();
+        assert_eq!(
+            panel.rows,
+            ["PLAYER 1  (YOU)  READY", "PLAYER 2  ...", "PLAYER 3  READY"],
+            "one ready does not hide the others"
+        );
+        assert_eq!(
+            panel.hint, "R  CANCEL READY",
+            "I am ready, so R takes it back"
+        );
+    }
+
+    #[test]
+    fn the_countdown_is_shown_only_while_everyone_is_ready_and_rounds_up() {
+        let session = session_in_room();
+        let shown = |starting_in| {
+            Hud::of(&session, Some(&camp_frame(vec![1, 2, 3], starting_in)))
+                .camp
+                .unwrap()
+                .countdown
+        };
+
+        assert_eq!(shown(Some(3.0)), Some("STARTING IN 3".to_string()));
+        assert_eq!(shown(Some(0.4)), Some("STARTING IN 1".to_string()));
+        assert_eq!(shown(None), None);
+    }
+
+    #[test]
+    fn the_camp_has_no_expedition_or_stash_and_other_stages_have_no_list() {
+        let session = session_in_room();
+
+        let camp = Hud::of(&session, Some(&camp_frame(vec![], None)));
+        assert_eq!(camp.expedition, None);
+        assert_eq!(camp.stash, None);
+        assert_eq!(
+            camp.carry, None,
+            "what a player carries is the expedition's"
+        );
+        assert_eq!(camp.banner, None);
+
+        let expedition = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
+        assert_eq!(expedition.camp, None);
+        assert!(expedition.stash.is_some());
+        assert_eq!(expedition.carry.as_deref(), Some("CARRY  0 / 10"));
+    }
+
+    #[test]
+    fn the_result_is_shown_with_the_confirmations_and_the_time_until_the_camp() {
+        let session = session_in_room();
+        let mut frame = frame(vec![player(YOU, alive(100)), player(2, alive(100))]);
         frame.phase = WirePhase::Debrief {
             outcome: WireOutcome::Defeat,
-            secs_left: 4.6,
+            secs_left: 59.6,
             confirmed: vec![],
         };
         let failed = Hud::of(&session, Some(&frame)).banner.unwrap();
         assert_eq!(failed.title, "EXPEDITION FAILED");
-        assert_eq!(failed.detail.as_deref(), Some("Next expedition in 5s"));
+        assert_eq!(
+            failed.detail.as_deref(),
+            Some("ENTER  BACK TO CAMP  (0 / 2)\nBACK TO CAMP IN 60s")
+        );
         assert_eq!(failed.tone, BannerTone::Bad);
+
+        frame.phase = WirePhase::Debrief {
+            outcome: WireOutcome::Defeat,
+            secs_left: 40.0,
+            confirmed: vec![2],
+        };
+        let other_confirmed = Hud::of(&session, Some(&frame)).banner.unwrap();
+        assert_eq!(
+            other_confirmed.detail.as_deref(),
+            Some("ENTER  BACK TO CAMP  (1 / 2)\nBACK TO CAMP IN 40s"),
+            "I still have to confirm"
+        );
+
+        frame.phase = WirePhase::Debrief {
+            outcome: WireOutcome::Defeat,
+            secs_left: 40.0,
+            confirmed: vec![1],
+        };
+        let i_confirmed = Hud::of(&session, Some(&frame)).banner.unwrap();
+        assert_eq!(
+            i_confirmed.detail.as_deref(),
+            Some("WAITING FOR THE OTHERS  (1 / 2)\nBACK TO CAMP IN 40s")
+        );
 
         frame.phase = WirePhase::Debrief {
             outcome: WireOutcome::Victory,
             secs_left: 1.0,
             confirmed: vec![],
         };
+        assert_eq!(Hud::of(&session, Some(&frame)).camp, None);
         let won = Hud::of(&session, Some(&frame)).banner.unwrap();
         assert_eq!(won.title, "EXPEDITION SUCCESS");
         assert_eq!(won.tone, BannerTone::Good);

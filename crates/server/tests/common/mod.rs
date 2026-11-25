@@ -9,7 +9,7 @@ use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, InputMsg, LoopbackClient, LoopbackConnector,
     PROTOCOL_VERSION, ServerLimits, ServerMsg, Snapshot, WirePlayer, WireVec2, loopback,
 };
-use caravan_rules::{Seed, Tuning, Vec2};
+use caravan_rules::{Seed, Start, Tuning, Vec2};
 use caravan_server::{GameServer, Notice, RoomSeeds};
 
 pub struct Rig {
@@ -25,6 +25,13 @@ pub fn rig() -> Rig {
 
 pub fn rig_with(tuning: Tuning) -> Rig {
     rig_with_limits(tuning, ServerLimits::default())
+}
+
+/// 방이 만들어지자마자 첫날이 시작되는 서버입니다. 야영지를 거치지 않고, 원정 중인 방에서 일어나는 일(낮과 밤, 몬스터, 원정 중의 입장)을 시험할 때 씁니다.
+/// 기본 서버는 방이 야영지에서 시작합니다.
+pub fn rig_in_expedition(mut tuning: Tuning) -> Rig {
+    tuning.camp.start = Start::AtOnce;
+    rig_with(tuning)
 }
 
 pub fn rig_with_limits(tuning: Tuning, limits: ServerLimits) -> Rig {
@@ -101,6 +108,15 @@ impl Rig {
             (_, other) => panic!("expected Welcome, got {other:?}"),
         }
     }
+}
+
+/// 준비 키(R)를 한 번 누른 입력입니다.
+pub fn press_ready(seq: u32) -> ClientMsg {
+    ClientMsg::Input(InputMsg {
+        seq,
+        toggle_ready: true,
+        ..InputMsg::default()
+    })
 }
 
 pub fn input(seq: u32) -> ClientMsg {

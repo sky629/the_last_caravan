@@ -11,13 +11,13 @@
 //! 이 테스트가 실패하면 전송 형식이 바뀐 것입니다. 기대 바이트를 고칠 때 `PROTOCOL_VERSION`도 함께 올립니다.
 
 use caravan_protocol::{
-    ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RejectReason, ServerMsg,
-    Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
-    WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMonster,
-    WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
-    WirePos, WireProjectile, WirePrompt, WireRect, WireRepairTarget, WireShot, WireStruck,
-    WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo,
-    decode_client, decode_server, encode_client, encode_server,
+    ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RackInfo, RejectReason,
+    ServerMsg, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal,
+    WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife,
+    WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase,
+    WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt, WireRect, WireRepairTarget,
+    WireShot, WireStruck, WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind,
+    WorldInfo, decode_client, decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -153,6 +153,16 @@ fn welcome_carries_the_fixed_world() {
                         delivery: WireDelivery::Hitscan,
                     },
                 ],
+                racks: vec![
+                    RackInfo {
+                        kind: WireWeaponKind::Sword,
+                        pos: WirePos { x: 512, y: 4672 },
+                    },
+                    RackInfo {
+                        kind: WireWeaponKind::Bow,
+                        pos: WirePos { x: 666, y: 4672 },
+                    },
+                ],
             },
         }),
         &[
@@ -193,6 +203,11 @@ fn welcome_carries_the_fixed_world() {
             0x00, 0x00, 0x70, 0x41, // half_angle_deg 15.0
             0x04, 0x01, // Crossbow, Projectile
             0x05, 0x02, // Rifle, Hitscan
+            0x02, // racks: 길이 2
+            0x00, // Sword
+            0x80, 0x04, 0xC0, 0x24, // pos 512, 4672
+            0x01, // Bow
+            0x9A, 0x05, 0xC0, 0x24, // pos 666, 4672
         ],
     );
 }

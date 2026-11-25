@@ -311,13 +311,18 @@ fn each_expedition_has_its_own_seed_and_a_room_seed_always_gives_the_same_ones()
     let second = s.sim.expedition_seed();
 
     assert_ne!(first, second, "a new expedition draws again");
+    let first_of = |seed: Seed| {
+        let mut sim = Sim::new(Tuning::default(), seed);
+        sim.begin_expedition();
+        sim.expedition_seed()
+    };
     assert_eq!(
-        Sim::new(Tuning::default(), SEED).expedition_seed(),
+        first_of(SEED),
         first,
         "the same room seed gives the same first expedition"
     );
     assert_ne!(
-        Sim::new(Tuning::default(), Seed(2)).expedition_seed(),
+        first_of(Seed(2)),
         first,
         "another room seed gives another expedition"
     );

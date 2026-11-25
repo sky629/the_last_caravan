@@ -50,6 +50,7 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
         MAX_MONSTER_KINDS,
     )?;
     check_count("weapon kinds", world.weapons.len(), MAX_WEAPON_KINDS)?;
+    check_count("weapon racks", world.racks.len(), MAX_WEAPON_KINDS)?;
 
     // 최대 HP가 0이면 막대의 비율을 정할 수 없으므로, 몬스터 종류는 최대 HP가 1 이상이어야 합니다.
     if world.monster_kinds.iter().any(|kind| kind.max_hp == 0) {
@@ -102,6 +103,11 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
     for node in &world.nodes {
         if !is_inside(node.tile.to_tile().rect(), map) {
             return Err("a gather node lies outside the map".to_string());
+        }
+    }
+    for rack in &world.racks {
+        if !map.contains(rack.pos.to_tiles()) {
+            return Err("a weapon rack lies outside the map".to_string());
         }
     }
     check_count(
@@ -223,6 +229,23 @@ mod tests {
         let mut welcome = normal();
         welcome.world.nodes[0].tile = crate::WireTile { x: 64, y: 3 };
         assert!(refused(&welcome).contains("gather node"), "off the map");
+    }
+
+    #[test]
+    fn too_many_weapon_racks_or_a_rack_off_the_map_are_refused() {
+        let mut welcome = normal();
+        let rack = welcome.world.racks[0];
+        welcome.world.racks = vec![rack; MAX_WEAPON_KINDS];
+        assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
+        welcome.world.racks = vec![rack; MAX_WEAPON_KINDS + 1];
+        assert!(refused(&welcome).contains("weapon racks"));
+
+        let mut welcome = normal();
+        welcome.world.racks[0].pos = WirePos {
+            x: tiles(65),
+            y: tiles(3),
+        };
+        assert!(refused(&welcome).contains("weapon rack"), "off the map");
     }
 
     #[test]

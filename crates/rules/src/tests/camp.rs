@@ -68,6 +68,55 @@ fn the_scarecrow_is_refused_in_waves_and_as_a_guard() {
 }
 
 #[test]
+fn a_default_room_starts_in_the_camp_counts_three_seconds_and_shows_the_result_for_a_minute() {
+    let tuning = Tuning::default();
+    assert_eq!(tuning.camp.start, Start::WhenReady);
+    assert_eq!(tuning.camp.countdown_secs, 3.0);
+    assert_eq!(tuning.camp.debrief_secs, 60.0);
+    assert_eq!(tuning.validate(), Ok(()));
+
+    let sim = Sim::new(tuning, Seed(1));
+
+    assert!(in_camp(&sim));
+    assert_eq!(sim.expedition_number(), 0);
+}
+
+#[test]
+fn the_camp_has_scarecrows_and_racks_and_nothing_of_the_expedition() {
+    // 지도에 채집 지점, 상자 자리, 처음부터 서 있는 감시탑이 있어도 야영지에는 놓이지 않습니다.
+    let mut s = Scenario::camp(|t| {
+        t.map.nodes = vec![Tile::new(3, 3)];
+        t.map.chest_sites = vec![Tile::new(5, 3)];
+        t.loot.chests_per_day = 1;
+        t.guards.per_node = 2;
+        t.village.start_towers = vec![Tile::new(15, 17)];
+    });
+
+    let kinds: Vec<MonsterKind> = s.sim.monsters().map(|monster| monster.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![MonsterKind::Scarecrow; 3],
+        "no monster but the scarecrows"
+    );
+    assert_eq!(s.sim.nodes().count(), 0);
+    assert_eq!(s.sim.chests().count(), 0);
+    assert_eq!(s.sim.towers().count(), 0);
+    assert_eq!(s.sim.ground_weapons().count(), 0);
+    assert_eq!(s.sim.stash(), 0);
+    let racks: Vec<WeaponKind> = s.sim.racks().map(|rack| rack.kind).collect();
+    assert_eq!(racks, WeaponKind::ALL.to_vec());
+
+    s.sim.begin_expedition();
+    assert_eq!(
+        s.sim.nodes().count(),
+        1,
+        "the expedition has its node again"
+    );
+    assert_eq!(s.sim.chests().count(), 1);
+    assert_eq!(s.sim.towers().count(), 1);
+}
+
+#[test]
 fn a_room_that_starts_in_the_camp_returns_to_it_when_the_result_time_is_up() {
     let mut s = Scenario::camp(|_| {});
     assert!(in_camp(&s.sim));
@@ -173,6 +222,45 @@ fn a_lone_player_who_gets_ready_starts_the_expedition_after_the_countdown() {
     s.run_ticks(1);
     assert_eq!(s.sim.expedition_number(), 1);
     assert!(matches!(phase(&s.sim), Phase::Day { day: 1, .. }));
+}
+
+#[test]
+fn a_camp_where_nobody_is_ready_waits_however_long_it_takes() {
+    let mut s = Scenario::camp(|_| {});
+    s.player_at(10.0, 10.0);
+    s.player_at(11.0, 10.0);
+
+    s.run_ticks(5000);
+
+    assert!(in_camp(&s.sim));
+    assert_eq!(s.sim.expedition_number(), 0);
+    assert_eq!(camp_of(&s.sim).countdown(), None);
+}
+
+#[test]
+fn a_player_who_joins_a_running_expedition_is_in_it_at_once_and_alive_at_a_start_point() {
+    let mut s = Scenario::with_cycle(|_| {});
+    let first = s.player_at(2.0, 2.0);
+    s.run_ticks(40);
+    let before = phase(&s.sim);
+
+    let late = s.sim.add_player().expect("the room has space");
+
+    assert_eq!(s.sim.expedition_number(), 1, "no new expedition starts");
+    assert!(!in_camp(&s.sim));
+    assert_eq!(
+        std::mem::discriminant(&phase(&s.sim)),
+        std::mem::discriminant(&before),
+        "the day goes on"
+    );
+    assert!(s.player(late).is_alive());
+    assert_eq!(s.player(late).hp(), s.sim.tuning().player.max_hp);
+    assert_eq!(s.player(late).pos, s.sim.tuning().map.player_spawns[0]);
+    assert_eq!(
+        s.player(first).pos,
+        Vec2::new(2.0, 2.0),
+        "the player who was there is not moved"
+    );
 }
 
 #[test]
@@ -348,6 +436,7 @@ fn the_expedition_the_countdown_starts_puts_everyone_back_at_the_start() {
     let a = s.player_at(10.0, 10.0);
     let b = s.player_at(11.0, 10.0);
     s.arm(a, WeaponKind::Bow, Some(WeaponKind::Spear));
+    s.set_carried(a, 5);
     s.move_player(b, Vec2::new(3.0, 3.0));
     s.hold_move(b, 1.0, 0.0);
     s.set_stash(7);
@@ -370,6 +459,11 @@ fn the_expedition_the_countdown_starts_puts_everyone_back_at_the_start() {
             "the weapon of the camp is not carried over"
         );
         assert_eq!(player.hp(), s.sim.tuning().player.max_hp);
+        assert_eq!(
+            player.carried(),
+            0,
+            "nothing is carried into the expedition"
+        );
         assert!(
             spawns.contains(&player.pos),
             "back at a start point, not one step beyond it: {:?}",

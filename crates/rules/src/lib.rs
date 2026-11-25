@@ -56,7 +56,7 @@ pub use math::{Rect, Vec2};
 pub use monster::{Monster, Order};
 pub use player::{Interaction, LastAttack, Life, Player, RepairTarget};
 pub use projectile::{Flight, Projectile};
-pub use resources::{GatherNode, Pile};
+pub use resources::{GatherNode, Pile, nodes_of};
 pub use sim::{JoinError, Sim};
 pub use stage::Stage;
 pub use stamina::Stamina;

@@ -31,7 +31,7 @@ mod tests {
     use caravan_protocol::{
         WireBuildRefusal, WireCannotBuild, WireInteraction, WireLoadout, WireTile, WireWeaponKind,
     };
-    use caravan_rules::{AimDir, PlayerInput, PlayerInputs, Seed, Sim, Team, Tuning, Vec2};
+    use caravan_rules::{AimDir, PlayerInput, PlayerInputs, Seed, Sim, Start, Team, Tuning, Vec2};
 
     const MAP: (u16, u16) = (64, 64);
 
@@ -112,7 +112,10 @@ mod tests {
             (1.0, -1.0),
         ];
         for (x, y) in aims {
-            let mut sim = Sim::new(Tuning::default(), Seed(1));
+            // 건설은 야영지에서 거절되므로, 원정이 시작된 방에서 시험합니다.
+            let mut tuning = Tuning::default();
+            tuning.camp.start = Start::AtOnce;
+            let mut sim = Sim::new(tuning, Seed(1));
             let id = sim.add_player().expect("the room has space");
             let aim = AimDir::new(x, y);
             // 조준을 한 번 보내서 캐릭터가 그 방향을 바라보게 한 뒤, 건설 키를 누르기 전의 모습으로 미리 보기를 구합니다.
