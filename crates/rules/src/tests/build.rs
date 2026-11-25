@@ -7,7 +7,7 @@ use super::support::Scenario;
 use crate::build::{BuildRefusal, CannotBuild, front_tile};
 use crate::ids::PlayerId;
 use crate::input::PlayerInput;
-use crate::math::Vec2;
+use crate::math::{Rect, Vec2};
 use crate::structures::TowerState;
 use crate::world::Tile;
 
@@ -455,6 +455,51 @@ fn the_wagon_cannot_be_walled_in_whatever_tile_comes_last() {
         );
         assert_eq!(s.sim.stash(), 100, "nothing was spent");
     }
+}
+
+/// 지도를 서쪽과 동쪽으로 가르는 벽에 구멍이 둘 있는 시나리오입니다. 마차는 동쪽에 있습니다.
+/// 위쪽 구멍은 (10, 3)이고 마을의 범위 밖이며, 아래쪽 구멍은 (10, 15)이고 마을의 범위 안입니다. `chest_site`가 후보 자리입니다.
+fn wall_with_two_gaps(chest_site: Option<Tile>) -> Scenario {
+    Scenario::with_tuning(|t| {
+        t.map.obstacles = vec![
+            Rect::new(10.0, 0.0, 11.0, 3.0),
+            Rect::new(10.0, 4.0, 11.0, 15.0),
+            Rect::new(10.0, 16.0, 11.0, 20.0),
+        ];
+        t.map.player_spawns = vec![Vec2::new(14.0, 10.0)];
+        t.map.chest_sites = chest_site.into_iter().collect();
+    })
+}
+
+#[test]
+fn a_tower_that_would_leave_a_chest_site_as_the_only_way_through_is_refused() {
+    let mut s = wall_with_two_gaps(Some(Tile::new(10, 3)));
+    s.set_stash(100);
+    let a = builder_toward(&mut s, (10, 15));
+
+    s.run_ticks(3);
+
+    assert_eq!(
+        refusal(&s, a),
+        Some(BuildRefusal {
+            tile: Tile::new(10, 15),
+            why: CannotBuild::WouldBlockPath
+        }),
+        "on a day the chest stands there, the west side would be cut off"
+    );
+    assert_eq!(s.sim.stash(), 100, "nothing was spent");
+}
+
+#[test]
+fn the_same_tower_is_built_when_no_chest_can_ever_stand_in_the_other_gap() {
+    let mut s = wall_with_two_gaps(None);
+    s.set_stash(100);
+    let a = builder_toward(&mut s, (10, 15));
+
+    s.run_ticks(3);
+
+    assert_eq!(refusal(&s, a), None);
+    assert_eq!(s.sim.towers().count(), 1);
 }
 
 #[test]

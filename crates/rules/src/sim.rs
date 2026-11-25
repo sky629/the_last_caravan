@@ -3,7 +3,7 @@
 use crate::expedition::{self, Advance, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
-use crate::loot::{GroundWeapon, Prompt, Seed};
+use crate::loot::{Chest, GroundWeapon, Prompt, Seed};
 use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
@@ -53,7 +53,7 @@ impl Sim {
         let mut world = World::new(&tuning);
         let spawns = SpawnPlan::new(&world.tiles, &tuning)
             .expect("a validated tuning has a spot where night monsters appear");
-        expedition::begin_day(&mut world, &spawns, &tuning);
+        expedition::begin_day(&mut world, &spawns, seed.derive(1), 1, &tuning);
         Sim {
             seed,
             expedition: 1,
@@ -121,10 +121,12 @@ impl Sim {
     /// 모든 공격은 같은 상태를 보고 결정한 뒤 한꺼번에 적용합니다. 그래서 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다.
     pub fn step(&mut self, inputs: &PlayerInputs) {
         self.tick += 1;
+        let expedition_seed = self.expedition_seed();
         match expedition::advance_phase(
             &mut self.phase,
             &mut self.world,
             &self.spawns,
+            expedition_seed,
             &self.tuning,
         ) {
             Advance::Frozen => {
@@ -188,7 +190,14 @@ impl Sim {
             assigned.push(slot);
             player.reset(slot, spawn_point(&self.tuning.map, slot), &self.tuning);
         }
-        expedition::begin_day(&mut self.world, &self.spawns, &self.tuning);
+        let expedition_seed = self.expedition_seed();
+        expedition::begin_day(
+            &mut self.world,
+            &self.spawns,
+            expedition_seed,
+            1,
+            &self.tuning,
+        );
     }
 
     /// 진영을 정하는 곳은 이 함수 하나입니다. 협동 모드는 모두를 같은 편으로 둡니다.
@@ -260,6 +269,11 @@ impl Sim {
     /// 번호가 작은 채집 지점부터 차례로 돌려줍니다.
     pub fn nodes(&self) -> impl Iterator<Item = &GatherNode> {
         self.world.nodes.iter()
+    }
+
+    /// 지금 놓여 있는 무기 상자를 번호가 작은 상자부터 차례로 돌려줍니다. 낮에만 있습니다.
+    pub fn chests(&self) -> impl Iterator<Item = &Chest> {
+        self.world.chests.iter()
     }
 
     /// 바닥에 놓인 무기를 번호가 작은 무기부터 차례로 돌려줍니다.

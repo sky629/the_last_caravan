@@ -120,6 +120,14 @@ impl WeaponTable {
             WeaponKind::Spear => &self.spear,
         }
     }
+
+    /// 모든 무기의 `chest_weight`를 더한 값입니다. 0이면 상자에서 나올 수 있는 무기가 없습니다.
+    pub fn total_chest_weight(&self) -> u32 {
+        WeaponKind::ALL
+            .iter()
+            .map(|kind| self.get(*kind).chest_weight)
+            .sum()
+    }
 }
 
 /// 정상 피해량입니다. 서비스할 때의 값입니다.
@@ -267,20 +275,24 @@ pub struct ResourceTuning {
     pub pickup_reach: f32,
 }
 
-/// 낮에 채집 지점을 지키는 몬스터의 수치입니다. 이 몬스터들은 낮이 시작될 때마다 놓이고, 밤이 되면 마차를 향합니다.
+/// 낮에 채집 지점과 무기 상자를 지키는 몬스터의 수치입니다. 이 몬스터들은 낮이 시작될 때마다 놓이고, 밤이 되면 마차를 향합니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GuardTuning {
     pub kind: MonsterKind,
     /// 채집 지점 하나를 지키는 몬스터의 수입니다. 지점의 이웃한 빈 타일 하나에 한 마리씩 섭니다.
     pub per_node: u32,
+    /// 무기 상자 하나를 지키는 몬스터의 수입니다. 상자가 놓인 자리의 이웃한 빈 타일 하나에 한 마리씩 섭니다.
+    pub per_chest: u32,
     /// 지키는 자리의 중심에서 플레이어의 중심까지 잰, 플레이어를 쫓기 시작하는 거리입니다.
     /// 몬스터가 아니라 자리에서 재므로, 몬스터가 쫓다가 자리에서 이 거리를 넘으면 돌아갑니다.
     pub chase_range: f32,
 }
 
-/// 바닥의 무기의 수치입니다.
+/// 무기 상자와 바닥의 무기의 수치입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LootTuning {
+    /// 낮이 시작될 때마다 놓이는 상자의 수입니다. `MapSpec::chest_sites`의 수 이하입니다. 상자는 후보 자리 가운데 서로 다른 곳에 놓입니다.
+    pub chests_per_day: u32,
     /// 플레이어의 가장자리에서 바닥의 무기까지 잰, 무기를 주울 수 있는 거리입니다.
     pub take_reach: f32,
 }
@@ -389,7 +401,7 @@ impl NightTuning {
 
 /// 고정된 맵 하나입니다. 좌표는 타일 단위입니다.
 /// 맵의 크기, 장애물, 마차는 정수 좌표에 놓아서 타일에 꼭 맞습니다(`Tuning::validate`가 검사합니다).
-/// 채집 지점은 타일을 가리키므로 처음부터 타일에 맞습니다.
+/// 채집 지점과 상자의 후보 자리는 타일을 가리키므로 처음부터 타일에 맞습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapSpec {
     pub width: f32,
@@ -398,6 +410,9 @@ pub struct MapSpec {
     pub obstacles: Vec<Rect>,
     /// 채집 지점이 있는 타일입니다. 지점은 타일 하나를 차지하고 길을 막습니다. 번호는 이 목록의 순서대로 1부터 붙습니다.
     pub nodes: Vec<Tile>,
+    /// 무기 상자가 놓일 수 있는 후보 타일입니다. 낮이 시작될 때마다 이 가운데 `loot.chests_per_day`곳에 상자가 놓입니다.
+    /// 상자는 채집 지점과 같이 타일 하나를 차지하고 길을 막습니다.
+    pub chest_sites: Vec<Tile>,
     /// 플레이어가 나타나는 위치입니다. 플레이어마다 자기 등장 순서의 지점을 쓰고, 입장할 때는 방에 있는 플레이어가 쓰지 않는 가장 앞의 순서를 받습니다.
     pub player_spawns: Vec<Vec2>,
     /// 주변 몬스터를 찾는 격자의 칸 크기입니다.
@@ -465,7 +480,7 @@ impl Tuning {
     ///
     /// 맵은 타일에 꼭 맞아야 합니다. 크기, 장애물, 마차가 정수 좌표이고, 몸의 반지름이 타일의 절반보다 짧고,
     /// 채집 지점이 맵 안의 빈 타일이면서 마을의 범위 밖에 있고,
-    /// 비어 있는 타일이 모두 마차에 걸어서 이어져야 합니다. 충돌과 몬스터의 이동 경로가 이 전제 위에서 같은 타일 지도를 읽습니다.
+    /// 비어 있는 타일이 모두 마차에 걸어서 이어져야 합니다. 무기 상자의 후보 자리는 `validate_chest_sites`가 따로 검사합니다. 충돌과 몬스터의 이동 경로가 이 전제 위에서 같은 타일 지도를 읽습니다.
     pub fn validate(&self) -> Result<(), String> {
         if self.tick_hz == 0 {
             return Err("tick_hz must be at least 1".to_string());
@@ -703,10 +718,70 @@ impl Tuning {
             &tiles,
         )?;
         let wagon_tiles = tiles.engage_tiles(map.wagon, self.monsters.longest_engage_distance());
-        if !tiles.is_fully_connected(&wagon_tiles, None) {
+        if !tiles.is_fully_connected(&wagon_tiles, &[]) {
             return Err("every free tile must be connected to the wagon".to_string());
         }
+        self.validate_chest_sites(&tiles, &wagon_tiles)?;
         SpawnPlan::new(&tiles, self)?;
+        Ok(())
+    }
+
+    /// 무기 상자의 수치와 후보 자리를 검사합니다. `validate`가 타일 지도를 만든 뒤에 부릅니다.
+    ///
+    /// - 후보 자리는 맵 안의 빈 타일이고, 서로 겹치지 않고, 마을의 범위 밖에 있습니다. 마을 안에 상자가 놓이면 싸우지 않고 열 수 있기 때문입니다.
+    /// - 후보 자리가 모두 막혀도 비어 있는 타일이 모두 마차에 이어집니다. 어느 날 어느 자리에 상자가 놓여도 길이 끊기지 않습니다.
+    /// - 후보 자리마다 마을의 범위 밖에 상하좌우로 이웃한 빈 타일이 하나 이상 있고, 그 타일은 다른 후보 자리가 아닙니다.
+    ///   플레이어가 그 타일에 서서 상자를 열 수 있고, 감시탑이 그 타일을 막을 수 없으므로 상자가 사라진 뒤의 타일도 길에 이어집니다.
+    /// - 상자는 후보 자리의 수보다 많이 놓이지 않고, 상자가 놓이는 맵이면 상자에서 나오는 무기의 비중을 더한 값이 1 이상입니다.
+    fn validate_chest_sites(&self, tiles: &TileMap, wagon_tiles: &[Tile]) -> Result<(), String> {
+        let loot = &self.loot;
+        check_not_negative("loot take_reach", loot.take_reach)?;
+        let sites = &self.map.chest_sites;
+        if loot.chests_per_day as usize > sites.len() {
+            return Err(format!(
+                "{} chests per day need at least that many chest sites, but the map has {}",
+                loot.chests_per_day,
+                sites.len()
+            ));
+        }
+        let outside_village =
+            |tile: Tile| self.map.wagon.distance_to(tile.center()) > self.village.build_range;
+        let mut taken: BTreeSet<Tile> = BTreeSet::new();
+        for site in sites {
+            if !tiles.is_free(*site) || !taken.insert(*site) {
+                return Err(format!(
+                    "chest site {site:?} must be a free tile of the map that no other site or gather node takes"
+                ));
+            }
+            if !outside_village(*site) {
+                return Err(format!(
+                    "chest site {site:?} is inside the village; it must be farther than the build range {} from the wagon",
+                    self.village.build_range
+                ));
+            }
+        }
+        if !tiles.is_fully_connected(wagon_tiles, sites) {
+            return Err(
+                "every free tile must stay connected to the wagon when every chest site is blocked"
+                    .to_string(),
+            );
+        }
+        for site in sites {
+            let stand = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                .into_iter()
+                .filter_map(|(dx, dy)| site.step(dx, dy))
+                .any(|next| tiles.is_free(next) && !taken.contains(&next) && outside_village(next));
+            if !stand {
+                return Err(format!(
+                    "chest site {site:?} needs a free side tile outside the village to open it from"
+                ));
+            }
+        }
+        if loot.chests_per_day > 0 && self.weapons.total_chest_weight() == 0 {
+            return Err(
+                "some weapon needs a chest_weight of at least 1 when chests are placed".to_string(),
+            );
+        }
         Ok(())
     }
 
@@ -953,9 +1028,13 @@ impl Default for Tuning {
             guards: GuardTuning {
                 kind: MonsterKind::Grunt,
                 per_node: 2,
+                per_chest: 3,
                 chase_range: 6.0,
             },
-            loot: LootTuning { take_reach: 1.0 },
+            loot: LootTuning {
+                chests_per_day: 3,
+                take_reach: 1.0,
+            },
             resources: ResourceTuning {
                 node_amount: 15,
                 carry_capacity: 10,
@@ -999,6 +1078,7 @@ impl MapSpec {
     /// 64 x 64 타일입니다. 한가운데에 마차가 있고, 마차 둘레의 마을에 장애물이 다섯 개, 그 바깥에 여덟 개 있습니다.
     /// 바깥의 장애물은 밤의 몬스터가 나타나는 여덟 방향의 자리를 피해서 놓습니다.
     /// 채집 지점 여덟 곳은 마차에서 24타일쯤 떨어진 곳에, 밤의 몬스터가 나타나는 방향과 방향의 사이마다 하나씩 놓습니다.
+    /// 무기 상자의 후보 자리 여덟 곳은 마차에서 동서남북으로 15타일쯤, 대각선 방향으로 24타일쯤 떨어진 곳에 있습니다.
     pub fn frontier() -> MapSpec {
         MapSpec {
             width: 64.0,
@@ -1028,6 +1108,16 @@ impl MapSpec {
                 Tile::new(22, 9),
                 Tile::new(41, 9),
                 Tile::new(54, 22),
+            ],
+            chest_sites: vec![
+                Tile::new(47, 32),
+                Tile::new(32, 47),
+                Tile::new(17, 32),
+                Tile::new(32, 17),
+                Tile::new(49, 49),
+                Tile::new(15, 49),
+                Tile::new(15, 15),
+                Tile::new(49, 15),
             ],
             player_spawns: vec![
                 Vec2::new(32.0, 29.5),

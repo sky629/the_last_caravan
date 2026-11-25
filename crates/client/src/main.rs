@@ -72,6 +72,7 @@ fn main() {
                 towers::sync_towers.run_if(resource_exists::<view::Scene>),
                 supplies::sync_nodes.run_if(resource_exists::<view::Scene>),
                 supplies::sync_piles.run_if(resource_exists::<view::Scene>),
+                loot::sync_chests.run_if(resource_exists::<view::Scene>),
                 loot::sync_ground_weapons.run_if(resource_exists::<view::Scene>),
                 characters::sync_characters.run_if(resource_exists::<view::Scene>),
                 effects::draw_effects.run_if(resource_exists::<view::Scene>),

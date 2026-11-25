@@ -13,7 +13,7 @@
 use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RejectReason, ServerMsg,
     Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
-    WireDelivery, WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMonster,
+    WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMonster,
     WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
     WirePos, WireProjectile, WirePrompt, WireRect, WireRepairTarget, WireShot, WireTile, WireTower,
     WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server,
@@ -284,6 +284,10 @@ fn a_busy_snapshot_matches_golden_bytes() {
             facing: WireAngle(128),
             hp: 60,
         }],
+        chests: vec![WireChest {
+            id: 2,
+            tile: WireTile { x: 47, y: 32 },
+        }],
         ground_weapons: vec![WireGroundWeapon {
             id: 4,
             pos: WirePos { x: 1664, y: 1408 },
@@ -341,6 +345,8 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x80, 0x18, 0x80, 0x01, // pos 3072, 128
             0x80, // facing 128
             0x3C, // hp 60
+            0x01, // chests: 길이 1
+            0x02, 0x2F, 0x20, // id 2, tile 47 32
             0x01, // ground_weapons: 길이 1
             0x04, 0x80, 0x0D, 0x80, 0x0B, 0x02, // id 4, pos 1664 1408, Greatsword
             0x01, // projectiles: 길이 1
@@ -363,6 +369,7 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
         piles: vec![],
         players: vec![],
         monsters: vec![],
+        chests: vec![],
         ground_weapons: vec![],
         projectiles: vec![],
     }
@@ -372,7 +379,9 @@ fn quiet_snapshot(phase: WirePhase) -> Snapshot {
 fn quiet_bytes(phase: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0x02, 0x01, 0x01]; // Snapshot, tick 1, expedition 1
     bytes.extend_from_slice(phase);
-    bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // wagon 0/0, stash 0, 빈 목록 일곱 개
+    bytes.extend_from_slice(&[
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]); // wagon 0/0, stash 0, 빈 목록 여덟 개
     bytes
 }
 
@@ -553,6 +562,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_and_a_dead_player_match_g
             0x00, // loadout: 든 무기 Bow, 다른 칸 없음 (쓰러지거나 죽어도 무기를 가집니다)
             0x00, // prompt: 없음
             0x00, // monsters: 길이 0
+            0x00, // chests: 길이 0
             0x00, // ground_weapons: 길이 0
             0x00, // projectiles: 길이 0
         ],

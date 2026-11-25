@@ -9,9 +9,9 @@
 //! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    BuildRefusal, CannotBuild, GatherNode, GroundWeapon, Interaction, Life, Loadout, Monster,
-    MonsterKind, NightStep, Outcome, Phase, Pile, Player, Projectile, Prompt, RepairTarget, Sim,
-    Tower, TowerState, Tuning, WeaponKind,
+    BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life, Loadout,
+    Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, Projectile, Prompt,
+    RepairTarget, Sim, Tower, TowerState, Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,8 @@ pub struct Snapshot {
     pub players: Vec<WirePlayer>,
     /// 번호가 작은 몬스터부터입니다.
     pub monsters: Vec<WireMonster>,
+    /// 낮에 놓여 있는 무기 상자입니다. 번호가 작은 상자부터이고, 밤이 되면 모두 사라집니다. 상자 안의 무기는 싣지 않습니다.
+    pub chests: Vec<WireChest>,
     /// 바닥에 놓인 무기입니다. 번호가 작은 무기부터이고, 주워 간 무기는 없습니다.
     pub ground_weapons: Vec<WireGroundWeapon>,
     /// 날아가는 탄환과 이번 Tick에 끝난 탄환입니다. 번호가 작은 탄환부터입니다. 끝난 탄환이 한 번 실리므로 클라이언트가 탄환이 닿은 자리까지 그립니다.
@@ -98,6 +100,13 @@ pub struct WirePile {
     pub id: u32,
     pub pos: WirePos,
     pub amount: u32,
+}
+
+/// 무기 상자 하나입니다. 어떤 무기가 들어 있는지는 열어서 바닥에 놓일 때까지 보내지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireChest {
+    pub id: u32,
+    pub tile: WireTile,
 }
 
 /// 바닥에 놓인 무기 하나입니다. 다른 플레이어가 줍고 맞바꾸면 `kind`가 바뀝니다.
@@ -364,6 +373,7 @@ impl Snapshot {
                 .map(|player| wire_player(sim, player))
                 .collect(),
             monsters: sim.monsters().map(wire_monster).collect(),
+            chests: sim.chests().map(wire_chest).collect(),
             ground_weapons: sim.ground_weapons().map(wire_ground_weapon).collect(),
             projectiles: sim.projectiles().map(wire_projectile).collect(),
         }
@@ -448,6 +458,14 @@ fn wire_pile(pile: &Pile) -> WirePile {
         id: pile.id.0,
         pos: WirePos::from_tiles(pile.pos),
         amount: pile.amount,
+    }
+}
+
+/// `Chest::contents`는 이 크레이트 밖에서 읽을 수 없으므로 상자의 내용은 전송 형식에 들어갈 수 없습니다.
+fn wire_chest(chest: &Chest) -> WireChest {
+    WireChest {
+        id: chest.id.0,
+        tile: WireTile::from_tile(chest.tile),
     }
 }
 

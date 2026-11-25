@@ -11,9 +11,9 @@ use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 use caravan_protocol::{
-    Snapshot, WireAngle, WireAttack, WireGroundWeapon, WireLife, WireLoadout, WireMonster,
-    WireMonsterKind, WireNode, WirePhase, WirePile, WirePlayer, WireProjectile, WirePrompt,
-    WireTower, WireWagon,
+    Snapshot, WireAngle, WireAttack, WireChest, WireGroundWeapon, WireLife, WireLoadout,
+    WireMonster, WireMonsterKind, WireNode, WirePhase, WirePile, WirePlayer, WireProjectile,
+    WirePrompt, WireTower, WireWagon,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -41,6 +41,8 @@ pub struct Frame {
     pub nodes: Vec<WireNode>,
     /// 땅에 떨어진 자원입니다. 움직이지 않으므로 위치를 섞지 않습니다.
     pub piles: Vec<WirePile>,
+    /// 낮에 놓여 있는 무기 상자입니다. 움직이지 않으므로 위치를 섞지 않습니다.
+    pub chests: Vec<WireChest>,
     /// 바닥에 놓인 무기입니다. 움직이지 않으므로 위치를 섞지 않습니다.
     pub ground_weapons: Vec<WireGroundWeapon>,
     pub players: Vec<PlayerView>,
@@ -231,6 +233,7 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
         towers: older.towers.clone(),
         nodes: older.nodes.clone(),
         piles: older.piles.clone(),
+        chests: older.chests.clone(),
         ground_weapons: older.ground_weapons.clone(),
         players,
         monsters,
@@ -329,6 +332,7 @@ mod tests {
             towers: Vec::new(),
             nodes: Vec::new(),
             piles: Vec::new(),
+            chests: Vec::new(),
             ground_weapons: Vec::new(),
             players: Vec::new(),
             monsters: Vec::new(),

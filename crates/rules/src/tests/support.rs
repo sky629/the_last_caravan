@@ -13,7 +13,7 @@ use crate::monster::Monster;
 use crate::player::{Life, Player};
 use crate::sim::Sim;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::{GuardTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
+use crate::tuning::{GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
 use crate::world::Tile;
 
 /// 시나리오가 쓰는 씨앗입니다.
@@ -27,7 +27,8 @@ pub(crate) struct Scenario {
 impl Scenario {
     /// 장애물과 채집 지점이 없는 20 x 20 맵입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
     /// 낮이 끝나지 않으므로 무리가 저절로 나타나지 않고, 몬스터는 테스트가 `monster_at`으로 놓은 것뿐입니다.
-    /// 채집 지점을 더해도 낮의 몬스터는 없습니다(`with_cycle`). 낮의 몬스터를 시험하는 테스트가 `guards.per_node`를 직접 정합니다.
+    /// 채집 지점을 더해도 낮의 몬스터는 없고(`with_cycle`), 무기 상자도 없습니다. 낮의 몬스터를 시험하는 테스트가 `guards.per_node`를 직접 정하고,
+    /// 상자를 시험하는 테스트가 `chest_sites`와 `loot.chests_per_day`를 직접 정합니다.
     pub fn open_field() -> Scenario {
         Scenario::with_tuning(|_| {})
     }
@@ -54,6 +55,7 @@ impl Scenario {
                     wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
                     obstacles: vec![],
                     nodes: vec![],
+                    chest_sites: vec![],
                     player_spawns: vec![Vec2::new(10.0, 10.0)],
                     spatial_cell: 2.0,
                 },
@@ -64,6 +66,10 @@ impl Scenario {
                 guards: GuardTuning {
                     per_node: 0,
                     ..defaults.guards.clone()
+                },
+                loot: LootTuning {
+                    chests_per_day: 0,
+                    ..defaults.loot.clone()
                 },
                 ..defaults
             },

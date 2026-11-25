@@ -535,6 +535,7 @@ mod tests {
             stash: 7,
             nodes: vec![WireNode { id: 1, amount: 9 }],
             piles: Vec::new(),
+            chests: Vec::new(),
             ground_weapons: Vec::new(),
             towers: vec![WireTower {
                 id: 1,

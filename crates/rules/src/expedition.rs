@@ -7,6 +7,7 @@
 //! 단계를 바꾸는 바로 그 자리에서 부르므로, 단계와 그 일이 어긋날 수 없습니다.
 //! 첫날의 낮은 `Sim`이 원정을 시작하면서 `begin_day`를 불러 시작합니다.
 
+use crate::loot::{self, Seed};
 use crate::math::Vec2;
 use crate::monster::Order;
 use crate::resources;
@@ -80,6 +81,7 @@ pub(crate) fn advance_phase(
     phase: &mut Phase,
     world: &mut World,
     spawns: &SpawnPlan,
+    expedition: Seed,
     t: &Tuning,
 ) -> Advance {
     match *phase {
@@ -128,7 +130,7 @@ pub(crate) fn advance_phase(
                     day: next_day,
                     ticks_left: t.ticks(t.cycle.day_secs),
                 };
-                begin_day(world, spawns, t);
+                begin_day(world, spawns, expedition, next_day, t);
             }
             Advance::Simulate
         }
@@ -171,8 +173,15 @@ pub(crate) fn advance_phase(
 /// 모든 플레이어가 최대 HP의 살아 있는 상태가 됩니다. 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다.
 /// 위치, 하고 있던 일, 든 자원은 그대로입니다. 모든 채집 지점이 가득 다시 채워지고, 지점마다 낮의 몬스터가 자리를 지키며 섭니다.
 /// 밤을 막고 나면 몬스터가 모두 사라졌으므로 낮의 몬스터가 겹쳐서 놓이지 않습니다.
-/// 감시탑과 그 HP, 마차의 HP, 보관함의 자원, 떨어진 자원은 이 함수가 건드리지 않으므로 다음 날로 그대로 이어집니다.
-pub(crate) fn begin_day(world: &mut World, spawns: &SpawnPlan, t: &Tuning) {
+/// 무기 상자가 놓이고 상자마다 몬스터가 선 뒤입니다(`loot::start_day`). 어느 후보 자리에 어떤 무기가 놓이는지는 원정의 씨앗(`expedition`)과 날(`day`)이 정합니다.
+/// 가진 무기, 바닥의 무기, 감시탑과 그 HP, 마차의 HP, 보관함의 자원, 떨어진 자원은 이 함수가 건드리지 않으므로 다음 날로 그대로 이어집니다.
+pub(crate) fn begin_day(
+    world: &mut World,
+    spawns: &SpawnPlan,
+    expedition: Seed,
+    day: u32,
+    t: &Tuning,
+) {
     for player in world.players.values_mut() {
         player.restore_for_new_day(t);
     }
@@ -180,13 +189,16 @@ pub(crate) fn begin_day(world: &mut World, spawns: &SpawnPlan, t: &Tuning) {
     for post in spawns.guard_posts() {
         world.spawn_monster(t.guards.kind, Order::Guard { post }, post.center(), t);
     }
+    loot::start_day(world, spawns, expedition, day, t);
 }
 
 /// 밤이 시작됩니다. 낮에 처치하지 않은 몬스터는 자리를 떠나 마차를 향하고, 그때부터 밤의 몬스터와 같이 움직입니다.
+/// 열지 않은 무기 상자는 사라지고 타일이 비워집니다. 상자를 지키던 몬스터도 채집 지점을 지키던 몬스터와 같이 마차를 향합니다.
 fn nightfall(world: &mut World) {
     for monster in &mut world.monsters {
         monster.order = Order::Raid;
     }
+    loot::clear_chests(world);
 }
 
 /// 나타날 몬스터가 남아 있고 때가 되었으면 한 마리를 등장시킵니다. 그렇지 않으면 카운트다운만 진행합니다.

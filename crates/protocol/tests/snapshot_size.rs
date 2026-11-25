@@ -123,6 +123,8 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
                 hp: 60,
             })
             .collect(),
+        // 상자는 낮에만 있으므로 밤의 스냅샷에는 없습니다.
+        chests: vec![],
         // 플레이어가 나가면서 떨어뜨린 무기 넷입니다.
         ground_weapons: (1..=4)
             .map(|id| WireGroundWeapon {

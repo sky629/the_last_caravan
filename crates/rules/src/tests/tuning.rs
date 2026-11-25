@@ -166,6 +166,146 @@ fn two_nodes_do_not_share_a_guard_tile() {
     assert!(why.contains("room for only 1 of the 3 guards"), "{why}");
 }
 
+/// 기본 맵에서 상자의 후보 자리를 `sites`로 바꾼 수치를 검사해서, 거절한 이유를 돌려줍니다.
+fn chest_sites_rejected(sites: Vec<Tile>) -> String {
+    let mut t = Tuning::default();
+    t.map.chest_sites = sites;
+    t.loot.chests_per_day = 1;
+    t.validate().expect_err("the chest sites should be refused")
+}
+
+#[test]
+fn a_chest_site_must_be_a_free_tile_of_the_map_outside_the_village() {
+    assert!(
+        chest_sites_rejected(vec![Tile::new(64, 10)]).contains("must be a free tile"),
+        "outside the map"
+    );
+    assert!(
+        chest_sites_rejected(vec![Tile::new(25, 24)]).contains("must be a free tile"),
+        "on an obstacle"
+    );
+    assert!(
+        chest_sites_rejected(vec![Tile::new(31, 31)]).contains("must be a free tile"),
+        "on the wagon"
+    );
+    assert!(
+        chest_sites_rejected(vec![Tile::new(54, 41)]).contains("must be a free tile"),
+        "on a gather node"
+    );
+    assert!(
+        chest_sites_rejected(vec![Tile::new(47, 32), Tile::new(47, 32)])
+            .contains("must be a free tile"),
+        "twice on one tile"
+    );
+    assert!(
+        chest_sites_rejected(vec![Tile::new(36, 28)]).contains("inside the village"),
+        "within the build range of the wagon"
+    );
+}
+
+#[test]
+fn a_chest_site_that_would_cut_the_map_off_when_it_is_blocked_is_rejected() {
+    let mut t = Tuning::default();
+    // 지도를 가로지르는 벽에 폭 1타일의 틈 (63, 5)가 하나 있습니다. 그 틈이 후보 자리이면 상자가 놓이는 날 벽 너머가 끊깁니다.
+    t.map.obstacles = vec![Rect::new(0.0, 5.0, 63.0, 6.0)];
+    t.map.chest_sites = vec![Tile::new(63, 5)];
+    t.loot.chests_per_day = 1;
+
+    let why = t.validate().expect_err("the only gap is a chest site");
+
+    assert!(why.contains("stay connected"), "{why}");
+    t.map.chest_sites = vec![Tile::new(62, 10)];
+    assert_eq!(t.validate(), Ok(()), "a site beside the gap is fine");
+}
+
+#[test]
+fn a_chest_site_with_no_free_side_tile_to_open_it_from_is_rejected() {
+    let mut t = Tuning::default();
+    t.village.build_range = 2.0;
+    t.nights.spawn_distance = 18.0;
+    t.guards.per_chest = 0;
+    // 후보 자리 (0, 0)의 상하좌우 이웃 (1, 0)과 (0, 1)이 모두 다른 후보 자리이면 서서 열 타일이 없습니다.
+    t.map.chest_sites = vec![Tile::new(0, 0), Tile::new(1, 0), Tile::new(0, 1)];
+    t.loot.chests_per_day = 1;
+
+    let why = t.validate().expect_err("no tile to stand on");
+
+    assert!(why.contains("free side tile"), "{why}");
+    assert!(why.contains("Tile { x: 0, y: 0 }"), "{why}");
+    t.map.chest_sites = vec![Tile::new(0, 0), Tile::new(1, 0)];
+    assert_eq!(t.validate(), Ok(()), "(0, 1) is a tile to stand on");
+}
+
+#[test]
+fn a_chest_site_with_too_little_room_for_its_guards_is_rejected() {
+    let mut t = Tuning::default();
+    t.village.build_range = 2.0;
+    t.nights.spawn_distance = 18.0;
+    t.map.chest_sites = vec![Tile::new(0, 0)];
+    t.loot.chests_per_day = 1;
+    t.guards.per_chest = 3;
+    assert_eq!(t.validate(), Ok(()), "three neighbours, three guards");
+
+    t.guards.per_chest = 4;
+    let why = t.validate().expect_err("a fourth guard has no tile");
+
+    assert!(why.contains("chest site"), "{why}");
+    assert!(why.contains("room for only 3 of the 4 guards"), "{why}");
+}
+
+#[test]
+fn a_guard_tile_is_never_a_chest_site_or_shared_between_a_node_and_a_chest() {
+    let mut t = Tuning::default();
+    t.village.build_range = 2.0;
+    t.nights.spawn_distance = 18.0;
+    // 후보 자리 (0, 0)의 이웃은 (1, 0), (0, 1), (1, 1)이고, 후보 자리 (1, 0)이 하나를 차지합니다. 남은 이웃은 둘입니다.
+    t.map.nodes = Vec::new();
+    t.map.chest_sites = vec![Tile::new(0, 0), Tile::new(1, 0)];
+    t.loot.chests_per_day = 1;
+    t.guards.per_chest = 2;
+    assert_eq!(t.validate(), Ok(()), "(0, 1) and (1, 1) are enough");
+
+    t.guards.per_chest = 3;
+    let why = t
+        .validate()
+        .expect_err("the other site is not a guard tile");
+    assert!(why.contains("room for only 2 of the 3 guards"), "{why}");
+}
+
+#[test]
+fn more_chests_a_day_than_sites_or_chests_that_can_hold_nothing_are_rejected() {
+    let mut t = Tuning::default();
+    t.loot.chests_per_day = 9;
+    let why = t
+        .validate()
+        .expect_err("eight sites cannot hold nine chests");
+    assert!(why.contains("chests per day"), "{why}");
+
+    let mut t = Tuning::default();
+    t.weapons.bow.chest_weight = 0;
+    t.weapons.greatsword.chest_weight = 0;
+    t.weapons.spear.chest_weight = 0;
+    let why = t.validate().expect_err("no weapon can come out of a chest");
+    assert!(why.contains("chest_weight"), "{why}");
+    t.loot.chests_per_day = 0;
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "without chests the weights do not matter"
+    );
+}
+
+#[test]
+fn a_map_without_chest_sites_is_valid_when_no_chest_is_placed() {
+    let mut t = Tuning::default();
+    t.map.chest_sites = Vec::new();
+    t.loot.chests_per_day = 0;
+    assert_eq!(t.validate(), Ok(()));
+
+    t.loot.chests_per_day = 1;
+    assert!(t.validate().is_err(), "one chest needs one site");
+}
+
 #[test]
 fn a_negative_chase_range_is_rejected() {
     let mut t = Tuning::default();

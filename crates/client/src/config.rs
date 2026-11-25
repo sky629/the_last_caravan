@@ -24,6 +24,8 @@ pub const OBSTACLE_HEIGHT: f32 = 28.0;
 pub const WAGON_HEIGHT: f32 = 20.0;
 pub const TOWER_HEIGHT: f32 = 64.0;
 pub const NODE_HEIGHT: f32 = 22.0;
+/// 무기 상자입니다. 채집 지점보다 낮고 작은 상자처럼 보입니다.
+pub const CHEST_HEIGHT: f32 = 16.0;
 /// 짓는 중인 감시탑(공사터)입니다.
 pub const SITE_HEIGHT: f32 = 24.0;
 
@@ -67,6 +69,8 @@ pub const SITE: Color = Color::srgb(0.62, 0.55, 0.38);
 /// 채집 지점입니다. 자원이 다 떨어지면 어두운 색이 됩니다.
 pub const NODE: Color = Color::srgb(0.25, 0.72, 0.66);
 pub const NODE_EMPTY: Color = Color::srgb(0.30, 0.34, 0.34);
+/// 무기 상자입니다. 채집 지점(청록)과 감시탑(파랑)과 구분되는 황금색입니다.
+pub const CHEST: Color = Color::srgb(0.86, 0.64, 0.16);
 /// 땅에 떨어진 자원입니다.
 pub const PILE: Color = Color::srgb(1.00, 0.85, 0.30);
 /// 바닥에 놓인 무기의 색입니다. 무기마다 달라서, 이름을 읽기 전에도 어떤 무기인지 알 수 있습니다.

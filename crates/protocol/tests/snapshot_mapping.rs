@@ -65,13 +65,30 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
     assert_eq!((snapshot.wagon.hp, snapshot.wagon.max_hp), (500, 500));
     assert_eq!(
         snapshot.monsters.len(),
-        16,
-        "the day's guards are already there: two beside each of the eight nodes"
+        25,
+        "the day's guards are already there: two beside each of the eight nodes and three beside each of the three chests"
     );
     assert!(snapshot.monsters.iter().all(|m| m.hp == 60));
 
     assert_eq!(snapshot.stash, 10, "the starting stash");
     assert!(snapshot.towers.is_empty(), "the village starts empty");
+    assert_eq!(
+        snapshot
+            .chests
+            .iter()
+            .map(|chest| chest.id)
+            .collect::<Vec<_>>(),
+        [1, 2, 3],
+        "three chests, numbered from 1"
+    );
+    let sites = &sim.tuning().map.chest_sites;
+    assert!(
+        snapshot
+            .chests
+            .iter()
+            .all(|chest| sites.contains(&chest.tile.to_tile())),
+        "each chest stands on a candidate site"
+    );
 
     let [player] = snapshot.players[..] else {
         panic!("one player expected, got {:?}", snapshot.players);
@@ -335,6 +352,8 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
         t.monsters.grunt.attack_damage = 100;
         t.monsters.grunt.attack_cooldown_secs = 100.0;
         t.wagon.max_hp = u32::MAX;
+        // 낮의 몬스터가 밤에 마차로 와서 플레이어를 공격하지 않게 합니다. 상자를 지키는 몬스터가 가장 가깝습니다.
+        t.loot.chests_per_day = 0;
         // 부활한 직후의 HP를 확인하므로, 마차 곁의 회복이 HP를 더하지 않게 합니다.
         t.wagon.recovery.hp_per_pulse = 0;
     });

@@ -42,6 +42,7 @@ fn village_under_siege_with(
         t.wagon.max_hp = u32::MAX;
         t.player.max_hp = u32::MAX;
         t.guards.per_node = 0;
+        t.guards.per_chest = 0;
         t.village.start_towers = towers;
         t.structures.watchtower.max_hp = tower_hp;
         t.structures.watchtower.damage = 0;

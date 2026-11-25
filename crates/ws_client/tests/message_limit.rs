@@ -44,6 +44,7 @@ fn snapshot_of(monsters: u32) -> Snapshot {
         nodes: vec![],
         piles: vec![],
         players: vec![],
+        chests: vec![],
         ground_weapons: vec![],
         monsters: (1..=monsters)
             .map(|id| WireMonster {

@@ -57,7 +57,7 @@ pub fn front_tile(pos: Vec2, facing: Vec2, map_size: (u16, u16)) -> Option<Tile>
 /// `tile`에 감시탑을 놓을 수 있는지 판정합니다. 자원은 보지 않습니다.
 ///
 /// `own`이 `None`이면 아직 지어지지 않은 새 자리를 검사합니다. 타일이 비어 있어야 하고, 상한에 하나 더 들어가고,
-/// 연결 검사는 이 타일을 막힌 것으로 보고 합니다.
+/// 연결 검사는 이 타일과 무기 상자의 후보 자리를 막힌 것으로 보고 합니다.
 /// `own`이 `Some(id)`이면 이미 짓는 중인 감시탑 `id`가 이 타일을 차지하고 있으므로, 그 감시탑을 뺀 나머지에 대해 검사합니다.
 /// 짓는 중인 다른 감시탑은 타일 지도에 이미 막힌 타일로 들어 있으므로 따로 합치지 않습니다.
 ///
@@ -88,8 +88,12 @@ pub(crate) fn check_site(
     let wagon_tiles = world
         .tiles
         .engage_tiles(world.wagon.rect, t.monsters.longest_engage_distance());
-    let extra_block = own.is_none().then_some(tile);
-    if !world.tiles.is_fully_connected(&wagon_tiles, extra_block) {
+    // 무기 상자의 후보 자리는 어느 날이든 막힐 수 있으므로 막힌 것으로 보고 검사합니다. 그래야 내일 놓일 상자가 길을 끊지 않습니다.
+    let mut blocked = t.map.chest_sites.clone();
+    if own.is_none() {
+        blocked.push(tile);
+    }
+    if !world.tiles.is_fully_connected(&wagon_tiles, &blocked) {
         return Err(CannotBuild::WouldBlockPath);
     }
     Ok(())

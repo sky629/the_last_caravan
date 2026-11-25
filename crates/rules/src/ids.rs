@@ -25,6 +25,10 @@ pub struct ProjectileId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PileId(pub u32);
 
+/// 무기 상자의 번호입니다. 상자가 놓일 때마다 1씩 늘려서 나누어 주고 다시 사용하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChestId(pub u32);
+
 /// 바닥에 놓인 무기 하나의 번호입니다. 무기가 바닥에 놓일 때마다 1씩 늘려서 나누어 주고 다시 사용하지 않습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GroundWeaponId(pub u32);

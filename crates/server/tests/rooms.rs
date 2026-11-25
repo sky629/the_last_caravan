@@ -742,18 +742,18 @@ fn the_stats_count_rooms_members_monsters_and_ticks() {
         ServerStats {
             rooms: 2,
             members: 3,
-            monsters: 32,
+            monsters: 50,
             ticks: 0
         }
     );
 
-    // 낮이 시작될 때 방마다 낮의 몬스터가 열여섯 마리(채집 지점 여덟 곳에 둘씩) 놓입니다.
+    // 낮이 시작될 때 방마다 낮의 몬스터가 스물다섯 마리(채집 지점 여덟 곳에 둘씩, 상자 세 곳에 셋씩) 놓입니다.
     // 낮이 끝나고 첫 무리가 나타난 뒤에는 방마다 밤의 몬스터가 더해집니다.
     rig.run_ticks(64);
     let busy = rig.server.stats();
     assert_eq!((busy.rooms, busy.members, busy.ticks), (2, 3, 64));
     assert!(
-        busy.monsters >= 34,
+        busy.monsters >= 52,
         "the guards and at least one night monster per room, got {}",
         busy.monsters
     );
