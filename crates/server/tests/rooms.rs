@@ -758,7 +758,12 @@ fn a_server_starts_exactly_when_a_client_would_accept_its_welcome() {
     let (mut accepted, mut refused) = (0, 0);
     for (name, tuning) in cases {
         let verdict = client_verdict(&tuning);
-        let started = try_start(tuning, ServerLimits::default());
+        // 정원이 큰 경우에도 한 집의 한 방이 함께 끊겨 유지되도록, 유지하는 자리의 한도를 넉넉하게 줍니다.
+        let limits = ServerLimits {
+            max_held_seats_per_ip: 32,
+            ..ServerLimits::default()
+        };
+        let started = try_start(tuning, limits);
         match verdict {
             Ok(()) => {
                 accepted += 1;

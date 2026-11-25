@@ -42,7 +42,7 @@ pub use snapshot::{
     WireOutcome, WirePhase, WirePile, WirePlayer, WireProjectile, WirePrompt, WireRepairTarget,
     WireShot, WireStruck, WireTower, WireTowerState, WireWagon, WireWeaponKind,
 };
-pub use transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};
+pub use transport::{ClientEvent, ClientTransport, LinkId, PeerKey, ServerEvent, ServerTransport};
 pub use units::{WireAngle, WirePos, WireRect, WireTile};
 pub use welcome::{
     MonsterKindInfo, NodeInfo, RackInfo, WeaponInfo, Welcome, WireDelivery, WorldInfo,

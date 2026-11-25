@@ -4,15 +4,36 @@
 //! 다른 스레드에서 게임 상태를 바꾸는 콜백이 없으므로 잠금이 필요하지 않습니다.
 //! WebSocket 외의 접속 방식(Steam, 프로세스 내부)도 이 트레이트를 구현하면 서버와 클라이언트를 고치지 않고 연결됩니다.
 
+use std::fmt;
+use std::net::IpAddr;
+
 use crate::messages::{ClientMsg, ServerMsg};
 
 /// 서버 쪽에서 접속 하나를 가리키는 번호입니다. 접속 방식이 정하며, 다른 코드에서는 의미가 없는 값입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LinkId(pub u64);
 
+/// 접속의 상대를 구분하는 값입니다. 같은 사람이 여는 접속은 같은 값이 되도록 접속 방식이 정합니다(IP 주소, IPv6는 같은 /64 대역을 하나로 봅니다).
+/// 서버는 이 값으로 상대마다 유지하는 자리의 수를 셉니다. 주소는 개인 정보이므로 로그에 남지 않게 `Debug`가 값을 보여 주지 않습니다.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PeerKey(IpAddr);
+
+impl PeerKey {
+    pub const fn new(address: IpAddr) -> PeerKey {
+        PeerKey(address)
+    }
+}
+
+impl fmt::Debug for PeerKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PeerKey(..)")
+    }
+}
+
 #[derive(Debug)]
 pub enum ServerEvent {
-    Connected(LinkId),
+    /// 접속이 열렸습니다. 값은 그 접속의 상대를 구분하는 열쇠입니다.
+    Connected(LinkId, PeerKey),
     /// 이미 해석한 메시지입니다. 해석할 수 없는 데이터를 보낸 접속은 접속 방식이 닫습니다.
     /// 형식이 바뀐 빌드의 입장 요청은 해석할 수 없지만 닫지 않습니다. 접속 방식이 `VersionMismatch`로 답하고, 게임 서버는 이 접속이 입장하지 않은 채 기한을 넘기면 닫습니다.
     Message(LinkId, ClientMsg),

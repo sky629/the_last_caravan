@@ -25,7 +25,7 @@
 //! `dormant`는 야영지에서 `still_ticks`가 한도에 닿으면 켜지고, 조작이 오면 꺼집니다. 원정이 시작되어도 켜진 채로 이어지므로,
 //! 그 사람 없이 시작한 원정에서 캐릭터는 자리를 비운 사람처럼 보호받다가 조작이 오면 합류합니다.
 
-use caravan_protocol::{LinkId, PlayerName, SeatToken};
+use caravan_protocol::{LinkId, PeerKey, PlayerName, SeatToken};
 use caravan_rules::Presence;
 
 use crate::input::MemberInput;
@@ -35,6 +35,8 @@ pub(crate) struct Seat {
     pub token: SeatToken,
     /// 지금 이 자리를 쓰는 접속입니다. 접속이 닫혔으면 `None`이고, 같은 표식으로 다시 입장하면 새 접속이 들어옵니다.
     pub link: Option<LinkId>,
+    /// 접속이 닫혀서 자리를 유지하는 동안, 그 접속의 상대입니다. 접속이 있으면 `None`입니다. 상대마다 유지하는 자리의 수를 세는 데 씁니다.
+    pub held_by: Option<PeerKey>,
     quiet_ticks: u32,
     still_ticks: u32,
     dormant: bool,
@@ -47,6 +49,7 @@ impl Seat {
             name,
             token,
             link: Some(link),
+            held_by: None,
             quiet_ticks: 0,
             still_ticks: 0,
             dormant: false,
@@ -92,12 +95,13 @@ impl Seat {
         dozes
     }
 
-    /// `link`가 닫혔습니다. 이 자리의 접속이 그것이었으면 접속을 비우고 참을 돌려줍니다.
+    /// `link`가 닫혔습니다. 이 자리의 접속이 그것이었으면 접속을 비우고, 그 접속의 상대 `peer`가 자리를 유지시키는 것으로 기록하고, 참을 돌려줍니다.
     /// 이미 다른 접속이 이어받은 자리이면 아무것도 하지 않고 거짓을 돌려줍니다.
-    pub fn close_link(&mut self, link: LinkId) -> bool {
+    pub fn close_link(&mut self, link: LinkId, peer: PeerKey) -> bool {
         let is_current = self.link == Some(link);
         if is_current {
             self.link = None;
+            self.held_by = Some(peer);
         }
         is_current
     }
@@ -106,6 +110,7 @@ impl Seat {
     /// 돌아온 사람이 이름을 바꿨으면 새 이름을 씁니다. 새 클라이언트는 입력의 순서 번호를 1부터 다시 세므로 입력 상태를 새로 만듭니다.
     pub fn take_over(&mut self, link: LinkId, name: PlayerName) -> Option<LinkId> {
         let old = self.link.replace(link);
+        self.held_by = None;
         self.name = name;
         self.input = MemberInput::new();
         self.heard();
@@ -116,10 +121,13 @@ impl Seat {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
     use super::*;
 
     const AWAY: u32 = 60;
     const HOLD: u32 = 1200;
+    const PEER: PeerKey = PeerKey::new(IpAddr::V4(Ipv4Addr::LOCALHOST));
 
     fn seat() -> Seat {
         Seat::new(
@@ -157,7 +165,7 @@ mod tests {
     fn a_seat_without_a_link_is_away_at_once_and_ends_by_the_clock_of_the_last_message() {
         let mut seat = seat();
         pass(&mut seat, 10);
-        assert!(seat.close_link(LinkId(1)));
+        assert!(seat.close_link(LinkId(1), PEER));
         assert_eq!(seat.presence(AWAY), Presence::Away);
 
         pass(&mut seat, HOLD - 11);
@@ -201,13 +209,25 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_seat_remembers_who_holds_it_until_a_new_link_takes_it_over() {
+        let mut seat = seat();
+        assert_eq!(seat.held_by, None, "a link is open");
+
+        assert!(seat.close_link(LinkId(1), PEER));
+        assert_eq!(seat.held_by, Some(PEER));
+
+        seat.take_over(LinkId(2), PlayerName::parse("KANG").unwrap());
+        assert_eq!(seat.held_by, None, "back with a link, nobody holds it");
+    }
+
+    #[test]
     fn closing_a_link_the_seat_no_longer_uses_changes_nothing() {
         let mut seat = seat();
         let old = seat.take_over(LinkId(2), PlayerName::parse("KANG").unwrap());
         assert_eq!(old, Some(LinkId(1)));
 
         assert!(
-            !seat.close_link(LinkId(1)),
+            !seat.close_link(LinkId(1), PEER),
             "the old link was already replaced"
         );
         assert_eq!(seat.link, Some(LinkId(2)));
@@ -223,7 +243,7 @@ mod tests {
         });
         pass(&mut seat, 500);
         assert!(seat.doze_off(500), "it had been away in the camp");
-        seat.close_link(LinkId(1));
+        seat.close_link(LinkId(1), PEER);
 
         let old = seat.take_over(LinkId(7), PlayerName::parse("MIRO").unwrap());
 

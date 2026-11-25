@@ -3,6 +3,7 @@
 //! 테스트 파일마다 이 모듈을 따로 컴파일하므로, 한 파일이 쓰지 않는 함수는 사용하지 않는 코드로 경고됩니다.
 #![allow(dead_code)]
 
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
@@ -16,6 +17,11 @@ use caravan_server::{GameServer, Notice, PredictableRandom, RandomSource, RoomSe
 /// 새 방의 코드와 자리의 표식을 만드는 무작위 원천입니다. 서버를 다시 만들어도 같은 순서로 같은 값이 나옵니다.
 pub fn random() -> Box<dyn RandomSource> {
     Box::new(PredictableRandom::new(1))
+}
+
+/// 시험용 주소 `203.0.113.<last>`입니다. 마지막 자리가 같으면 같은 상대입니다.
+pub fn address(last: u8) -> IpAddr {
+    IpAddr::V4(Ipv4Addr::new(203, 0, 113, last))
 }
 
 /// 시험용 이름입니다.
@@ -118,9 +124,18 @@ impl Rig {
         self.join_msg(&join_msg(version, Some(room), NAME))
     }
 
-    /// 접속하고 `msg`를 보낸 뒤, 서버가 보낸 첫 답을 돌려줍니다.
+    /// 접속하고 `msg`를 보낸 뒤, 서버가 보낸 첫 답을 돌려줍니다. 상대의 주소는 `127.0.0.1`입니다.
     pub fn join_msg(&mut self, msg: &ClientMsg) -> (LoopbackClient, ServerMsg) {
-        let mut client = self.connector.connect();
+        self.join_msg_from(IpAddr::V4(Ipv4Addr::LOCALHOST), msg)
+    }
+
+    /// `join_msg`와 같고, 상대의 주소를 정합니다. 주소가 같은 접속은 서버에서 같은 상대입니다.
+    pub fn join_msg_from(
+        &mut self,
+        address: IpAddr,
+        msg: &ClientMsg,
+    ) -> (LoopbackClient, ServerMsg) {
+        let mut client = self.connector.connect_from(address);
         assert!(matches!(client.poll(), Some(ClientEvent::Connected)));
         client.send(msg);
         self.pump();
@@ -168,10 +183,27 @@ impl Rig {
         }
     }
 
-    /// 클라이언트의 접속이 끊긴 것으로 하고, 서버가 그것을 처리하게 합니다.
-    pub fn drop_link(&mut self, client: LoopbackClient) {
+    /// `join_welcomed`와 같고, 상대의 주소를 정합니다.
+    pub fn join_welcomed_from(
+        &mut self,
+        address: IpAddr,
+        room: Option<&str>,
+        name: &str,
+        token: Option<SeatToken>,
+    ) -> (LoopbackClient, Welcome) {
+        match self.join_msg_from(
+            address,
+            &join_msg_with_token(PROTOCOL_VERSION, room, name, token),
+        ) {
+            (client, ServerMsg::Welcome(welcome)) => (client, *welcome),
+            (_, other) => panic!("expected Welcome, got {other:?}"),
+        }
+    }
+
+    /// 클라이언트의 접속이 끊긴 것으로 하고, 서버가 그것을 처리하게 합니다. 서버가 알린 일을 돌려줍니다.
+    pub fn drop_link(&mut self, client: LoopbackClient) -> Vec<Notice> {
         drop(client);
-        self.pump();
+        self.pump()
     }
 
     /// 이 서버의 Tick 속도에서 `secs`초가 몇 Tick인지 돌려줍니다.

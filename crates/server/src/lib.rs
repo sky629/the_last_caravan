@@ -203,11 +203,21 @@ fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerErro
             limits.camp_idle
         )));
     }
-    // 접속한 사람이 있는 방은 접속 하나가 방 하나를 쓰므로, IP 주소 하나가 방을 모두 차지하지 못하려면 방의 수가 주소당 접속의 수보다 커야 합니다.
-    if limits.max_rooms <= limits.max_links_per_ip {
+    // 한 집에서 방 하나의 사람들이 함께 끊겨도 모두 유지되어야 합니다.
+    if limits.max_held_seats_per_ip < tuning.max_players {
         return Err(ServerError::InvalidLimits(format!(
-            "max_rooms {} must be larger than max_links_per_ip {}",
-            limits.max_rooms, limits.max_links_per_ip
+            "max_held_seats_per_ip {} must be at least max_players {}",
+            limits.max_held_seats_per_ip, tuning.max_players
+        )));
+    }
+    // 한 상대가 열린 접속과 유지시킨 자리로 방을 모두 차지하지 못하려면, 방의 수가 그 상대가 차지할 수 있는 방의 수보다 커야 합니다.
+    let one_peer_can_hold = limits
+        .max_links_per_ip
+        .saturating_add(limits.max_held_seats_per_ip);
+    if limits.max_rooms <= one_peer_can_hold {
+        return Err(ServerError::InvalidLimits(format!(
+            "max_rooms {} must be larger than max_links_per_ip {} plus max_held_seats_per_ip {}",
+            limits.max_rooms, limits.max_links_per_ip, limits.max_held_seats_per_ip
         )));
     }
 

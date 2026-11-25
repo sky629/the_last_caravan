@@ -3,9 +3,9 @@
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientMsg, InputMsg, LinkId, PROTOCOL_VERSION, RejectReason, ServerEvent, ServerLimits,
-    ServerMsg, ServerTransport, Snapshot, WireAngle, WireMonster, WireMonsterKind, WirePhase,
-    WirePos, WireWagon, decode_server, encode_client,
+    ClientMsg, InputMsg, LinkId, PROTOCOL_VERSION, PeerKey, RejectReason, ServerEvent,
+    ServerLimits, ServerMsg, ServerTransport, Snapshot, WireAngle, WireMonster, WireMonsterKind,
+    WirePhase, WirePos, WireWagon, decode_server, encode_client,
 };
 use caravan_ws_server::WsServer;
 use futures_util::{SinkExt, StreamExt};
@@ -65,7 +65,7 @@ async fn next_event(server: &mut WsServer, within: Duration) -> ServerEvent {
 
 async fn connected_link(server: &mut WsServer) -> LinkId {
     match next_event(server, Duration::from_secs(5)).await {
-        ServerEvent::Connected(link) => link,
+        ServerEvent::Connected(link, _) => link,
         other => panic!("expected Connected, got {other:?}"),
     }
 }
@@ -459,4 +459,19 @@ fn dropping_the_server_releases_its_port() {
         std::net::TcpListener::bind(addr).is_ok(),
         "the address can be bound again right after the drop"
     );
+}
+
+#[tokio::test]
+async fn a_new_link_reports_the_key_of_its_peer() {
+    let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+    let (_client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+
+    match next_event(&mut server, Duration::from_secs(5)).await {
+        ServerEvent::Connected(_, peer) => assert_eq!(
+            peer,
+            PeerKey::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+        ),
+        other => panic!("expected Connected, got {other:?}"),
+    }
 }

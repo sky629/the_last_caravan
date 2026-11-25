@@ -18,8 +18,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use caravan_protocol::{
-    ClientMsg, LinkId, PROTOCOL_VERSION, RejectReason, ServerEvent, ServerLimits, ServerMsg,
-    ServerTransport, decode_client, encode_server,
+    ClientMsg, LinkId, PROTOCOL_VERSION, PeerKey, RejectReason, ServerEvent, ServerLimits,
+    ServerMsg, ServerTransport, decode_client, encode_server,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -54,6 +54,8 @@ pub struct WsServer {
 enum Inbound {
     Opened {
         link: LinkId,
+        /// 접속의 상대를 구분하는 열쇠입니다. 접속 수를 세는 열쇠(`seat_key`)와 같습니다.
+        peer: PeerKey,
         outbox: mpsc::Sender<Vec<u8>>,
     },
     Message(LinkId, ClientMsg),
@@ -120,9 +122,9 @@ impl ServerTransport for WsServer {
             return Some(event);
         }
         match self.inbound.try_recv().ok()? {
-            Inbound::Opened { link, outbox } => {
+            Inbound::Opened { link, peer, outbox } => {
                 self.outboxes.insert(link, outbox);
-                Some(ServerEvent::Connected(link))
+                Some(ServerEvent::Connected(link, peer))
             }
             Inbound::Message(link, msg) => Some(ServerEvent::Message(link, msg)),
             Inbound::LimitReached(link, reason) => {
@@ -297,7 +299,11 @@ async fn serve_link(
     };
     let (outbox, mut outgoing) = mpsc::channel::<Vec<u8>>(limits.outbox_capacity);
     if inbound
-        .send(Inbound::Opened { link, outbox })
+        .send(Inbound::Opened {
+            link,
+            peer: PeerKey::new(seat.key),
+            outbox,
+        })
         .await
         .is_err()
     {

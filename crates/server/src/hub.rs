@@ -6,7 +6,7 @@ use std::collections::btree_map::Entry;
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientMsg, LinkId, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, SeatToken,
+    ClientMsg, LinkId, PROTOCOL_VERSION, PeerKey, PlayerName, RejectReason, RoomCode, SeatToken,
     ServerEvent, ServerLimits, ServerMsg, Welcome, WireRoster,
 };
 use caravan_rules::{JoinError, PlayerId, Seed, Tuning};
@@ -65,8 +65,6 @@ struct Admitted {
     others: Vec<Out>,
     /// 이 입장이 방을 만들었으면 그 방의 씨앗입니다.
     created_with: Option<Seed>,
-    /// 새 방을 둘 자리를 만들려고 없앤 방이 있으면 그 일을 알리는 것입니다.
-    evicted: Vec<Out>,
 }
 
 pub(crate) struct Hub {
@@ -75,6 +73,8 @@ pub(crate) struct Hub {
     idle_timeout: Duration,
     /// 한꺼번에 둘 수 있는 방의 수입니다.
     max_rooms: usize,
+    /// 같은 상대가 유지시킬 수 있는 끊긴 자리의 수입니다.
+    max_held_per_peer: usize,
     times: RoomTimes,
     seeds: RoomSeeds,
     /// 방 코드를 비우고 입장한 사람의 방 코드와, 새 자리의 표식을 만듭니다.
@@ -82,6 +82,8 @@ pub(crate) struct Hub {
     /// 지금까지 만든 방의 수입니다. 방이 없어졌다가 같은 코드로 다시 만들어져도 다른 방이므로 센 값이 이어집니다.
     rooms_created: u32,
     links: BTreeMap<LinkId, LinkState>,
+    /// 열려 있는 접속의 상대입니다. 접속 방식이 `Connected`로 알려 준 값이고, `Disconnected`까지 있습니다.
+    peers: BTreeMap<LinkId, PeerKey>,
     rooms: BTreeMap<RoomCode, Room>,
 }
 
@@ -108,18 +110,21 @@ impl Hub {
             join_deadline: limits.join_deadline,
             idle_timeout: limits.idle_timeout,
             max_rooms: limits.max_rooms,
+            max_held_per_peer: limits.max_held_seats_per_ip,
             times,
             seeds,
             mint: Mint::new(random),
             rooms_created: 0,
             links: BTreeMap::new(),
+            peers: BTreeMap::new(),
             rooms: BTreeMap::new(),
         }
     }
 
     pub fn handle_event(&mut self, event: ServerEvent, now: Instant) -> Vec<Out> {
         match event {
-            ServerEvent::Connected(link) => {
+            ServerEvent::Connected(link, peer) => {
+                self.peers.insert(link, peer);
                 let deadline = now + self.join_deadline;
                 self.links
                     .insert(link, LinkState::AwaitingJoin { deadline });
@@ -138,11 +143,17 @@ impl Hub {
                 }
                 outs
             }
-            ServerEvent::Disconnected(link) => match self.links.remove(&link) {
-                Some(LinkState::InRoom { room, player, .. }) => self.hold_seat(room, player, link),
-                // 모르는 접속의 퇴장은 무시하므로 같은 퇴장을 두 번 받아도 안전합니다.
-                _ => Vec::new(),
-            },
+            ServerEvent::Disconnected(link) => {
+                let outs = match self.links.remove(&link) {
+                    Some(LinkState::InRoom { room, player, .. }) => {
+                        self.hold_seat(room, player, link)
+                    }
+                    // 모르는 접속의 퇴장은 무시하므로 같은 퇴장을 두 번 받아도 안전합니다.
+                    _ => Vec::new(),
+                };
+                self.peers.remove(&link);
+                outs
+            }
         }
     }
 
@@ -277,11 +288,10 @@ impl Hub {
     ) -> Vec<Out> {
         match self.admit(link, version, raw_room, raw_name, token, now) {
             Ok(admitted) => {
-                let mut outs = admitted.evicted;
-                outs.extend([
+                let mut outs = vec![
                     Out::Send(link, ServerMsg::Welcome(Box::new(admitted.welcome))),
                     Out::Send(link, ServerMsg::Roster(admitted.roster)),
-                ]);
+                ];
                 outs.extend(admitted.others);
                 if let Some(old) = admitted.replaced {
                     // 이전 접속은 닫지 않습니다. 이유를 읽은 클라이언트가 닫기를 기다립니다(`LinkState::Told`).
@@ -346,16 +356,11 @@ impl Hub {
             Some(raw) => RoomCode::parse(raw).map_err(|_| RejectReason::BadRoomCode)?,
             None => self.mint.room_code(&self.rooms),
         };
-        // 새 방이 필요한데 방의 수가 한도에 닿았으면, 접속한 사람이 없는 방을 하나 없앱니다. 그런 방이 없을 때만 거절합니다.
-        let mut evicted = Vec::new();
-        if !self.rooms.contains_key(&code) && self.rooms.len() >= self.max_rooms {
-            evicted = self
-                .evict_longest_abandoned_room()
-                .ok_or(RejectReason::ServerFull)?;
-        }
+        let at_room_limit = self.rooms.len() >= self.max_rooms;
         let mut created_with = None;
         let room = match self.rooms.entry(code.clone()) {
             Entry::Occupied(occupied) => occupied.into_mut(),
+            Entry::Vacant(_) if at_room_limit => return Err(RejectReason::ServerFull),
             Entry::Vacant(vacant) => {
                 self.rooms_created += 1;
                 let seed = self.seeds.for_room(self.rooms_created);
@@ -393,35 +398,7 @@ impl Hub {
             roster: entered.roster,
             others: entered.others,
             created_with,
-            evicted,
         })
-    }
-
-    /// 접속한 사람이 한 명도 없는 방 가운데 가장 오래 그랬던 방을 없애고, 없앤 자리들과 방을 알리는 일을 돌려줍니다. 그런 방이 없으면 `None`입니다.
-    /// 그 방의 자리는 모두 접속이 없으므로 닫을 접속이 없고, 그 표식은 더 이상 쓸 수 없습니다.
-    fn evict_longest_abandoned_room(&mut self) -> Option<Vec<Out>> {
-        let code = self
-            .rooms
-            .iter()
-            .filter(|(_, room)| !room.has_link())
-            .max_by_key(|(_, room)| room.abandoned_ticks())
-            .map(|(code, _)| code.clone())?;
-        let room = self.rooms.remove(&code)?;
-        let mut members = room.member_count();
-        let mut outs: Vec<Out> = room
-            .players()
-            .into_iter()
-            .map(|player| {
-                members -= 1;
-                Out::Notice(Notice::Left {
-                    room: code.clone(),
-                    player,
-                    members,
-                })
-            })
-            .collect();
-        outs.push(Out::Notice(Notice::RoomRemoved { room: code }));
-        Some(outs)
     }
 
     /// 플레이어가 스스로 나갑니다. 자리를 곧바로 내놓고 접속을 닫습니다. 마지막 자리였으면 방을 없앱니다.
@@ -454,16 +431,29 @@ impl Hub {
 
     /// `link`가 닫혔으니 자리를 유지합니다. 자리는 방에 남고, 시간이 다 되면 끝납니다.
     /// 이미 다른 접속이 이어받은 자리이면 아무 일도 하지 않습니다.
+    /// 같은 상대가 이미 유지시키는 자리가 한도(`max_held_per_peer`)에 닿아 있으면 이 자리는 유지하지 않고 곧바로 내놓습니다.
+    /// 접속이 없는 자리는 접속 수의 한도에 들지 않으므로, 이 한도가 한 상대가 접속자 없는 방을 쌓는 것을 막습니다.
     fn hold_seat(&mut self, code: RoomCode, player: PlayerId, link: LinkId) -> Vec<Out> {
+        // 열린 접속은 모두 `Connected`로 상대가 알려졌으므로, 상대를 모르는 접속은 없습니다.
+        let Some(peer) = self.peers.get(&link).copied() else {
+            return self.give_up_seat(code, player);
+        };
         let held = self
             .rooms
             .get_mut(&code)
-            .is_some_and(|room| room.link_closed(player, link));
-        if held {
-            vec![Out::Notice(Notice::Held { room: code, player })]
-        } else {
-            Vec::new()
+            .is_some_and(|room| room.link_closed(player, link, peer));
+        if !held {
+            return Vec::new();
         }
+        if self.held_from(peer) > self.max_held_per_peer {
+            return self.give_up_seat(code, player);
+        }
+        vec![Out::Notice(Notice::Held { room: code, player })]
+    }
+
+    /// `peer`가 지금 유지시키고 있는 끊긴 자리의 수입니다. 자리가 끝나거나 사람이 돌아오면 줄어듭니다.
+    fn held_from(&self, peer: PeerKey) -> usize {
+        self.rooms.values().map(|room| room.held_from(peer)).sum()
     }
 
     /// 자리를 곧바로 내놓습니다. 남은 사람에게 새 명단을 보내고, 마지막 자리였으면 방도 없앱니다.
