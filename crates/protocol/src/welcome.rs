@@ -77,6 +77,8 @@ pub enum WireDelivery {
     Arc { reach: f32, half_angle_deg: f32 },
     /// 탄환입니다. 탄환은 스냅샷의 탄환 목록으로 그리므로 수치가 없습니다.
     Projectile,
+    /// 조준선 위의 몬스터를 곧바로 맞힙니다. 선이 끝난 자리는 스냅샷의 마지막 공격(`WireAttack::trace_end`)에 있으므로 수치가 없습니다.
+    Hitscan,
 }
 
 impl WireDelivery {
@@ -88,6 +90,7 @@ impl WireDelivery {
                 half_angle_deg: arc.half_angle_deg,
             },
             Delivery::Projectile(_) => WireDelivery::Projectile,
+            Delivery::Hitscan(_) => WireDelivery::Hitscan,
         }
     }
 }

@@ -37,10 +37,13 @@ pub struct Player {
 }
 
 /// 플레이어가 마지막으로 한 공격입니다. 공격한 무기를 함께 기억하므로, 공격한 직후에 무기를 바꿔도 화면은 공격한 무기의 효과를 그립니다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LastAttack {
     pub tick: u64,
     pub weapon: WeaponKind,
+    /// 곧바로 맞히는 무기의 사격 선이 끝난 자리입니다. 맞힌 몬스터의 가장자리, 막힌 타일, 사거리의 끝 가운데 가장 가까운 곳입니다.
+    /// 선은 쏜 플레이어에서 이 자리까지이므로 시작점은 저장하지 않습니다. 곧바로 맞히지 않는 무기는 `None`입니다.
+    pub trace_end: Option<Vec2>,
 }
 
 /// 플레이어의 생명 상태입니다. 상태마다 그 상태에서 의미가 있는 값만 가집니다.

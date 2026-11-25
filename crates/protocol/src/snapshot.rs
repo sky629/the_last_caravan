@@ -152,6 +152,9 @@ pub struct WireAttack {
     /// 공격한 서버 Tick입니다.
     pub tick: u64,
     pub weapon: WireWeaponKind,
+    /// 곧바로 맞히는 무기이면 사격 선이 끝난 자리입니다. 클라이언트는 공격한 플레이어에서 이 자리까지 선을 긋습니다.
+    /// 시작점은 보내지 않으므로 선이 없는 공격은 1바이트, 선이 있는 공격은 5바이트입니다.
+    pub trace_end: Option<WirePos>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -212,6 +215,8 @@ pub enum WireWeaponKind {
     Bow,
     Greatsword,
     Spear,
+    Crossbow,
+    Rifle,
 }
 
 impl WireWeaponKind {
@@ -222,6 +227,8 @@ impl WireWeaponKind {
             WeaponKind::Bow => WireWeaponKind::Bow,
             WeaponKind::Greatsword => WireWeaponKind::Greatsword,
             WeaponKind::Spear => WireWeaponKind::Spear,
+            WeaponKind::Crossbow => WireWeaponKind::Crossbow,
+            WeaponKind::Rifle => WireWeaponKind::Rifle,
         }
     }
 }
@@ -523,6 +530,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
         last_attack: player.last_attack.map(|attack| WireAttack {
             tick: attack.tick,
             weapon: WireWeaponKind::of(attack.weapon),
+            trace_end: attack.trace_end.map(WirePos::from_tiles),
         }),
         loadout: WireLoadout::of(&player.loadout),
         prompt: sim.prompt(player.id).map(WirePrompt::of),

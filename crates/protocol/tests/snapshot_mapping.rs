@@ -735,10 +735,53 @@ fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_hel
         player.last_attack,
         Some(WireAttack {
             tick: swung_at,
-            weapon: WireWeaponKind::Sword
+            weapon: WireWeaponKind::Sword,
+            trace_end: None
         }),
         "the effect to draw is the sword swing"
     );
+}
+
+#[test]
+fn a_rifle_shot_puts_the_end_of_its_line_in_the_last_attack_and_a_swing_puts_none() {
+    let mut sim = sim_with(|t| {
+        t.player.start_loadout = Loadout::new(WeaponKind::Rifle, Some(WeaponKind::Sword));
+    });
+    let shooter = sim.add_player().unwrap();
+    let aim_east = |attack: bool, switch_weapon: bool| {
+        PlayerInputs::from([(
+            shooter,
+            PlayerInput {
+                aim: AimDir::new(1.0, 0.0),
+                attack,
+                switch_weapon,
+                ..PlayerInput::default()
+            },
+        )])
+    };
+    // 플레이어는 (32, 29.5)에 서 있고, 소총의 사거리는 12타일이며, 동쪽의 12타일 안에는 막힌 곳이 없습니다.
+    let start = Snapshot::from_sim(&sim).players[0].pos.to_tiles();
+
+    step(&mut sim, &aim_east(true, false), 1);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let shot = snapshot.players[0].last_attack.expect("the rifle fired");
+    assert_eq!(shot.weapon, WireWeaponKind::Rifle);
+    assert_eq!(shot.tick, snapshot.tick);
+    assert_eq!(
+        shot.trace_end,
+        Some(WirePos::from_tiles(Vec2::new(start.x + 12.0, start.y))),
+        "the line ends at the range, east of the shooter"
+    );
+
+    // 쿨다운은 무기를 바꿔도 이어지므로, 소총의 쿨다운(1.5초)이 끝난 뒤에 검이 휘둘러집니다.
+    step(&mut sim, &aim_east(false, true), 1);
+    step(&mut sim, &aim_east(true, false), 40);
+    let swing = Snapshot::from_sim(&sim).players[0]
+        .last_attack
+        .expect("the sword swung");
+    assert_eq!(swing.weapon, WireWeaponKind::Sword);
+    assert_eq!(swing.trace_end, None, "a swing has no line");
 }
 
 #[test]
@@ -821,6 +864,14 @@ fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
                     reach: 2.2,
                     half_angle_deg: 15.0
                 },
+            },
+            WeaponInfo {
+                kind: WireWeaponKind::Crossbow,
+                delivery: WireDelivery::Projectile,
+            },
+            WeaponInfo {
+                kind: WireWeaponKind::Rifle,
+                delivery: WireDelivery::Hitscan,
             },
         ]
     );

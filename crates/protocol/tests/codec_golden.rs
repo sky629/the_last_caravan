@@ -32,17 +32,17 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 5);
+    assert_eq!(PROTOCOL_VERSION, 6);
 }
 
 #[test]
 fn join_is_variant_zero_then_version_then_room_text() {
     assert_client_wire(
         ClientMsg::Join {
-            version: 5,
+            version: 6,
             room: "test".to_string(),
         },
-        &[0x00, 0x05, 0x04, b't', b'e', b's', b't'],
+        &[0x00, 0x06, 0x04, b't', b'e', b's', b't'],
     );
 }
 
@@ -133,6 +133,14 @@ fn welcome_carries_the_fixed_world() {
                             half_angle_deg: 15.0,
                         },
                     },
+                    WeaponInfo {
+                        kind: WireWeaponKind::Crossbow,
+                        delivery: WireDelivery::Projectile,
+                    },
+                    WeaponInfo {
+                        kind: WireWeaponKind::Rifle,
+                        delivery: WireDelivery::Hitscan,
+                    },
                 ],
             },
         }),
@@ -158,7 +166,7 @@ fn welcome_carries_the_fixed_world() {
             0x00, // Grunt
             0x00, 0x00, 0x80, 0x3E, // radius 0.25
             0x3C, // max_hp 60
-            0x04, // weapons: 길이 4
+            0x06, // weapons: 길이 6
             0x00, 0x00, // Sword, Arc
             0x00, 0x00, 0x80, 0x3F, // reach 1.0
             0x00, 0x00, 0x70, 0x42, // half_angle_deg 60.0
@@ -169,6 +177,8 @@ fn welcome_carries_the_fixed_world() {
             0x03, 0x00, // Spear, Arc
             0xCD, 0xCC, 0x0C, 0x40, // reach 2.2
             0x00, 0x00, 0x70, 0x41, // half_angle_deg 15.0
+            0x04, 0x01, // Crossbow, Projectile
+            0x05, 0x02, // Rifle, Hitscan
         ],
     );
 }
@@ -251,7 +261,8 @@ fn a_busy_snapshot_matches_golden_bytes() {
                 last_input_seq: 300,
                 last_attack: Some(WireAttack {
                     tick: 120,
-                    weapon: WireWeaponKind::Sword,
+                    weapon: WireWeaponKind::Rifle,
+                    trace_end: Some(WirePos { x: 2048, y: 1216 }),
                 }),
                 loadout: WireLoadout {
                     held: WireWeaponKind::Bow,
@@ -269,7 +280,11 @@ fn a_busy_snapshot_matches_golden_bytes() {
                     revive_progress: Some(0.25),
                 },
                 last_input_seq: 7,
-                last_attack: None,
+                last_attack: Some(WireAttack {
+                    tick: 118,
+                    weapon: WireWeaponKind::Sword,
+                    trace_end: None,
+                }),
                 loadout: WireLoadout {
                     held: WireWeaponKind::Sword,
                     spare: None,
@@ -327,7 +342,8 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x3F, // interaction: 있음, Reviving, target 2, progress 0.5
             0x00, // build_refusal: 없음
             0xAC, 0x02, // last_input_seq 300
-            0x01, 0x78, 0x00, // last_attack: 있음, tick 120, 공격한 무기 Sword
+            0x01, 0x78, 0x05, // last_attack: 있음, tick 120, 공격한 무기 Rifle
+            0x01, 0x80, 0x10, 0xC0, 0x09, // trace_end: 있음, 2048, 1216
             0x01, 0x01, 0x00, // loadout: 든 무기 Bow, 다른 칸 있음 Sword
             0x01, 0x01, 0x03, // prompt: 있음, TakeWeapon(변형 1), Spear
             // 플레이어 2: 쓰러졌고 25%까지 부활됨
@@ -337,7 +353,8 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x01, 0x00, 0x00, 0x20, 0x40, // Downed, bleed_secs_left 2.5
             0x01, 0x00, 0x00, 0x80, 0x3E, // revive_progress: 있음, 0.25
             0x07, // last_input_seq
-            0x00, // last_attack: 없음
+            0x01, 0x76, 0x00, // last_attack: 있음, tick 118, 공격한 무기 Sword
+            0x00, // trace_end: 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
             0x01, // monsters: 길이 1

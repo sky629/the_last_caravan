@@ -1,7 +1,7 @@
 //! 몬스터 300마리가 있고 감시탑이 상한만큼 서 있을 때 Tick 하나를 계산하는 데 걸리는 시간을 잽니다.
 //!
 //! 시간의 한계는 릴리스 빌드에서만 확인합니다. 최적화하지 않은 빌드의 시간은 한계와 관계가 없기 때문입니다.
-//! 일반 테스트에서는 측정 상황이 말한 대로 만들어졌는지(몬스터 300마리, 감시탑 상한, 건설과 파괴가 실제로 일어남, 탄환이 실제로 날아다님)만 확인합니다.
+//! 일반 테스트에서는 측정 상황이 말한 대로 만들어졌는지(몬스터 300마리, 감시탑 상한, 건설과 파괴가 실제로 일어남, 탄환이 실제로 날아다님, 석궁의 탄환이 몬스터를 꿰뚫음, 소총이 몬스터를 맞힘)만 확인합니다.
 //! 시간을 보려면 다음 명령을 실행합니다.
 //!
 //! ```text
@@ -232,10 +232,10 @@ fn perf_a_tick_that_builds_or_destroys_a_tower_fits_inside_one_interval() {
     );
 }
 
-/// 활을 든 플레이어를 `pos`에 세우고 `aim` 방향으로 쉬지 않고 쏘게 합니다.
-fn add_archer(s: &mut Scenario, pos: Vec2, aim: (f32, f32)) {
+/// `weapon`을 든 플레이어를 `pos`에 세우고 `aim` 방향으로 쉬지 않고 쏘게 합니다.
+fn add_shooter(s: &mut Scenario, weapon: WeaponKind, pos: Vec2, aim: (f32, f32)) {
     let id = s.player_at(pos.x, pos.y);
-    s.give_weapon(id, WeaponKind::Bow);
+    s.give_weapon(id, weapon);
     s.hold(
         id,
         PlayerInput {
@@ -246,25 +246,56 @@ fn add_archer(s: &mut Scenario, pos: Vec2, aim: (f32, f32)) {
     );
 }
 
-/// 1000 Tick을 진행하고 Tick 하나의 평균 시간과 가장 느린 시간, 날아다니는 탄환의 평균과 최대 수를 출력한 뒤 평균 시간을 돌려줍니다.
-/// 탄환이 실제로 날아다니는지 알려면 숫자를 보기 전에 탄환의 수를 확인해야 하므로, 탄환의 최대 수도 함께 돌려줍니다.
-fn measure_with_arrows(s: &mut Scenario) -> (Duration, usize) {
+/// `measure_with_arrows`가 돌려주는 값입니다.
+struct Measured {
+    /// Tick 하나의 평균 시간입니다.
+    average: Duration,
+    /// 한 Tick에 날아다닌 탄환의 최대 수입니다. 탄환이 실제로 날아다니는지 알려면 숫자를 보기 전에 확인해야 합니다.
+    most_flying: usize,
+    /// 지켜본 Tick 동안 쏜 탄환의 가장 큰 번호입니다. 탄환의 번호는 쏜 순서로 1부터 매기므로 쏜 수를 셀 때 씁니다.
+    last_bolt: u32,
+}
+
+/// 1000 Tick을 진행하고 Tick 하나의 평균 시간과 가장 느린 시간, 날아다니는 탄환의 평균과 최대 수를 출력합니다.
+/// `last_bolt`는 이 측정이 시작될 때까지 쏜 탄환의 가장 큰 번호이고, `Measured::last_bolt`에서 이 값을 뺀 것이 측정하는 동안 쏜 수입니다.
+fn measure_with_arrows(s: &mut Scenario, last_bolt: u32) -> Measured {
     let mut total = Duration::ZERO;
     let mut slowest = Duration::ZERO;
     let mut flying_sum = 0;
     let mut most_flying = 0;
+    let mut last_bolt = last_bolt;
     for _ in 0..1000 {
         let took = timed_tick(s);
         total += took;
         slowest = slowest.max(took);
         flying_sum += s.flying();
         most_flying = most_flying.max(s.flying());
+        last_bolt = last_bolt.max(bolts_launched(s));
     }
     println!(
         "slowest of 1000 ticks: {slowest:?}; arrows in the air: average {:.1}, most {most_flying}",
         flying_sum as f32 / 1000.0
     );
-    (total / 1000, most_flying)
+    Measured {
+        average: total / 1000,
+        most_flying,
+        last_bolt,
+    }
+}
+
+/// 지금 세계에 있는 탄환 가운데 가장 큰 번호입니다. 탄환이 없으면 0입니다.
+fn bolts_launched(s: &Scenario) -> u32 {
+    s.sim.projectiles().map(|bolt| bolt.id.0).max().unwrap_or(0)
+}
+
+/// `ticks` Tick을 진행하면서 쏜 탄환의 가장 큰 번호를 돌려줍니다. 탄환은 쏜 Tick에 세계에 있으므로 한 Tick씩 진행하면 놓치지 않습니다.
+fn run_and_count_bolts(s: &mut Scenario, ticks: u32) -> u32 {
+    let mut last_bolt = 0;
+    for _ in 0..ticks {
+        s.run_ticks(1);
+        last_bolt = last_bolt.max(bolts_launched(s));
+    }
+    last_bolt
 }
 
 #[test]
@@ -279,25 +310,28 @@ fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_four_archers_is_a_t
     // 플레이어 넷이 등장 지점에서 동서남북으로 쉬지 않고 쏩니다.
     let aims = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
     for (spawn, aim) in defaults.map.player_spawns.iter().zip(aims) {
-        add_archer(&mut s, *spawn, aim);
+        add_shooter(&mut s, WeaponKind::Bow, *spawn, aim);
     }
     until_the_crowd_is_there(&mut s);
     s.run_ticks(600);
     assert_eq!(s.sim.monsters().count(), 300, "nobody died");
     assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
 
-    let (average, most_flying) = measure_with_arrows(&mut s);
+    let measured = measure_with_arrows(&mut s, 0);
 
     assert_eq!(
         s.sim.monsters().count(),
         300,
         "300 monsters in every sampled tick"
     );
-    assert!(most_flying >= 1, "arrows flew during the measurement");
+    assert!(
+        measured.most_flying >= 1,
+        "arrows flew during the measurement"
+    );
     let interval = Duration::from_secs_f32(defaults.dt());
     check_limit(
         "average of 1000 ticks with four archers",
-        average,
+        measured.average,
         interval / 10,
     );
 }
@@ -318,14 +352,19 @@ fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_over_a_hundred_arro
     });
     // 몬스터가 오지 않는 서쪽 가장자리에서 북쪽으로 쏩니다. 탄환은 사거리를 다 날아갑니다.
     for i in 0..archers {
-        add_archer(&mut s, Vec2::new(2.5, 3.0 + 4.0 * i as f32), (0.0, 1.0));
+        add_shooter(
+            &mut s,
+            WeaponKind::Bow,
+            Vec2::new(2.5, 3.0 + 4.0 * i as f32),
+            (0.0, 1.0),
+        );
     }
     until_the_crowd_is_there(&mut s);
     s.run_ticks(600);
     assert_eq!(s.sim.monsters().count(), 300, "nobody died");
     assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
 
-    let (average, most_flying) = measure_with_arrows(&mut s);
+    let measured = measure_with_arrows(&mut s, 0);
 
     assert_eq!(
         s.sim.monsters().count(),
@@ -333,13 +372,142 @@ fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_over_a_hundred_arro
         "300 monsters in every sampled tick"
     );
     assert!(
-        most_flying >= 100,
-        "more than a hundred arrows flew at once, but only {most_flying}"
+        measured.most_flying >= 100,
+        "more than a hundred arrows flew at once, but only {}",
+        measured.most_flying
     );
     let interval = Duration::from_secs_f32(defaults.dt());
     check_limit(
         "average of 1000 ticks with many arrows",
-        average,
+        measured.average,
+        interval / 10,
+    );
+}
+
+/// 무리가 쌓인 동쪽 바깥에 `weapon`을 든 플레이어 넷을 나란히 세우고 서쪽(무리와 마을)을 향해 쉬지 않고 쏘게 합니다.
+/// 첫 무리는 동쪽에서 나타나서 마을의 동쪽 가장자리에 쌓이므로, 이 자리에서 쏘는 것은 무리를 가로지릅니다.
+fn add_four_shooters_east_of_the_crowd(s: &mut Scenario, weapon: WeaponKind) {
+    for y in [30.5, 31.5, 32.5, 33.5] {
+        add_shooter(s, weapon, Vec2::new(56.0, y), (-1.0, 0.0));
+    }
+}
+
+/// 몬스터가 지금까지 입은 피해의 합입니다. 몬스터의 HP가 가장 클 때(`u32::MAX`) 맞은 만큼 줄어듭니다.
+fn damage_taken_by_monsters(s: &Scenario) -> u64 {
+    s.sim
+        .monsters()
+        .map(|monster| u64::from(u32::MAX - monster.hp))
+        .sum()
+}
+
+#[test]
+fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_four_crossbows_piercing_the_crowd_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| t.monsters.grunt.max_hp = u32::MAX);
+    add_four_shooters_east_of_the_crowd(&mut s, WeaponKind::Crossbow);
+    until_the_crowd_is_there(&mut s);
+    let last_bolt = run_and_count_bolts(&mut s, 600);
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    let damage_before = damage_taken_by_monsters(&s);
+
+    let measured = measure_with_arrows(&mut s, last_bolt);
+
+    assert_eq!(
+        s.sim.monsters().count(),
+        300,
+        "300 monsters in every sampled tick"
+    );
+    // 탄환 하나가 몬스터를 하나만 맞히면 맞힌 수와 쏜 수가 같습니다. 1보다 커야 탄환이 무리를 꿰뚫은 것입니다.
+    let hits = (damage_taken_by_monsters(&s) - damage_before)
+        / u64::from(defaults.weapons.crossbow.damage);
+    let bolts = measured.last_bolt - last_bolt;
+    let per_bolt = hits as f32 / bolts as f32;
+    println!("{bolts} bolts made {hits} hits during the measurement: {per_bolt:.2} hits per bolt");
+    assert!(
+        per_bolt > 1.5,
+        "the bolts passed through the crowd: {per_bolt} hits per bolt"
+    );
+    let interval = Duration::from_secs_f32(defaults.dt());
+    check_limit(
+        "average of 1000 ticks with four crossbows",
+        measured.average,
+        interval / 10,
+    );
+}
+
+#[test]
+fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_four_rifles_firing_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| t.monsters.grunt.max_hp = u32::MAX);
+    add_four_shooters_east_of_the_crowd(&mut s, WeaponKind::Rifle);
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    let damage_before = damage_taken_by_monsters(&s);
+
+    let measured = measure_with_arrows(&mut s, 0);
+
+    assert_eq!(
+        s.sim.monsters().count(),
+        300,
+        "300 monsters in every sampled tick"
+    );
+    assert_eq!(measured.most_flying, 0, "a rifle shot does not fly");
+    let hits =
+        (damage_taken_by_monsters(&s) - damage_before) / u64::from(defaults.weapons.rifle.damage);
+    // 1000 Tick은 50초이고 소총의 쿨다운은 1.5초이므로 플레이어 하나가 34발쯤 쏩니다.
+    println!("{hits} rifle hits during the measurement");
+    assert!(
+        hits >= 100,
+        "four rifles hit the crowd, but only {hits} hits"
+    );
+    let interval = Duration::from_secs_f32(defaults.dt());
+    check_limit(
+        "average of 1000 ticks with four rifles",
+        measured.average,
+        interval / 10,
+    );
+}
+
+#[test]
+fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_four_rifles_firing_every_tick_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    // 쿨다운을 한 Tick으로 줄여서 규칙이 허용하는 것보다 훨씬 자주 쏘게 합니다. 한 Tick에 네 발입니다.
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| {
+        t.monsters.grunt.max_hp = u32::MAX;
+        t.weapons.rifle.cooldown_secs = t.dt();
+    });
+    add_four_shooters_east_of_the_crowd(&mut s, WeaponKind::Rifle);
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    let damage_before = damage_taken_by_monsters(&s);
+
+    let measured = measure_with_arrows(&mut s, 0);
+
+    let hits =
+        (damage_taken_by_monsters(&s) - damage_before) / u64::from(defaults.weapons.rifle.damage);
+    println!("{hits} rifle hits during the measurement");
+    assert!(
+        hits >= 3000,
+        "four rifles hit the crowd every tick, but only {hits} hits"
+    );
+    let interval = Duration::from_secs_f32(defaults.dt());
+    check_limit(
+        "average of 1000 ticks with four rifles every tick",
+        measured.average,
         interval / 10,
     );
 }

@@ -68,8 +68,10 @@ pub struct WeaponTuning {
 pub enum Delivery {
     /// 공격하는 순간 부채꼴 안에 있는 몬스터를 모두 맞힙니다.
     Arc(ArcTuning),
-    /// 탄환을 쏩니다. 탄환은 직선으로 날아가며 처음 닿는 몬스터 한 마리를 맞힙니다.
+    /// 탄환을 쏩니다. 탄환은 직선으로 날아가며 닿는 순서대로 `pierce`마리를 맞히고 사라집니다.
     Projectile(ProjectileTuning),
+    /// 쏜 순간 조준 방향의 선 위에서 처음 닿는 몬스터 한 마리를 맞힙니다. 날아가는 것이 없으므로 같은 Tick에 결과가 정해집니다.
+    Hitscan(HitscanTuning),
 }
 
 /// 부채꼴로 공격하는 방식의 수치입니다.
@@ -91,6 +93,16 @@ pub struct ProjectileTuning {
     /// 탄환의 반지름(타일)입니다. 몬스터의 반지름과 더한 거리 안으로 지나가면 닿은 것입니다.
     /// 플레이어의 반지름을 √2로 나눈 값보다 짧아야 합니다. 그래야 장애물의 모서리에 붙어 서서 쏜 탄환이 쏜 자리에서 멈추지 않습니다.
     pub radius: f32,
+    /// 탄환 하나가 맞힐 수 있는 몬스터의 수입니다. 이만큼 맞히면 사라지고, 몬스터마다 같은 피해를 줍니다. 1이면 처음 닿는 한 마리에서 사라집니다.
+    /// 1 이상이어야 합니다.
+    pub pierce: u32,
+}
+
+/// 조준선 위의 몬스터를 곧바로 맞히는 방식의 수치입니다. 선의 굵기는 0이라서 몬스터의 몸 안으로 선이 지나가야 맞습니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitscanTuning {
+    /// 플레이어의 중심에서 선이 닿는 거리(타일)입니다. 막힌 타일에 닿으면 거기서 끝납니다.
+    pub range: f32,
 }
 
 /// 상자에서 나올 무게의 상한입니다. 무게의 합이 `u32`에 들어가므로 상자의 내용을 뽑는 계산이 넘치지 않습니다.
@@ -109,6 +121,8 @@ pub struct WeaponTable {
     pub bow: WeaponTuning,
     pub greatsword: WeaponTuning,
     pub spear: WeaponTuning,
+    pub crossbow: WeaponTuning,
+    pub rifle: WeaponTuning,
 }
 
 impl WeaponTable {
@@ -118,6 +132,8 @@ impl WeaponTable {
             WeaponKind::Bow => &self.bow,
             WeaponKind::Greatsword => &self.greatsword,
             WeaponKind::Spear => &self.spear,
+            WeaponKind::Crossbow => &self.crossbow,
+            WeaponKind::Rifle => &self.rifle,
         }
     }
 
@@ -135,6 +151,8 @@ const SWORD_DAMAGE: u32 = 25;
 const BOW_DAMAGE: u32 = 15;
 const GREATSWORD_DAMAGE: u32 = 45;
 const SPEAR_DAMAGE: u32 = 30;
+const CROSSBOW_DAMAGE: u32 = 20;
+const RIFLE_DAMAGE: u32 = 60;
 
 /// 테스트하는 동안 모든 무기의 피해량에 곱하는 배수입니다. 서비스하기 전에 1로 내립니다.
 /// 무기마다 따로 올리지 않고 이 값 하나로 올리므로, 무기 사이의 피해량 비율은 정상 값과 같습니다.
@@ -811,6 +829,8 @@ impl Tuning {
     /// - 쿨다운과 부채꼴의 닿는 거리는 유한하고 0 이상입니다. 쿨다운이 음수나 NaN이면 Tick 수로 바꾸는 계산이 깨집니다.
     /// - 부채꼴의 절반 각도는 0도 이상 180도 이하입니다.
     /// - 탄환의 속도와 사거리는 유한하고 0보다 큽니다. 0이면 탄환이 사라지지 않아서 스냅샷이 끝없이 커집니다.
+    /// - 탄환이 맞힐 수 있는 몬스터의 수는 1 이상입니다. 0이면 탄환이 아무도 맞히지 못합니다.
+    /// - 곧바로 맞히는 무기의 사거리는 유한하고 0보다 큽니다. 0이면 아무것도 맞히지 못합니다.
     /// - 탄환의 반지름은 유한하고 0 이상이며, √2를 곱한 값이 플레이어의 반지름보다 짧습니다. 탄환은 플레이어의 중심에서 나가므로,
     ///   벽이나 장애물의 모서리에 붙어 선 플레이어가 쏘는 탄환이 처음부터 막힌 곳에 닿으면 안 되기 때문입니다.
     ///
@@ -841,6 +861,11 @@ impl Tuning {
                     check_positive(&format!("{kind:?} projectile speed"), shot.speed)?;
                     check_positive(&format!("{kind:?} projectile range"), shot.range)?;
                     check_not_negative(&format!("{kind:?} projectile radius"), shot.radius)?;
+                    if shot.pierce == 0 {
+                        return Err(format!(
+                            "{kind:?} projectile pierce must be at least 1, so that the projectile can hit a monster"
+                        ));
+                    }
                     // 탄환은 막힌 타일을 반지름만큼 키운 각진 사각형에 닿으면 멈춥니다. 그 사각형의 모서리는 타일의 모서리에서
                     // 반지름의 √2배까지 나와 있으므로, 타일의 모서리에 대각선으로 붙어 선 플레이어의 중심이 그 안에 들어가지 않아야 합니다.
                     if shot.radius * std::f32::consts::SQRT_2 >= self.player.radius {
@@ -849,6 +874,9 @@ impl Tuning {
                             shot.radius, self.player.radius
                         ));
                     }
+                }
+                Delivery::Hitscan(shot) => {
+                    check_positive(&format!("{kind:?} hitscan range"), shot.range)?;
                 }
             }
         }
@@ -958,6 +986,7 @@ impl Default for Tuning {
                         speed: 14.0,
                         range: 9.0,
                         radius: 0.15,
+                        pierce: 1,
                     }),
                     chest_weight: 1,
                 },
@@ -977,6 +1006,23 @@ impl Default for Tuning {
                         reach: 2.2,
                         half_angle_deg: 15.0,
                     }),
+                    chest_weight: 1,
+                },
+                crossbow: WeaponTuning {
+                    damage: CROSSBOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 0.9,
+                    delivery: Delivery::Projectile(ProjectileTuning {
+                        speed: 18.0,
+                        range: 11.0,
+                        radius: 0.15,
+                        pierce: 4,
+                    }),
+                    chest_weight: 1,
+                },
+                rifle: WeaponTuning {
+                    damage: RIFLE_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 1.5,
+                    delivery: Delivery::Hitscan(HitscanTuning { range: 12.0 }),
                     chest_weight: 1,
                 },
             },

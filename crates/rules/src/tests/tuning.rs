@@ -3,7 +3,9 @@
 use super::support::{Scenario, nights};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
-use crate::tuning::{ArcTuning, Delivery, PLAYTEST_DAMAGE_MULTIPLIER, ProjectileTuning, Tuning};
+use crate::tuning::{
+    ArcTuning, Delivery, HitscanTuning, PLAYTEST_DAMAGE_MULTIPLIER, ProjectileTuning, Tuning,
+};
 use crate::world::Tile;
 
 #[test]
@@ -285,6 +287,8 @@ fn more_chests_a_day_than_sites_or_chests_that_can_hold_nothing_are_rejected() {
     t.weapons.bow.chest_weight = 0;
     t.weapons.greatsword.chest_weight = 0;
     t.weapons.spear.chest_weight = 0;
+    t.weapons.crossbow.chest_weight = 0;
+    t.weapons.rifle.chest_weight = 0;
     let why = t.validate().expect_err("no weapon can come out of a chest");
     assert!(why.contains("chest_weight"), "{why}");
     t.loot.chests_per_day = 0;
@@ -671,6 +675,22 @@ fn a_projectile_that_never_moves_or_never_ends_is_rejected() {
 }
 
 #[test]
+fn a_projectile_that_can_hit_no_monster_is_rejected() {
+    let t = with_bow(ProjectileTuning {
+        pierce: 0,
+        ..default_shot()
+    });
+    let why = t.validate().expect_err("a pierce of 0");
+    assert!(why.contains("Bow projectile pierce"), "{why}");
+
+    let t = with_bow(ProjectileTuning {
+        pierce: 1,
+        ..default_shot()
+    });
+    assert_eq!(t.validate(), Ok(()), "one monster is the least");
+}
+
+#[test]
 fn a_projectile_as_wide_as_the_player_is_rejected() {
     let player_radius = Tuning::default().player.radius;
     // 0.75배는 플레이어보다 가늘지만, 장애물의 모서리에 붙어 서서 쏘면 쏜 자리에서 멈추는 굵기입니다.
@@ -731,6 +751,16 @@ fn the_playtest_multiplier_raises_every_weapon_by_the_same_ratio() {
         30 * PLAYTEST_DAMAGE_MULTIPLIER,
         "the normal spear damage is 30"
     );
+    assert_eq!(
+        t.weapons.get(WeaponKind::Crossbow).damage,
+        20 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal crossbow damage is 20"
+    );
+    assert_eq!(
+        t.weapons.get(WeaponKind::Rifle).damage,
+        60 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal rifle damage is 60"
+    );
 }
 
 #[test]
@@ -738,13 +768,52 @@ fn the_default_greatsword_and_spear_are_the_numbers_of_the_weapon_table() {
     let t = Tuning::default();
     let arc = |kind| match t.weapons.get(kind).delivery {
         Delivery::Arc(arc) => (arc.reach, arc.half_angle_deg),
-        Delivery::Projectile(_) => panic!("{kind:?} swings an arc"),
+        Delivery::Projectile(_) | Delivery::Hitscan(_) => panic!("{kind:?} swings an arc"),
     };
 
     assert_eq!(arc(WeaponKind::Greatsword), (1.3, 90.0));
     assert_eq!(t.weapons.greatsword.cooldown_secs, 1.0);
     assert_eq!(arc(WeaponKind::Spear), (2.2, 15.0));
     assert_eq!(t.weapons.spear.cooldown_secs, 0.6);
+}
+
+#[test]
+fn the_default_crossbow_is_the_numbers_of_the_weapon_table() {
+    let t = Tuning::default();
+    let crossbow = t.weapons.get(WeaponKind::Crossbow);
+    let Delivery::Projectile(shot) = crossbow.delivery else {
+        panic!("the crossbow shoots projectiles");
+    };
+
+    assert_eq!(crossbow.cooldown_secs, 0.9);
+    assert_eq!(
+        (shot.speed, shot.range, shot.radius, shot.pierce),
+        (18.0, 11.0, 0.15, 4)
+    );
+    assert!(crossbow.chest_weight > 0, "it comes out of chests");
+}
+
+#[test]
+fn the_default_rifle_is_the_numbers_of_the_weapon_table() {
+    let t = Tuning::default();
+    let rifle = t.weapons.get(WeaponKind::Rifle);
+    let Delivery::Hitscan(shot) = rifle.delivery else {
+        panic!("the rifle hits along a line");
+    };
+
+    assert_eq!(rifle.cooldown_secs, 1.5);
+    assert_eq!(shot.range, 12.0);
+    assert!(rifle.chest_weight > 0, "it comes out of chests");
+}
+
+#[test]
+fn a_hitscan_weapon_with_no_range_is_rejected_and_the_reason_names_it() {
+    for bad in [0.0, -12.0, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.weapons.rifle.delivery = Delivery::Hitscan(HitscanTuning { range: bad });
+        let why = t.validate().expect_err(&format!("a range of {bad}"));
+        assert!(why.contains("Rifle hitscan range"), "{bad}: {why}");
+    }
 }
 
 #[test]
@@ -770,4 +839,6 @@ fn before_a_release_the_damage_is_the_normal_damage() {
     assert_eq!(t.weapons.get(WeaponKind::Bow).damage, 15);
     assert_eq!(t.weapons.get(WeaponKind::Greatsword).damage, 45);
     assert_eq!(t.weapons.get(WeaponKind::Spear).damage, 30);
+    assert_eq!(t.weapons.get(WeaponKind::Crossbow).damage, 20);
+    assert_eq!(t.weapons.get(WeaponKind::Rifle).damage, 60);
 }
