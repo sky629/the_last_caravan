@@ -822,6 +822,10 @@ fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
                     half_angle_deg: 15.0
                 },
             },
+            WeaponInfo {
+                kind: WireWeaponKind::Crossbow,
+                delivery: WireDelivery::Projectile,
+            },
         ]
     );
 }

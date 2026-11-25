@@ -419,6 +419,7 @@ pub fn weapon_name(weapon: WireWeaponKind) -> &'static str {
         WireWeaponKind::Bow => "BOW",
         WireWeaponKind::Greatsword => "GREATSWORD",
         WireWeaponKind::Spear => "SPEAR",
+        WireWeaponKind::Crossbow => "CROSSBOW",
     }
 }
 
@@ -753,12 +754,13 @@ mod tests {
             WireWeaponKind::Bow,
             WireWeaponKind::Greatsword,
             WireWeaponKind::Spear,
+            WireWeaponKind::Crossbow,
         ]
         .into_iter()
         .map(weapon_name)
         .collect();
 
-        assert_eq!(names, ["SWORD", "BOW", "GREATSWORD", "SPEAR"]);
+        assert_eq!(names, ["SWORD", "BOW", "GREATSWORD", "SPEAR", "CROSSBOW"]);
     }
 
     #[test]

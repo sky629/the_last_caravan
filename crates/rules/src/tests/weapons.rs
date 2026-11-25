@@ -9,7 +9,7 @@ use crate::input::{AimDir, PlayerInput};
 use crate::kind::WeaponKind;
 use crate::loadout::Loadout;
 use crate::player::{Interaction, LastAttack};
-use crate::tuning::{ArcTuning, Delivery, WeaponTuning};
+use crate::tuning::{ArcTuning, Delivery, ProjectileTuning, WeaponTuning};
 use crate::world::Tile;
 
 fn attack_east() -> PlayerInput {
@@ -201,6 +201,103 @@ fn the_spear_waits_for_the_cooldown_of_its_own_row() {
 
     // 쿨다운 0.35초는 7 Tick이므로 1, 8, 15번째 Tick에 찌릅니다.
     assert_eq!(hp_of(&s, monster), 1000 - 3 * 13);
+}
+
+/// 석궁의 행을 활의 행과 겹치지 않는 수치로 바꾼 시나리오입니다. 몬스터는 제자리에 서 있고 한 번에 죽지 않습니다.
+/// 행이 아니라 활의 수치를 읽는 코드는 이 시나리오에서 맞히는 몬스터와 날아가는 거리가 달라져서 드러납니다.
+fn crossbow_with_its_own_numbers() -> Scenario {
+    Scenario::with_tuning(|t| {
+        t.monsters.grunt.max_hp = 1000;
+        t.monsters.grunt.speed = 0.0;
+        t.monsters.grunt.separation_speed = 0.0;
+        t.weapons.crossbow = WeaponTuning {
+            damage: 7,
+            cooldown_secs: 0.25,
+            delivery: Delivery::Projectile(ProjectileTuning {
+                speed: 30.0,
+                range: 6.0,
+                radius: 0.2,
+                pierce: 2,
+            }),
+            chest_weight: 1,
+        };
+    })
+}
+
+#[test]
+fn the_crossbow_shoots_the_damage_width_and_count_of_its_own_row() {
+    let mut s = crossbow_with_its_own_numbers();
+    let a = s.player_at(3.0, 10.0);
+    s.give_weapon(a, WeaponKind::Crossbow);
+    let first = s.monster_at(5.0, 10.0);
+    // 활의 탄환(반지름 0.15)이 닿는 0.55보다 멀고 석궁의 탄환(반지름 0.2)이 닿는 0.6보다 가까운 곳입니다.
+    let just_inside_the_width = s.monster_at(6.0, 10.58);
+    let beyond_the_count = s.monster_at(7.0, 10.0);
+    s.hold(a, attack_east());
+
+    s.run_ticks(1);
+    s.hold(
+        a,
+        PlayerInput {
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    );
+    s.run_ticks(4);
+
+    assert_eq!(hp_of(&s, first), 1000 - 7);
+    assert_eq!(
+        hp_of(&s, just_inside_the_width),
+        1000 - 7,
+        "0.58 aside is inside 0.4 + 0.2"
+    );
+    assert_eq!(hp_of(&s, beyond_the_count), 1000, "two hits and it ended");
+}
+
+#[test]
+fn the_crossbow_bolt_flies_the_speed_and_range_of_its_own_row() {
+    let mut s = crossbow_with_its_own_numbers();
+    let a = s.player_at(3.0, 10.0);
+    s.give_weapon(a, WeaponKind::Crossbow);
+    s.hold(a, attack_east());
+
+    s.run_ticks(1);
+    s.hold(
+        a,
+        PlayerInput {
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    );
+    let bolt = s.sim.projectiles().next().expect("the bolt flies");
+    // 초당 30타일은 Tick(20 Hz)마다 1.5타일입니다.
+    assert!(
+        (bolt.pos.x - 4.5).abs() < 1e-3,
+        "one tick of speed 30, at {:?}",
+        bolt.pos
+    );
+
+    s.run_until(10, |sim| sim.projectiles().any(|bolt| !bolt.is_flying()));
+    let bolt = s.sim.projectiles().next().expect("the bolt ended");
+    assert!(
+        (bolt.pos.x - 9.0).abs() < 1e-3,
+        "range 6 from x = 3, ended at {:?}",
+        bolt.pos
+    );
+}
+
+#[test]
+fn the_crossbow_waits_for_the_cooldown_of_its_own_row() {
+    let mut s = crossbow_with_its_own_numbers();
+    let a = s.player_at(3.0, 10.0);
+    s.give_weapon(a, WeaponKind::Crossbow);
+    s.hold(a, attack_east());
+
+    s.run_ticks(11);
+
+    // 쿨다운 0.25초는 5 Tick이므로 1, 6, 11번째 Tick에 쏩니다.
+    let newest = s.sim.projectiles().map(|bolt| bolt.id.0).max();
+    assert_eq!(newest, Some(3));
 }
 
 #[test]

@@ -58,6 +58,7 @@ pub struct WeaponPaints {
     bow: Handle<ColorMaterial>,
     greatsword: Handle<ColorMaterial>,
     spear: Handle<ColorMaterial>,
+    crossbow: Handle<ColorMaterial>,
 }
 
 impl WeaponPaints {
@@ -68,6 +69,7 @@ impl WeaponPaints {
             WireWeaponKind::Bow => self.bow.clone(),
             WireWeaponKind::Greatsword => self.greatsword.clone(),
             WireWeaponKind::Spear => self.spear.clone(),
+            WireWeaponKind::Crossbow => self.crossbow.clone(),
         }
     }
 }
@@ -94,6 +96,7 @@ pub fn setup_palette(
             bow: paint(config::WEAPON_BOW),
             greatsword: paint(config::WEAPON_GREATSWORD),
             spear: paint(config::WEAPON_SPEAR),
+            crossbow: paint(config::WEAPON_CROSSBOW),
         },
         shadow: paint(config::SHADOW),
         you: paint(config::YOU),

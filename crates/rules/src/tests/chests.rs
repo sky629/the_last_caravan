@@ -90,7 +90,12 @@ fn a_chest_never_holds_the_sword_and_every_other_weapon_comes_out_of_some_chest(
 
     assert_eq!(
         seen,
-        BTreeSet::from([WeaponKind::Bow, WeaponKind::Greatsword, WeaponKind::Spear])
+        BTreeSet::from([
+            WeaponKind::Bow,
+            WeaponKind::Greatsword,
+            WeaponKind::Spear,
+            WeaponKind::Crossbow
+        ])
     );
 }
 
@@ -103,10 +108,11 @@ fn the_same_seed_places_the_same_chests_and_other_seeds_place_other_ones() {
 }
 
 /// 씨앗 7의 첫날 상자입니다. 난수를 쓰는 순서나 방법을 바꾸면 같은 씨앗이 다른 맵을 만들게 되므로 이 값이 바뀝니다.
+/// 상자가 놓이는 자리는 무기 표와 관계없이 같고, 내용은 상자에서 나오는 무기의 목록이 바뀌면 달라집니다.
 const SEED_7_FIRST_DAY: [(Tile, WeaponKind); 3] = [
-    (Tile::new(17, 32), WeaponKind::Spear),
-    (Tile::new(32, 17), WeaponKind::Bow),
-    (Tile::new(49, 49), WeaponKind::Greatsword),
+    (Tile::new(17, 32), WeaponKind::Bow),
+    (Tile::new(32, 17), WeaponKind::Crossbow),
+    (Tile::new(49, 49), WeaponKind::Spear),
 ];
 
 #[test]

@@ -112,6 +112,7 @@ pub struct WeaponTable {
     pub bow: WeaponTuning,
     pub greatsword: WeaponTuning,
     pub spear: WeaponTuning,
+    pub crossbow: WeaponTuning,
 }
 
 impl WeaponTable {
@@ -121,6 +122,7 @@ impl WeaponTable {
             WeaponKind::Bow => &self.bow,
             WeaponKind::Greatsword => &self.greatsword,
             WeaponKind::Spear => &self.spear,
+            WeaponKind::Crossbow => &self.crossbow,
         }
     }
 
@@ -138,6 +140,7 @@ const SWORD_DAMAGE: u32 = 25;
 const BOW_DAMAGE: u32 = 15;
 const GREATSWORD_DAMAGE: u32 = 45;
 const SPEAR_DAMAGE: u32 = 30;
+const CROSSBOW_DAMAGE: u32 = 20;
 
 /// 테스트하는 동안 모든 무기의 피해량에 곱하는 배수입니다. 서비스하기 전에 1로 내립니다.
 /// 무기마다 따로 올리지 않고 이 값 하나로 올리므로, 무기 사이의 피해량 비율은 정상 값과 같습니다.
@@ -986,6 +989,17 @@ impl Default for Tuning {
                     delivery: Delivery::Arc(ArcTuning {
                         reach: 2.2,
                         half_angle_deg: 15.0,
+                    }),
+                    chest_weight: 1,
+                },
+                crossbow: WeaponTuning {
+                    damage: CROSSBOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 0.9,
+                    delivery: Delivery::Projectile(ProjectileTuning {
+                        speed: 18.0,
+                        range: 11.0,
+                        radius: 0.15,
+                        pierce: 4,
                     }),
                     chest_weight: 1,
                 },

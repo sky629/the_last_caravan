@@ -11,7 +11,7 @@ use crate::input::{AimDir, PlayerInput};
 use crate::kind::WeaponKind;
 use crate::math::Rect;
 use crate::projectile::{Flight, Projectile};
-use crate::tuning::{Delivery, Tuning};
+use crate::tuning::{Delivery, ProjectileTuning, Tuning};
 
 fn bow_damage(s: &Scenario) -> u32 {
     s.sim.tuning().weapons.bow.damage
@@ -25,12 +25,17 @@ fn bow_pierces(t: &mut Tuning, pierce: u32) {
     spec.pierce = pierce;
 }
 
-/// 몬스터가 한 번에 죽지 않고 제자리에 서 있고, 활의 탄환이 `pierce`마리를 맞히는 시나리오입니다. `adjust`로 수치를 더 바꿉니다.
+/// 몬스터가 한 번에 죽지 않고 제자리에 서 있게 합니다.
+fn still_monsters(t: &mut Tuning) {
+    t.monsters.grunt.max_hp = 1000;
+    t.monsters.grunt.speed = 0.0;
+    t.monsters.grunt.separation_speed = 0.0;
+}
+
+/// 몬스터가 제자리에 서 있고, 활의 탄환이 `pierce`마리를 맞히는 시나리오입니다. `adjust`로 수치를 더 바꿉니다.
 fn quiet_field(pierce: u32, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
     Scenario::with_tuning(|t| {
-        t.monsters.grunt.max_hp = 1000;
-        t.monsters.grunt.speed = 0.0;
-        t.monsters.grunt.separation_speed = 0.0;
+        still_monsters(t);
         bow_pierces(t, pierce);
         adjust(t);
     })
@@ -236,4 +241,98 @@ fn a_projectile_that_can_hit_one_monster_still_ends_at_the_first_it_touches() {
     assert_eq!(hp_of(&s, near), 1000 - damage);
     assert_eq!(hp_of(&s, behind), 1000);
     assert_eq!(only_projectile(&s).flight, Flight::Landed);
+}
+
+/// 수치표의 석궁 행입니다.
+fn crossbow_spec(s: &Scenario) -> ProjectileTuning {
+    let Delivery::Projectile(spec) = s.sim.tuning().weapons.crossbow.delivery else {
+        panic!("the crossbow shoots projectiles");
+    };
+    spec
+}
+
+/// (3, 10)에 선 사수가 석궁을 한 번 쏘고 `ticks` Tick을 더 진행합니다.
+fn shoot_crossbow_once(s: &mut Scenario, ticks: u32) -> PlayerId {
+    let a = s.player_at(3.0, 10.0);
+    s.give_weapon(a, WeaponKind::Crossbow);
+    let aim = AimDir::new(1.0, 0.0);
+    s.hold(
+        a,
+        PlayerInput {
+            aim,
+            attack: true,
+            ..PlayerInput::default()
+        },
+    );
+    s.run_ticks(1);
+    s.hold(
+        a,
+        PlayerInput {
+            aim,
+            ..PlayerInput::default()
+        },
+    );
+    s.run_ticks(ticks);
+    a
+}
+
+#[test]
+fn a_crossbow_bolt_hits_the_fourth_monster_as_hard_as_the_first_and_spares_the_fifth() {
+    let mut s = Scenario::with_tuning(still_monsters);
+    let line: Vec<MonsterId> = (0..5).map(|i| s.monster_at(6.0 + i as f32, 10.0)).collect();
+    let damage = s.sim.tuning().weapons.crossbow.damage;
+
+    shoot_crossbow_once(&mut s, 0);
+    run_until_landed(&mut s);
+
+    for id in &line[..4] {
+        assert_eq!(
+            hp_of(&s, *id),
+            1000 - damage,
+            "every monster the bolt passes takes the same damage"
+        );
+    }
+    assert_eq!(hp_of(&s, line[4]), 1000, "the fifth is beyond the count");
+    let bolt = only_projectile(&s);
+    assert_eq!(bolt.flight, Flight::Landed);
+    assert!(close(bolt.pos.x, 9.0 - 0.55), "{:?}", bolt.pos);
+}
+
+#[test]
+fn a_crossbow_bolt_ends_at_a_wall_and_passes_through_players() {
+    let mut s = Scenario::with_tuning(|t| {
+        still_monsters(t);
+        t.map.obstacles = vec![Rect::new(8.0, 9.0, 9.0, 11.0)];
+    });
+    let ally = s.player_at(5.0, 10.0);
+    let behind_the_wall = s.monster_at(10.0, 10.0);
+
+    shoot_crossbow_once(&mut s, 0);
+    run_until_landed(&mut s);
+
+    assert_eq!(s.player(ally).hp(), 100, "the ally in the way is unhurt");
+    assert_eq!(hp_of(&s, behind_the_wall), 1000);
+    let bolt = only_projectile(&s);
+    assert!(
+        close(bolt.pos.x, 8.0 - 0.15),
+        "stopped at the wall: {:?}",
+        bolt.pos
+    );
+}
+
+#[test]
+fn a_crossbow_bolt_ends_at_the_end_of_its_range() {
+    let mut s = Scenario::with_tuning(still_monsters);
+    let range = crossbow_spec(&s).range;
+
+    shoot_crossbow_once(&mut s, 0);
+    run_until_landed(&mut s);
+
+    let bolt = only_projectile(&s);
+    assert_eq!(bolt.flight, Flight::Landed);
+    assert!(
+        close(bolt.pos.x, 3.0 + range),
+        "ended at its range: {:?}",
+        bolt.pos
+    );
 }

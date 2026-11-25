@@ -78,6 +78,7 @@ pub const WEAPON_SWORD: Color = Color::srgb(0.85, 0.88, 0.92);
 pub const WEAPON_BOW: Color = Color::srgb(0.55, 0.85, 0.40);
 pub const WEAPON_GREATSWORD: Color = Color::srgb(0.95, 0.45, 0.30);
 pub const WEAPON_SPEAR: Color = Color::srgb(0.95, 0.80, 0.35);
+pub const WEAPON_CROSSBOW: Color = Color::srgb(0.30, 0.78, 0.85);
 pub const SHADOW: Color = Color::srgb(0.07, 0.09, 0.07);
 pub const YOU: Color = Color::srgb(1.00, 0.84, 0.25);
 pub const ALLY: Color = Color::srgb(0.35, 0.65, 1.00);
@@ -97,7 +98,7 @@ pub const BAR_NODE: Color = Color::srgb(0.45, 0.90, 0.82);
 pub const SWING: Color = Color::srgb(1.00, 1.00, 0.80);
 pub const WAGON_MARKER: Color = Color::srgb(1.00, 0.72, 0.38);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
-/// 활의 탄환입니다.
+/// 활과 석궁의 탄환입니다.
 pub const BULLET: Color = Color::srgb(1.00, 0.97, 0.75);
 /// 건설이 거절된 타일의 테두리입니다.
 pub const REFUSAL: Color = Color::srgb(1.00, 0.35, 0.30);

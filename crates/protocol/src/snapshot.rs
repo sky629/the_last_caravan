@@ -212,6 +212,7 @@ pub enum WireWeaponKind {
     Bow,
     Greatsword,
     Spear,
+    Crossbow,
 }
 
 impl WireWeaponKind {
@@ -222,6 +223,7 @@ impl WireWeaponKind {
             WeaponKind::Bow => WireWeaponKind::Bow,
             WeaponKind::Greatsword => WireWeaponKind::Greatsword,
             WeaponKind::Spear => WireWeaponKind::Spear,
+            WeaponKind::Crossbow => WireWeaponKind::Crossbow,
         }
     }
 }

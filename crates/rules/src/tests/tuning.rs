@@ -285,6 +285,7 @@ fn more_chests_a_day_than_sites_or_chests_that_can_hold_nothing_are_rejected() {
     t.weapons.bow.chest_weight = 0;
     t.weapons.greatsword.chest_weight = 0;
     t.weapons.spear.chest_weight = 0;
+    t.weapons.crossbow.chest_weight = 0;
     let why = t.validate().expect_err("no weapon can come out of a chest");
     assert!(why.contains("chest_weight"), "{why}");
     t.loot.chests_per_day = 0;
@@ -747,6 +748,11 @@ fn the_playtest_multiplier_raises_every_weapon_by_the_same_ratio() {
         30 * PLAYTEST_DAMAGE_MULTIPLIER,
         "the normal spear damage is 30"
     );
+    assert_eq!(
+        t.weapons.get(WeaponKind::Crossbow).damage,
+        20 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal crossbow damage is 20"
+    );
 }
 
 #[test]
@@ -761,6 +767,22 @@ fn the_default_greatsword_and_spear_are_the_numbers_of_the_weapon_table() {
     assert_eq!(t.weapons.greatsword.cooldown_secs, 1.0);
     assert_eq!(arc(WeaponKind::Spear), (2.2, 15.0));
     assert_eq!(t.weapons.spear.cooldown_secs, 0.6);
+}
+
+#[test]
+fn the_default_crossbow_is_the_numbers_of_the_weapon_table() {
+    let t = Tuning::default();
+    let crossbow = t.weapons.get(WeaponKind::Crossbow);
+    let Delivery::Projectile(shot) = crossbow.delivery else {
+        panic!("the crossbow shoots projectiles");
+    };
+
+    assert_eq!(crossbow.cooldown_secs, 0.9);
+    assert_eq!(
+        (shot.speed, shot.range, shot.radius, shot.pierce),
+        (18.0, 11.0, 0.15, 4)
+    );
+    assert!(crossbow.chest_weight > 0, "it comes out of chests");
 }
 
 #[test]
@@ -786,4 +808,5 @@ fn before_a_release_the_damage_is_the_normal_damage() {
     assert_eq!(t.weapons.get(WeaponKind::Bow).damage, 15);
     assert_eq!(t.weapons.get(WeaponKind::Greatsword).damage, 45);
     assert_eq!(t.weapons.get(WeaponKind::Spear).damage, 30);
+    assert_eq!(t.weapons.get(WeaponKind::Crossbow).damage, 20);
 }
