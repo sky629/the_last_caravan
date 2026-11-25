@@ -1,13 +1,15 @@
-//! 선분을 따라 움직이는 원이 무엇에 처음 닿는지 구합니다. 탄환의 명중 판정이 쓰는 연속 충돌입니다.
+//! 선분을 따라 움직이는 원이 무엇에 닿는지 구합니다. 탄환의 명중 판정이 쓰는 연속 충돌입니다.
 //!
 //! `collision`의 이동은 「이동한 뒤 밀어내기」라서 한 Tick에 움직이는 거리가 몸의 반지름보다 짧아야 합니다. 이 파일은 이동한 뒤의 자리가 아니라
 //! 이동하는 선분 전체를 검사하므로, 한 Tick에 얼마나 멀리 움직여도 얇은 몬스터나 벽을 건너뛸 수 없습니다. 그래서 속도에 상한이 없습니다.
 //!
-//! 모든 함수는 시작점 `from`과 이동량 `delta`를 받고, 처음 닿는 자리를 `from + delta * t`의 `t`(0.0에서 1.0)로 돌려줍니다.
+//! 모든 함수는 시작점 `from`과 이동량 `delta`를 받고, 닿는 자리를 `from + delta * t`의 `t`(0.0에서 1.0)로 돌려줍니다.
 //! 시작할 때 이미 닿아 있으면 0.0이고, 닿지 않으면 `None`입니다. 사칙연산과 제곱근만 씁니다.
 
+use crate::ids::{MonsterId, Team};
 use crate::math::{Rect, Vec2};
-use crate::world::TileMap;
+use crate::monster::Monster;
+use crate::world::{Ctx, TileMap};
 
 /// 중심이 `from`에서 `from + delta`로 움직이는 점이 중심이 `center`이고 반지름이 `radius`인 원에 처음 닿는 `t`입니다.
 /// 움직이는 원의 반지름이 `r`이면 `radius`에 `r`을 더해서 부릅니다.
@@ -100,6 +102,45 @@ pub(crate) fn first_blocked(
     });
     let edge = area_exit(from, delta, tiles.bounds().shrink(radius));
     walls.chain(edge).min_by(f32::total_cmp)
+}
+
+/// `monsters_along`의 작업용 배열입니다. 부를 때마다 비우고 다시 채우므로, 한 Tick 동안 하나를 계속 써도 됩니다.
+#[derive(Default)]
+pub(crate) struct Strikes {
+    /// 격자에서 찾은 후보 몬스터의 순서입니다.
+    nearby: Vec<usize>,
+    /// 닿는 `t`와 몬스터의 번호입니다. `t`가 작은 것이 앞이고, `t`가 같으면 번호가 작은 몬스터가 앞입니다.
+    pub(crate) found: Vec<(f32, MonsterId)>,
+}
+
+/// 반지름이 `radius`인 원이 `from`에서 `from + delta`로 움직일 때 닿는 `team`과 적대적인 몬스터를 닿는 순서대로 `out.found`에 채웁니다.
+/// 탄환은 앞에서부터 맞힐 수 있는 수만큼 맞힙니다. 중심이 몬스터의 반지름에 `radius`를 더한 거리 안으로 지나가면 닿은 것입니다.
+pub(crate) fn monsters_along(
+    team: Team,
+    radius: f32,
+    from: Vec2,
+    delta: Vec2,
+    monsters: &[Monster],
+    ctx: &Ctx,
+    out: &mut Strikes,
+) {
+    out.found.clear();
+    // 선분 위의 모든 점은 중점에서 길이의 절반 안에 있으므로, 그 둘레의 몬스터만 후보입니다.
+    let middle = from + delta * 0.5;
+    let search_radius = delta.length() * 0.5 + radius + ctx.t.monsters.largest_radius();
+    ctx.grid.query(middle, search_radius, &mut out.nearby);
+    for &index in &out.nearby {
+        let monster = &monsters[index];
+        if !team.is_hostile_to(monster.team) {
+            continue;
+        }
+        let reach = ctx.t.monsters.get(monster.kind).radius + radius;
+        if let Some(at) = circle_entry(from, delta, monster.pos, reach) {
+            out.found.push((at, monster.id));
+        }
+    }
+    out.found
+        .sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
 }
 
 #[cfg(test)]

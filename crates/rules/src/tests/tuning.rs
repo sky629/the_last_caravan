@@ -671,6 +671,22 @@ fn a_projectile_that_never_moves_or_never_ends_is_rejected() {
 }
 
 #[test]
+fn a_projectile_that_can_hit_no_monster_is_rejected() {
+    let t = with_bow(ProjectileTuning {
+        pierce: 0,
+        ..default_shot()
+    });
+    let why = t.validate().expect_err("a pierce of 0");
+    assert!(why.contains("Bow projectile pierce"), "{why}");
+
+    let t = with_bow(ProjectileTuning {
+        pierce: 1,
+        ..default_shot()
+    });
+    assert_eq!(t.validate(), Ok(()), "one monster is the least");
+}
+
+#[test]
 fn a_projectile_as_wide_as_the_player_is_rejected() {
     let player_radius = Tuning::default().player.radius;
     // 0.75배는 플레이어보다 가늘지만, 장애물의 모서리에 붙어 서서 쏘면 쏜 자리에서 멈추는 굵기입니다.
