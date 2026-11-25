@@ -14,6 +14,7 @@ use crate::kind::{MonsterKind, WeaponKind};
 use crate::loadout::Loadout;
 use crate::loot::Seed;
 use crate::math::Vec2;
+use crate::player::Presence;
 use crate::sim::Sim;
 use crate::stage::Stage;
 use crate::tuning::{Start, Tuning};
@@ -364,6 +365,51 @@ fn a_ready_player_who_leaves_does_not_cancel_the_countdown() {
     assert_eq!(camp_of(&s.sim).ready().collect::<Vec<_>>(), vec![b]);
     s.run_ticks(wait - 10);
     assert_eq!(s.sim.expedition_number(), 1);
+}
+
+#[test]
+fn a_ready_player_coming_back_does_not_cancel_but_an_unready_one_does() {
+    let mut s = Scenario::camp(|_| {});
+    let a = s.player_at(10.0, 10.0);
+    let b = s.player_at(11.0, 10.0);
+    let wait = countdown_ticks(&s);
+    s.tap_ready(a);
+    s.tap_ready(b);
+    s.sim.set_presence(b, Presence::Away);
+    s.run_ticks(10);
+    assert_eq!(
+        camp_of(&s.sim).countdown(),
+        Some(wait - 10),
+        "away is not a cancel"
+    );
+
+    s.sim.set_presence(b, Presence::Here);
+
+    assert_eq!(
+        camp_of(&s.sim).countdown(),
+        Some(wait - 10),
+        "b was ready before and still is"
+    );
+
+    let mut s = Scenario::camp(|_| {});
+    let a = s.player_at(10.0, 10.0);
+    let c = s.player_at(11.0, 10.0);
+    s.tap_ready(a);
+    s.sim.set_presence(c, Presence::Away);
+    s.run_ticks(5);
+    assert!(
+        camp_of(&s.sim).countdown().is_some(),
+        "the one who is here is ready and starts it"
+    );
+
+    s.sim.set_presence(c, Presence::Here);
+
+    assert_eq!(
+        camp_of(&s.sim).countdown(),
+        None,
+        "not before the next tick, the moment c is back and not ready"
+    );
+    assert!(camp_of(&s.sim).is_ready(a));
 }
 
 #[test]

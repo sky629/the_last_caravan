@@ -212,7 +212,7 @@ pub(crate) fn monsters_act(
 }
 
 /// 몬스터의 목표를 고릅니다. 몬스터는 목표를 기억하지 않고 Tick마다 새로 고릅니다.
-/// 이 한 함수가 「쫓다가 범위를 벗어나면 다시 마차로(밤) 또는 자리로(낮)」, 「쓰러지거나 사망한 플레이어는 대상이 아님」,
+/// 이 한 함수가 「쫓다가 범위를 벗어나면 다시 마차로(밤) 또는 자리로(낮)」, 「쓰러지거나 사망했거나 자리를 비운 플레이어는 대상이 아님」,
 /// 「파괴된 감시탑은 대상이 아님」을 정합니다. 명령(`Order`)이 어느 쪽 규칙을 쓸지 정합니다.
 fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
     match monster.order {
@@ -222,7 +222,7 @@ fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Go
     }
 }
 
-/// 자리를 지키는 몬스터의 목표입니다. 자리의 중심에서 `chase_range` 안에 있고 몬스터와 적대하는 살아 있는 플레이어 가운데
+/// 자리를 지키는 몬스터의 목표입니다. 자리의 중심에서 `chase_range` 안에 있고 몬스터와 적대하는 노릴 수 있는(`Player::is_targetable`) 플레이어 가운데
 /// 몬스터에게 가장 가까운 플레이어를 쫓고, 없으면 자리로 돌아갑니다. 범위를 몬스터가 아니라 자리에서 재므로,
 /// 플레이어가 자리에서 멀어지면 쫓아 나오던 몬스터가 곧바로 돌아서고 자리에서 계속 멀어지지 않습니다.
 fn guard_goal(world: &World, monster: &Monster, post: Tile, ctx: &Ctx) -> Goal {
@@ -230,7 +230,7 @@ fn guard_goal(world: &World, monster: &Monster, post: Tile, ctx: &Ctx) -> Goal {
     let nearest = world
         .players
         .values()
-        .filter(|player| player.is_alive() && monster.team.is_hostile_to(player.team))
+        .filter(|player| player.is_targetable() && monster.team.is_hostile_to(player.team))
         .filter(|player| post.center().distance(player.pos) <= chase_range)
         .min_by(|a, b| {
             let (da, db) = (monster.pos.distance(a.pos), monster.pos.distance(b.pos));
@@ -244,7 +244,7 @@ fn guard_goal(world: &World, monster: &Monster, post: Tile, ctx: &Ctx) -> Goal {
 
 /// 마차를 향하는 몬스터의 목표입니다.
 ///
-/// 후보는 추적 거리(`aggro_range`) 안에 있고 몬스터와 적대하는 살아 있는 플레이어와, 걸어서 추적 거리 안에 있는 서 있는 감시탑입니다.
+/// 후보는 추적 거리(`aggro_range`) 안에 있고 몬스터와 적대하는 노릴 수 있는(`Player::is_targetable`) 플레이어와, 걸어서 추적 거리 안에 있는 서 있는 감시탑입니다.
 /// 플레이어까지의 거리는 직선으로 재고, 감시탑까지의 거리는 감시탑 흐름장의 걸음 수로 잽니다.
 /// 그래서 벽 너머에 있는 감시탑을 쫓아서 돌아가지 않습니다.
 /// 후보 가운데 가장 가까운 대상을 고르고, 후보가 없으면 마차를 고릅니다.
@@ -259,7 +259,7 @@ fn raid_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal
         }
     };
     for player in world.players.values() {
-        if player.is_alive() && monster.team.is_hostile_to(player.team) {
+        if player.is_targetable() && monster.team.is_hostile_to(player.team) {
             let distance = (monster.pos.distance(player.pos) - t.player.radius).max(0.0);
             consider(Goal::Player(player.id), distance);
         }

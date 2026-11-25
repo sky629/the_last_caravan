@@ -35,9 +35,10 @@ pub struct Struck {
     pub amount: u32,
 }
 
-/// 「모두 준비」와 「모두 확인」에 필요한 플레이어입니다. 방에 있는 모든 플레이어입니다.
+/// 「모두 준비」, 「모두 확인」, 원정의 실패 판정에 필요한 플레이어입니다. 자리에 있는 플레이어입니다.
+/// 자리를 비운 사람은 방에 남아 있지만 나머지를 막지 않습니다.
 pub(crate) fn who_must_agree(world: &World) -> impl Iterator<Item = &Player> {
-    world.players.values()
+    world.players.values().filter(|player| player.is_present())
 }
 
 impl Camp {
@@ -70,9 +71,9 @@ impl Camp {
 
     /// Tick의 맨 앞에서 준비 키를 반영하고 카운트다운을 진행합니다. 원정을 시작할 때가 되었으면 참입니다.
     ///
-    /// 준비 키는 누를 때마다 준비를 켜고 끕니다. 모두가 준비했으면 카운트다운이 시작되거나 이어지고, 그렇지 않으면 사라집니다.
-    /// 그래서 누가 준비를 끄거나 준비하지 않은 사람이 들어오면 세던 시간이 처음으로 돌아가고, 준비한 사람이 나가도 이어집니다.
-    /// 방에 아무도 없으면 시작하지 않습니다.
+    /// 준비 키는 누를 때마다 준비를 켜고 끕니다. 자리에 있는 모두가 준비했으면 카운트다운이 시작되거나 이어지고, 그렇지 않으면 사라집니다.
+    /// 그래서 누가 준비를 끄거나 준비하지 않은 사람이 들어오거나 돌아오면 세던 시간이 처음으로 돌아가고, 준비한 사람이 나가도 이어집니다.
+    /// 자리에 있는 사람이 없으면 시작하지 않습니다.
     pub(crate) fn advance(&mut self, world: &World, inputs: &PlayerInputs, t: &Tuning) -> bool {
         for (id, input) in inputs {
             if input.toggle_ready && world.players.contains_key(id) && !self.ready.remove(id) {
@@ -87,8 +88,9 @@ impl Camp {
         self.countdown == Some(0)
     }
 
-    /// 방의 사람이 바뀐 직후(들어옴, 나감)에 부릅니다. 떠난 플레이어의 준비를 지우고,
-    /// 이제 모두가 준비한 상태가 아니면 카운트다운을 취소합니다. 준비한 사람이 나가는 것은 취소하지 않습니다.
+    /// 방의 사람이 바뀐 직후(들어옴, 나감, 자리를 비움, 돌아옴)에 부릅니다. 떠난 플레이어의 준비를 지우고,
+    /// 이제 자리에 있는 모두가 준비한 상태가 아니면 카운트다운을 취소합니다. 준비한 사람이 나가거나 자리를 비우는 것은 취소하지 않고,
+    /// 준비하지 않은 사람이 들어오거나 돌아오는 것은 취소합니다.
     pub(crate) fn settle(&mut self, world: &World) {
         self.ready.retain(|id| world.players.contains_key(id));
         if !self.everyone_ready(world) {
