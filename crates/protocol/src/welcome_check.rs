@@ -150,7 +150,8 @@ mod tests {
     fn normal() -> Welcome {
         let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
-        Welcome::from_sim(&sim, sim.player(first).unwrap())
+        let room = crate::RoomCode::parse("test").unwrap();
+        Welcome::from_sim(&sim, sim.player(first).unwrap(), &room)
     }
 
     fn rect(min_x: u16, min_y: u16, max_x: u16, max_y: u16) -> WireRect {

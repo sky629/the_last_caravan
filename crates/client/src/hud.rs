@@ -1,14 +1,14 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
 //! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸이 있고,
-//! 야영지에서는 그 아래에 준비 목록과 `R` 안내와 시작까지 남은 시간이 있고,
+//! 야영지에서는 그 아래에 방 코드와 `C` 안내, 준비 목록, `R` 안내, 시작까지 남은 시간이 있고,
 //! 아래 가운데에 F를 누르면 하게 되는 일의 안내와 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
-//! 오른쪽 아래에 방 코드가 있고, 화면 가운데에 원정의 결과나 접속 문제가 크게 나옵니다.
+//! 오른쪽 아래에 원정 중의 방 코드가 있고, 화면 가운데에 원정의 결과나 접속을 기다리는 안내가 크게 나옵니다.
 
 use bevy::prelude::*;
-use caravan_client_core::{BannerTone, Hud, Meter, Tone};
+use caravan_client_core::{BannerTone, Hud, Invite, Meter, Tone};
 
-use crate::net::{ClientSession, CurrentFrame};
+use crate::net::{ClientFlow, CurrentFrame, InviteFlash};
 
 const METER_WIDTH: f32 = 260.0;
 const ACTION_WIDTH: f32 = 380.0;
@@ -60,6 +60,8 @@ pub struct HudNodes {
     stash: Entity,
     carry: Entity,
     weapon: Entity,
+    /// 야영지의 방 코드와 `C` 안내입니다.
+    camp_room: Entity,
     /// 야영지의 준비 목록입니다. 한 줄씩 담는 상자이고, 줄은 방의 정원만큼 입장한 뒤에 만듭니다.
     camp_rows_box: Entity,
     camp_rows: Vec<Entity>,
@@ -167,7 +169,8 @@ pub fn setup(mut commands: Commands) {
     let stash = text_node(&mut commands, 22.0, TEXT);
     let carry = text_node(&mut commands, 22.0, TEXT);
     let weapon = text_node(&mut commands, 22.0, TEXT);
-    // 야영지에서는 이 아래에 준비 목록이 나옵니다.
+    // 야영지에서는 이 아래에 방 코드와 준비 목록이 나옵니다.
+    let camp_room = text_node(&mut commands, 20.0, TEXT);
     let camp_rows_box = commands
         .spawn(column(Node {
             align_items: AlignItems::FlexEnd,
@@ -193,6 +196,7 @@ pub fn setup(mut commands: Commands) {
             stash,
             carry,
             weapon,
+            camp_room,
             camp_rows_box,
             camp_hint,
             camp_countdown,
@@ -235,7 +239,7 @@ pub fn setup(mut commands: Commands) {
         })
         .add_child(room);
 
-    // 가운데: 원정의 결과, 입장 거절, 접속이 끊김.
+    // 가운데: 원정의 결과, 접속과 첫 스냅샷을 기다리는 안내.
     let banner_title = text_node(&mut commands, 46.0, TEXT);
     let banner_detail = text_node(&mut commands, 22.0, TEXT);
     commands
@@ -260,6 +264,7 @@ pub fn setup(mut commands: Commands) {
         stash,
         carry,
         weapon,
+        camp_room,
         camp_rows_box,
         camp_rows: Vec::new(),
         camp_hint,
@@ -281,15 +286,11 @@ pub fn setup(mut commands: Commands) {
 
 /// 입장한 직후 한 번, 동료의 막대와 야영지의 준비 목록의 줄을 만듭니다.
 /// 수는 `Welcome`이 알려 준 방의 정원에서 정합니다. `Session`이 입장할 때 정원의 상한을 확인했으므로 그대로 믿습니다.
-pub fn build_roster(
-    mut commands: Commands,
-    session: Res<ClientSession>,
-    mut nodes: ResMut<HudNodes>,
-) {
+pub fn build_roster(mut commands: Commands, flow: Res<ClientFlow>, mut nodes: ResMut<HudNodes>) {
     if nodes.roster_built {
         return;
     }
-    let Some(joined) = session.0.joined() else {
+    let Some(joined) = flow.joined() else {
         return;
     };
     // 내 막대는 따로 있으므로 동료 막대는 정원보다 하나 적습니다.
@@ -359,14 +360,24 @@ fn show_meter(
 
 /// HUD의 내용을 이번 프레임의 값으로 맞춥니다.
 pub fn update(
-    session: Res<ClientSession>,
+    flow: Res<ClientFlow>,
     frame: Res<CurrentFrame>,
+    flash: Res<InviteFlash>,
+    time: Res<Time<Real>>,
     nodes: Res<HudNodes>,
     mut texts: Query<(&mut Text, &mut TextColor)>,
     mut slots: Query<(&MeterSlot, &mut Node), Without<MeterFill>>,
     mut fills: Query<(&mut Node, &mut BackgroundColor), With<MeterFill>>,
 ) {
-    let hud = Hud::of(&session.0, frame.0.as_ref());
+    // 시작 화면에는 방에 관한 값이 없으므로 모든 칸을 비웁니다.
+    let invite = Invite {
+        kind: flow.0.invite_kind(),
+        copied: flash.copied(time.elapsed_secs_f64()),
+    };
+    let hud = match flow.0.session() {
+        Some(session) => Hud::of(session, frame.0.as_ref(), invite),
+        None => Hud::none(),
+    };
 
     set_text(&mut texts, nodes.connection, &hud.connection);
     set_text(&mut texts, nodes.room, hud.room.as_deref().unwrap_or(""));
@@ -385,6 +396,11 @@ pub fn update(
         hud.weapon.as_deref().unwrap_or(""),
     );
     let camp = hud.camp.as_ref();
+    set_text(
+        &mut texts,
+        nodes.camp_room,
+        camp.map_or("", |panel| panel.room_line.as_str()),
+    );
     for (index, row) in nodes.camp_rows.iter().enumerate() {
         let line = camp.and_then(|panel| panel.rows.get(index));
         set_text(&mut texts, *row, line.map_or("", String::as_str));

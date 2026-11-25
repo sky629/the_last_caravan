@@ -66,7 +66,7 @@ pub fn sync_chests(
                 ChestView,
             ))
             .id();
-        loot.chests.insert(chest.id, entity);
+        loot.chests.insert(&mut commands, chest.id, entity);
     }
     loot.chests.despawn_unseen(&mut commands);
 }
@@ -119,7 +119,7 @@ pub fn sync_racks(
                 ))
                 .add_child(label)
                 .id();
-            loot.racks.insert(id, entity);
+            loot.racks.insert(&mut commands, id, entity);
         }
     }
     loot.racks.despawn_unseen(&mut commands);
@@ -191,7 +191,7 @@ pub fn sync_ground_weapons(
                     ))
                     .add_children(&[disc, label])
                     .id();
-                loot.weapons.insert(weapon.id, entity);
+                loot.weapons.insert(&mut commands, weapon.id, entity);
             }
         }
     }
@@ -201,7 +201,7 @@ pub fn sync_ground_weapons(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::joined_session;
+    use crate::testing::joined_flow;
     use crate::view::{self, Scene};
     use caravan_client_core::Frame;
     use caravan_protocol::{WireChest, WireGroundWeapon, WirePhase, WirePos, WireTile, WireWagon};
@@ -212,7 +212,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<ColorMaterial>()
-            .insert_resource(joined_session())
+            .insert_resource(joined_flow())
             .init_resource::<CurrentFrame>()
             .init_resource::<LootRegistry>()
             .add_systems(Startup, crate::palette::setup_palette)

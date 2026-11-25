@@ -7,6 +7,11 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 
+/// 방을 그리려고 만든 개체의 뿌리입니다. 방을 떠나면 이 표시가 있는 개체를 모두 지웁니다(`view::clear_world`).
+/// 번호로 추적하는 개체는 `Registry::insert`가 표시하고, 지형은 `view`가 표시합니다. 자식은 뿌리와 함께 지워집니다.
+#[derive(Component)]
+pub struct RoomEntity;
+
 #[derive(Default)]
 pub struct Registry {
     entities: HashMap<u32, Tracked>,
@@ -30,7 +35,9 @@ impl Registry {
         Some(tracked.entity)
     }
 
-    pub fn insert(&mut self, id: u32, entity: Entity) {
+    /// 새로 만든 개체를 번호에 연결하고, 방을 떠날 때 지워지도록 표시합니다.
+    pub fn insert(&mut self, commands: &mut Commands, id: u32, entity: Entity) {
+        commands.entity(entity).insert(RoomEntity);
         self.entities.insert(
             id,
             Tracked {
@@ -52,7 +59,7 @@ impl Registry {
         });
     }
 
-    #[cfg(test)]
+    /// 번호의 개체를 찾기만 합니다. `find`와 달리 이번 프레임에 보였다고 표시하지 않습니다.
     pub fn entity_of(&self, id: u32) -> Option<Entity> {
         self.entities.get(&id).map(|tracked| tracked.entity)
     }

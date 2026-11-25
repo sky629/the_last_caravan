@@ -3,6 +3,8 @@
 //! 서버의 개체 번호에서 Bevy 개체로 가는 표(`Registry`)를 두고, 새 번호만 만들고 사라진 번호만 지웁니다.
 //! 프레임마다 모든 개체를 다시 만들지 않으므로 몬스터가 수백 마리여도 매 프레임 하는 일은 위치와 막대를 맞추는 것뿐입니다.
 
+use std::collections::HashSet;
+
 use bevy::prelude::*;
 use caravan_client_core::{MonsterView, PlayerView, bar_fraction};
 use caravan_protocol::{WireLife, WireMonsterKind};
@@ -10,7 +12,7 @@ use caravan_rules::Vec2 as Ground;
 
 use crate::config;
 use crate::convert;
-use crate::net::CurrentFrame;
+use crate::net::{ClientFlow, CurrentFrame};
 use crate::palette::Palette;
 use crate::parts::{self, PartQuery, Parts};
 use crate::registry::Registry;
@@ -20,6 +22,12 @@ use crate::view::{Footprint, Scene};
 pub struct Spawned {
     players: Registry,
     monsters: Registry,
+}
+
+/// 플레이어 캐릭터 위에 떠 있는 이름입니다. 캐릭터의 뿌리(그림자)의 자식이고, `player`는 이름의 주인입니다.
+#[derive(Component)]
+pub struct NameLabel {
+    player: u32,
 }
 
 /// 이번 프레임에 캐릭터 하나가 어떻게 보이는지입니다. 플레이어와 몬스터가 같은 도형을 쓰므로 이 값 하나로 둘을 그립니다.
@@ -63,6 +71,11 @@ impl Look {
 
     fn bar_y(&self) -> f32 {
         self.body_size.y + config::BAR_GAP
+    }
+
+    /// 이름이 떠 있는 높이입니다. 몸통 위의 HP 막대 자리에서 한 칸 더 위이고, 막대가 숨겨져도(쓰러지거나 죽었을 때) 몸통과의 간격은 그대로입니다.
+    fn name_y(&self) -> f32 {
+        self.bar_y() + config::BAR_SIZE.y + config::NAME_GAP
     }
 }
 
@@ -207,7 +220,7 @@ pub fn sync_characters(
             }
             None => {
                 let entity = spawn_character(&mut commands, &palette, &player_kit, &look);
-                spawned.players.insert(player.id, entity);
+                spawned.players.insert(&mut commands, player.id, entity);
             }
         }
     }
@@ -236,7 +249,7 @@ pub fn sync_characters(
                     bar_fill: &palette.bar_monster,
                 };
                 let entity = spawn_character(&mut commands, &palette, &kit, &look);
-                spawned.monsters.insert(monster.id, entity);
+                spawned.monsters.insert(&mut commands, monster.id, entity);
             }
         }
     }
@@ -245,12 +258,67 @@ pub fn sync_characters(
     spawned.monsters.despawn_unseen(&mut commands);
 }
 
+/// 플레이어 캐릭터 위의 이름을 명단에 맞춥니다. 명단에서 이름을 알게 된 플레이어에게만 이름을 달고,
+/// 이미 달린 이름은 위치와 글자를 이번 프레임에 맞춥니다. 캐릭터가 사라지면 자식인 이름도 함께 지워집니다.
+pub fn sync_name_labels(
+    flow: Res<ClientFlow>,
+    frame: Res<CurrentFrame>,
+    scene: Res<Scene>,
+    palette: Res<Palette>,
+    spawned: Res<Spawned>,
+    mut commands: Commands,
+    mut labels: Query<(&NameLabel, &mut Text2d, &mut Transform)>,
+) {
+    let (Some(joined), Some(frame)) = (flow.joined(), &frame.0) else {
+        return;
+    };
+    let mut labelled = HashSet::new();
+    for (label, mut text, mut transform) in &mut labels {
+        labelled.insert(label.player);
+        let Some(player) = frame.player(label.player) else {
+            continue;
+        };
+        let Some(member) = joined
+            .roster
+            .iter()
+            .find(|member| member.id == label.player)
+        else {
+            continue;
+        };
+        if text.0 != member.name {
+            text.0.clone_from(&member.name);
+        }
+        let look = player_look(player, &scene, &palette);
+        transform.translation.y = look.name_y();
+    }
+    for player in &frame.players {
+        if labelled.contains(&player.id) {
+            continue;
+        }
+        let Some(member) = joined.roster.iter().find(|member| member.id == player.id) else {
+            continue;
+        };
+        let Some(root) = spawned.players.entity_of(player.id) else {
+            continue;
+        };
+        let look = player_look(player, &scene, &palette);
+        commands.entity(root).with_child((
+            NameLabel { player: player.id },
+            Text2d::new(member.name.clone()),
+            TextFont {
+                font_size: FontSize::Px(config::NAME_SIZE),
+                ..default()
+            },
+            TextColor(config::NAME),
+            Transform::from_xyz(0.0, look.name_y(), config::NAME_Z_LIFT),
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
-    use crate::testing::{YOU, joined_session};
+    use crate::testing::{YOU, deliver_roster, joined_flow};
     use crate::view;
     use caravan_client_core::Frame;
     use caravan_protocol::{WireLoadout, WireMonsterKind, WirePhase, WireWagon, WireWeaponKind};
@@ -262,7 +330,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<ColorMaterial>()
-            .insert_resource(joined_session())
+            .insert_resource(joined_flow())
             .init_resource::<CurrentFrame>()
             .init_resource::<Spawned>()
             .add_systems(Startup, crate::palette::setup_palette)
@@ -271,6 +339,7 @@ mod tests {
                 (
                     view::spawn_world.run_if(not(resource_exists::<Scene>)),
                     sync_characters.run_if(resource_exists::<Scene>),
+                    sync_name_labels.run_if(resource_exists::<Scene>),
                 )
                     .chain(),
             );
@@ -398,6 +467,123 @@ mod tests {
             "me and monster 2 stay"
         );
         assert_eq!(monster_entity(&app, 2), kept);
+    }
+
+    /// 이름표(`NameLabel`)가 달린 글자와 그 글자가 달린 부모 개체입니다. 글자 순서대로 돌려줍니다.
+    fn name_labels(app: &mut App) -> Vec<(String, Entity, f32)> {
+        let world = app.world_mut();
+        let mut query = world.query::<(&NameLabel, &Text2d, &ChildOf, &Transform)>();
+        let mut labels: Vec<_> = query
+            .iter(world)
+            .map(|(_, text, parent, transform)| {
+                (text.0.clone(), parent.parent(), transform.translation.y)
+            })
+            .collect();
+        labels.sort_by(|a, b| a.0.cmp(&b.0));
+        labels
+    }
+
+    fn player_entity(app: &App, id: u32) -> Entity {
+        app.world()
+            .resource::<Spawned>()
+            .players
+            .entity_of(id)
+            .unwrap()
+    }
+
+    #[test]
+    fn each_player_the_roster_names_wears_the_name_and_monsters_wear_none() {
+        let mut app = app();
+        deliver_roster(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG"), (2, "MIRO")],
+        );
+        let players = vec![
+            player(YOU, 12.0, 9.0, alive(100)),
+            player(2, 14.0, 9.0, alive(100)),
+        ];
+
+        show(&mut app, frame(players, vec![monster(1, 3.0, 3.0, 60)]));
+
+        let labels = name_labels(&mut app);
+        let texts: Vec<_> = labels.iter().map(|label| label.0.as_str()).collect();
+        assert_eq!(texts, ["KANG", "MIRO"]);
+        assert_eq!(labels[0].1, player_entity(&app, YOU), "hangs on its player");
+        assert_eq!(labels[1].1, player_entity(&app, 2));
+    }
+
+    #[test]
+    fn a_name_is_added_when_the_roster_arrives_and_is_not_made_twice() {
+        let mut app = app();
+        let players = vec![player(YOU, 12.0, 9.0, alive(100))];
+
+        show(&mut app, frame(players.clone(), Vec::new()));
+        assert!(name_labels(&mut app).is_empty(), "no name is known yet");
+
+        deliver_roster(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG")],
+        );
+        show(&mut app, frame(players.clone(), Vec::new()));
+        show(&mut app, frame(players, Vec::new()));
+        assert_eq!(name_labels(&mut app).len(), 1);
+        assert_eq!(name_labels(&mut app)[0].0, "KANG");
+    }
+
+    #[test]
+    fn a_name_follows_the_roster_and_leaves_with_its_player() {
+        let mut app = app();
+        deliver_roster(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG"), (2, "MIRO")],
+        );
+        let both = vec![
+            player(YOU, 12.0, 9.0, alive(100)),
+            player(2, 14.0, 9.0, alive(100)),
+        ];
+        show(&mut app, frame(both.clone(), Vec::new()));
+
+        deliver_roster(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG"), (2, "MIRA")],
+        );
+        show(&mut app, frame(both.clone(), Vec::new()));
+        let texts: Vec<_> = name_labels(&mut app).into_iter().map(|l| l.0).collect();
+        assert_eq!(texts, ["KANG", "MIRA"], "a changed name is rewritten");
+
+        show(&mut app, frame(vec![both[0].clone()], Vec::new()));
+        app.update();
+        let texts: Vec<_> = name_labels(&mut app).into_iter().map(|l| l.0).collect();
+        assert_eq!(texts, ["KANG"], "the name of the player who left is gone");
+    }
+
+    #[test]
+    fn the_name_stays_just_above_the_body_when_the_player_goes_down() {
+        let mut app = app();
+        deliver_roster(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG")],
+        );
+        let height = |body: f32| body + config::BAR_GAP + config::BAR_SIZE.y + config::NAME_GAP;
+
+        show(
+            &mut app,
+            frame(vec![player(YOU, 12.0, 9.0, alive(100))], Vec::new()),
+        );
+        assert_eq!(name_labels(&mut app)[0].2, height(config::PLAYER_BODY.y));
+
+        let downed = WireLife::Downed {
+            bleed_secs_left: 20.0,
+            revive_progress: None,
+        };
+        show(
+            &mut app,
+            frame(vec![player(YOU, 12.0, 9.0, downed)], Vec::new()),
+        );
+        assert_eq!(
+            name_labels(&mut app)[0].2,
+            height(config::DOWNED_BODY_HEIGHT)
+        );
     }
 
     #[test]

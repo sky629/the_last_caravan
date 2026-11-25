@@ -10,7 +10,13 @@ use caravan_protocol::{
     PROTOCOL_VERSION, ServerLimits, ServerMsg, Snapshot, WirePlayer, WireVec2, loopback,
 };
 use caravan_rules::{Seed, Start, Tuning, Vec2};
-use caravan_server::{GameServer, Notice, RoomSeeds};
+use caravan_server::{GameServer, Notice, RoomSeeds, ServerSecret};
+
+/// 새 방의 코드를 정하는 고정된 비밀 값입니다. 서버를 다시 만들어도 같은 순서로 같은 코드가 나옵니다.
+pub const SECRET: ServerSecret = ServerSecret { k0: 1, k1: 2 };
+
+/// 시험용 이름입니다.
+pub const NAME: &str = "TESTER";
 
 pub struct Rig {
     pub server: GameServer,
@@ -43,7 +49,7 @@ pub fn rig_with_seeds(tuning: Tuning, limits: ServerLimits, seeds: RoomSeeds) ->
     let now = Instant::now();
     let period = Duration::from_secs(1) / tuning.tick_hz;
     Rig {
-        server: GameServer::new(Box::new(transport), tuning, limits, seeds, now)
+        server: GameServer::new(Box::new(transport), tuning, limits, seeds, SECRET, now)
             .expect("the test tuning is valid"),
         connector,
         now,
@@ -67,18 +73,25 @@ impl Rig {
         notices
     }
 
-    /// 접속하고 `Join`을 보낸 뒤, 서버가 보낸 첫 답을 돌려줍니다.
+    /// 접속하고 이름 `NAME`으로 `Join`을 보낸 뒤, 서버가 보낸 첫 답을 돌려줍니다.
     pub fn join(&mut self, room: &str) -> (LoopbackClient, ServerMsg) {
-        self.join_with_version(room, PROTOCOL_VERSION)
+        self.join_as(Some(room), NAME)
+    }
+
+    /// `join`과 같지만 이름과 방 코드를 고릅니다. 방 코드가 없으면 서버가 새 방을 만듭니다.
+    pub fn join_as(&mut self, room: Option<&str>, name: &str) -> (LoopbackClient, ServerMsg) {
+        self.join_msg(&join_msg(PROTOCOL_VERSION, room, name))
     }
 
     pub fn join_with_version(&mut self, room: &str, version: u32) -> (LoopbackClient, ServerMsg) {
+        self.join_msg(&join_msg(version, Some(room), NAME))
+    }
+
+    /// 접속하고 `msg`를 보낸 뒤, 서버가 보낸 첫 답을 돌려줍니다.
+    pub fn join_msg(&mut self, msg: &ClientMsg) -> (LoopbackClient, ServerMsg) {
         let mut client = self.connector.connect();
         assert!(matches!(client.poll(), Some(ClientEvent::Connected)));
-        client.send(&ClientMsg::Join {
-            version,
-            room: room.to_string(),
-        });
+        client.send(msg);
         self.pump();
         match client.poll() {
             Some(ClientEvent::Message(answer)) => (client, answer),
@@ -90,10 +103,7 @@ impl Rig {
     pub fn join_noticed(&mut self, room: &str) -> (LoopbackClient, Vec<Notice>) {
         let mut client = self.connector.connect();
         assert!(matches!(client.poll(), Some(ClientEvent::Connected)));
-        client.send(&ClientMsg::Join {
-            version: PROTOCOL_VERSION,
-            room: room.to_string(),
-        });
+        client.send(&join_msg(PROTOCOL_VERSION, Some(room), NAME));
         let notices = self.pump();
         assert!(matches!(
             client.poll(),
@@ -107,6 +117,15 @@ impl Rig {
             (client, ServerMsg::Welcome(welcome)) => (client, welcome.you),
             (_, other) => panic!("expected Welcome, got {other:?}"),
         }
+    }
+}
+
+/// 입장 요청입니다.
+pub fn join_msg(version: u32, room: Option<&str>, name: &str) -> ClientMsg {
+    ClientMsg::Join {
+        version,
+        room: room.map(str::to_string),
+        name: name.to_string(),
     }
 }
 

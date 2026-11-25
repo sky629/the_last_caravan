@@ -70,6 +70,14 @@ pub const BAR_GAP: f32 = 7.0;
 /// 막대의 바깥 테두리 두께입니다.
 pub const BAR_BORDER: f32 = 1.0;
 
+/// 캐릭터 위의 이름입니다. 글자는 HP 막대 위에 `NAME_GAP`만큼 떠 있고, 같은 개체의 다른 부품보다 앞에 그립니다.
+pub const NAME_SIZE: f32 = 14.0;
+pub const NAME_GAP: f32 = 9.0;
+pub const NAME_Z_LIFT: f32 = 2.0;
+pub const NAME: Color = Color::srgb(0.96, 0.96, 0.96);
+/// 링크나 방 코드를 복사한 뒤에 야영지의 안내가 복사했다는 알림으로 바뀌어 있는 시간(초)입니다.
+pub const INVITE_FLASH_SECS: f64 = 2.0;
+
 // 효과. 시간은 서버 Tick으로 셉니다.
 pub const SWING_TICKS: f64 = 4.0;
 pub const SHOT_TICKS: f64 = 3.0;

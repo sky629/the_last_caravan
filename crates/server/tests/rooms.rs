@@ -6,14 +6,14 @@ mod common;
 use std::time::Duration;
 
 use caravan_protocol::{
-    ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
+    ClientEvent, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason, RoomCode,
     ServerLimits, ServerMsg, Welcome, WireLife, WireNightStep, WirePhase, check_welcome, loopback,
 };
 use caravan_rules::{PlayerId, Seed, Sim, Tuning};
 use caravan_server::{GameServer, Notice, RoomSeeds, ServerError, ServerStats};
 use common::{
-    assert_near, drain, input, input_with, last_snapshot, player, player_ids, position,
-    press_ready, rig, rig_in_expedition, rig_with, rig_with_limits, snapshots, ticks,
+    NAME, SECRET, assert_near, drain, input, input_with, join_msg, last_snapshot, player,
+    player_ids, position, press_ready, rig, rig_in_expedition, rig_with_limits, snapshots, ticks,
 };
 
 #[test]
@@ -68,11 +68,17 @@ fn room_codes_ignore_case() {
 }
 
 #[test]
-fn a_full_room_rejects_with_its_capacity_and_closes_the_link() {
-    let mut rig = rig_with(Tuning {
-        max_players: 2,
-        ..Tuning::default()
-    });
+fn a_full_room_rejects_with_its_capacity_and_leaves_the_closing_to_the_client() {
+    let mut rig = rig_with_limits(
+        Tuning {
+            max_players: 2,
+            ..Tuning::default()
+        },
+        ServerLimits {
+            join_deadline: Duration::from_secs(5),
+            ..ServerLimits::default()
+        },
+    );
     let _a = rig.join_ok("test");
     let _b = rig.join_ok("test");
 
@@ -83,10 +89,28 @@ fn a_full_room_rejects_with_its_capacity_and_closes_the_link() {
             reason: RejectReason::RoomFull { capacity: 2 }
         }
     );
+    assert!(
+        drain(&mut c).is_empty(),
+        "the link stays open so that the reason is read before the close"
+    );
+
+    c.send(&input(1));
+    rig.run_ticks(1);
+    assert!(
+        drain(&mut c).is_empty(),
+        "a rejected link is not in the room, so it gets no snapshot"
+    );
+
+    rig.now += Duration::from_secs(5);
+    let notices = rig.pump();
     assert!(matches!(
         drain(&mut c)[..],
         [ClientEvent::Disconnected { .. }]
     ));
+    assert!(
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("after its Join was rejected")),
+        "a client that never closes is closed by the server: {notices:?}"
+    );
 }
 
 #[test]
@@ -99,10 +123,7 @@ fn a_bad_room_code_or_another_protocol_version_is_rejected() {
             reason: RejectReason::BadRoomCode
         }
     );
-    assert!(matches!(
-        drain(&mut bad_code)[..],
-        [ClientEvent::Disconnected { .. }]
-    ));
+    assert!(drain(&mut bad_code).is_empty());
 
     let (_old_build, answer) = rig.join_with_version("test", PROTOCOL_VERSION + 1);
     assert_eq!(
@@ -121,10 +142,7 @@ fn input_before_join_closes_the_link_without_a_welcome() {
     let mut client = rig.connector.connect();
     client.poll();
     client.send(&input(1));
-    client.send(&ClientMsg::Join {
-        version: PROTOCOL_VERSION,
-        room: "test".to_string(),
-    });
+    client.send(&join_msg(PROTOCOL_VERSION, Some("test"), NAME));
     let notices = rig.pump();
     assert!(
         matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("before Join")),
@@ -167,10 +185,7 @@ fn pump_reports_rooms_created_and_removed_with_the_joins_and_leaves() {
     let mut second = rig.connector.connect();
     for client in [&mut first, &mut second] {
         client.poll();
-        client.send(&ClientMsg::Join {
-            version: PROTOCOL_VERSION,
-            room: "test".to_string(),
-        });
+        client.send(&join_msg(PROTOCOL_VERSION, Some("test"), NAME));
     }
     let room = caravan_protocol::RoomCode::parse("test").unwrap();
     assert_eq!(
@@ -314,10 +329,11 @@ fn a_flood_of_events_is_spread_over_pumps_and_the_due_tick_still_runs() {
         .map(|i| {
             let mut client = rig.connector.connect();
             client.poll();
-            client.send(&ClientMsg::Join {
-                version: PROTOCOL_VERSION,
-                room: format!("flood-{i}"),
-            });
+            client.send(&join_msg(
+                PROTOCOL_VERSION,
+                Some(&format!("flood-{i}")),
+                NAME,
+            ));
             client
         })
         .collect();
@@ -539,11 +555,10 @@ fn a_second_join_on_one_link_closes_it_and_removes_its_player() {
     let mut rig = rig();
     let (mut a, _) = rig.join_ok("test");
     let (mut b, _) = rig.join_ok("test");
+    // 입장하면서 받은 명단은 이 시험이 보려는 것이 아니므로 비웁니다.
+    drain(&mut a);
 
-    a.send(&ClientMsg::Join {
-        version: PROTOCOL_VERSION,
-        room: "elsewhere".to_string(),
-    });
+    a.send(&join_msg(PROTOCOL_VERSION, Some("elsewhere"), NAME));
     let notices = rig.pump();
     assert!(
         matches!(drain(&mut a)[..], [ClientEvent::Disconnected { .. }]),
@@ -631,6 +646,7 @@ fn try_start(tuning: Tuning, limits: ServerLimits) -> Result<(), ServerError> {
         tuning,
         limits,
         RoomSeeds::Fixed(Seed(1)),
+        SECRET,
         std::time::Instant::now(),
     )
     .map(|_| ())
@@ -705,7 +721,11 @@ fn client_verdict(tuning: &Tuning) -> Result<(), String> {
     let mut sim = Sim::new(tuning.clone(), Seed(1));
     let first = sim.add_player().expect("an empty room admits a player");
     let me = sim.player(first).expect("the player was just added");
-    check_welcome(&Welcome::from_sim(&sim, me))
+    check_welcome(&Welcome::from_sim(
+        &sim,
+        me,
+        &RoomCode::parse("test").expect("a valid room code"),
+    ))
 }
 
 #[test]
@@ -766,6 +786,7 @@ fn a_server_refuses_to_start_with_numbers_that_break_the_rules() {
             tuning,
             ServerLimits::default(),
             RoomSeeds::Fixed(Seed(1)),
+            SECRET,
             std::time::Instant::now(),
         )
         .map(|_| ())

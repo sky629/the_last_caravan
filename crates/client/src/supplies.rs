@@ -85,7 +85,7 @@ pub fn sync_nodes(
                     ))
                     .add_children(&view_bar.entities())
                     .id();
-                supplies.nodes.insert(node.id, entity);
+                supplies.nodes.insert(&mut commands, node.id, entity);
             }
         }
     }
@@ -115,7 +115,7 @@ pub fn sync_piles(
                     .with_scale(config::PILE_RADII.extend(1.0)),
             ))
             .id();
-        supplies.piles.insert(pile.id, entity);
+        supplies.piles.insert(&mut commands, pile.id, entity);
     }
     supplies.piles.despawn_unseen(&mut commands);
 }
@@ -123,7 +123,7 @@ pub fn sync_piles(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::joined_session;
+    use crate::testing::joined_flow;
     use crate::view;
     use caravan_client_core::Frame;
     use caravan_protocol::{WirePhase, WirePile, WirePos, WireWagon};
@@ -134,7 +134,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<ColorMaterial>()
-            .insert_resource(joined_session())
+            .insert_resource(joined_flow())
             .init_resource::<CurrentFrame>()
             .init_resource::<SupplyRegistry>()
             .add_systems(Startup, crate::palette::setup_palette)

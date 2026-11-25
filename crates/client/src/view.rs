@@ -12,10 +12,17 @@ use caravan_protocol::{
 };
 use caravan_rules::{Team, Vec2 as Ground};
 
+use crate::camera::{FollowedSetting, WagonMarkerNode};
+use crate::camp::StrikeRegistry;
+use crate::characters::Spawned;
 use crate::config;
 use crate::convert;
-use crate::net::ClientSession;
+use crate::loot::LootRegistry;
+use crate::net::{ClientFlow, CurrentFrame};
 use crate::palette::Palette;
+use crate::registry::RoomEntity;
+use crate::supplies::SupplyRegistry;
+use crate::towers::TowerRegistry;
 
 /// 입장한 뒤에 만든 세계에서 캐릭터를 그릴 때 필요한 값입니다. 세계를 만들면 한 번 들어갑니다.
 #[derive(Resource)]
@@ -84,6 +91,7 @@ fn spawn_block(
             Mesh2d(mesh.clone()),
             MeshMaterial2d(material.clone()),
             Transform::from_translation(convert::placement(center)),
+            RoomEntity,
         ))
         .id()
 }
@@ -130,11 +138,11 @@ fn ground_mesh(cols: u32, rows: u32) -> Mesh {
 /// 캐릭터가 긴 벽의 한쪽 끝 옆에 서도 벽의 앞과 뒤가 맞게 가려집니다.
 pub fn spawn_world(
     mut commands: Commands,
-    session: Res<ClientSession>,
+    flow: Res<ClientFlow>,
     palette: Res<Palette>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let Some(joined) = session.0.joined() else {
+    let Some(joined) = flow.joined() else {
         return;
     };
     let welcome = &joined.welcome;
@@ -145,6 +153,7 @@ pub fn spawn_world(
         Mesh2d(meshes.add(ground_mesh(map_size.x as u32, map_size.y as u32))),
         MeshMaterial2d(palette.ground.clone()),
         Transform::from_xyz(0.0, 0.0, config::GROUND_Z),
+        RoomEntity,
     ));
     for obstacle in &world.obstacles {
         for center in core::tile_centers(obstacle.to_rect()) {
@@ -182,10 +191,217 @@ pub fn spawn_world(
     });
 }
 
+/// 방을 떠났을 때 방의 세계를 모두 지웁니다. 지형과 번호로 추적하는 개체를 지우고, 추적하는 표를 비우고, 그릴 모습과 `Scene`을 없애고,
+/// 화면 가장자리의 마차 표시를 숨기고, 카메라가 따라가던 세계의 모습을 잊습니다. 다음 방에 들어가면 `spawn_world`가 처음부터 다시 만듭니다.
+pub fn clear_world(
+    mut commands: Commands,
+    entities: Query<Entity, With<RoomEntity>>,
+    mut wagon_marker: Query<&mut Visibility, With<WagonMarkerNode>>,
+) {
+    for mut visibility in &mut wagon_marker {
+        *visibility = Visibility::Hidden;
+    }
+    commands.insert_resource(FollowedSetting::default());
+    for entity in &entities {
+        commands.entity(entity).despawn();
+    }
+    commands.remove_resource::<Scene>();
+    commands.insert_resource(CurrentFrame::default());
+    commands.insert_resource(Spawned::default());
+    commands.insert_resource(TowerRegistry::default());
+    commands.insert_resource(SupplyRegistry::default());
+    commands.insert_resource(LootRegistry::default());
+    commands.insert_resource(StrikeRegistry::default());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camp;
+    use crate::characters;
+    use crate::loot;
+    use crate::supplies;
+    use crate::testing::{YOU, joined_flow};
+    use crate::towers;
     use bevy::mesh::VertexAttributeValues;
+    use caravan_client_core::{Frame, MonsterView, PlayerView};
+    use caravan_protocol::{
+        WireChest, WireGroundWeapon, WireLife, WireLoadout, WireMonsterKind, WireNode, WirePhase,
+        WirePile, WirePos, WireStruck, WireTile, WireTower, WireTowerState, WireWagon,
+        WireWeaponKind,
+    };
+
+    /// 모든 종류의 개체가 한 장면에 있는 야영지의 모습입니다.
+    /// 플레이어 둘, 허수아비 하나(맞은 기록이 있음), 감시탑, 채집 지점, 자원 더미, 상자, 바닥의 무기가 있고, 야영지이므로 진열대도 그려집니다.
+    fn crowded_frame() -> Frame {
+        let player = |id| PlayerView {
+            id,
+            team: caravan_rules::Team::CARAVAN,
+            pos: Ground::new(10.0 + id as f32, 9.0),
+            facing: Ground::new(1.0, 0.0),
+            life: WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 0,
+                stamina: 100,
+                interaction: None,
+                build_refusal: None,
+            },
+            last_attack: None,
+            loadout: WireLoadout {
+                held: WireWeaponKind::Sword,
+                spare: None,
+            },
+            prompt: None,
+        };
+        Frame {
+            tick: 20.0,
+            expedition: 0,
+            phase: WirePhase::Camp {
+                ready: vec![],
+                starting_in: None,
+                struck: vec![WireStruck {
+                    monster: 7,
+                    tick: 19,
+                    amount: 40,
+                }],
+            },
+            wagon: WireWagon {
+                hp: 500,
+                max_hp: 500,
+            },
+            stash: 0,
+            towers: vec![WireTower {
+                id: 1,
+                tile: WireTile { x: 15, y: 11 },
+                max_hp: 300,
+                state: WireTowerState::Standing {
+                    hp: 250,
+                    last_shot: None,
+                },
+            }],
+            nodes: vec![WireNode { id: 1, amount: 9 }],
+            piles: vec![WirePile {
+                id: 1,
+                pos: WirePos { x: 1600, y: 1400 },
+                amount: 3,
+            }],
+            chests: vec![WireChest {
+                id: 1,
+                tile: WireTile { x: 20, y: 20 },
+            }],
+            ground_weapons: vec![WireGroundWeapon {
+                id: 1,
+                pos: WirePos { x: 1500, y: 1500 },
+                kind: WireWeaponKind::Bow,
+            }],
+            players: vec![player(YOU), player(2)],
+            monsters: vec![MonsterView {
+                id: 7,
+                kind: WireMonsterKind::Scarecrow,
+                pos: Ground::new(12.0, 12.0),
+                facing: Ground::new(1.0, 0.0),
+                hp: 60,
+            }],
+            projectiles: Vec::new(),
+        }
+    }
+
+    /// 방을 그리고 지우는 시스템을 `main.rs`와 같은 순서와 실행 조건으로 놓은 앱입니다.
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<ColorMaterial>()
+            .insert_resource(joined_flow())
+            .init_resource::<CurrentFrame>()
+            .init_resource::<characters::Spawned>()
+            .init_resource::<towers::TowerRegistry>()
+            .init_resource::<supplies::SupplyRegistry>()
+            .init_resource::<loot::LootRegistry>()
+            .init_resource::<camp::StrikeRegistry>()
+            .add_systems(Startup, crate::palette::setup_palette)
+            .add_systems(
+                Update,
+                (
+                    clear_world
+                        .run_if(not(crate::start::in_room).and_then(resource_exists::<Scene>)),
+                    spawn_world
+                        .run_if(crate::start::in_room.and_then(not(resource_exists::<Scene>))),
+                    towers::sync_towers.run_if(resource_exists::<Scene>),
+                    supplies::sync_nodes.run_if(resource_exists::<Scene>),
+                    supplies::sync_piles.run_if(resource_exists::<Scene>),
+                    loot::sync_chests.run_if(resource_exists::<Scene>),
+                    loot::sync_ground_weapons.run_if(resource_exists::<Scene>),
+                    loot::sync_racks.run_if(resource_exists::<Scene>),
+                    camp::sync_strikes.run_if(resource_exists::<Scene>),
+                    characters::sync_characters.run_if(resource_exists::<Scene>),
+                )
+                    .chain(),
+            );
+        app
+    }
+
+    fn show(app: &mut App, frame: Option<Frame>) {
+        app.world_mut().resource_mut::<CurrentFrame>().0 = frame;
+        app.update();
+    }
+
+    /// 화면에 그려진 모양(도형이나 글자)을 가진 개체의 수입니다. 카메라와 HUD는 세지 않습니다.
+    fn drawn(app: &mut App) -> usize {
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<Entity, Or<(With<Mesh2d>, With<Text2d>)>>();
+        query.iter(world).count()
+    }
+
+    #[test]
+    fn leaving_the_room_clears_everything_that_was_drawn_for_it() {
+        let mut app = app();
+        show(&mut app, Some(crowded_frame()));
+        let in_the_room = drawn(&mut app);
+        assert!(
+            in_the_room > 50,
+            "the ground, blocks, players, a scarecrow, a tower, a node, a pile, a chest, a weapon, racks and a number: {in_the_room}"
+        );
+        assert!(app.world().contains_resource::<Scene>());
+        let marker = app
+            .world_mut()
+            .spawn((WagonMarkerNode, Visibility::Inherited))
+            .id();
+        app.world_mut()
+            .insert_resource(FollowedSetting(Some(crowded_frame().setting())));
+
+        app.world_mut().resource_mut::<ClientFlow>().0.leave();
+        // 같은 프레임에 이전 방의 스냅샷이 남아 있어도 그리지 않고 지웁니다.
+        show(&mut app, Some(crowded_frame()));
+
+        assert_eq!(drawn(&mut app), 0, "nothing of the room is left");
+        assert!(!app.world().contains_resource::<Scene>());
+        assert!(app.world().resource::<CurrentFrame>().0.is_none());
+        assert_eq!(
+            app.world().get::<Visibility>(marker),
+            Some(&Visibility::Hidden),
+            "the wagon marker at the edge of the screen does not stay on the start screen"
+        );
+        assert!(
+            app.world().resource::<FollowedSetting>().0.is_none(),
+            "the camera forgets the room it followed"
+        );
+    }
+
+    #[test]
+    fn a_new_room_is_drawn_from_scratch_after_the_old_one_was_cleared() {
+        let mut app = app();
+        show(&mut app, Some(crowded_frame()));
+        let first_room = drawn(&mut app);
+        app.world_mut().resource_mut::<ClientFlow>().0.leave();
+        show(&mut app, None);
+
+        app.world_mut().insert_resource(joined_flow());
+        show(&mut app, Some(crowded_frame()));
+
+        assert_eq!(drawn(&mut app), first_room, "the same scene, not doubled");
+    }
 
     #[test]
     fn the_whole_ground_is_one_mesh_with_a_diamond_for_every_tile() {

@@ -4,19 +4,22 @@
 //! 호출하는 쪽이 접속 방식과 현재 시각을 넘기고 `GameServer::pump`를 반복해서 호출합니다.
 //! 그래서 전용 서버 실행 파일과 테스트가 같은 코드를 실행하고, 다른 게임 프로세스에 내장할 수도 있습니다.
 //!
-//! 읽는 순서: `input`(플레이어 한 명의 입력), `room`(방 하나), `hub`(접속과 방), `clock`(Tick 일정), 이 파일.
+//! 읽는 순서: `input`(플레이어 한 명의 입력), `seat`(자리 하나), `room`(방 하나), `mint`(새 방의 코드), `hub`(접속과 방), `clock`(Tick 일정), 이 파일.
 
 mod clock;
 mod hub;
 mod input;
+mod mint;
 mod room;
+mod seat;
 
 use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    LinkId, RejectReason, RoomCode, ServerLimits, ServerTransport, Welcome, check_welcome,
+    LinkId, PlayerName, RejectReason, RoomCode, ServerLimits, ServerTransport, Welcome,
+    check_welcome,
 };
 use caravan_rules::{PlayerId, Seed, Tuning};
 
@@ -86,6 +89,14 @@ impl fmt::Display for Notice {
             Notice::LinkClosed { link, reason } => write!(f, "link {} closed: {reason}", link.0),
         }
     }
+}
+
+/// 새 방의 코드를 만드는 비밀 값입니다. 서버는 운영체제의 무작위를 직접 읽지 않으므로 호출하는 쪽이 넘깁니다.
+/// 전용 서버는 실행할 때마다 새 값을, 테스트는 고정된 값을 넘깁니다. 로그에 값이 남지 않도록 `Debug`를 만들지 않습니다.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ServerSecret {
+    pub k0: u64,
+    pub k1: u64,
 }
 
 /// 방마다 씨앗을 정하는 방법입니다. 서버는 시계를 읽지 않으므로 호출하는 쪽이 씨앗을 넘깁니다.
@@ -176,12 +187,14 @@ fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerErro
 /// 이 수치로 만든 빈 방에 첫 플레이어가 입장할 때 서버가 보내는 입장 안내입니다.
 fn first_welcome(tuning: &Tuning, limits: &ServerLimits) -> Welcome {
     // 입장 안내는 씨앗에서 정해지는 것을 담지 않으므로, 어떤 씨앗으로 만든 방이든 같은 안내를 냅니다.
-    let mut room = Room::new(tuning.clone(), Seed(0), limits.input_stale_ticks);
+    // 입장 안내의 방 코드와 이름은 입장 안내의 크기와 상한에 관계가 없으므로 아무 값이나 씁니다.
+    let code = RoomCode::parse("check").expect("the code is valid");
+    let name = PlayerName::parse("check").expect("the name is valid");
+    let mut room = Room::new(code, tuning.clone(), Seed(0), limits.input_stale_ticks);
     // `Tuning::validate`가 정원이 1 이상임을 확인했으므로 빈 방의 첫 입장은 항상 성공합니다.
-    let (_, welcome) = room
-        .admit(LinkId(0))
-        .expect("a validated tuning admits the first player");
-    welcome
+    room.enter(LinkId(0), name)
+        .expect("a validated tuning admits the first player")
+        .welcome
 }
 
 impl GameServer {
@@ -193,13 +206,14 @@ impl GameServer {
         tuning: Tuning,
         limits: ServerLimits,
         seeds: RoomSeeds,
+        secret: ServerSecret,
         now: Instant,
     ) -> Result<GameServer, ServerError> {
         check_config(&tuning, &limits)?;
         Ok(GameServer {
             transport,
             clock: TickClock::new(tuning.tick_hz, now),
-            hub: Hub::new(tuning, limits, seeds),
+            hub: Hub::new(tuning, limits, seeds, secret),
             events_per_pump: limits.events_per_pump,
             ticks_run: 0,
         })

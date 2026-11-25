@@ -91,7 +91,8 @@ async fn messages_cross_a_real_socket_as_binary_frames_and_close_delivers_the_la
 
     let join = ClientMsg::Join {
         version: PROTOCOL_VERSION,
-        room: "test".to_string(),
+        room: Some("test".to_string()),
+        name: "TESTER".to_string(),
     };
     client
         .send(Message::binary(encode_client(&join)))

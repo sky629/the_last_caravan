@@ -16,6 +16,10 @@ caravan_client_core.workspace = true
 caravan_ws_client.workspace = true
 bevy.workspace = true
 
+# PC는 운영체제의 클립보드로 붙여 넣고 링크를 복사합니다. 웹은 브라우저의 클립보드를 씁니다.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { workspace = true, features = ["system_clipboard"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { workspace = true, features = ["web"] }
 web-sys.workspace = true

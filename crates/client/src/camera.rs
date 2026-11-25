@@ -15,8 +15,9 @@ use crate::net::CurrentFrame;
 use crate::view::Scene;
 
 /// 카메라가 마지막으로 따라간 세계의 모습입니다. 값이 바뀌면 세계가 다시 놓여서 캐릭터가 등장 지점으로 돌아간 것이므로 카메라를 곧바로 옮깁니다.
-#[derive(Default)]
-pub struct FollowedSetting(Option<Setting>);
+/// 방을 떠나면 비웁니다(`view::clear_world`). 그래서 다음 방의 첫 프레임에도 카메라가 이전 방의 자리에서 미끄러져 오지 않습니다.
+#[derive(Resource, Default)]
+pub struct FollowedSetting(pub(crate) Option<Setting>);
 
 /// 화면 가장자리의 마차 표시입니다.
 #[derive(Component)]
@@ -63,7 +64,7 @@ pub fn follow(
     frame: Res<CurrentFrame>,
     scene: Res<Scene>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
-    mut followed: Local<FollowedSetting>,
+    mut followed: ResMut<FollowedSetting>,
 ) {
     let Some(frame) = &frame.0 else {
         return;
@@ -136,7 +137,7 @@ mod tests {
     use super::*;
     use crate::net::CurrentFrame;
     use crate::palette;
-    use crate::testing::{YOU, joined_session};
+    use crate::testing::{YOU, joined_flow};
     use crate::view;
     use bevy::time::TimeUpdateStrategy;
     use caravan_client_core::{Frame, PlayerView};
@@ -149,8 +150,9 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<ColorMaterial>()
-            .insert_resource(joined_session())
+            .insert_resource(joined_flow())
             .init_resource::<CurrentFrame>()
+            .init_resource::<FollowedSetting>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 50,
             )))
@@ -265,6 +267,22 @@ mod tests {
         assert!(
             camera_at(&mut app).distance(body_center(32.0, 30.0)) < 1e-3,
             "the expedition number is the same, but the world was laid out again"
+        );
+    }
+
+    #[test]
+    fn a_room_drawn_anew_puts_the_camera_on_the_character_at_once_even_in_the_same_stage() {
+        let mut app = app();
+        show(&mut app, 1, 30.0, 30.0);
+
+        // 방을 떠났다가 같은 단계의 다른 방에 들어간 것과 같습니다. 방을 떠나면 `view::clear_world`가 따라가던 세계의 모습을 잊습니다.
+        // 두 방의 캐릭터가 가까워서(따라가는 거리 안이어서) 잊은 것만이 곧바로 옮기는 이유입니다.
+        app.world_mut().insert_resource(FollowedSetting::default());
+        show(&mut app, 1, 33.0, 30.0);
+
+        assert!(
+            camera_at(&mut app).distance(body_center(33.0, 30.0)) < 1e-3,
+            "no sliding in from where the camera was in the other room"
         );
     }
 

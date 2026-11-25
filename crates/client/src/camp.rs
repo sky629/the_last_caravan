@@ -77,7 +77,7 @@ pub fn sync_strikes(
                             StrikeNumber,
                         ))
                         .id();
-                    strikes.numbers.insert(hit.monster, entity);
+                    strikes.numbers.insert(&mut commands, hit.monster, entity);
                 }
             }
         }
@@ -88,7 +88,7 @@ pub fn sync_strikes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::joined_session;
+    use crate::testing::joined_flow;
     use crate::view::{self, Scene};
     use caravan_client_core::{Frame, MonsterView};
     use caravan_protocol::{WireMonsterKind, WireStruck, WireWagon};
@@ -99,7 +99,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<ColorMaterial>()
-            .insert_resource(joined_session())
+            .insert_resource(joined_flow())
             .init_resource::<CurrentFrame>()
             .init_resource::<StrikeRegistry>()
             .add_systems(Startup, crate::palette::setup_palette)
