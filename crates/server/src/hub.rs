@@ -13,7 +13,7 @@ use caravan_rules::{JoinError, PlayerId, Seed, Tuning};
 
 use crate::mint::Mint;
 use crate::room::{Room, RoomTimes};
-use crate::{Notice, RoomSeeds, ServerSecret, ServerStats};
+use crate::{Notice, RandomSource, RoomSeeds, ServerStats};
 
 /// 허브가 요청하는 일입니다. `GameServer::apply`만 이 값을 실행합니다.
 pub(crate) enum Out {
@@ -82,7 +82,7 @@ impl Hub {
         tuning: Tuning,
         limits: ServerLimits,
         seeds: RoomSeeds,
-        secret: ServerSecret,
+        random: Box<dyn RandomSource>,
     ) -> Hub {
         let times = RoomTimes {
             input_stale_ticks: limits.input_stale_ticks,
@@ -95,7 +95,7 @@ impl Hub {
             idle_timeout: limits.idle_timeout,
             times,
             seeds,
-            mint: Mint::new(secret),
+            mint: Mint::new(random),
             rooms_created: 0,
             links: BTreeMap::new(),
             rooms: BTreeMap::new(),

@@ -13,8 +13,8 @@ use caravan_protocol::{
 use caravan_rules::{PlayerId, Seed, Sim, Tuning};
 use caravan_server::{GameServer, Notice, RoomSeeds, ServerError, ServerStats};
 use common::{
-    NAME, SECRET, assert_near, drain, input, input_with, join_msg, last_snapshot, player,
-    player_ids, position, press_ready, rig, rig_in_expedition, rig_with_limits, snapshots, ticks,
+    NAME, assert_near, drain, input, input_with, join_msg, last_snapshot, player, player_ids,
+    position, press_ready, rig, rig_in_expedition, rig_with_limits, snapshots, ticks,
 };
 
 #[test]
@@ -648,7 +648,7 @@ fn try_start(tuning: Tuning, limits: ServerLimits) -> Result<(), ServerError> {
         tuning,
         limits,
         RoomSeeds::Fixed(Seed(1)),
-        SECRET,
+        common::random(),
         std::time::Instant::now(),
     )
     .map(|_| ())
@@ -789,7 +789,7 @@ fn a_server_refuses_to_start_with_numbers_that_break_the_rules() {
             tuning,
             ServerLimits::default(),
             RoomSeeds::Fixed(Seed(1)),
-            SECRET,
+            common::random(),
             std::time::Instant::now(),
         )
         .map(|_| ())

@@ -7,8 +7,23 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// 16바이트(128비트)입니다. postcard로 길이 없이 16바이트가 됩니다. 기기에는 32자의 16진수 글자로 저장합니다.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct SeatToken(pub [u8; 16]);
+
+/// 같은지 알아내는 시간이 앞에서부터 맞는 바이트의 수에 따르지 않도록, 16바이트를 모두 본 뒤에 결과를 냅니다.
+/// 걸린 시간으로 표식을 한 바이트씩 알아내는 일을 막습니다.
+impl PartialEq for SeatToken {
+    fn eq(&self, other: &SeatToken) -> bool {
+        let differing_bits = self
+            .0
+            .iter()
+            .zip(&other.0)
+            .fold(0u8, |bits, (mine, theirs)| bits | (mine ^ theirs));
+        differing_bits == 0
+    }
+}
+
+impl Eq for SeatToken {}
 
 impl SeatToken {
     /// 소문자 16진수 32자입니다.
@@ -60,6 +75,18 @@ mod tests {
             Some(TOKEN),
             "the case of the digits does not matter"
         );
+    }
+
+    #[test]
+    fn two_tokens_are_equal_only_when_every_byte_is_equal() {
+        assert_eq!(TOKEN, SeatToken(TOKEN.0));
+        for index in 0..16 {
+            for bit in 0..8 {
+                let mut other = TOKEN.0;
+                other[index] ^= 1 << bit;
+                assert_ne!(TOKEN, SeatToken(other), "byte {index} bit {bit}");
+            }
+        }
     }
 
     #[test]

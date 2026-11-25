@@ -2131,6 +2131,7 @@ dependencies = [
  "caravan_rules",
  "caravan_server",
  "caravan_ws_server",
+ "getrandom 0.4.3",
  "tokio-tungstenite",
 ]
 

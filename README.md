@@ -243,7 +243,7 @@ cd crates/client && trunk build
 | 애플리케이션 | `caravan_client_core` | 클라이언트에서 Bevy가 필요하지 않은 로직입니다. 접속 상태, 입력 전송, 보간, 쿼터뷰 투영, 카메라의 계산, 건설할 타일의 미리보기, HUD의 내용, 실행 옵션을 다룹니다. | `caravan_rules`, `caravan_protocol` |
 | 어댑터 | `caravan_ws_server` | WebSocket으로 서버 쪽 접속 방식 인터페이스를 구현합니다 (PC 전용). | `caravan_protocol`, tokio, tokio-tungstenite, futures-util |
 | 어댑터 | `caravan_ws_client` | WebSocket으로 클라이언트 쪽 접속 방식 인터페이스를 구현합니다 (PC와 웹). | `caravan_protocol`, ewebsock |
-| 조립 | `caravan_dedicated` | 전용 서버 실행 파일입니다. 게임 서버에 WebSocket 어댑터를 연결해서 실행합니다. | `caravan_rules`, `caravan_protocol`, `caravan_server`, `caravan_ws_server` |
+| 조립 | `caravan_dedicated` | 전용 서버 실행 파일입니다. 게임 서버에 WebSocket 어댑터와 운영체제의 암호용 무작위(자리의 표식과 방 코드의 원천)를 연결해서 실행합니다. | `caravan_rules`, `caravan_protocol`, `caravan_server`, `caravan_ws_server`, getrandom |
 | 조립 | `caravan_client` | Bevy 앱입니다. 입력, 화면, HUD를 맡고 클라이언트 코어와 WebSocket 어댑터를 연결합니다. Bevy를 쓰는 크레이트는 이것 하나입니다. | `caravan_rules`, `caravan_protocol`, `caravan_client_core`, `caravan_ws_client`, bevy, web-sys (웹 빌드만) |
 
 아래 그림에서 화살표는 의존하는 방향입니다. 표의 마지막 열이 각 크레이트의 `Cargo.toml`에 적힌 실제 의존 목록이고, 그림은 방향만 보여 줍니다.

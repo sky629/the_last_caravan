@@ -24,7 +24,7 @@ mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
 use caravan_rules::{Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WeaponKind};
-use caravan_server::{GameServer, RoomSeeds, ServerSecret};
+use caravan_server::{GameServer, RandomSource, RoomSeeds};
 use caravan_ws_server::WsServer;
 use report::TickTimer;
 
@@ -170,10 +170,20 @@ impl ServerTransport for DebugTransport {
     }
 }
 
-/// 서버를 실행할 때마다 달라지는 씨앗과 비밀 값의 뿌리입니다. 표준 라이브러리의 `RandomState`는 운영체제의 무작위로 키를 정하므로,
-/// 외부 크레이트 없이, 시계를 읽지 않고 이 값을 얻습니다.
+/// 서버를 실행할 때마다 달라지는 씨앗의 뿌리입니다. 표준 라이브러리의 `RandomState`는 운영체제의 무작위로 키를 정하므로,
+/// 시계를 읽지 않고 이 값을 얻습니다. 씨앗은 방을 만들 때 로그에 출력하므로 비밀이 아닙니다.
 fn fresh_entropy() -> u64 {
     RandomState::new().hash_one(())
+}
+
+/// 운영체제의 암호용 무작위입니다. 자리의 표식이 이 바이트가 그대로 되므로, 다른 사람이 다음 값을 예측할 수 없어야 합니다.
+struct OsRandom;
+
+impl RandomSource for OsRandom {
+    fn fill(&mut self, bytes: &mut [u8]) {
+        // 운영체제가 무작위를 주지 못하면 안전한 표식을 만들 수 없으므로, 서버를 멈춥니다.
+        getrandom::fill(bytes).expect("the operating system gives random bytes");
+    }
 }
 
 /// 읽을 수 있는 한 줄로 바꿉니다. 스냅샷은 몬스터가 수백 마리, 탄환이 수십 개일 수 있으므로 두 목록을 수로 줄입니다.
@@ -238,11 +248,14 @@ fn main() -> ExitCode {
         Some(seed) => RoomSeeds::Fixed(Seed(seed)),
         None => RoomSeeds::Fresh(Seed(fresh_entropy())),
     };
-    let secret = ServerSecret {
-        k0: fresh_entropy(),
-        k1: fresh_entropy(),
-    };
-    let mut server = match GameServer::new(transport, tuning, limits, seeds, secret, started) {
+    let mut server = match GameServer::new(
+        transport,
+        tuning,
+        limits,
+        seeds,
+        Box::new(OsRandom),
+        started,
+    ) {
         Ok(server) => server,
         Err(err) => {
             eprintln!("cannot start the server: {err}");
@@ -274,6 +287,21 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_operating_system_random_gives_new_bytes_each_time() {
+        let mut random = OsRandom;
+        let draws: Vec<[u8; 16]> = (0..20)
+            .map(|_| {
+                let mut bytes = [0u8; 16];
+                random.fill(&mut bytes);
+                bytes
+            })
+            .collect();
+        let distinct: std::collections::BTreeSet<_> = draws.iter().collect();
+        assert_eq!(distinct.len(), draws.len(), "no draw twice");
+        assert!(draws.iter().all(|bytes| bytes.iter().any(|&b| b != 0)));
     }
 
     #[test]

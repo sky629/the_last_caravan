@@ -3,13 +3,15 @@
 
 mod common;
 
+use std::collections::VecDeque;
+
 use caravan_protocol::{
-    ClientEvent, ClientMsg, ClientTransport, LoopbackClient, RejectReason, ServerMsg, Welcome,
-    WireMember, encode_server,
+    ClientEvent, ClientMsg, ClientTransport, LoopbackClient, RejectReason, ServerLimits, ServerMsg,
+    Welcome, WireMember, encode_server,
 };
-use caravan_rules::Tuning;
-use caravan_server::Notice;
-use common::{NAME, Rig, drain, join_msg, rig, rig_with, snapshots};
+use caravan_rules::{Seed, Tuning};
+use caravan_server::{Notice, RandomSource, RoomSeeds};
+use common::{NAME, Rig, drain, join_msg, rig, rig_with, rig_with_random, snapshots};
 
 /// 입장을 받아들인 답에서 입장 안내를 꺼냅니다.
 fn welcome_of(answer: ServerMsg) -> Welcome {
@@ -143,24 +145,38 @@ fn a_friend_who_types_the_new_code_joins_the_same_room() {
     );
 }
 
-/// 같은 비밀 값으로 서버를 다시 만들면 방 코드를 만드는 순서가 같으므로, 첫 코드를 미리 알 수 있습니다.
-fn first_code_the_server_makes() -> String {
-    let mut rig = rig();
-    let (_a, answer) = rig.join_as(None, "KANG");
-    welcome_of(answer).room
+/// 정해 둔 바이트를 차례로 주는 무작위 원천입니다. 바이트가 모자라면 시험이 실패합니다.
+struct Queue(VecDeque<u8>);
+
+impl RandomSource for Queue {
+    fn fill(&mut self, bytes: &mut [u8]) {
+        for slot in bytes {
+            *slot = self.0.pop_front().expect("the queue ran out of bytes");
+        }
+    }
 }
 
 #[test]
 fn a_new_code_is_never_the_code_of_a_room_that_already_exists() {
-    let taken = first_code_the_server_makes();
-    let mut rig = rig();
-    let (_squatter, answer) = rig.join_as(Some(&taken), "KANG");
-    assert_eq!(welcome_of(answer).room, taken);
+    // 먼저 들어온 사람의 표식 16바이트, 그다음에 만들 코드 둘(171은 t, 172는 u)과 표식 16바이트입니다.
+    let bytes = [1; 16]
+        .into_iter()
+        .chain([171; 5])
+        .chain([172; 5])
+        .chain([2; 16]);
+    let mut rig = rig_with_random(
+        Tuning::default(),
+        ServerLimits::default(),
+        RoomSeeds::Fixed(Seed(1)),
+        Box::new(Queue(bytes.collect())),
+    );
+    let (_squatter, answer) = rig.join_as(Some("ttttt"), "KANG");
+    assert_eq!(welcome_of(answer).room, "ttttt");
 
     let (_new, answer) = rig.join_as(None, "MIRO");
     let made = welcome_of(answer).room;
 
-    assert_ne!(made, taken, "the code the server would make was taken");
+    assert_eq!(made, "uuuuu", "the code the server first made was taken");
     assert_eq!(rig.server.stats().rooms, 2);
     assert_eq!(
         rig.server.stats().members,

@@ -19,13 +19,15 @@ use caravan_protocol::{
     WireMember, WireVec2, decode_server, encode_client, loopback,
 };
 use caravan_rules::{Seed, Tuning};
-use caravan_server::{GameServer, Notice, RoomSeeds, ServerSecret};
+use caravan_server::{GameServer, Notice, PredictableRandom, RandomSource, RoomSeeds};
 use caravan_ws_server::WsServer;
 use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::{Error, Message, WebSocket, connect};
 
-/// 새 방의 코드를 정하는 고정된 비밀 값입니다.
-const SECRET: ServerSecret = ServerSecret { k0: 1, k1: 2 };
+/// 새 방의 코드와 자리의 표식을 만드는 무작위 원천입니다. 서버를 다시 만들어도 같은 순서로 같은 값이 나옵니다.
+fn random() -> Box<dyn RandomSource> {
+    Box::new(PredictableRandom::new(1))
+}
 
 /// 실행 파일(`main.rs`)과 같은 방식으로 스레드 하나에서 서버를 돌립니다. 버려지면 스레드를 멈춥니다.
 struct RunningServer {
@@ -51,7 +53,7 @@ impl RunningServer {
                 tuning,
                 limits,
                 RoomSeeds::Fixed(Seed(1)),
-                SECRET,
+                random(),
                 Instant::now(),
             )
             .expect("the tuning is valid and fits the limits");
@@ -312,7 +314,7 @@ fn fastest_tick_hz_the_default_limits_carry() -> u32 {
                 tuning,
                 ServerLimits::default(),
                 RoomSeeds::Fixed(Seed(1)),
-                SECRET,
+                random(),
                 Instant::now(),
             )
             .is_ok()

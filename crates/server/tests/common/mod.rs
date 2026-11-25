@@ -11,10 +11,12 @@ use caravan_protocol::{
     WirePlayer, WireRoster, WireVec2, loopback,
 };
 use caravan_rules::{Seed, Start, Tuning, Vec2};
-use caravan_server::{GameServer, Notice, RoomSeeds, ServerSecret};
+use caravan_server::{GameServer, Notice, PredictableRandom, RandomSource, RoomSeeds};
 
-/// 새 방의 코드를 정하는 고정된 비밀 값입니다. 서버를 다시 만들어도 같은 순서로 같은 코드가 나옵니다.
-pub const SECRET: ServerSecret = ServerSecret { k0: 1, k1: 2 };
+/// 새 방의 코드와 자리의 표식을 만드는 무작위 원천입니다. 서버를 다시 만들어도 같은 순서로 같은 값이 나옵니다.
+pub fn random() -> Box<dyn RandomSource> {
+    Box::new(PredictableRandom::new(1))
+}
 
 /// 시험용 이름입니다.
 pub const NAME: &str = "TESTER";
@@ -46,11 +48,20 @@ pub fn rig_with_limits(tuning: Tuning, limits: ServerLimits) -> Rig {
 }
 
 pub fn rig_with_seeds(tuning: Tuning, limits: ServerLimits, seeds: RoomSeeds) -> Rig {
+    rig_with_random(tuning, limits, seeds, random())
+}
+
+pub fn rig_with_random(
+    tuning: Tuning,
+    limits: ServerLimits,
+    seeds: RoomSeeds,
+    random: Box<dyn RandomSource>,
+) -> Rig {
     let (transport, connector) = loopback();
     let now = Instant::now();
     let period = Duration::from_secs(1) / tuning.tick_hz;
     Rig {
-        server: GameServer::new(Box::new(transport), tuning, limits, seeds, SECRET, now)
+        server: GameServer::new(Box::new(transport), tuning, limits, seeds, random, now)
             .expect("the test tuning is valid"),
         connector,
         now,

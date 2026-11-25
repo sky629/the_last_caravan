@@ -7,10 +7,10 @@ use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, SeatToken, ServerMsg, WireLife, WireMember, WirePhase,
 };
 use caravan_rules::Tuning;
-use caravan_server::Notice;
+use caravan_server::{Notice, RandomSource};
 use common::{
     drain, hear, input, input_with, last_roster, last_snapshot, player, press_ready, rig,
-    rig_in_expedition, rosters,
+    rig_in_expedition, rig_with_random, rosters,
 };
 
 /// 몬스터가 곧 마차 둘레로 몰려오는 원정입니다. 낮이 0.1초이고, 첫 무리가 0.1초 뒤에 나타나서 20마리가 0.05초마다 한 마리씩 나옵니다.
@@ -653,7 +653,7 @@ fn a_server_refuses_limits_that_leave_a_seat_over_before_its_link_or_its_protect
             Tuning::default(),
             limits,
             RoomSeeds::Fixed(caravan_rules::Seed(1)),
-            common::SECRET,
+            common::random(),
             std::time::Instant::now(),
         )
         .map(|_| ())
@@ -688,4 +688,34 @@ fn a_server_refuses_limits_that_leave_a_seat_over_before_its_link_or_its_protect
             "away_after {away_after} s, seat_hold {seat_hold} s"
         );
     }
+}
+
+/// 같은 바이트만 주는 원천입니다.
+struct Constant(u8);
+
+impl RandomSource for Constant {
+    fn fill(&mut self, bytes: &mut [u8]) {
+        bytes.fill(self.0);
+    }
+}
+
+/// 자리의 표식과 새 방의 코드는 서버를 만들 때 넘긴 무작위 원천의 바이트로 만들어집니다. 서버가 따로 만들어 내는 값이 없습니다.
+#[test]
+fn the_token_and_the_room_code_are_made_from_the_bytes_the_random_source_gives() {
+    let mut rig = rig_with_random(
+        Tuning::default(),
+        caravan_protocol::ServerLimits::default(),
+        caravan_server::RoomSeeds::Fixed(caravan_rules::Seed(1)),
+        Box::new(Constant(171)),
+    );
+
+    let (_kang, welcome) = rig.join_welcomed("night", "KANG", None);
+    assert_eq!(welcome.token, SeatToken([171; 16]));
+
+    let (_miro, answer) = rig.join_as(None, "MIRO");
+    let ServerMsg::Welcome(made) = answer else {
+        panic!("expected Welcome, got {answer:?}");
+    };
+    // 문자표의 17번째 글자(171 % 31 = 16)가 다섯 번 나옵니다.
+    assert_eq!(made.room, "ttttt");
 }
