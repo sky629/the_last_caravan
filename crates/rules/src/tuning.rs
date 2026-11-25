@@ -298,6 +298,7 @@ pub struct LootTuning {
     /// 플레이어의 가장자리에서 상자의 가장자리까지 잰, 상자를 열 수 있는 거리입니다.
     pub open_reach: f32,
     /// 플레이어의 가장자리에서 바닥의 무기까지 잰, 무기를 주울 수 있는 거리입니다.
+    /// 상자를 여는 플레이어가 선 자리에서 그대로 무기를 주울 수 있도록, 상자가 놓이는 맵에서는 `open_reach`에 타일 절반의 대각선을 더한 값 이상입니다.
     pub take_reach: f32,
 }
 
@@ -737,6 +738,8 @@ impl Tuning {
     /// - 후보 자리마다 마을의 범위 밖에 상하좌우로 이웃한 빈 타일이 하나 이상 있고, 그 타일은 다른 후보 자리가 아닙니다.
     ///   플레이어가 그 타일에 서서 상자를 열 수 있고, 감시탑이 그 타일을 막을 수 없으므로 상자가 사라진 뒤의 타일도 길에 이어집니다.
     /// - 상자는 후보 자리의 수보다 많이 놓이지 않고, 상자가 놓이는 맵이면 상자에서 나오는 무기의 비중을 더한 값이 1 이상입니다.
+    /// - 상자가 놓이는 맵이면 무기를 줍는 거리가 상자를 여는 거리에 타일 절반의 대각선을 더한 값 이상입니다. 무기는 상자가 있던 타일의 중심에 놓이고,
+    ///   상자를 열 수 있는 가장 먼 자리는 상자의 모서리에서 대각선으로 떨어진 자리이므로, 이 값이면 연 플레이어가 어느 방향에서 열었든 걷지 않고 무기를 줍습니다.
     fn validate_chest_sites(&self, tiles: &TileMap, wagon_tiles: &[Tile]) -> Result<(), String> {
         let loot = &self.loot;
         for (name, value) in [
@@ -786,6 +789,13 @@ impl Tuning {
                     "chest site {site:?} needs a free side tile outside the village to open it from"
                 ));
             }
+        }
+        let to_the_middle_of_the_tile = loot.open_reach + std::f32::consts::FRAC_1_SQRT_2;
+        if loot.chests_per_day > 0 && loot.take_reach < to_the_middle_of_the_tile {
+            return Err(format!(
+                "loot take_reach {} is shorter than open_reach {} plus half the tile diagonal ({to_the_middle_of_the_tile}), so a player who opens a chest from its far corner could not take the weapon without stepping",
+                loot.take_reach, loot.open_reach
+            ));
         }
         if loot.chests_per_day > 0 && self.weapons.total_chest_weight() == 0 {
             return Err(
@@ -1045,7 +1055,7 @@ impl Default for Tuning {
                 chests_per_day: 3,
                 open_secs: 1.5,
                 open_reach: 1.0,
-                take_reach: 1.0,
+                take_reach: 1.75,
             },
             resources: ResourceTuning {
                 node_amount: 15,

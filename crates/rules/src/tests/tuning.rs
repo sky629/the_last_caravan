@@ -296,6 +296,33 @@ fn more_chests_a_day_than_sites_or_chests_that_can_hold_nothing_are_rejected() {
 }
 
 #[test]
+fn a_take_reach_that_leaves_the_farthest_opener_short_of_the_weapon_is_rejected() {
+    let mut t = Tuning::default();
+    // 상자를 열 수 있는 가장 먼 자리에서 타일의 중심까지의 거리는 1.0 + 0.7071입니다.
+    t.loot.take_reach = 1.7;
+    let why = t
+        .validate()
+        .expect_err("the weapon on the chest tile is out of reach");
+    assert!(why.contains("take_reach 1.7"), "{why}");
+    assert!(why.contains("without stepping"), "{why}");
+
+    t.loot.take_reach = 1.71;
+    assert_eq!(t.validate(), Ok(()), "1.71 covers 1.7071");
+
+    t.loot.open_reach = 1.5;
+    assert!(
+        t.validate().is_err(),
+        "a longer open reach needs a longer take reach"
+    );
+    t.loot.chests_per_day = 0;
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "without chests nobody opens from afar"
+    );
+}
+
+#[test]
 fn a_map_without_chest_sites_is_valid_when_no_chest_is_placed() {
     let mut t = Tuning::default();
     t.map.chest_sites = Vec::new();

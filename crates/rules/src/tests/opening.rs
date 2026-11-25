@@ -491,3 +491,100 @@ fn the_prompt_says_open_chest_in_reach_and_is_silent_while_opening_or_out_of_rea
         "the chest is open, so F now takes the weapon"
     );
 }
+
+/// 상자 (2, 2)를 열 수 있는 가장 먼 자리 여덟 곳입니다. 네 변의 한가운데와 네 모서리의 바깥쪽 대각선 방향이고,
+/// 어디서든 플레이어의 가장자리에서 상자의 가장자리까지 열 수 있는 거리보다 0.001타일만 안쪽입니다.
+fn farthest_spots_to_open_from(s: &Scenario) -> Vec<(&'static str, Vec2)> {
+    let t = s.sim.tuning();
+    let out = t.player.radius + t.loot.open_reach - 0.001;
+    let diagonal = out / std::f32::consts::SQRT_2;
+    let chest = Tile::new(2, 2);
+    vec![
+        ("south", Vec2::new(2.5, 3.0 + out)),
+        ("north", Vec2::new(2.5, 2.0 - out)),
+        ("east", Vec2::new(3.0 + out, 2.5)),
+        ("west", Vec2::new(2.0 - out, 2.5)),
+        (
+            "south-east corner",
+            Vec2::new(3.0 + diagonal, 3.0 + diagonal),
+        ),
+        (
+            "south-west corner",
+            Vec2::new(2.0 - diagonal, 3.0 + diagonal),
+        ),
+        (
+            "north-east corner",
+            Vec2::new(3.0 + diagonal, 2.0 - diagonal),
+        ),
+        (
+            "north-west corner",
+            Vec2::new(2.0 - diagonal, 2.0 - diagonal),
+        ),
+    ]
+    .into_iter()
+    .inspect(|(name, spot)| {
+        assert!(
+            chest.rect().distance_to(*spot) - t.player.radius <= t.loot.open_reach,
+            "{name} is within the reach to open"
+        );
+    })
+    .collect()
+}
+
+#[test]
+fn whoever_opens_a_chest_from_the_farthest_spot_takes_its_weapon_with_one_press_without_stepping() {
+    let spots = farthest_spots_to_open_from(&Scenario::with_chest(WeaponKind::Spear, 0));
+    for (name, spot) in spots {
+        let mut s = Scenario::with_chest(WeaponKind::Spear, 0);
+        let a = s.player_at(spot.x, spot.y);
+        assert_eq!(s.sim.prompt(a), Some(Prompt::OpenChest), "{name}");
+        s.hold_interact(a);
+        s.run_ticks(required_ticks(&s));
+        assert_eq!(chests_left(&s), 0, "{name}: the chest opened");
+
+        s.hold(a, PlayerInput::default());
+        s.run_ticks(1);
+        assert_eq!(
+            s.sim.prompt(a),
+            Some(Prompt::TakeWeapon(WeaponKind::Spear)),
+            "{name}: the prompt names the weapon from where the opener stands"
+        );
+        s.press_interact_key(a);
+
+        assert_eq!(
+            s.player(a).loadout,
+            Loadout::new(WeaponKind::Sword, Some(WeaponKind::Spear)),
+            "{name}: one press takes the weapon"
+        );
+        assert!(weapons_on_the_ground(&s).is_empty(), "{name}");
+        assert_eq!(s.player(a).pos, spot, "{name}: the opener did not step");
+    }
+}
+
+#[test]
+fn every_spot_that_opens_a_chest_is_a_spot_that_takes_a_weapon_lying_on_its_tile() {
+    let mut chest_side = Scenario::with_chest(WeaponKind::Spear, 0);
+    let opener = chest_side.player_at(10.0, 10.0);
+    let mut weapon_side = Scenario::open_field();
+    let taker = weapon_side.player_at(10.0, 10.0);
+    weapon_side.weapon_at(2.5, 2.5, WeaponKind::Spear);
+
+    let mut spots_that_open = 0;
+    for ix in 0..=250 {
+        for iy in 0..=250 {
+            let spot = Vec2::new(0.35 + ix as f32 * 0.02, 0.35 + iy as f32 * 0.02);
+            chest_side.move_player(opener, spot);
+            weapon_side.move_player(taker, spot);
+            if chest_side.sim.prompt(opener) == Some(Prompt::OpenChest) {
+                spots_that_open += 1;
+                assert_eq!(
+                    weapon_side.sim.prompt(taker),
+                    Some(Prompt::TakeWeapon(WeaponKind::Spear)),
+                    "the chest opens from {spot:?}, but the weapon on its tile is out of reach"
+                );
+            }
+        }
+    }
+
+    assert!(spots_that_open > 1000, "{spots_that_open}");
+}

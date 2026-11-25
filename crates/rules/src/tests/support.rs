@@ -240,6 +240,11 @@ impl Scenario {
             .count()
     }
 
+    /// 플레이어를 `spot`으로 옮깁니다. 충돌은 보지 않습니다.
+    pub fn move_player(&mut self, id: PlayerId, spot: Vec2) {
+        self.player_mut(id).pos = spot;
+    }
+
     fn player_mut(&mut self, id: PlayerId) -> &mut Player {
         self.sim
             .world_mut()
