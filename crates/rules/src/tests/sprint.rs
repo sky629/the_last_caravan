@@ -3,7 +3,7 @@
 //! 기본 수치에서 게이지가 가득 차면 4초(80 Tick) 달릴 수 있고, 빈 게이지는 10초(200 Tick)에 가득 찹니다.
 //! 게이지는 `Player::stamina_percent`(0에서 100)로 읽습니다. 달리기로 줄어든 값은 Tick마다 가득 찬 값의 1.25%이고, 찰 때는 Tick마다 0.5%입니다.
 
-use super::support::{Scenario, close};
+use super::support::{Scenario, close, phase};
 use crate::expedition::Phase;
 use crate::ids::PlayerId;
 use crate::input::{AimDir, MoveDir, PlayerInput};
@@ -288,11 +288,11 @@ fn the_gauge_is_full_at_the_start_of_each_day() {
     });
 
     s.run_ticks(2);
-    assert!(matches!(s.sim.phase(), Phase::Dawn { .. }));
+    assert!(matches!(phase(&s.sim), Phase::Dawn { .. }));
     assert_eq!(percent(&s, a), 1, "still the slow fill of the dawn");
 
     s.run_ticks(1);
-    assert!(matches!(s.sim.phase(), Phase::Day { day: 2, .. }));
+    assert!(matches!(phase(&s.sim), Phase::Day { day: 2, .. }));
     assert_eq!(percent(&s, a), 100, "the new day fills it at once");
 }
 
@@ -301,12 +301,7 @@ fn the_gauge_is_full_at_a_new_expedition() {
     let mut s = wide_field();
     let a = s.player_at(1.0, 5.0);
     s.drain_stamina(a);
-    s.sim.set_phase(Phase::Over {
-        outcome: crate::expedition::Outcome::Defeat,
-        ticks_left: 1,
-    });
-
-    s.run_ticks(1);
+    s.restart_expedition();
 
     assert_eq!(s.sim.expedition_number(), 2);
     assert_eq!(percent(&s, a), 100);

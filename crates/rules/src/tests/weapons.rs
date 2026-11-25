@@ -1,8 +1,8 @@
 //! 플레이어가 가진 무기를 확인합니다: 처음 가진 무기, `Q`로 바꾸기, 바꿀 수 없는 때, 쓰러짐과 새 날과 새 원정에서의 무기.
 //! 시험하는 것은 `&Sim`이 공개하는 값(`Player::loadout`, `Sim::projectiles`)뿐입니다.
 
-use super::support::Scenario;
-use crate::expedition::{Outcome, Phase};
+use super::support::{Scenario, phase};
+use crate::expedition::Phase;
 use crate::ids::MonsterId;
 use crate::ids::PlayerId;
 use crate::input::{AimDir, PlayerInput};
@@ -424,7 +424,7 @@ fn both_weapons_survive_a_new_day() {
         ticks_left: 1,
     });
 
-    s.run_until(5, |sim| matches!(sim.phase(), Phase::Day { day: 2, .. }));
+    s.run_until(5, |sim| matches!(phase(sim), Phase::Day { day: 2, .. }));
 
     assert_eq!(
         s.player(a).loadout,
@@ -439,12 +439,7 @@ fn a_new_expedition_returns_every_player_to_the_sword_alone() {
     let b = s.player_at(11.0, 10.0);
     s.arm(a, WeaponKind::Bow, Some(WeaponKind::Sword));
     s.give_weapon(b, WeaponKind::Bow);
-    s.sim.set_phase(Phase::Over {
-        outcome: Outcome::Victory,
-        ticks_left: 1,
-    });
-
-    s.run_until(5, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
 
     let starting = Loadout::new(WeaponKind::Sword, None);
     assert_eq!(s.player(a).loadout, starting);

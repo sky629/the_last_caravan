@@ -34,6 +34,8 @@ pub struct Tuning {
     pub guards: GuardTuning,
     pub loot: LootTuning,
     pub cycle: CycleTuning,
+    /// 야영지와 결과 화면, 원정을 시작하는 방법입니다.
+    pub camp: CampTuning,
     pub nights: NightTuning,
     pub map: MapSpec,
 }
@@ -361,8 +363,24 @@ pub struct CycleTuning {
     pub day_secs: f32,
     /// 밤의 무리를 모두 처치한 뒤 다음 날의 낮이 시작되기까지의 시간입니다.
     pub dawn_secs: f32,
-    /// 원정의 결과를 보여 주는 시간입니다. 이 시간이 지나면 새 원정이 시작됩니다.
-    pub restart_secs: f32,
+}
+
+/// 원정을 시작하는 방법입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    /// 방은 야영지에서 시작하고, 결과를 본 뒤 야영지로 돌아갑니다.
+    WhenReady,
+    /// 야영지 없이 방이 만들어지자마자, 그리고 결과 화면이 끝날 때마다 곧바로 원정을 시작합니다.
+    /// 사람의 조작 없이 원정이 진행되어야 하는 부하 시험(`--stress`)만 씁니다.
+    AtOnce,
+}
+
+/// 야영지와 결과 화면의 수치입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CampTuning {
+    pub start: Start,
+    /// 결과 화면을 보여 주는 시간입니다. 이 시간이 지나면 다음 단계로 넘어갑니다.
+    pub debrief_secs: f32,
 }
 
 /// 밤 하나입니다. 무리는 목록의 순서대로 나옵니다.
@@ -647,7 +665,6 @@ impl Tuning {
         for (name, value) in [
             ("day_secs", self.cycle.day_secs),
             ("dawn_secs", self.cycle.dawn_secs),
-            ("restart_secs", self.cycle.restart_secs),
             ("first_wave_delay_secs", self.nights.first_wave_delay_secs),
             ("between_waves_secs", self.nights.between_waves_secs),
             ("spawn_interval_secs", self.nights.spawn_interval_secs),
@@ -766,6 +783,7 @@ impl Tuning {
                 ));
             }
         }
+        check_positive("camp debrief_secs", self.camp.debrief_secs)?;
         check_not_negative("guards chase_range", self.guards.chase_range)?;
         if !map.nodes.is_empty() && resources.node_amount == 0 {
             return Err("node_amount must be at least 1 when the map has gather nodes".to_string());
@@ -1192,7 +1210,10 @@ impl Default for Tuning {
             cycle: CycleTuning {
                 day_secs: 90.0,
                 dawn_secs: 4.0,
-                restart_secs: 5.0,
+            },
+            camp: CampTuning {
+                start: Start::AtOnce,
+                debrief_secs: 5.0,
             },
             nights: NightTuning {
                 plans: vec![

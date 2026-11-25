@@ -1,7 +1,7 @@
 //! 몬스터의 목표 선택, 이동, 공격을 확인합니다.
 
-use super::support::{Scenario, nights};
-use crate::expedition::{Outcome, Phase};
+use super::support::{Scenario, nights, outcome};
+use crate::expedition::Outcome;
 use crate::math::{Rect, Vec2};
 
 #[test]
@@ -287,17 +287,12 @@ fn a_wave_of_300_monsters_runs_to_victory() {
 
     s.run_until(3000, |sim| {
         most_alive = most_alive.max(sim.monsters().count());
-        matches!(sim.phase(), Phase::Over { .. })
+        outcome(sim).is_some()
     });
 
-    assert!(
-        matches!(
-            s.sim.phase(),
-            Phase::Over {
-                outcome: Outcome::Victory,
-                ..
-            }
-        ),
+    assert_eq!(
+        outcome(&s.sim),
+        Some(Outcome::Victory),
         "the wave is cleared"
     );
     assert!(

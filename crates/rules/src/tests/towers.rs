@@ -4,7 +4,6 @@
 
 use super::support::Scenario;
 use crate::build::CannotBuild;
-use crate::expedition::{Outcome, Phase};
 use crate::input::PlayerInput;
 use crate::math::Rect;
 use crate::structures::{Shot, TowerState};
@@ -462,11 +461,7 @@ fn start_towers_stand_at_full_hp_when_the_expedition_begins_and_again_after_a_ne
     assert_eq!(standing, vec![(sites[0], 300), (sites[1], 300)]);
 
     s.set_tower_hp(10);
-    s.sim.set_phase(Phase::Over {
-        outcome: Outcome::Defeat,
-        ticks_left: 1,
-    });
-    s.run_ticks(1);
+    s.restart_expedition();
 
     assert_eq!(s.sim.expedition_number(), 2);
     let standing: Vec<(Tile, u32)> = s

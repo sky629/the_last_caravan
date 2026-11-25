@@ -11,7 +11,7 @@
 use caravan_rules::{
     BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life, Loadout,
     Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, Projectile, Prompt,
-    RepairTarget, Sim, Tower, TowerState, Tuning, WeaponKind,
+    RepairTarget, Sim, Stage, Tower, TowerState, Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +22,7 @@ use crate::units::{WireAngle, WirePos, WireTile};
 pub struct Snapshot {
     /// 서버의 Tick 번호입니다. 같은 방의 모든 클라이언트는 같은 Tick에 같은 상태를 받습니다.
     pub tick: u64,
-    /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
+    /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1이고, 첫 원정을 시작하기 전의 야영지에서는 0입니다.
     pub expedition: u32,
     pub phase: WirePhase,
     pub wagon: WireWagon,
@@ -46,8 +46,8 @@ pub struct Snapshot {
     pub projectiles: Vec<WireProjectile>,
 }
 
-/// 원정의 단계입니다. 단계마다 그 단계에서 표시할 값만 가집니다.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// 방의 단계입니다. 야영지, 원정의 낮과 밤과 새벽, 결과 화면 가운데 하나이고, 단계마다 그 단계에서 표시할 값만 가집니다.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WirePhase {
     /// `day`번째 날의 낮이고, `secs_left`초 뒤에 밤이 됩니다.
     Day { day: u32, secs_left: f32 },
@@ -59,11 +59,31 @@ pub enum WirePhase {
     },
     /// 밤의 무리를 모두 처치했고, `secs_left`초 뒤에 `next_day`번째 날의 낮이 시작됩니다.
     Dawn { next_day: u32, secs_left: f32 },
-    /// 결과를 보여 주는 중이며, `secs_left`초 뒤에 새 원정이 시작됩니다.
-    Over {
-        outcome: WireOutcome,
-        secs_left: f32,
+    /// 야영지입니다. 진열대의 위치는 `Welcome`에 있습니다.
+    Camp {
+        /// 준비한 플레이어의 번호입니다. 번호가 작은 플레이어부터입니다.
+        ready: Vec<u32>,
+        /// 모두가 준비했으면, 원정이 시작되기까지 남은 초입니다.
+        starting_in: Option<f32>,
+        /// 허수아비마다 마지막으로 맞은 때와 그 Tick의 피해입니다. 번호가 작은 허수아비부터입니다.
+        struck: Vec<WireStruck>,
     },
+    /// 원정의 결과를 보여 주는 중입니다.
+    Debrief {
+        outcome: WireOutcome,
+        /// 이 시간이 지나면 야영지로 돌아갑니다.
+        secs_left: f32,
+        /// 확인한 플레이어의 번호입니다. 번호가 작은 플레이어부터입니다.
+        confirmed: Vec<u32>,
+    },
+}
+
+/// 허수아비가 마지막으로 맞은 때입니다. 클라이언트는 `tick`이 최근일 때만 피해의 숫자를 띄웁니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireStruck {
+    pub monster: u32,
+    pub tick: u64,
+    pub amount: u32,
 }
 
 /// 밤 안에서의 진행입니다. 무리의 번호는 그 밤 안에서 1부터 셉니다.
@@ -375,7 +395,7 @@ impl Snapshot {
         Snapshot {
             tick: sim.tick(),
             expedition: sim.expedition_number(),
-            phase: wire_phase(sim.phase(), tuning),
+            phase: wire_stage(sim.stage(), tuning),
             wagon: WireWagon {
                 hp: sim.wagon().hp,
                 max_hp: tuning.wagon.max_hp,
@@ -404,6 +424,29 @@ fn secs(ticks: u32, tuning: &Tuning) -> f32 {
     ticks as f32 / tuning.tick_hz as f32
 }
 
+fn wire_outcome(outcome: Outcome) -> WireOutcome {
+    match outcome {
+        Outcome::Victory => WireOutcome::Victory,
+        Outcome::Defeat => WireOutcome::Defeat,
+    }
+}
+
+fn wire_stage(stage: &Stage, tuning: &Tuning) -> WirePhase {
+    match stage {
+        Stage::Camp(_) => WirePhase::Camp {
+            ready: Vec::new(),
+            starting_in: None,
+            struck: Vec::new(),
+        },
+        Stage::Expedition(phase) => wire_phase(*phase, tuning),
+        Stage::Debrief(debrief) => WirePhase::Debrief {
+            outcome: wire_outcome(debrief.outcome()),
+            secs_left: secs(debrief.ticks_left(), tuning),
+            confirmed: debrief.confirmed().map(|id| id.0).collect(),
+        },
+    }
+}
+
 fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
     match phase {
         Phase::Day { day, ticks_left } => WirePhase::Day {
@@ -429,16 +472,6 @@ fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
             ticks_left,
         } => WirePhase::Dawn {
             next_day,
-            secs_left: secs(ticks_left, tuning),
-        },
-        Phase::Over {
-            outcome,
-            ticks_left,
-        } => WirePhase::Over {
-            outcome: match outcome {
-                Outcome::Victory => WireOutcome::Victory,
-                Outcome::Defeat => WireOutcome::Defeat,
-            },
             secs_left: secs(ticks_left, tuning),
         },
     }

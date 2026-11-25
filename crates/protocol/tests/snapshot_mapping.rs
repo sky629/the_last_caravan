@@ -493,7 +493,7 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
 }
 
 #[test]
-fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
+fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_camp() {
     // 몬스터가 마차 바로 옆에서 나타나고, 플레이어를 쫓지 않으므로 마차만 공격합니다. 플레이어가 있어야 실패로 판정됩니다.
     let mut sim = sim_with(|t| {
         t.wagon.max_hp = 1;
@@ -506,7 +506,7 @@ fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
     for _ in 0..100 {
         sim.step(&none);
         let snapshot = Snapshot::from_sim(&sim);
-        if matches!(snapshot.phase, WirePhase::Over { .. }) {
+        if matches!(snapshot.phase, WirePhase::Debrief { .. }) {
             over = Some(snapshot);
             break;
         }
@@ -514,20 +514,22 @@ fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
     let over = over.expect("the wagon falls and the expedition ends");
     assert_eq!(
         over.phase,
-        WirePhase::Over {
+        WirePhase::Debrief {
             outcome: WireOutcome::Defeat,
-            secs_left: 5.0
+            secs_left: 5.0,
+            confirmed: vec![],
         },
-        "restart_secs is 5, shown as seconds"
+        "debrief_secs is 5, shown as seconds"
     );
     assert_eq!(over.wagon.hp, 0);
 
     step(&mut sim, &none, 20);
     assert_eq!(
         Snapshot::from_sim(&sim).phase,
-        WirePhase::Over {
+        WirePhase::Debrief {
             outcome: WireOutcome::Defeat,
-            secs_left: 4.0
+            secs_left: 4.0,
+            confirmed: vec![],
         }
     );
 }

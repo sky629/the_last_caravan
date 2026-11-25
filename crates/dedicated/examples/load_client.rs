@@ -247,6 +247,7 @@ fn report_line(elapsed: Duration, window: &Window, latest: Option<&Snapshot>) ->
 
 fn phase_name(snapshot: &Snapshot) -> String {
     match snapshot.phase {
+        WirePhase::Camp { .. } => "camp".to_string(),
         WirePhase::Day { day, .. } => format!("day({day})"),
         WirePhase::Night {
             day,
@@ -261,7 +262,7 @@ fn phase_name(snapshot: &Snapshot) -> String {
             }
         },
         WirePhase::Dawn { next_day, .. } => format!("dawn(next {next_day})"),
-        WirePhase::Over { outcome, .. } => format!("over({outcome:?})"),
+        WirePhase::Debrief { outcome, .. } => format!("debrief({outcome:?})"),
     }
 }
 

@@ -1,6 +1,6 @@
 //! 원정의 시작과 끝(입장과 퇴장, 성공과 실패, 새 원정)과 결정성을 확인합니다. 낮과 밤의 흐름은 `days.rs`가 확인합니다.
 
-use super::support::{SEED, Scenario};
+use super::support::{SEED, Scenario, outcome, phase};
 use crate::expedition::{Outcome, Phase};
 use crate::ids::PlayerId;
 use crate::kind::WeaponKind;
@@ -86,7 +86,7 @@ fn a_player_who_joins_in_the_middle_of_an_expedition_is_alive_at_a_spawn_point()
     let mut s = Scenario::with_cycle(|t| t.cycle.day_secs = 1.0);
     s.run_until(400, |sim| sim.monsters().count() > 0);
     assert!(
-        matches!(s.sim.phase(), Phase::Night { .. }),
+        matches!(phase(&s.sim), Phase::Night { .. }),
         "the expedition is in progress"
     );
 
@@ -146,7 +146,7 @@ fn a_new_expedition_returns_each_player_to_their_own_spawn_point_after_someone_l
 
     s.set_wagon_hp(0);
     s.run_ticks(1);
-    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 1);
+    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 1);
 
     assert_eq!(s.sim.expedition_number(), 2);
     assert_eq!(s.player(second).pos, spawns[1]);
@@ -198,7 +198,7 @@ fn a_new_expedition_does_not_stack_two_players_on_one_point_while_another_is_fre
 
     s.set_wagon_hp(0);
     s.run_ticks(1);
-    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 1);
+    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 1);
 
     assert_eq!(s.sim.expedition_number(), 2);
     let mut positions: Vec<_> = staying.iter().map(|&id| s.player(id).pos).collect();
@@ -216,13 +216,7 @@ fn a_destroyed_wagon_fails_the_expedition() {
     s.run_ticks(1);
 
     assert_eq!(s.sim.wagon().hp, 0);
-    assert!(matches!(
-        s.sim.phase(),
-        Phase::Over {
-            outcome: Outcome::Defeat,
-            ..
-        }
-    ));
+    assert_eq!(outcome(&s.sim), Some(Outcome::Defeat));
 }
 
 #[test]
@@ -231,25 +225,20 @@ fn the_expedition_fails_when_every_player_is_downed_or_dead() {
     let a = s.player_at(2.0, 2.0);
     let b = s.player_at(3.0, 2.0);
     s.run_ticks(1);
-    assert!(matches!(s.sim.phase(), Phase::Day { .. }));
+    assert!(matches!(phase(&s.sim), Phase::Day { .. }));
 
     s.knock_down(a);
     s.run_ticks(1);
     assert!(
-        matches!(s.sim.phase(), Phase::Day { .. }),
+        matches!(phase(&s.sim), Phase::Day { .. }),
         "one is still standing"
     );
 
     s.kill(b);
     s.run_ticks(1);
-    assert!(
-        matches!(
-            s.sim.phase(),
-            Phase::Over {
-                outcome: Outcome::Defeat,
-                ..
-            }
-        ),
+    assert_eq!(
+        outcome(&s.sim),
+        Some(Outcome::Defeat),
         "one downed and one dead"
     );
 }
@@ -261,12 +250,12 @@ fn an_empty_room_never_fails() {
 
     s.run_ticks(100);
 
-    assert!(matches!(s.sim.phase(), Phase::Day { .. }));
+    assert!(matches!(phase(&s.sim), Phase::Day { .. }));
 
     let a = s.player_at(2.0, 2.0);
     s.sim.remove_player(a);
     s.run_ticks(100);
-    assert!(matches!(s.sim.phase(), Phase::Day { .. }));
+    assert!(matches!(phase(&s.sim), Phase::Day { .. }));
 }
 
 #[test]
@@ -276,7 +265,7 @@ fn the_world_stands_still_while_the_result_is_shown() {
     let monster = s.monster_at(10.0, 3.0);
     s.set_wagon_hp(0);
     s.run_ticks(1);
-    assert!(matches!(s.sim.phase(), Phase::Over { .. }));
+    assert!(outcome(&s.sim).is_some());
     let player_before = s.player(a).pos;
     let monster_before = s.monster(monster).unwrap().pos;
 
@@ -301,7 +290,7 @@ fn a_new_expedition_restores_the_players_the_wagon_and_the_field() {
     let old_monster_count = s.sim.monsters().count();
     assert_eq!(old_monster_count, 1);
 
-    let restart = s.ticks(s.sim.tuning().cycle.restart_secs);
+    let restart = s.ticks(s.sim.tuning().camp.debrief_secs);
     s.run_ticks(restart + 1);
 
     assert_eq!(s.sim.expedition_number(), 2);
@@ -324,7 +313,7 @@ fn each_expedition_has_its_own_seed_and_a_room_seed_always_gives_the_same_ones()
     s.player_at(2.0, 2.0);
     s.set_wagon_hp(0);
     s.run_ticks(1);
-    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 1);
+    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 1);
     assert_eq!(s.sim.expedition_number(), 2);
     let second = s.sim.expedition_seed();
 
@@ -348,7 +337,7 @@ fn monster_ids_are_not_reused_in_a_new_expedition() {
     let old_ids: Vec<_> = s.sim.monsters().map(|m| m.id).collect();
     s.sim.world_mut().wagon.hp = 0;
     s.player_at(2.0, 2.0);
-    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 2);
+    s.run_ticks(s.ticks(s.sim.tuning().camp.debrief_secs) + 2);
     assert_eq!(s.sim.expedition_number(), 2);
 
     s.run_until(400, |sim| sim.monsters().count() > 0);
@@ -400,7 +389,7 @@ fn play_a_scripted_expedition() -> String {
     format!(
         "{trace}{players:?} {monsters:?} {towers:?} {projectiles:?} {:?} {:?}",
         s.sim.wagon(),
-        s.sim.phase()
+        s.sim.stage()
     )
 }
 

@@ -4,7 +4,7 @@
 //! 시나리오는 `Scenario::with_chest`입니다. 후보 자리 (2, 2)의 상자가 `contents` 하나만 낼 수 있고, 플레이어는 상자의 남쪽 (2.5, 3.6)에 섭니다.
 //! 플레이어의 가장자리에서 상자의 가장자리까지 0.25타일이므로 닿는 거리(1타일) 안입니다.
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, nights, phase};
 use crate::expedition::Phase;
 use crate::ids::PlayerId;
 use crate::input::{MoveDir, PlayerInput};
@@ -458,7 +458,7 @@ fn nightfall_ends_an_opening_that_is_not_finished_and_leaves_no_weapon() {
     let a = beside_the_chest(&mut s);
     s.hold_interact(a);
 
-    s.run_until(100, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    s.run_until(100, |sim| matches!(phase(sim), Phase::Night { .. }));
     s.run_ticks(1);
 
     assert_eq!(chests_left(&s), 0, "the unopened chest vanished");

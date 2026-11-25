@@ -1,7 +1,7 @@
 //! 테스트에서만 쓰는 상황 구성 도구입니다. 개체를 필요한 자리에 놓은 뒤,
 //! 서버가 하는 것과 같은 방식(누르고 있는 입력과 `step`)으로 게임을 진행합니다.
 
-use crate::expedition::Phase;
+use crate::expedition::{Outcome, Phase};
 use crate::ids::{MonsterId, NodeId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 use crate::kind::MonsterKind;
@@ -245,6 +245,12 @@ impl Scenario {
         self.sim.step(&inputs);
     }
 
+    /// 지금 원정을 끝내고 다음 원정의 첫날을 곧바로 시작합니다. 「새 원정이 무엇을 되돌리는가」를 시험하는 테스트가 씁니다.
+    pub fn restart_expedition(&mut self) {
+        self.sim.end_expedition(Outcome::Defeat);
+        self.sim.begin_expedition();
+    }
+
     /// 지금 누르고 있는 입력은 그대로 두고, 무기 전환 키(Q)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.
     ///
     /// `hold`는 입력을 매 Tick 되풀이하므로 `hold`로는 「한 번 누름」을 만들 수 없습니다. 서버가 하는 일과 같이 이 Tick의 입력에만 참을 넣습니다.
@@ -408,6 +414,16 @@ pub(crate) fn resource_total(sim: &Sim) -> u32 {
 pub(crate) fn gathered_total(sim: &Sim) -> u32 {
     let full = sim.tuning().resources.node_amount;
     sim.nodes().map(|node| full - node.amount).sum()
+}
+
+/// 원정이 끝나서 결과 화면이면 그 결과입니다.
+pub(crate) fn outcome(sim: &Sim) -> Option<Outcome> {
+    sim.debrief().map(|debrief| debrief.outcome())
+}
+
+/// 원정 중인 방의 단계입니다. 원정 중이 아니면 테스트가 실패합니다.
+pub(crate) fn phase(sim: &Sim) -> Phase {
+    sim.phase().expect("the room is on an expedition")
 }
 
 /// 부동소수점 결과를 비교할 때 쓰는 허용 오차입니다.

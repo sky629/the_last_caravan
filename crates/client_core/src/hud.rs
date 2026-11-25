@@ -113,9 +113,9 @@ impl Hud {
         let you = joined.welcome.you;
         let my_team = Team(joined.welcome.team);
         hud.expedition = Some(format!("EXPEDITION {}", frame.expedition));
-        (hud.day, hud.timer) = phase_text(frame.phase, joined.welcome.world.day_count);
+        (hud.day, hud.timer) = phase_text(&frame.phase, joined.welcome.world.day_count);
         hud.stash = Some(format!("STASH  {}", frame.stash));
-        if let WirePhase::Over {
+        if let WirePhase::Debrief {
             outcome, secs_left, ..
         } = frame.phase
         {
@@ -206,8 +206,8 @@ fn result_banner(outcome: WireOutcome, secs_left: f32) -> Banner {
 }
 
 /// 화면 오른쪽 위에 적는 두 줄입니다. 첫 줄은 몇 번째 날의 낮인지 밤인지이고, 둘째 줄은 거기서 기다리는 것입니다.
-fn phase_text(phase: WirePhase, day_count: u32) -> (Option<String>, Option<String>) {
-    let (day, timer) = match phase {
+fn phase_text(phase: &WirePhase, day_count: u32) -> (Option<String>, Option<String>) {
+    let (day, timer) = match *phase {
         WirePhase::Day { day, secs_left } => (
             format!("DAY {day} / {day_count}"),
             format!("NIGHT IN {}s", whole_secs(secs_left)),
@@ -236,7 +236,7 @@ fn phase_text(phase: WirePhase, day_count: u32) -> (Option<String>, Option<Strin
             "DAWN".to_string(),
             format!("DAY {next_day} / {day_count} IN {}s", whole_secs(secs_left)),
         ),
-        WirePhase::Over { .. } => return (None, None),
+        WirePhase::Camp { .. } | WirePhase::Debrief { .. } => return (None, None),
     };
     (Some(day), Some(timer))
 }
@@ -618,12 +618,22 @@ mod tests {
             text("DAWN", "DAY 3 / 3 IN 1s")
         );
         assert_eq!(
-            shown(WirePhase::Over {
+            shown(WirePhase::Debrief {
                 outcome: WireOutcome::Victory,
-                secs_left: 5.0
+                secs_left: 5.0,
+                confirmed: vec![]
             }),
             (None, None),
             "the result takes the place of the day"
+        );
+        assert_eq!(
+            shown(WirePhase::Camp {
+                ready: vec![],
+                starting_in: None,
+                struck: vec![]
+            }),
+            (None, None),
+            "the camp has no day"
         );
     }
 
@@ -1194,18 +1204,20 @@ mod tests {
     fn the_result_is_shown_with_the_time_until_the_next_expedition() {
         let session = session_in_room();
         let mut frame = frame(vec![player(YOU, alive(100))]);
-        frame.phase = WirePhase::Over {
+        frame.phase = WirePhase::Debrief {
             outcome: WireOutcome::Defeat,
             secs_left: 4.6,
+            confirmed: vec![],
         };
         let failed = Hud::of(&session, Some(&frame)).banner.unwrap();
         assert_eq!(failed.title, "EXPEDITION FAILED");
         assert_eq!(failed.detail.as_deref(), Some("Next expedition in 5s"));
         assert_eq!(failed.tone, BannerTone::Bad);
 
-        frame.phase = WirePhase::Over {
+        frame.phase = WirePhase::Debrief {
             outcome: WireOutcome::Victory,
             secs_left: 1.0,
+            confirmed: vec![],
         };
         let won = Hud::of(&session, Some(&frame)).banner.unwrap();
         assert_eq!(won.title, "EXPEDITION SUCCESS");

@@ -7,7 +7,7 @@
 //! 기대하는 피해량과 속도는 수치표의 활 행에서 구합니다.
 
 use super::support::{Scenario, close};
-use crate::expedition::{Outcome, Phase};
+use crate::expedition::Outcome;
 use crate::ids::{MonsterId, PlayerId, ProjectileId};
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::WeaponKind;
@@ -445,10 +445,7 @@ fn an_arrow_that_ended_does_not_stay_through_the_result_screen() {
     s.run_ticks(1);
     stop_shooting(&mut s, a);
     s.run_until(40, |sim| sim.projectiles().any(|arrow| !arrow.is_flying()));
-    s.sim.set_phase(Phase::Over {
-        outcome: Outcome::Defeat,
-        ticks_left: 10,
-    });
+    s.sim.end_expedition(Outcome::Defeat);
 
     s.run_ticks(1);
 
@@ -465,10 +462,7 @@ fn an_arrow_in_flight_stops_where_it_is_during_the_result_screen() {
     s.run_ticks(1);
     stop_shooting(&mut s, a);
     let before: Vec<_> = s.sim.projectiles().map(|arrow| arrow.pos).collect();
-    s.sim.set_phase(Phase::Over {
-        outcome: Outcome::Defeat,
-        ticks_left: 10,
-    });
+    s.sim.end_expedition(Outcome::Defeat);
 
     s.run_ticks(3);
 
@@ -483,12 +477,7 @@ fn a_new_expedition_clears_the_projectiles() {
     s.run_ticks(1);
     stop_shooting(&mut s, a);
     assert_eq!(s.flying(), 1);
-    s.sim.set_phase(Phase::Over {
-        outcome: Outcome::Defeat,
-        ticks_left: 1,
-    });
-
-    s.run_until(5, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
 
     assert_eq!(s.sim.projectiles().count(), 0);
 }

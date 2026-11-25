@@ -3,7 +3,7 @@
 //!
 //! 시나리오는 20 x 20 맵이고 마차는 (17, 17)에서 (19, 19)까지입니다. 채집 지점은 마을의 범위(10타일) 밖인 타일 (2, 2)에 있습니다.
 
-use super::support::{Scenario, gathered_total, nights, resource_total};
+use super::support::{Scenario, gathered_total, nights, phase, resource_total};
 use crate::expedition::{NightStep, Phase};
 use crate::ids::{NodeId, PlayerId};
 use crate::input::PlayerInput;
@@ -419,7 +419,7 @@ fn two_short_days() -> Scenario {
 fn clear_the_night_and_wait_for_the_day(s: &mut Scenario, day: u32) {
     s.run_until(2000, |sim| {
         matches!(
-            sim.phase(),
+            phase(sim),
             Phase::Night {
                 step: NightStep::Fighting { to_spawn: 0, .. },
                 ..
@@ -429,7 +429,7 @@ fn clear_the_night_and_wait_for_the_day(s: &mut Scenario, day: u32) {
     s.clear_monsters();
     s.run_until(
         2000,
-        |sim| matches!(sim.phase(), Phase::Day { day: d, .. } if d == day),
+        |sim| matches!(phase(sim), Phase::Day { day: d, .. } if d == day),
     );
 }
 

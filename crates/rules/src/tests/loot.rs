@@ -2,8 +2,8 @@
 //!
 //! 시험하는 것은 `&Sim`이 공개하는 값(바닥의 무기, 가진 무기, 안내)뿐입니다.
 
-use super::support::{Scenario, nights};
-use crate::expedition::{Outcome, Phase};
+use super::support::{Scenario, nights, phase};
+use crate::expedition::Phase;
 use crate::ids::PlayerId;
 use crate::input::{MoveDir, PlayerInput};
 use crate::kind::WeaponKind;
@@ -442,13 +442,13 @@ fn a_weapon_on_the_ground_stays_through_the_night_and_the_next_day() {
     });
     s.weapon_at(5.0, 5.0, WeaponKind::Spear);
 
-    s.run_until(100, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    s.run_until(100, |sim| matches!(phase(sim), Phase::Night { .. }));
     assert_eq!(weapons_on_the_ground(&s), [WeaponKind::Spear]);
     s.run_until(2000, |sim| {
-        sim.monsters().count() == 1 && matches!(sim.phase(), Phase::Night { .. })
+        sim.monsters().count() == 1 && matches!(phase(sim), Phase::Night { .. })
     });
     s.clear_monsters();
-    s.run_until(400, |sim| matches!(sim.phase(), Phase::Day { day: 2, .. }));
+    s.run_until(400, |sim| matches!(phase(sim), Phase::Day { day: 2, .. }));
 
     assert_eq!(weapons_on_the_ground(&s), [WeaponKind::Spear]);
 }
@@ -457,12 +457,7 @@ fn a_weapon_on_the_ground_stays_through_the_night_and_the_next_day() {
 fn a_new_expedition_clears_the_weapons_on_the_ground() {
     let mut s = Scenario::open_field();
     s.weapon_at(5.0, 5.0, WeaponKind::Spear);
-    s.sim.set_phase(Phase::Over {
-        outcome: Outcome::Defeat,
-        ticks_left: 1,
-    });
-
-    s.run_until(5, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
 
     assert!(weapons_on_the_ground(&s).is_empty());
 }

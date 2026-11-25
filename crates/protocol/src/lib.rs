@@ -31,7 +31,7 @@ pub use snapshot::{
     Snapshot, WireAttack, WireBuildRefusal, WireCannotBuild, WireChest, WireGroundWeapon,
     WireInteraction, WireLife, WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode,
     WireOutcome, WirePhase, WirePile, WirePlayer, WireProjectile, WirePrompt, WireRepairTarget,
-    WireShot, WireTower, WireTowerState, WireWagon, WireWeaponKind,
+    WireShot, WireStruck, WireTower, WireTowerState, WireWagon, WireWeaponKind,
 };
 pub use transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};
 pub use units::{WireAngle, WirePos, WireRect, WireTile};

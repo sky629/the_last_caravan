@@ -243,9 +243,9 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 
 ## Tick 하나의 처리 순서
 
-`Sim::step`(`crates/rules/src/sim.rs`)은 한 Tick에 다음 순서로 상태를 바꿉니다. 모든 공격과 피해는 같은 상태를 읽고 결정한 뒤 14번에서 한꺼번에 적용합니다.
+`Sim::step`(`crates/rules/src/sim.rs`)은 방의 단계(`Stage`)에 따라 다른 일을 합니다. 결과 화면에서는 세계가 멈추고 결과를 보여 주는 남은 시간만 줄입니다. 원정 중의 Tick(`Sim::simulate`)은 다음 순서로 상태를 바꿉니다. 모든 공격과 피해는 같은 상태를 읽고 결정한 뒤 14번에서 한꺼번에 적용합니다.
 
-1. `advance_phase`가 낮, 밤, 새벽, 결과 화면의 카운트다운을 줄이고, 때가 되면 밤이나 낮을 시작하거나 몬스터를 한 마리 등장시킵니다. 낮이 시작되면 상자를 놓고 상자마다 몬스터를 세우고(`loot::start_day`), 밤이 시작되면 열지 않은 상자를 치웁니다(`loot::clear_chests`). 결과 화면의 동안에는 여기서 Tick이 끝납니다.
+1. `advance_phase`가 낮, 밤, 새벽의 카운트다운을 줄이고, 때가 되면 밤이나 낮을 시작하거나 몬스터를 한 마리 등장시킵니다. 낮이 시작되면 상자를 놓고 상자마다 몬스터를 세우고(`loot::start_day`), 밤이 시작되면 열지 않은 상자를 치웁니다(`loot::clear_chests`).
 2. `Paths::sync`가 마차와 감시탑으로 가는 이동 경로를 필요하면 다시 만듭니다.
 3. `MonsterGrid::rebuild`가 몬스터의 위치를 격자에 넣습니다.
 4. `update_interactions`가 `F`와 `B`를 처리합니다. 부활, 감시탑 수리, 마차 수리, 채집, 상자 열기의 순서로 대상을 고르고, 수리의 비용을 보관함에서 내고(플레이어 번호 순서), 건설의 시작과 거절을 판정합니다. 부활, 수리, 채집 다음에 상자 열기가 오고, `F`를 누른 순간에 더 높은 순위의 대상이 없으면 가장 가까운 바닥의 무기를 줍습니다(플레이어 번호 순서).
@@ -262,7 +262,7 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 15. `recover_near_wagon`이 마차 곁의 살아 있는 플레이어의 HP를 회복합니다. 피해를 적용한 뒤에 부르므로, 같은 Tick의 회복이 쓰러뜨리는 피해를 되돌리지 않습니다.
 16. `advance_life_timers`가 부활을 마무리하고 출혈 시간을 줄입니다.
 17. `finish_openings`가 열기를 마친 플레이어의 상자를 열어서 무기를 바닥에 놓습니다. 피해를 적용한 뒤에 부르므로, 열기가 끝나는 Tick에 맞은 플레이어는 열지 못합니다.
-18. `settle_outcome`이 원정의 성공과 실패, 무리를 모두 처치했는지를 판정합니다.
+18. `settle_outcome`이 원정의 성공과 실패, 무리를 모두 처치했는지를 판정합니다. 원정이 끝났으면 방이 결과 화면으로 넘어갑니다.
 
 ## 키 입력 하나가 다른 플레이어의 화면에 그려지기까지
 
@@ -285,9 +285,9 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. 규칙에서 시작해서 프로토콜, 서버, 어댑터, 클라이언트 코어, 클라이언트로 나아갑니다.
 
 1. `crates/rules/src/tuning.rs`에서는 게임의 모든 수치가 한 구조체에 모인 모습과, `Default` 트레이트 구현, 그리고 초를 정수 Tick으로 바꾸는 `Tuning::ticks`를 봅니다.
-2. `crates/rules/src/sim.rs`의 `Sim::step`은 Tick 하나의 처리 순서를 나열하며, `world`만 가변 참조로 넘기고 `tuning`과 `paths` 같은 다른 필드는 `Ctx`에 공유 참조로 빌려 주는 방식이 구조체 필드를 따로 빌리는 소유권 규칙의 첫 예입니다.
+2. `crates/rules/src/sim.rs`의 `Sim::step`은 방의 단계에 따라 Tick의 일을 나누고, 원정의 Tick(`simulate`)은 Tick 하나의 처리 순서를 나열하며, `world`만 가변 참조로 넘기고 `tuning`과 `paths` 같은 다른 필드는 `Ctx`에 공유 참조로 빌려 주는 방식이 구조체 필드를 따로 빌리는 소유권 규칙의 첫 예입니다.
 3. `crates/rules/src/player.rs`의 `Life`는 데이터를 가지는 열거형의 예이고, 쓰러진 플레이어가 HP나 쿨다운을 가지는 상태를 타입으로 표현할 수 없게 만듭니다. `crates/rules/src/loadout.rs`의 `Loadout`은 무기 두 칸을 타입으로 표현합니다. 든 무기(`held`)가 `Option`이 아니라서 「칸이 둘 다 빈 상태」를 만들 수 없고, 필드가 비공개라서 상태를 바꾸는 방법이 `swap`(`Q`)과 `take`(`F`로 줍기) 둘뿐입니다. `crates/rules/src/weapon.rs`는 공격을 두 단계(`decide`가 공격을 모으고, `deliver`가 `Delivery`의 값에 따라 전달합니다)로 나누고, 무기마다 다른 수치는 `crates/rules/src/tuning.rs`의 무기 표(`WeaponTable`) 한 행에 둡니다. `crates/rules/src/projectile.rs`는 탄환을 쏜 플레이어와 따로 세계의 개체 목록에 두고, `crates/rules/src/sweep.rs`는 한 Tick에 움직인 선분 전체를 검사해서 빠른 탄환이 얇은 몬스터를 건너뛰지 못하게 하고, 탄환과 소총의 선이 몬스터를 앞에서부터 찾는 순서(`monsters_along`)를 정합니다. 소총은 `weapon.rs`의 `shoot`가 누른 Tick에 이 함수와 막힌 타일 검사를 한 번씩 부릅니다. `crates/rules/src/stamina.rs`의 `Stamina`는 정수 하나를 새 타입(newtype)으로 감싸서, 달리기 게이지를 소수 없이 정수 점수로 세는 방법을 한 곳에 모읍니다.
-4. `crates/rules/src/world/tiles.rs`의 `TileMap`은 어디가 막혔는지 아는 유일한 곳이고, `crates/rules/src/build.rs`는 감시탑을 놓을 수 있는 조건을 한 함수(`check_site`)로 판정합니다. `crates/rules/src/expedition.rs`는 낮, 밤, 새벽, 결과 화면의 단계를 열거형(`Phase`)으로 두고 단계를 바꾸는 곳을 두 함수로 모았으며, 낮이 시작될 때 일어나는 일은 `begin_day` 하나에 있습니다. `crates/rules/src/loot.rs`는 무기 상자와 바닥의 무기를 다루고, 규칙에서 난수를 쓰는 곳은 이 모듈의 `dice` 하나입니다(상자의 자리와 내용을 씨앗에서 뽑습니다). `Chest`의 내용(`contents`)은 규칙 크레이트 안에서만 보이므로, 프로토콜 크레이트가 상자 안의 무기를 읽어서 스냅샷에 실으면 컴파일되지 않습니다. `crates/rules/src/resources.rs`는 자원이 채집 지점, 플레이어의 손, 땅, 보관함 가운데 한 곳에만 있도록 옮기는 규칙입니다. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 명령(`Order`: 낮에는 자리를 지키고 밤에는 마차로 향합니다), 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
+4. `crates/rules/src/world/tiles.rs`의 `TileMap`은 어디가 막혔는지 아는 유일한 곳이고, `crates/rules/src/build.rs`는 감시탑을 놓을 수 있는 조건을 한 함수(`check_site`)로 판정합니다. `crates/rules/src/expedition.rs`는 낮, 밤, 새벽의 단계를 열거형(`Phase`)으로 두고 단계를 바꾸는 곳을 두 함수로 모았으며, 낮이 시작될 때 일어나는 일은 `begin_day` 하나에 있습니다. 그 위의 단계인 야영지, 원정, 결과 화면은 `crates/rules/src/stage.rs`의 `Stage`가 열거형 하나로 두고, 단계마다 그 단계에서만 의미 있는 값을 가지며, 단계를 바꾸는 곳은 `Sim`의 세 함수(`begin_expedition`, `conclude`, `enter_camp`)뿐입니다. `crates/rules/src/loot.rs`는 무기 상자와 바닥의 무기를 다루고, 규칙에서 난수를 쓰는 곳은 이 모듈의 `dice` 하나입니다(상자의 자리와 내용을 씨앗에서 뽑습니다). `Chest`의 내용(`contents`)은 규칙 크레이트 안에서만 보이므로, 프로토콜 크레이트가 상자 안의 무기를 읽어서 스냅샷에 실으면 컴파일되지 않습니다. `crates/rules/src/resources.rs`는 자원이 채집 지점, 플레이어의 손, 땅, 보관함 가운데 한 곳에만 있도록 옮기는 규칙입니다. `crates/rules/src/monster.rs`, `crates/rules/src/nav.rs`, `crates/rules/src/spatial.rs`에서는 몬스터의 명령(`Order`: 낮에는 자리를 지키고 밤에는 마차로 향합니다), 목표 선택, 흐름장(flow field)으로 장애물을 피하는 경로 탐색, 균일 격자로 주변 몬스터를 찾는 방법을 배웁니다.
 5. `crates/rules/src/tests/support.rs`와 같은 폴더의 테스트는 화면과 네트워크 없이 개체를 원하는 자리에 놓고 `step`을 반복해서 규칙을 시험하는 방법을 보여 줍니다. 상자는 `chests.rs`(자리와 내용, 씨앗, 지키는 몬스터)와 `opening.rs`(여는 일)가, 바닥의 무기는 `loot.rs`가 시험합니다.
 6. `crates/protocol/src/messages.rs`의 `ClientMsg`와 `ServerMsg`는 serde의 derive로 직렬화하는 열거형이며, 클라이언트가 보낼 수 있는 게임 정보가 입력뿐이라는 서버 권위 방식이 이 타입에 드러납니다.
 7. `crates/protocol/src/snapshot.rs`의 `Snapshot::from_sim`은 게임 상태를 전송 형식으로 바꾸는 유일한 함수이며, 규칙의 상태 타입과 전송용 타입을 분리한 모습을 보여 줍니다. 소총의 사격 선은 `WireAttack::trace_end`에 끝점 하나만 싣고, 선의 시작은 보내지 않습니다.

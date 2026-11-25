@@ -227,7 +227,7 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
     Frame {
         tick,
         expedition: older.expedition,
-        phase: older.phase,
+        phase: older.phase.clone(),
         wagon: older.wagon,
         stash: older.stash,
         towers: older.towers.clone(),
@@ -447,9 +447,10 @@ mod tests {
         older.monsters = vec![monster(1, 4.0, 4.0, 60)];
         older.players = vec![player(1, 8.0, 8.0, 100)];
         let mut newer = snapshot(11);
-        newer.phase = WirePhase::Over {
+        newer.phase = WirePhase::Debrief {
             outcome: caravan_protocol::WireOutcome::Defeat,
             secs_left: 5.0,
+            confirmed: vec![],
         };
         newer.wagon.hp = 100;
         newer.monsters = vec![monster(1, 5.0, 4.0, 20)];

@@ -15,9 +15,9 @@ use caravan_protocol::{
     Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
     WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMonster,
     WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
-    WirePos, WireProjectile, WirePrompt, WireRect, WireRepairTarget, WireShot, WireTile, WireTower,
-    WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server,
-    encode_client, encode_server,
+    WirePos, WireProjectile, WirePrompt, WireRect, WireRepairTarget, WireShot, WireStruck,
+    WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo,
+    decode_client, decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -448,18 +448,35 @@ fn every_phase_matches_golden_bytes() {
         &quiet_bytes(&[0x02, 0x02, 0x00, 0x00, 0x80, 0x40]),
     );
     assert_server_wire(
-        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Over {
-            outcome: WireOutcome::Victory,
-            secs_left: 5.0,
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Camp {
+            ready: vec![1, 2],
+            starting_in: Some(3.0),
+            struck: vec![WireStruck {
+                monster: 1,
+                tick: 5,
+                amount: 25,
+            }],
         }))),
-        &quiet_bytes(&[0x03, 0x00, 0x00, 0x00, 0xA0, 0x40]),
+        // Camp, 준비 2명(1, 2), 남은 3.0초, 맞은 허수아비 1개(번호 1, Tick 5, 피해 25)
+        &quiet_bytes(&[
+            0x03, 0x02, 0x01, 0x02, 0x01, 0x00, 0x00, 0x40, 0x40, 0x01, 0x01, 0x05, 0x19,
+        ]),
     );
     assert_server_wire(
-        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Over {
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Debrief {
+            outcome: WireOutcome::Victory,
+            secs_left: 5.0,
+            confirmed: vec![],
+        }))),
+        &quiet_bytes(&[0x04, 0x00, 0x00, 0x00, 0xA0, 0x40, 0x00]),
+    );
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Debrief {
             outcome: WireOutcome::Defeat,
             secs_left: 5.0,
+            confirmed: vec![2],
         }))),
-        &quiet_bytes(&[0x03, 0x01, 0x00, 0x00, 0xA0, 0x40]),
+        &quiet_bytes(&[0x04, 0x01, 0x00, 0x00, 0xA0, 0x40, 0x01, 0x02]),
     );
 }
 
