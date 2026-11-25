@@ -41,6 +41,15 @@ enum LinkState {
     Closing,
 }
 
+/// 서버가 접속을 닫을 때 그 접속의 자리를 어떻게 하는지입니다. 접속이 자리를 쓰고 있지 않으면 어느 쪽이든 같습니다.
+#[derive(Clone, Copy)]
+enum SeatFate {
+    /// 입력이 오지 않는 접속입니다. 끊긴 접속처럼 자리를 유지하고, 사람이 돌아올 수 있습니다.
+    Hold,
+    /// 약속을 어기거나 한도를 넘은 접속입니다. 자리를 곧바로 내놓습니다.
+    GiveUp,
+}
+
 /// 입장에 성공한 결과입니다.
 struct Admitted {
     code: RoomCode,
@@ -62,6 +71,8 @@ pub(crate) struct Hub {
     tuning: Tuning,
     join_deadline: Duration,
     idle_timeout: Duration,
+    /// 한꺼번에 둘 수 있는 방의 수입니다.
+    max_rooms: usize,
     times: RoomTimes,
     seeds: RoomSeeds,
     /// 방 코드를 비우고 입장한 사람의 방 코드와, 새 자리의 표식을 만듭니다.
@@ -93,6 +104,7 @@ impl Hub {
             tuning,
             join_deadline: limits.join_deadline,
             idle_timeout: limits.idle_timeout,
+            max_rooms: limits.max_rooms,
             times,
             seeds,
             mint: Mint::new(random),
@@ -111,8 +123,17 @@ impl Hub {
                 Vec::new()
             }
             ServerEvent::Message(link, msg) => self.handle_message(link, msg, now),
+            // 접속 방식이 한도를 넘은 접속을 닫았습니다. 이 접속의 `Disconnected`가 바로 이어서 오지만, 자리는 지금 내놓습니다.
             ServerEvent::LimitReached(link, reason) => {
-                vec![Out::Notice(Notice::LinkClosed { link, reason })]
+                let mut outs = vec![Out::Notice(Notice::LinkClosed { link, reason })];
+                let state = self
+                    .links
+                    .get_mut(&link)
+                    .map(|state| std::mem::replace(state, LinkState::Closing));
+                if let Some(LinkState::InRoom { room, player, .. }) = state {
+                    outs.extend(self.give_up_seat(room, player));
+                }
+                outs
             }
             ServerEvent::Disconnected(link) => match self.links.remove(&link) {
                 Some(LinkState::InRoom { room, player, .. }) => self.hold_seat(room, player, link),
@@ -125,30 +146,35 @@ impl Hub {
     /// `deadline`이 지나도록 메시지를 보내지 않은 접속을 닫습니다.
     /// 입장하지 않은 접속, 입장한 뒤 멈춘 접속, 이유를 보낸 뒤에도 닫지 않은 접속이 여기에 해당합니다.
     pub fn close_silent_links(&mut self, now: Instant) -> Vec<Out> {
-        let silent: Vec<(LinkId, String)> = self
+        let silent: Vec<(LinkId, String, SeatFate)> = self
             .links
             .iter()
             .filter_map(|(&link, state)| match state {
                 LinkState::AwaitingJoin { deadline } if now >= *deadline => Some((
                     link,
                     format!("no Join within {:?} of connecting", self.join_deadline),
+                    SeatFate::GiveUp,
                 )),
-                LinkState::InRoom { deadline, .. } if now >= *deadline => {
-                    Some((link, format!("no message for {:?}", self.idle_timeout)))
-                }
+                // 입력이 오지 않는 접속의 자리는 유지합니다. 창이 멈춘 사람이 돌아올 수 있습니다.
+                LinkState::InRoom { deadline, .. } if now >= *deadline => Some((
+                    link,
+                    format!("no message for {:?}", self.idle_timeout),
+                    SeatFate::Hold,
+                )),
                 LinkState::Told { deadline } if now >= *deadline => Some((
                     link,
                     format!(
                         "still open {:?} after it was told why it cannot stay",
                         self.join_deadline
                     ),
+                    SeatFate::GiveUp,
                 )),
                 _ => None,
             })
             .collect();
         silent
             .into_iter()
-            .flat_map(|(link, reason)| self.close_link(link, reason))
+            .flat_map(|(link, reason, fate)| self.close_link(link, reason, fate))
             .collect()
     }
 
@@ -220,15 +246,19 @@ impl Hub {
             }
             (Some(LinkState::InRoom { .. }), ClientMsg::Leave) => self.leave(link),
             // 입장하기 전의 입력과 나가기, 그리고 두 번째 `Join`은 약속 위반입니다.
-            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Input(_)) => {
-                self.close_link(link, "sent an input before Join".to_string())
-            }
+            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Input(_)) => self.close_link(
+                link,
+                "sent an input before Join".to_string(),
+                SeatFate::GiveUp,
+            ),
             (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Leave) => {
-                self.close_link(link, "sent Leave before Join".to_string())
+                self.close_link(link, "sent Leave before Join".to_string(), SeatFate::GiveUp)
             }
-            (Some(LinkState::InRoom { .. }), ClientMsg::Join { .. }) => {
-                self.close_link(link, "sent Join again after joining".to_string())
-            }
+            (Some(LinkState::InRoom { .. }), ClientMsg::Join { .. }) => self.close_link(
+                link,
+                "sent Join again after joining".to_string(),
+                SeatFate::GiveUp,
+            ),
             (Some(LinkState::Told { .. } | LinkState::Closing) | None, _) => Vec::new(),
         }
     }
@@ -312,9 +342,11 @@ impl Hub {
             Some(raw) => RoomCode::parse(raw).map_err(|_| RejectReason::BadRoomCode)?,
             None => self.mint.room_code(&self.rooms),
         };
+        let at_room_limit = self.rooms.len() >= self.max_rooms;
         let mut created_with = None;
         let room = match self.rooms.entry(code.clone()) {
             Entry::Occupied(occupied) => occupied.into_mut(),
+            Entry::Vacant(_) if at_room_limit => return Err(RejectReason::ServerFull),
             Entry::Vacant(vacant) => {
                 self.rooms_created += 1;
                 let seed = self.seeds.for_room(self.rooms_created);
@@ -368,13 +400,16 @@ impl Hub {
         outs
     }
 
-    /// 서버가 `reason` 때문에 접속을 닫습니다. 방에 있던 플레이어는 빼지 않고 자리를 유지합니다(끊긴 접속과 같습니다).
-    fn close_link(&mut self, link: LinkId, reason: String) -> Vec<Out> {
+    /// 서버가 `reason` 때문에 접속을 닫습니다. 방에 있던 플레이어의 자리는 `fate`가 정합니다.
+    fn close_link(&mut self, link: LinkId, reason: String, fate: SeatFate) -> Vec<Out> {
         let mut outs = vec![Out::Notice(Notice::LinkClosed { link, reason })];
         if let Some(LinkState::InRoom { room, player, .. }) =
             self.links.insert(link, LinkState::Closing)
         {
-            outs.extend(self.hold_seat(room, player, link));
+            outs.extend(match fate {
+                SeatFate::Hold => self.hold_seat(room, player, link),
+                SeatFate::GiveUp => self.give_up_seat(room, player),
+            });
         }
         outs.push(Out::Close(link));
         outs

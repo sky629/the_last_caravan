@@ -113,4 +113,6 @@ pub enum RejectReason {
     },
     /// 이름이 비었거나, 12자보다 길거나, 쓸 수 없는 문자가 있습니다.
     BadName,
+    /// 서버가 둘 수 있는 방의 수(`ServerLimits::max_rooms`)에 닿아서 새 방을 만들 수 없습니다. 있는 방에는 들어갈 수 있습니다.
+    ServerFull,
 }

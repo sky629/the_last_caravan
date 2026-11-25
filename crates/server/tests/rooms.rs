@@ -552,7 +552,7 @@ fn a_player_who_joins_a_room_whose_expedition_has_started_joins_it_at_once() {
 }
 
 #[test]
-fn a_second_join_on_one_link_closes_it_and_holds_its_seat() {
+fn a_second_join_on_one_link_closes_it_and_gives_up_its_seat() {
     let mut rig = rig();
     let (mut a, _) = rig.join_ok("test");
     let (mut b, _) = rig.join_ok("test");
@@ -566,12 +566,12 @@ fn a_second_join_on_one_link_closes_it_and_holds_its_seat() {
         "the link that broke the protocol is closed"
     );
     assert!(
-        matches!(&notices[..], [Notice::LinkClosed { reason, .. }, Notice::Held { .. }] if reason.contains("Join again")),
-        "the closing is reported and its seat is held: {notices:?}"
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }, Notice::Left { members: 1, .. }] if reason.contains("Join again")),
+        "the closing is reported and its seat is given up: {notices:?}"
     );
 
     rig.run_ticks(1);
-    assert_eq!(player_ids(&last_snapshot(&mut b)), [1, 2]);
+    assert_eq!(player_ids(&last_snapshot(&mut b)), [2]);
 }
 
 #[test]

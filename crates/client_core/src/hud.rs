@@ -604,6 +604,7 @@ pub fn reject_text(reason: RejectReason) -> String {
         RejectReason::RoomFull { capacity } => format!("Room is full ({capacity} / {capacity})"),
         RejectReason::BadRoomCode => "That room code is not valid".to_string(),
         RejectReason::BadName => "Name must be 1-12 letters, digits, spaces, - or _".to_string(),
+        RejectReason::ServerFull => "The server is full. Try again later".to_string(),
         RejectReason::VersionMismatch { server } => format!(
             "Update or reload: the server speaks protocol {server}, this game speaks {PROTOCOL_VERSION}"
         ),
@@ -1647,6 +1648,10 @@ mod tests {
             "That room code is not valid"
         );
         assert!(reject_text(RejectReason::BadName).starts_with("Name must be"));
+        assert_eq!(
+            reject_text(RejectReason::ServerFull),
+            "The server is full. Try again later"
+        );
         let old = reject_text(RejectReason::VersionMismatch { server: 9 });
         assert!(
             old.contains("Update or reload") && old.contains('9'),

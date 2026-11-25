@@ -384,5 +384,5 @@ fn a_link_cut_by_the_message_rate_limit_is_reported_with_the_limit_it_broke() {
             ServerLimits::default().max_messages_per_sec
         )
     );
-    server.wait_for_notice(|notice| matches!(notice, Notice::Held { .. }));
+    server.wait_for_notice(|notice| matches!(notice, Notice::Left { members: 0, .. }));
 }

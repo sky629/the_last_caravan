@@ -283,6 +283,12 @@ fn join_rejected_reasons_match_golden_bytes() {
         },
         &[0x01, 0x03],
     );
+    assert_server_wire(
+        ServerMsg::JoinRejected {
+            reason: RejectReason::ServerFull,
+        },
+        &[0x01, 0x04],
+    );
 }
 
 #[test]

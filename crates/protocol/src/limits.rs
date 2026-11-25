@@ -17,6 +17,9 @@ pub struct ServerLimits {
     /// 상대 하나가 `max_links`의 자리를 모두 차지하지 못하게 합니다. 한 집이나 한 장소에서 여러 명이 같은 IP 주소로 접속해도 닿지 않게 넉넉하게 정했습니다.
     /// 리버스 프록시 뒤에 서버를 두면 모든 접속이 프록시의 IP 주소 하나로 보이므로, 이 값을 올리거나 프록시가 전달한 주소로 세도록 바꿔야 합니다.
     pub max_links_per_ip: usize,
+    /// 서버가 한꺼번에 둘 수 있는 방의 수입니다. 접속이 끊긴 자리는 접속이 없어도 방에 남으므로, 접속의 수(`max_links`)로는 방의 수가 묶이지 않습니다.
+    /// 입장과 끊기를 되풀이해서 방을 쌓는 상대가 서버의 메모리를 모두 쓰지 못하게 합니다. 넘으면 새 방을 만드는 입장을 거절하고, 있는 방에 들어가는 입장은 받습니다.
+    pub max_rooms: usize,
     /// 네트워크 스레드가 게임 스레드에 넘기고 아직 처리되지 않은 이벤트의 최대 수입니다 (모든 접속 합계).
     /// 가득 차면 읽기 작업이 기다리고, 그동안 소켓을 읽지 않으므로 보내는 쪽이 느려집니다. 메모리가 끝없이 늘지 않습니다.
     pub inbound_capacity: usize,
@@ -58,6 +61,7 @@ impl Default for ServerLimits {
             handshake_timeout: Duration::from_secs(5),
             max_links: 64,
             max_links_per_ip: 16,
+            max_rooms: 64,
             inbound_capacity: 1024,
             max_messages_per_sec: 100,
             max_message_bytes: 4096,
