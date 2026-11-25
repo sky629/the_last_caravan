@@ -65,6 +65,8 @@ struct Admitted {
     others: Vec<Out>,
     /// 이 입장이 방을 만들었으면 그 방의 씨앗입니다.
     created_with: Option<Seed>,
+    /// 새 방을 둘 자리를 만들려고 없앤 방이 있으면 그 일을 알리는 것입니다.
+    evicted: Vec<Out>,
 }
 
 pub(crate) struct Hub {
@@ -275,10 +277,11 @@ impl Hub {
     ) -> Vec<Out> {
         match self.admit(link, version, raw_room, raw_name, token, now) {
             Ok(admitted) => {
-                let mut outs = vec![
+                let mut outs = admitted.evicted;
+                outs.extend([
                     Out::Send(link, ServerMsg::Welcome(Box::new(admitted.welcome))),
                     Out::Send(link, ServerMsg::Roster(admitted.roster)),
-                ];
+                ]);
                 outs.extend(admitted.others);
                 if let Some(old) = admitted.replaced {
                     // 이전 접속은 닫지 않습니다. 이유를 읽은 클라이언트가 닫기를 기다립니다(`LinkState::Told`).
@@ -343,11 +346,16 @@ impl Hub {
             Some(raw) => RoomCode::parse(raw).map_err(|_| RejectReason::BadRoomCode)?,
             None => self.mint.room_code(&self.rooms),
         };
-        let at_room_limit = self.rooms.len() >= self.max_rooms;
+        // 새 방이 필요한데 방의 수가 한도에 닿았으면, 접속한 사람이 없는 방을 하나 없앱니다. 그런 방이 없을 때만 거절합니다.
+        let mut evicted = Vec::new();
+        if !self.rooms.contains_key(&code) && self.rooms.len() >= self.max_rooms {
+            evicted = self
+                .evict_longest_abandoned_room()
+                .ok_or(RejectReason::ServerFull)?;
+        }
         let mut created_with = None;
         let room = match self.rooms.entry(code.clone()) {
             Entry::Occupied(occupied) => occupied.into_mut(),
-            Entry::Vacant(_) if at_room_limit => return Err(RejectReason::ServerFull),
             Entry::Vacant(vacant) => {
                 self.rooms_created += 1;
                 let seed = self.seeds.for_room(self.rooms_created);
@@ -385,7 +393,35 @@ impl Hub {
             roster: entered.roster,
             others: entered.others,
             created_with,
+            evicted,
         })
+    }
+
+    /// 접속한 사람이 한 명도 없는 방 가운데 가장 오래 그랬던 방을 없애고, 없앤 자리들과 방을 알리는 일을 돌려줍니다. 그런 방이 없으면 `None`입니다.
+    /// 그 방의 자리는 모두 접속이 없으므로 닫을 접속이 없고, 그 표식은 더 이상 쓸 수 없습니다.
+    fn evict_longest_abandoned_room(&mut self) -> Option<Vec<Out>> {
+        let code = self
+            .rooms
+            .iter()
+            .filter(|(_, room)| !room.has_link())
+            .max_by_key(|(_, room)| room.abandoned_ticks())
+            .map(|(code, _)| code.clone())?;
+        let room = self.rooms.remove(&code)?;
+        let mut members = room.member_count();
+        let mut outs: Vec<Out> = room
+            .players()
+            .into_iter()
+            .map(|player| {
+                members -= 1;
+                Out::Notice(Notice::Left {
+                    room: code.clone(),
+                    player,
+                    members,
+                })
+            })
+            .collect();
+        outs.push(Out::Notice(Notice::RoomRemoved { room: code }));
+        Some(outs)
     }
 
     /// 플레이어가 스스로 나갑니다. 자리를 곧바로 내놓고 접속을 닫습니다. 마지막 자리였으면 방을 없앱니다.

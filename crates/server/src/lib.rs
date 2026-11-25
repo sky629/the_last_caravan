@@ -203,10 +203,12 @@ fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerErro
             limits.camp_idle
         )));
     }
-    if limits.max_rooms == 0 {
-        return Err(ServerError::InvalidLimits(
-            "max_rooms must be at least 1".to_string(),
-        ));
+    // 접속한 사람이 있는 방은 접속 하나가 방 하나를 쓰므로, IP 주소 하나가 방을 모두 차지하지 못하려면 방의 수가 주소당 접속의 수보다 커야 합니다.
+    if limits.max_rooms <= limits.max_links_per_ip {
+        return Err(ServerError::InvalidLimits(format!(
+            "max_rooms {} must be larger than max_links_per_ip {}",
+            limits.max_rooms, limits.max_links_per_ip
+        )));
     }
 
     // 자리를 비운 것으로 보는 시간이 자리를 내놓는 시간보다 짧아야, 자리가 끝나기 전에 보호가 시작됩니다.

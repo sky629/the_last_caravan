@@ -65,6 +65,8 @@ pub(crate) struct Room {
     sent_roster: Vec<WireMember>,
     /// 지금까지 보낸 명단의 수입니다. 명단마다 이 번호를 붙여서 받는 쪽이 더 새로운 명단을 알아봅니다.
     roster_revision: u32,
+    /// 접속한 사람이 한 명도 없는 채로 지난 서버 Tick의 수입니다. 접속한 사람이 있으면 0입니다.
+    abandoned_ticks: u32,
 }
 
 impl Room {
@@ -76,6 +78,7 @@ impl Room {
             times,
             sent_roster: Vec::new(),
             roster_revision: 0,
+            abandoned_ticks: 0,
         }
     }
 
@@ -143,6 +146,21 @@ impl Room {
         self.seats.is_empty()
     }
 
+    /// 접속이 열려 있는 자리가 하나라도 있습니다.
+    pub fn has_link(&self) -> bool {
+        self.seats.values().any(|seat| seat.link.is_some())
+    }
+
+    /// 접속한 사람이 한 명도 없는 채로 지난 서버 Tick의 수입니다. 값이 클수록 오래 비어 있던 방입니다.
+    pub fn abandoned_ticks(&self) -> u32 {
+        self.abandoned_ticks
+    }
+
+    /// 방에 자리가 있는 플레이어입니다. 번호가 작은 플레이어부터입니다.
+    pub fn players(&self) -> Vec<PlayerId> {
+        self.seats.keys().copied().collect()
+    }
+
     pub fn member_count(&self) -> usize {
         self.seats.len()
     }
@@ -163,6 +181,7 @@ impl Room {
     }
 
     /// 서버 Tick 하나입니다. 순서는 다음과 같습니다.
+    /// 0. 접속한 사람이 없는 시간을 셉니다.
     /// 1. 모든 자리의 시간이 흐릅니다. 방이 멈춘 Tick에도 흐르므로, 혼자 하던 사람이 돌아오지 않으면 자리가 끝납니다.
     /// 2. 시간이 다 된 자리를 내보냅니다(퇴장과 같습니다).
     /// 3. 야영지에서 조작 없이 한도를 넘긴 사람을 자리를 비운 것으로 하고, 자리에 있는지를 규칙에 알리고, 바뀐 명단을 보냅니다.
@@ -170,6 +189,11 @@ impl Room {
     /// 4. 자리에 있는 사람이 없으면 여기서 끝냅니다. 게임을 진행하지 않으므로 Tick 번호와 세계가 그대로이고 스냅샷도 보내지 않습니다.
     /// 5. 플레이어마다 입력을 하나씩 정해서 게임을 Tick 하나만큼 진행하고, 같은 스냅샷을 접속이 있는 모든 자리에 보냅니다.
     pub fn tick(&mut self) -> RoomTick {
+        self.abandoned_ticks = if self.has_link() {
+            0
+        } else {
+            self.abandoned_ticks.saturating_add(1)
+        };
         for seat in self.seats.values_mut() {
             seat.pass_tick();
         }
