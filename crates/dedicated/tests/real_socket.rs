@@ -15,14 +15,17 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientMsg, InputMsg, PROTOCOL_VERSION, ServerLimits, ServerMsg, Snapshot, WireVec2,
-    decode_server, encode_client, loopback,
+    ClientMsg, InputMsg, PROTOCOL_VERSION, ServerLimits, ServerMsg, Snapshot, Welcome, WireMember,
+    WireVec2, decode_server, encode_client, loopback,
 };
 use caravan_rules::{Seed, Tuning};
-use caravan_server::{GameServer, Notice, RoomSeeds};
+use caravan_server::{GameServer, Notice, RoomSeeds, ServerSecret};
 use caravan_ws_server::WsServer;
 use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::{Error, Message, WebSocket, connect};
+
+/// 새 방의 코드를 정하는 고정된 비밀 값입니다.
+const SECRET: ServerSecret = ServerSecret { k0: 1, k1: 2 };
 
 /// 실행 파일(`main.rs`)과 같은 방식으로 스레드 하나에서 서버를 돌립니다. 버려지면 스레드를 멈춥니다.
 struct RunningServer {
@@ -48,6 +51,7 @@ impl RunningServer {
                 tuning,
                 limits,
                 RoomSeeds::Fixed(Seed(1)),
+                SECRET,
                 Instant::now(),
             )
             .expect("the tuning is valid and fits the limits");
@@ -161,14 +165,38 @@ impl TestClient {
         }
     }
 
-    fn join(&mut self, room: &str) -> u32 {
+    /// 이름 `name`으로 입장하고, 받은 입장 안내를 돌려줍니다. `room`이 없으면 서버가 새 방을 만듭니다.
+    fn join_as(&mut self, room: Option<&str>, name: &str) -> Welcome {
         self.send(&ClientMsg::Join {
             version: PROTOCOL_VERSION,
-            room: room.to_string(),
+            room: room.map(str::to_string),
+            name: name.to_string(),
         });
         match self.next(Duration::from_secs(5)) {
-            ServerMsg::Welcome(welcome) => welcome.you,
+            ServerMsg::Welcome(welcome) => welcome,
             other => panic!("expected Welcome, got {other:?}"),
+        }
+    }
+
+    /// 이름 `TESTER`로 방 `room`에 입장하고, 받은 플레이어 번호를 돌려줍니다.
+    fn join(&mut self, room: &str) -> u32 {
+        self.join_as(Some(room), "TESTER").you
+    }
+
+    /// `ready`가 참이 되는 명단이 올 때까지 읽고, 그 명단을 돌려줍니다.
+    fn roster_where(
+        &mut self,
+        within: Duration,
+        ready: impl Fn(&[WireMember]) -> bool,
+    ) -> Vec<WireMember> {
+        let deadline = Instant::now() + within;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if let ServerMsg::Roster(roster) = self.next(left.max(Duration::from_millis(1)))
+                && ready(&roster)
+            {
+                return roster;
+            }
         }
     }
 }
@@ -208,6 +236,29 @@ fn input_from_one_socket_moves_that_player_in_the_snapshots_of_the_other_socket(
     );
 }
 
+#[test]
+fn a_player_without_a_room_code_gets_a_new_room_and_a_friend_who_knows_the_code_sees_the_same_names()
+ {
+    let server = RunningServer::start(Tuning::default());
+    let mut kang = TestClient::connect(server.addr);
+    let mut miro = TestClient::connect(server.addr);
+
+    let first = kang.join_as(None, "KANG");
+    assert_eq!(first.room.len(), 5, "the server made the room code");
+    let second = miro.join_as(Some(&first.room), "MIRO");
+    assert_eq!(second.room, first.room, "the friend is in the same room");
+
+    let both = |roster: &[WireMember]| roster.len() == 2;
+    let names = |roster: Vec<WireMember>| -> Vec<(u32, String)> {
+        roster.into_iter().map(|m| (m.id, m.name)).collect()
+    };
+    let expected = vec![(1, "KANG".to_string()), (2, "MIRO".to_string())];
+    let seen_by_kang = kang.roster_where(Duration::from_secs(5), both);
+    let seen_by_miro = miro.roster_where(Duration::from_secs(5), both);
+    assert_eq!(names(seen_by_kang), expected);
+    assert_eq!(names(seen_by_miro), expected);
+}
+
 /// 기본 접속 한도에서 서버가 시작을 허락하는 가장 빠른 Tick 속도입니다.
 fn fastest_tick_hz_the_default_limits_carry() -> u32 {
     (1..=240)
@@ -223,6 +274,7 @@ fn fastest_tick_hz_the_default_limits_carry() -> u32 {
                 tuning,
                 ServerLimits::default(),
                 RoomSeeds::Fixed(Seed(1)),
+                SECRET,
                 Instant::now(),
             )
             .is_ok()

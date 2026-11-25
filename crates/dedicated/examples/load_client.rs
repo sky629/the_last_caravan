@@ -21,12 +21,13 @@ use caravan_protocol::{
 use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::{Error, Message, WebSocket, connect};
 
-const USAGE: &str =
-    "usage: load_client [--addr HOST:PORT] [--room CODE] [--secs SECONDS] [--passive] [--bow]";
+const USAGE: &str = "usage: load_client [--addr HOST:PORT] [--room CODE] [--name NAME] [--secs SECONDS] [--passive] [--bow]";
 
 struct Options {
     addr: String,
     room: String,
+    /// 방의 명단에 보이는 이름입니다.
+    name: String,
     secs: u64,
     /// 공격 버튼을 누르지 않습니다.
     passive: bool,
@@ -38,6 +39,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut options = Options {
         addr: "127.0.0.1:7777".to_string(),
         room: "load".to_string(),
+        name: "load".to_string(),
         secs: 60,
         passive: false,
         bow: false,
@@ -60,6 +62,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         match arg.as_str() {
             "--addr" => options.addr = value()?,
             "--room" => options.room = value()?,
+            "--name" => options.name = value()?,
             "--secs" => {
                 let text = value()?;
                 options.secs = text
@@ -114,7 +117,8 @@ fn run(options: &Options) -> Result<(), String> {
         &mut socket,
         &ClientMsg::Join {
             version: PROTOCOL_VERSION,
-            room: options.room.clone(),
+            room: Some(options.room.clone()),
+            name: options.name.clone(),
         },
     )?;
 
@@ -149,6 +153,7 @@ fn run(options: &Options) -> Result<(), String> {
                 Ok(ServerMsg::JoinRejected { reason }) => {
                     return Err(format!("the server rejected the join: {reason:?}"));
                 }
+                Ok(ServerMsg::Roster(_)) => {}
                 Ok(ServerMsg::Snapshot(snapshot)) => {
                     window.snapshots += 1;
                     window.bytes += bytes.len();

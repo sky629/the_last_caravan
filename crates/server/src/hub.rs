@@ -6,13 +6,14 @@ use std::collections::btree_map::Entry;
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientMsg, LinkId, PROTOCOL_VERSION, RejectReason, RoomCode, ServerEvent, ServerLimits,
-    ServerMsg, Welcome,
+    ClientMsg, LinkId, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, ServerEvent,
+    ServerLimits, ServerMsg, Welcome,
 };
 use caravan_rules::{JoinError, PlayerId, Seed, Tuning};
 
+use crate::mint::Mint;
 use crate::room::Room;
-use crate::{Notice, RoomSeeds, ServerStats};
+use crate::{Notice, RoomSeeds, ServerSecret, ServerStats};
 
 /// 허브가 요청하는 일입니다. `GameServer::apply`만 이 값을 실행합니다.
 pub(crate) enum Out {
@@ -42,6 +43,8 @@ struct Admitted {
     player: PlayerId,
     members: usize,
     welcome: Welcome,
+    /// 입장 안내 다음에 보낼 명단입니다.
+    roster: Vec<Out>,
     /// 이 입장이 방을 만들었으면 그 방의 씨앗입니다.
     created_with: Option<Seed>,
 }
@@ -52,6 +55,8 @@ pub(crate) struct Hub {
     idle_timeout: Duration,
     input_stale_ticks: u32,
     seeds: RoomSeeds,
+    /// 방 코드를 비우고 입장한 사람의 방 코드를 만듭니다.
+    mint: Mint,
     /// 지금까지 만든 방의 수입니다. 방이 없어졌다가 같은 코드로 다시 만들어져도 다른 방이므로 센 값이 이어집니다.
     rooms_created: u32,
     links: BTreeMap<LinkId, LinkState>,
@@ -59,13 +64,19 @@ pub(crate) struct Hub {
 }
 
 impl Hub {
-    pub fn new(tuning: Tuning, limits: ServerLimits, seeds: RoomSeeds) -> Hub {
+    pub fn new(
+        tuning: Tuning,
+        limits: ServerLimits,
+        seeds: RoomSeeds,
+        secret: ServerSecret,
+    ) -> Hub {
         Hub {
             tuning,
             join_deadline: limits.join_deadline,
             idle_timeout: limits.idle_timeout,
             input_stale_ticks: limits.input_stale_ticks,
             seeds,
+            mint: Mint::new(secret),
             rooms_created: 0,
             links: BTreeMap::new(),
             rooms: BTreeMap::new(),
@@ -135,9 +146,14 @@ impl Hub {
 
     fn handle_message(&mut self, link: LinkId, msg: ClientMsg, now: Instant) -> Vec<Out> {
         match (self.links.get_mut(&link), msg) {
-            (Some(LinkState::AwaitingJoin { .. }), ClientMsg::Join { version, room }) => {
-                self.handle_join(link, version, &room, now)
-            }
+            (
+                Some(LinkState::AwaitingJoin { .. }),
+                ClientMsg::Join {
+                    version,
+                    room,
+                    name,
+                },
+            ) => self.handle_join(link, version, room.as_deref(), &name, now),
             // 입력은 접속이 살아 있다는 표시이기도 하므로, 버려지는 입력도 기한을 미룹니다.
             (
                 Some(LinkState::InRoom {
@@ -168,12 +184,14 @@ impl Hub {
         &mut self,
         link: LinkId,
         version: u32,
-        raw_room: &str,
+        raw_room: Option<&str>,
+        raw_name: &str,
         now: Instant,
     ) -> Vec<Out> {
-        match self.admit(link, version, raw_room, now) {
+        match self.admit(link, version, raw_room, raw_name, now) {
             Ok(admitted) => {
                 let mut outs = vec![Out::Send(link, ServerMsg::Welcome(admitted.welcome))];
+                outs.extend(admitted.roster);
                 if let Some(seed) = admitted.created_with {
                     outs.push(Out::Notice(Notice::RoomCreated {
                         room: admitted.code.clone(),
@@ -198,12 +216,14 @@ impl Hub {
         }
     }
 
-    /// 전송 형식의 문자열이 `RoomCode`가 되는 경계입니다. 처음 입장하는 사람이 방을 만듭니다.
+    /// 전송 형식의 문자열이 `PlayerName`과 `RoomCode`가 되는 경계입니다.
+    /// 방 코드가 없으면 서버가 새 코드를 만들고, 방 코드가 있는데 그 방이 없으면 그 코드로 방을 만듭니다.
     fn admit(
         &mut self,
         link: LinkId,
         version: u32,
-        raw_room: &str,
+        raw_room: Option<&str>,
+        raw_name: &str,
         now: Instant,
     ) -> Result<Admitted, RejectReason> {
         if version != PROTOCOL_VERSION {
@@ -211,7 +231,11 @@ impl Hub {
                 server: PROTOCOL_VERSION,
             });
         }
-        let code = RoomCode::parse(raw_room).map_err(|_| RejectReason::BadRoomCode)?;
+        let name = PlayerName::parse(raw_name).map_err(|_| RejectReason::BadName)?;
+        let code = match raw_room {
+            Some(raw) => RoomCode::parse(raw).map_err(|_| RejectReason::BadRoomCode)?,
+            None => self.mint.room_code(&self.rooms),
+        };
         let mut created_with = None;
         let room = match self.rooms.entry(code.clone()) {
             Entry::Occupied(occupied) => occupied.into_mut(),
@@ -219,11 +243,16 @@ impl Hub {
                 self.rooms_created += 1;
                 let seed = self.seeds.for_room(self.rooms_created);
                 created_with = Some(seed);
-                vacant.insert(Room::new(self.tuning.clone(), seed, self.input_stale_ticks))
+                vacant.insert(Room::new(
+                    code.clone(),
+                    self.tuning.clone(),
+                    seed,
+                    self.input_stale_ticks,
+                ))
             }
         };
-        let (player, welcome) = room
-            .admit(link)
+        let entered = room
+            .enter(link, name)
             .map_err(|JoinError::RoomFull { capacity }| RejectReason::RoomFull {
                 capacity: capacity as u32,
             })?;
@@ -232,15 +261,16 @@ impl Hub {
             link,
             LinkState::InRoom {
                 room: code.clone(),
-                player,
+                player: entered.player,
                 deadline: now + self.idle_timeout,
             },
         );
         Ok(Admitted {
             code,
-            player,
+            player: entered.player,
             members,
-            welcome,
+            welcome: entered.welcome,
+            roster: entered.roster,
             created_with,
         })
     }
@@ -258,23 +288,24 @@ impl Hub {
         outs
     }
 
-    /// 플레이어를 방에서 제거합니다. 마지막 플레이어가 나가면 방도 없앱니다.
+    /// 플레이어를 방에서 제거합니다. 남은 사람에게 새 명단을 보내고, 마지막 플레이어가 나가면 방도 없앱니다.
     fn remove_player(&mut self, code: RoomCode, player: PlayerId) -> Vec<Out> {
         let mut members = 0;
         let mut room_removed = false;
+        let mut outs = Vec::new();
         if let Some(room) = self.rooms.get_mut(&code) {
-            room.remove(player);
+            outs.extend(room.remove(player));
             members = room.member_count();
             if members == 0 {
                 self.rooms.remove(&code);
                 room_removed = true;
             }
         }
-        let mut outs = vec![Out::Notice(Notice::Left {
+        outs.push(Out::Notice(Notice::Left {
             room: code.clone(),
             player,
             members,
-        })];
+        }));
         if room_removed {
             outs.push(Out::Notice(Notice::RoomRemoved { room: code }));
         }

@@ -13,8 +13,8 @@
 //! 그래서 입장하기 전에 스냅샷을 그리거나 입력을 보내는 일은 값이 없어서 일어날 수 없습니다.
 
 use caravan_protocol::{
-    ClientEvent, ClientMsg, PROTOCOL_VERSION, RejectReason, RoomCode, ServerMsg, Snapshot, Welcome,
-    check_welcome,
+    ClientEvent, ClientMsg, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, ServerMsg,
+    Snapshot, Welcome, check_welcome,
 };
 use caravan_rules::Vec2;
 
@@ -26,11 +26,13 @@ pub enum Session {
     /// 접속이 열리기를 기다립니다. 열리지 않고 끝나면 어느 서버에 접속하려 했는지 알려야 하므로 `server`를 가집니다.
     Connecting {
         room: RoomCode,
+        name: PlayerName,
         server: String,
     },
     /// `Join`을 보내고 `Welcome`이나 `JoinRejected`를 기다립니다.
     Joining {
         room: RoomCode,
+        name: PlayerName,
     },
     /// 방에 들어간 뒤의 값은 다른 상태보다 훨씬 크므로 `Box`에 둡니다. 상태 하나를 옮길 때마다 가장 큰 상태의 크기를 복사하지 않게 합니다.
     InRoom(Box<Joined>),
@@ -76,22 +78,26 @@ impl Joined {
 }
 
 impl Session {
-    pub fn new(room: RoomCode, server: String) -> Session {
-        Session::Connecting { room, server }
+    pub fn new(room: RoomCode, name: PlayerName, server: String) -> Session {
+        Session::Connecting { room, name, server }
     }
 
     /// 이벤트 하나를 처리합니다. 서버에 답으로 보낼 메시지가 있으면 돌려줍니다.
     pub fn on_event(&mut self, event: ClientEvent) -> Option<ClientMsg> {
         match (&mut *self, event) {
-            (Session::Connecting { room, .. }, ClientEvent::Connected) => {
+            (Session::Connecting { room, name, .. }, ClientEvent::Connected) => {
                 let join = ClientMsg::Join {
                     version: PROTOCOL_VERSION,
-                    room: room.as_str().to_string(),
+                    room: Some(room.as_str().to_string()),
+                    name: name.as_str().to_string(),
                 };
-                *self = Session::Joining { room: room.clone() };
+                *self = Session::Joining {
+                    room: room.clone(),
+                    name: name.clone(),
+                };
                 Some(join)
             }
-            (Session::Joining { room }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
+            (Session::Joining { room, .. }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
                 // 서버가 보낸 값을 처음 믿기 전에 확인합니다. 여기를 통과한 값은 화면 코드가 다시 확인하지 않습니다.
                 *self = match check_welcome(&welcome) {
                     Ok(()) => Session::InRoom(Box::new(Joined::new(room.clone(), welcome))),
@@ -192,6 +198,7 @@ impl Session {
                         format!("the room is full ({capacity} players)")
                     }
                     RejectReason::BadRoomCode => "bad room code".to_string(),
+                    RejectReason::BadName => "bad name".to_string(),
                     RejectReason::VersionMismatch { server } => format!(
                         "server protocol {server}, client protocol {PROTOCOL_VERSION}. Update or reload."
                     ),
@@ -225,7 +232,7 @@ impl Session {
         match (self, self.problem()) {
             (_, Some(Problem { heading, reason })) => format!("{heading}: {reason}"),
             (Session::Connecting { room, .. }, None) => format!("Connecting... (room {room})"),
-            (Session::Joining { room }, None) => format!("Joining room {room}..."),
+            (Session::Joining { room, .. }, None) => format!("Joining room {room}..."),
             _ => "Connected".to_string(),
         }
     }
@@ -261,8 +268,12 @@ mod tests {
 
     const SERVER: &str = "ws://127.0.0.1:7777";
 
+    fn name() -> PlayerName {
+        PlayerName::parse("KANG").unwrap()
+    }
+
     fn connecting() -> Session {
-        Session::new(room(), SERVER.to_string())
+        Session::new(room(), name(), SERVER.to_string())
     }
 
     fn snapshot(tick: u64) -> Snapshot {
@@ -275,7 +286,7 @@ mod tests {
     fn welcome(you: u32) -> ServerMsg {
         let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
-        let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
+        let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room());
         welcome.you = you;
         ServerMsg::Welcome(welcome)
     }
@@ -305,10 +316,17 @@ mod tests {
             session.on_event(ClientEvent::Connected),
             Some(ClientMsg::Join {
                 version: PROTOCOL_VERSION,
-                room: "test".to_string()
+                room: Some("test".to_string()),
+                name: "KANG".to_string(),
             })
         );
-        assert_eq!(session, Session::Joining { room: room() });
+        assert_eq!(
+            session,
+            Session::Joining {
+                room: room(),
+                name: name()
+            }
+        );
     }
 
     #[test]
@@ -460,7 +478,13 @@ mod tests {
             session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(1))))),
             None
         );
-        assert_eq!(session, Session::Joining { room: room() });
+        assert_eq!(
+            session,
+            Session::Joining {
+                room: room(),
+                name: name()
+            }
+        );
         assert!(session.newest_snapshot().is_none());
     }
 
@@ -484,6 +508,7 @@ mod tests {
     fn every_rejection_reason_is_explained_on_screen() {
         for (reason, expected) in [
             (RejectReason::BadRoomCode, "bad room code"),
+            (RejectReason::BadName, "bad name"),
             (
                 RejectReason::VersionMismatch { server: 9 },
                 "server protocol 9",

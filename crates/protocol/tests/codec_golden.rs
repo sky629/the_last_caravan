@@ -14,10 +14,11 @@ use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RackInfo, RejectReason,
     ServerMsg, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal,
     WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife,
-    WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase,
-    WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt, WireRect, WireRepairTarget,
-    WireShot, WireStruck, WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind,
-    WorldInfo, decode_client, decode_server, encode_client, encode_server,
+    WireLoadout, WireMember, WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome,
+    WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt, WireRect,
+    WireRepairTarget, WireShot, WireStruck, WireTile, WireTower, WireTowerState, WireVec2,
+    WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server, encode_client,
+    encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -32,17 +33,31 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 7);
+    assert_eq!(PROTOCOL_VERSION, 8);
 }
 
 #[test]
-fn join_is_variant_zero_then_version_then_room_text() {
+fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name() {
     assert_client_wire(
         ClientMsg::Join {
             version: 6,
-            room: "test".to_string(),
+            room: Some("test".to_string()),
+            name: "KANG".to_string(),
         },
-        &[0x00, 0x06, 0x04, b't', b'e', b's', b't'],
+        &[
+            0x00, // Join 변형
+            0x06, // version
+            0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
+            0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
+        ],
+    );
+    assert_client_wire(
+        ClientMsg::Join {
+            version: 6,
+            room: None,
+            name: "KANG".to_string(),
+        },
+        &[0x00, 0x06, 0x00, 0x04, b'K', b'A', b'N', b'G'],
     );
 }
 
@@ -93,6 +108,7 @@ fn welcome_carries_the_fixed_world() {
             team: 0,
             tick_hz: 20,
             capacity: 4,
+            room: "k7m2q".to_string(),
             world: WorldInfo {
                 size: WirePos { x: 3072, y: 3072 },
                 obstacles: vec![rect(512, 640, 1024, 768)],
@@ -171,6 +187,7 @@ fn welcome_carries_the_fixed_world() {
             0x00, // team
             0x14, // tick_hz 20
             0x04, // capacity
+            0x05, b'k', b'7', b'm', b'2', b'q', // room: 글자 5개
             // world.size: 3072 = 24 * 128 -> 0x80 0x18
             0x80, 0x18, 0x80, 0x18, //
             0x01, // obstacles: 길이 1
@@ -231,6 +248,34 @@ fn join_rejected_reasons_match_golden_bytes() {
             reason: RejectReason::VersionMismatch { server: 3 },
         },
         &[0x01, 0x02, 0x03],
+    );
+    assert_server_wire(
+        ServerMsg::JoinRejected {
+            reason: RejectReason::BadName,
+        },
+        &[0x01, 0x03],
+    );
+}
+
+#[test]
+fn the_roster_is_variant_three_then_the_members_in_order() {
+    assert_server_wire(
+        ServerMsg::Roster(vec![
+            WireMember {
+                id: 1,
+                name: "KANG".to_string(),
+            },
+            WireMember {
+                id: 2,
+                name: "MIRO".to_string(),
+            },
+        ]),
+        &[
+            0x03, // Roster 변형
+            0x02, // 목록: 길이 2
+            0x01, 0x04, b'K', b'A', b'N', b'G', // 번호 1, 이름 글자 4개
+            0x02, 0x04, b'M', b'I', b'R', b'O', // 번호 2, 이름 글자 4개
+        ],
     );
 }
 

@@ -5,20 +5,24 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::roster::WireMember;
 use crate::snapshot::Snapshot;
 use crate::welcome::Welcome;
 
 /// 전송 형식이 바뀔 때 올리는 번호입니다. 서버는 다른 번호로 입장을 요청한 클라이언트를 거절합니다.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// 클라이언트에서 서버로 가는 메시지입니다. 이 열거형이 클라이언트가 서버에 할 수 있는 말의 전부입니다.
 /// 위치, 피해량, 공격 대상, 명중 여부는 어디에도 없습니다. 서버가 모든 결과를 판정합니다.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMsg {
-    /// 접속한 뒤 처음 보내는 메시지입니다. `room`은 플레이어가 입력한 그대로의 문자열이고, 서버가 `RoomCode`로 해석합니다.
+    /// 접속한 뒤 처음 보내는 메시지입니다. 모든 값은 플레이어가 입력한 그대로이고, 서버가 검사합니다.
     Join {
         version: u32,
-        room: String,
+        /// 방 코드입니다. 없으면 서버가 쓰이지 않는 새 코드로 방을 만듭니다. 있으면 `RoomCode`로 해석하고, 그 방이 없으면 만듭니다.
+        room: Option<String>,
+        /// 플레이어의 이름입니다. 서버가 `PlayerName`으로 해석하고, 맞지 않으면 `BadName`으로 거절합니다.
+        name: String,
     },
     Input(InputMsg),
 }
@@ -82,11 +86,20 @@ pub enum ServerMsg {
     /// Tick마다 보내는 방 전체의 상태입니다. 상자에 담는 까닭은 스냅샷이 커서, 상자에 담지 않으면 이 열거형과 이것을 감싼 모든 열거형이
     /// 가장 큰 변형의 크기를 가지기 때문입니다. 전송 형식은 상자에 담지 않은 값과 같습니다.
     Snapshot(Box<Snapshot>),
+    /// 방에 있는 사람의 이름입니다. 입장한 접속에 한 번 보내고, 그 뒤에는 누가 들어오거나 나갈 때만 방의 모든 접속에 보냅니다.
+    /// 번호가 작은 플레이어부터입니다. 이름은 스냅샷에 넣지 않으므로 Tick마다 보내는 크기가 이름의 길이와 관계가 없습니다.
+    Roster(Vec<WireMember>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RejectReason {
-    RoomFull { capacity: u32 },
+    RoomFull {
+        capacity: u32,
+    },
     BadRoomCode,
-    VersionMismatch { server: u32 },
+    VersionMismatch {
+        server: u32,
+    },
+    /// 이름이 비었거나, 12자보다 길거나, 쓸 수 없는 문자가 있습니다.
+    BadName,
 }

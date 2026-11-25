@@ -32,13 +32,15 @@ fn the_client_can_only_join_or_send_input() {
             ClientMsg::Join {
                 version: _,
                 room: _,
+                name: _,
             } => "join",
             ClientMsg::Input(_) => "input",
         }
     }
     let join = ClientMsg::Join {
         version: 1,
-        room: "test".to_string(),
+        room: Some("test".to_string()),
+        name: "KANG".to_string(),
     };
     assert_eq!(name(&join), "join");
     assert_eq!(name(&ClientMsg::Input(InputMsg::default())), "input");

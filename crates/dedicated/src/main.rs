@@ -24,7 +24,7 @@ mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
 use caravan_rules::{Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WeaponKind};
-use caravan_server::{GameServer, RoomSeeds};
+use caravan_server::{GameServer, RoomSeeds, ServerSecret};
 use caravan_ws_server::WsServer;
 use report::TickTimer;
 
@@ -170,7 +170,7 @@ impl ServerTransport for DebugTransport {
     }
 }
 
-/// 서버를 실행할 때마다 달라지는 씨앗의 뿌리입니다. 표준 라이브러리의 `RandomState`는 운영체제의 무작위로 키를 정하므로,
+/// 서버를 실행할 때마다 달라지는 씨앗과 비밀 값의 뿌리입니다. 표준 라이브러리의 `RandomState`는 운영체제의 무작위로 키를 정하므로,
 /// 외부 크레이트 없이, 시계를 읽지 않고 이 값을 얻습니다.
 fn fresh_entropy() -> u64 {
     RandomState::new().hash_one(())
@@ -238,7 +238,11 @@ fn main() -> ExitCode {
         Some(seed) => RoomSeeds::Fixed(Seed(seed)),
         None => RoomSeeds::Fresh(Seed(fresh_entropy())),
     };
-    let mut server = match GameServer::new(transport, tuning, limits, seeds, started) {
+    let secret = ServerSecret {
+        k0: fresh_entropy(),
+        k1: fresh_entropy(),
+    };
+    let mut server = match GameServer::new(transport, tuning, limits, seeds, secret, started) {
         Ok(server) => server,
         Err(err) => {
             eprintln!("cannot start the server: {err}");

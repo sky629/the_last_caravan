@@ -16,15 +16,17 @@ pub enum RoomCodeError {
 impl RoomCode {
     pub const MAX_LEN: usize = 16;
 
+    /// 해석한 방 코드에 들어갈 수 있는 문자입니다. 시작 화면의 방 코드 칸이 대문자를 소문자로 바꾼 뒤 이 함수로 입력을 거릅니다.
+    pub fn allows(c: char) -> bool {
+        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
+    }
+
     pub fn parse(raw: &str) -> Result<RoomCode, RoomCodeError> {
         let code = raw.trim().to_ascii_lowercase();
         if code.is_empty() {
             return Err(RoomCodeError::Empty);
         }
-        if let Some(bad) = code
-            .chars()
-            .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-' || *c == '_'))
-        {
+        if let Some(bad) = code.chars().find(|&c| !RoomCode::allows(c)) {
             return Err(RoomCodeError::BadChar(bad));
         }
         // 위에서 ASCII 문자만 남겼으므로 바이트 수가 글자 수와 같습니다.

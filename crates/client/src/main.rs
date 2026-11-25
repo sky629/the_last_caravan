@@ -1,7 +1,7 @@
 //! Bevy 클라이언트입니다. 이 워크스페이스에서 Bevy를 사용하는 크레이트는 이것 하나입니다.
 //!
-//! PC: `cargo run -p caravan_client -- --room test --server ws://127.0.0.1:7777`
-//! 웹: `cd crates/client && trunk serve` 뒤에 `http://127.0.0.1:8080/?room=test` 열기
+//! PC: `cargo run -p caravan_client -- --name KANG --room test --server ws://127.0.0.1:7777`
+//! 웹: `cd crates/client && trunk serve` 뒤에 `http://127.0.0.1:8080/?room=test&name=KANG` 열기
 //!
 //! 서버가 Tick마다 보내는 방 전체의 상태를 받아서 쿼터뷰로 그립니다. 읽는 순서는 `main`(한 프레임의 순서), `net`, `view`, `camera`, `towers`, `supplies`, `loot`, `camp`, `characters`입니다.
 
@@ -97,7 +97,7 @@ fn read_launch_options() -> Result<LaunchOptions, LaunchError> {
     LaunchOptions::from_args(&args)
 }
 
-/// 페이지 주소의 `?room=test&server=ws://...&debug-net`을 읽습니다.
+/// 페이지 주소의 `?room=test&name=KANG&server=ws://...&debug-net`을 읽습니다.
 #[cfg(target_arch = "wasm32")]
 fn read_launch_options() -> Result<LaunchOptions, LaunchError> {
     let query = web_sys::window()
@@ -105,5 +105,5 @@ fn read_launch_options() -> Result<LaunchOptions, LaunchError> {
         .and_then(|search| web_sys::UrlSearchParams::new_with_str(&search).ok());
     let get = |name: &str| query.as_ref().and_then(|params| params.get(name));
     let debug_net = query.as_ref().is_some_and(|params| params.has("debug-net"));
-    LaunchOptions::from_values(get("room"), get("server"), debug_net)
+    LaunchOptions::from_values(get("room"), get("name"), get("server"), debug_net)
 }

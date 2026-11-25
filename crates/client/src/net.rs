@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use caravan_client_core::{Frame, LaunchError, LaunchOptions, Session};
-use caravan_protocol::{ClientEvent, ClientTransport, ServerMsg};
+use caravan_protocol::{ClientEvent, ClientTransport, PlayerName, ServerMsg};
 use caravan_ws_client::WsClient;
 
 use crate::input::HeldControls;
@@ -43,6 +43,21 @@ fn open(launch: Result<LaunchOptions, LaunchError>) -> (Session, Option<Net>) {
             return (Session::Failed { reason }, None);
         }
     };
+    let Some(raw_name) = &options.name else {
+        let reason = "a name is required: --name NAME (or ?name=NAME in the address)".to_string();
+        return (Session::Failed { reason }, None);
+    };
+    let name = match PlayerName::parse(raw_name) {
+        Ok(name) => name,
+        Err(err) => {
+            return (
+                Session::Failed {
+                    reason: err.to_string(),
+                },
+                None,
+            );
+        }
+    };
     info!(
         "connecting to {} (room {})",
         options.server_url, options.room
@@ -53,7 +68,10 @@ fn open(launch: Result<LaunchOptions, LaunchError>) -> (Session, Option<Net>) {
                 transport: Box::new(client),
                 debug_net: options.debug_net,
             };
-            (Session::new(options.room, options.server_url), Some(net))
+            (
+                Session::new(options.room, name, options.server_url),
+                Some(net),
+            )
         }
         Err(reason) => (Session::Failed { reason }, None),
     }
