@@ -6,7 +6,7 @@
 
 use crate::collision::Body;
 use crate::ids::{PlayerId, Team};
-use crate::math::Vec2;
+use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
 use crate::player::{LastAttack, Life};
 use crate::projectile::Launch;
@@ -83,6 +83,8 @@ fn decide(world: &mut World, ctx: &Ctx) -> Vec<Attack> {
 /// 모은 공격을 방식에 따라 전달합니다. `match`에 `_` 갈래가 없으므로 방식을 추가하면 여기서 컴파일 오류가 납니다.
 fn deliver(world: &mut World, ctx: &Ctx, attacks: &[Attack], hits: &mut Vec<Hit>) {
     let mut candidates = Vec::new();
+    let mut solids = Vec::new();
+    let mut strikes = sweep::Strikes::default();
     for attack in attacks {
         match attack.delivery {
             Delivery::Arc(arc) => swing(attack, arc, &world.monsters, ctx, &mut candidates, hits),
@@ -95,7 +97,9 @@ fn deliver(world: &mut World, ctx: &Ctx, attacks: &[Attack], hits: &mut Vec<Hit>
                     spec,
                 });
             }
-            Delivery::Hitscan(shot) => shoot(attack, shot, world, ctx, hits),
+            Delivery::Hitscan(shot) => {
+                shoot(attack, shot, world, ctx, &mut solids, &mut strikes, hits);
+            }
         }
     }
 }
@@ -103,10 +107,17 @@ fn deliver(world: &mut World, ctx: &Ctx, attacks: &[Attack], hits: &mut Vec<Hit>
 /// 조준 방향의 사거리 안에서 처음 닿는 몬스터 한 마리를 맞힙니다. 막힌 타일이 몬스터보다 가까우면 몬스터를 맞히지 못합니다.
 /// 같은 거리에 닿으면 몬스터가 먼저입니다. 사격 선이 끝난 자리(맞힌 몬스터의 가장자리, 막힌 타일, 사거리의 끝)는
 /// 쏜 플레이어의 마지막 공격에 적어서 모든 클라이언트가 같은 선을 그리게 합니다.
-fn shoot(attack: &Attack, shot: HitscanTuning, world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
+fn shoot(
+    attack: &Attack,
+    shot: HitscanTuning,
+    world: &mut World,
+    ctx: &Ctx,
+    solids: &mut Vec<Rect>,
+    strikes: &mut sweep::Strikes,
+    hits: &mut Vec<Hit>,
+) {
     let delta = attack.facing * shot.range;
-    let wall = sweep::first_blocked(&world.tiles, attack.origin, delta, 0.0, &mut Vec::new());
-    let mut strikes = sweep::Strikes::default();
+    let wall = sweep::first_blocked(&world.tiles, attack.origin, delta, 0.0, solids);
     sweep::monsters_along(
         attack.team,
         0.0,
@@ -114,7 +125,7 @@ fn shoot(attack: &Attack, shot: HitscanTuning, world: &mut World, ctx: &Ctx, hit
         delta,
         &world.monsters,
         ctx,
-        &mut strikes,
+        strikes,
     );
     let first = strikes
         .found

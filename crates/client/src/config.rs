@@ -103,7 +103,7 @@ pub const WAGON_MARKER: Color = Color::srgb(1.00, 0.72, 0.38);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
 /// 활과 석궁의 탄환입니다.
 pub const BULLET: Color = Color::srgb(1.00, 0.97, 0.75);
-/// 소총의 사격 선을 굵게 보이게 하려고 겹쳐 그리는 선 둘이 중심선에서 위아래로 벗어난 픽셀 수입니다.
+/// 소총의 사격 선을 굵게 보이게 하려고 겹쳐 그리는 선 둘이 중심선에서 양옆으로(선의 방향에 수직으로) 벗어난 픽셀 수입니다.
 pub const TRACE_SPREAD_PX: f32 = 2.0;
 /// 소총의 사격 선입니다. 활의 탄환(연한 노랑)과 구분되는 밝은 흰색입니다.
 pub const TRACE: Color = Color::srgb(1.00, 1.00, 1.00);

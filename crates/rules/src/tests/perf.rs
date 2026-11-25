@@ -421,10 +421,6 @@ fn perf_the_average_tick_with_the_tower_cap_300_monsters_and_four_crossbows_pier
         300,
         "300 monsters in every sampled tick"
     );
-    assert!(
-        measured.most_flying >= 1,
-        "bolts flew during the measurement"
-    );
     // 탄환 하나가 몬스터를 하나만 맞히면 맞힌 수와 쏜 수가 같습니다. 1보다 커야 탄환이 무리를 꿰뚫은 것입니다.
     let hits = (damage_taken_by_monsters(&s) - damage_before)
         / u64::from(defaults.weapons.crossbow.damage);

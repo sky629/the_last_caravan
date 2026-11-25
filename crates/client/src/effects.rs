@@ -115,14 +115,19 @@ fn draw_swing(
 }
 
 /// 소총의 사격 선입니다. 쏜 플레이어의 지금 위치에서 서버가 정한 끝까지 가슴 높이에 긋고, 시간이 갈수록 옅어집니다.
-/// 쿨다운이 긴 무기의 한 발이 0.3초만 보이므로, 위아래로 어긋난 선 둘을 더해서 효과 선(3픽셀) 하나보다 굵게 그립니다.
+/// 쿨다운이 긴 무기의 한 발이 0.3초만 보이므로, 양옆으로 어긋난 선 둘을 더해서 효과 선(3픽셀) 하나보다 굵게 그립니다.
 fn draw_trace(gizmos: &mut Gizmos, player: &PlayerView, end: Ground, progress: f32) {
     let (from, to) = trace_line(player, end);
     let color = config::TRACE.with_alpha(1.0 - progress);
-    for spread in [-config::TRACE_SPREAD_PX, 0.0, config::TRACE_SPREAD_PX] {
-        let shift = Vec2::new(0.0, spread);
+    let side = trace_side(from, to);
+    for shift in [-side, Vec2::ZERO, side] {
         gizmos.line_2d(from + shift, to + shift, color);
     }
+}
+
+/// 사격 선을 굵게 그리려고 겹치는 선이 중심선에서 벗어나는 화면 벡터입니다. 선의 방향에 수직이므로 어느 방향으로 쏴도 같은 굵기로 보입니다.
+fn trace_side(from: Vec2, to: Vec2) -> Vec2 {
+    (to - from).perp().normalize_or_zero() * config::TRACE_SPREAD_PX
 }
 
 /// 사격 선의 화면 좌표(시작, 끝)입니다. 둘 다 가슴 높이입니다. 선의 시작은 서버가 보내지 않고 쏜 플레이어의 위치에서 긋습니다.
@@ -264,5 +269,28 @@ mod tests {
             (from_after_moving.y - 9.0).abs() < 1e-3,
             "the line follows the player: {from_after_moving:?}"
         );
+    }
+
+    #[test]
+    fn the_extra_lines_of_the_trace_sit_beside_it_at_the_same_distance_in_every_direction() {
+        let player = rifleman_at(10.0, 8.0);
+        let ends = [
+            Ground::new(16.0, 8.0),
+            Ground::new(10.0, 14.0),
+            Ground::new(16.0, 14.0),
+            Ground::new(4.0, 2.0),
+            Ground::new(16.0, 2.0),
+        ];
+
+        for end in ends {
+            let (from, to) = trace_line(&player, end);
+            let side = trace_side(from, to);
+
+            assert!(
+                (side.length() - config::TRACE_SPREAD_PX).abs() < 1e-3,
+                "{end:?}: {side:?}"
+            );
+            assert!(side.dot(to - from).abs() < 1e-2, "{end:?}: {side:?}");
+        }
     }
 }
