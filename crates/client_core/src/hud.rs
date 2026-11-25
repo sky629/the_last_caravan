@@ -4,8 +4,8 @@
 //! 모든 값은 지금 그리는 `Frame`에서 오므로, 막대는 그 피해를 일으킨 공격이 화면에 나타난 뒤에 줄어듭니다.
 
 use caravan_protocol::{
-    WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireNightStep, WireOutcome,
-    WirePhase, WireRepairTarget, WireTowerState, WireWeaponKind,
+    WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireLoadout, WireNightStep,
+    WireOutcome, WirePhase, WireRepairTarget, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::Team;
 
@@ -132,7 +132,7 @@ impl Hud {
 
         if let Some(me) = frame.player(you) {
             hud.me = Some(my_meter(me));
-            hud.weapon = Some(weapon_text(me.weapon));
+            hud.weapon = Some(weapon_text(me.loadout));
             hud.stamina = stamina_meter(me);
             hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
@@ -385,16 +385,22 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
     }
 }
 
-/// 든 자원과 상한입니다. 상한까지 들면 더 채집할 수 없으므로, 마차로 가져가라는 안내를 붙입니다.
-/// 들고 있는 무기의 이름과 바꾸는 키입니다. `match`가 모든 무기를 다루므로, 무기를 추가하면 여기서 컴파일 오류가 납니다.
-fn weapon_text(weapon: WireWeaponKind) -> String {
-    let name = match weapon {
-        WireWeaponKind::Sword => "SWORD",
-        WireWeaponKind::Bow => "BOW",
-    };
-    format!("WEAPON  {name}  [Q]")
+/// 가진 두 칸의 무기와 바꾸는 키입니다. 든 무기가 앞에 오고 대괄호로 묶으며, 빈 칸은 `-`입니다.
+fn weapon_text(loadout: WireLoadout) -> String {
+    let held = weapon_name(loadout.held);
+    let spare = loadout.spare.map_or("-", weapon_name);
+    format!("WEAPON  [{held}]  {spare}  [Q]")
 }
 
+/// 무기의 이름입니다. `match`가 모든 무기를 다루므로, 무기를 추가하면 여기서 컴파일 오류가 납니다.
+fn weapon_name(weapon: WireWeaponKind) -> &'static str {
+    match weapon {
+        WireWeaponKind::Sword => "SWORD",
+        WireWeaponKind::Bow => "BOW",
+    }
+}
+
+/// 든 자원과 상한입니다. 상한까지 들면 더 채집할 수 없으므로, 마차로 가져가라는 안내를 붙입니다.
 fn carry_text(carried: u32, capacity: u32) -> String {
     if carried >= capacity {
         format!("CARRY  {carried} / {capacity}  FULL - TAKE IT TO THE WAGON")
@@ -483,6 +489,10 @@ mod tests {
         }
     }
 
+    fn loadout(held: WireWeaponKind, spare: Option<WireWeaponKind>) -> WireLoadout {
+        WireLoadout { held, spare }
+    }
+
     fn player(id: u32, life: WireLife) -> PlayerView {
         PlayerView {
             id,
@@ -491,7 +501,7 @@ mod tests {
             facing: Vec2::new(1.0, 0.0),
             life,
             last_attack: None,
-            weapon: WireWeaponKind::Sword,
+            loadout: loadout(WireWeaponKind::Sword, None),
         }
     }
 
@@ -671,15 +681,15 @@ mod tests {
     }
 
     #[test]
-    fn the_held_weapon_is_shown_with_the_key_that_switches_it() {
+    fn the_held_weapon_comes_first_in_brackets_and_an_empty_slot_is_a_dash() {
         let session = session_in_room();
         let sword = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
-        assert_eq!(sword.weapon.as_deref(), Some("WEAPON  SWORD  [Q]"));
+        assert_eq!(sword.weapon.as_deref(), Some("WEAPON  [SWORD]  -  [Q]"));
 
         let mut archer = player(YOU, alive(100));
-        archer.weapon = WireWeaponKind::Bow;
+        archer.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         let bow = Hud::of(&session, Some(&frame(vec![archer])));
-        assert_eq!(bow.weapon.as_deref(), Some("WEAPON  BOW  [Q]"));
+        assert_eq!(bow.weapon.as_deref(), Some("WEAPON  [BOW]  SWORD  [Q]"));
     }
 
     #[test]
@@ -692,21 +702,21 @@ mod tests {
                 revive_progress: None,
             },
         );
-        downed.weapon = WireWeaponKind::Bow;
+        downed.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         assert_eq!(
             Hud::of(&session, Some(&frame(vec![downed])))
                 .weapon
                 .as_deref(),
-            Some("WEAPON  BOW  [Q]")
+            Some("WEAPON  [BOW]  SWORD  [Q]")
         );
         assert_eq!(Hud::of(&session, None).weapon, None);
 
         let mut ally = player(2, alive(100));
-        ally.weapon = WireWeaponKind::Bow;
+        ally.loadout = loadout(WireWeaponKind::Bow, None);
         let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100)), ally])));
         assert_eq!(
             hud.weapon.as_deref(),
-            Some("WEAPON  SWORD  [Q]"),
+            Some("WEAPON  [SWORD]  -  [Q]"),
             "only mine"
         );
     }

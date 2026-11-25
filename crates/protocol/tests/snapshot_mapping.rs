@@ -3,12 +3,12 @@
 
 use caravan_protocol::{
     Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
-    WireDelivery, WireInteraction, WireLife, WireMonsterKind, WireOutcome, WirePhase, WirePos,
-    WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
+    WireDelivery, WireInteraction, WireLife, WireLoadout, WireMonsterKind, WireOutcome, WirePhase,
+    WirePos, WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
-    AimDir, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Tile, Tuning,
-    Vec2, WavePlan,
+    AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Tile,
+    Tuning, Vec2, WavePlan, WeaponKind,
 };
 
 fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
@@ -95,9 +95,12 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
     );
     assert_eq!((player.last_input_seq, player.last_attack), (0, None));
     assert_eq!(
-        player.weapon,
-        WireWeaponKind::Sword,
-        "a player starts with the sword"
+        player.loadout,
+        WireLoadout {
+            held: WireWeaponKind::Sword,
+            spare: None
+        },
+        "a player starts with the sword and an empty second slot"
     );
     assert!(snapshot.piles.is_empty(), "nothing lies on the ground");
     let amounts: Vec<(u32, u32)> = snapshot
@@ -580,9 +583,17 @@ fn a_sprinting_player_runs_farther_and_the_stamina_on_the_wire_drains() {
     );
 }
 
+/// 검과 활을 두 칸에 가지고 시작하는 방입니다.
+fn sim_with_sword_and_bow(adjust: impl FnOnce(&mut Tuning)) -> Sim {
+    sim_with(|t| {
+        t.player.start_loadout = Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow));
+        adjust(t);
+    })
+}
+
 #[test]
-fn the_weapon_a_player_holds_is_on_the_wire() {
-    let mut sim = sim_with(|_| {});
+fn both_slots_and_the_held_one_are_on_the_wire() {
+    let mut sim = sim_with_sword_and_bow(|_| {});
     let alive = sim.add_player().unwrap();
     let other = sim.add_player().unwrap();
     let press_q = PlayerInputs::from([(
@@ -596,18 +607,27 @@ fn the_weapon_a_player_holds_is_on_the_wire() {
     step(&mut sim, &press_q, 1);
 
     let players = Snapshot::from_sim(&sim).players;
-    let weapon_of = |id: u32| players.iter().find(|p| p.id == id).map(|p| p.weapon);
-    assert_eq!(weapon_of(alive.0), Some(WireWeaponKind::Bow));
+    let loadout_of = |id: u32| players.iter().find(|p| p.id == id).map(|p| p.loadout);
     assert_eq!(
-        weapon_of(other.0),
-        Some(WireWeaponKind::Sword),
+        loadout_of(alive.0),
+        Some(WireLoadout {
+            held: WireWeaponKind::Bow,
+            spare: Some(WireWeaponKind::Sword)
+        })
+    );
+    assert_eq!(
+        loadout_of(other.0),
+        Some(WireLoadout {
+            held: WireWeaponKind::Sword,
+            spare: Some(WireWeaponKind::Bow)
+        }),
         "only the player who pressed Q switched"
     );
 }
 
 #[test]
 fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_held_now() {
-    let mut sim = sim_with(|_| {});
+    let mut sim = sim_with_sword_and_bow(|_| {});
     let fighter = sim.add_player().unwrap();
     let swing = PlayerInputs::from([(
         fighter,
@@ -631,7 +651,7 @@ fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_hel
 
     let snapshot = Snapshot::from_sim(&sim);
     let player = snapshot.players.iter().find(|p| p.id == fighter.0).unwrap();
-    assert_eq!(player.weapon, WireWeaponKind::Bow);
+    assert_eq!(player.loadout.held, WireWeaponKind::Bow);
     assert_eq!(
         player.last_attack,
         Some(WireAttack {
@@ -644,7 +664,7 @@ fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_hel
 
 #[test]
 fn a_shot_arrow_is_on_the_wire_with_its_position_and_direction_and_is_gone_when_it_ends() {
-    let mut sim = sim_with(|_| {});
+    let mut sim = sim_with_sword_and_bow(|_| {});
     let archer = sim.add_player().unwrap();
     let press_q = PlayerInputs::from([(
         archer,

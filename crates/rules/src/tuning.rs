@@ -10,6 +10,7 @@
 use std::collections::BTreeSet;
 
 use crate::kind::{MonsterKind, StructureKind, WeaponKind};
+use crate::loadout::Loadout;
 use crate::math::{Rect, Vec2};
 use crate::spawn::SpawnPlan;
 use crate::world::{Tile, TileMap, World};
@@ -44,6 +45,8 @@ pub struct PlayerTuning {
     pub speed: f32,
     /// 쓰러진 상태에서 기어가는 속도입니다.
     pub crawl_speed: f32,
+    /// 플레이어가 입장할 때와 새 원정이 시작될 때 가지는 무기입니다.
+    pub start_loadout: Loadout,
 }
 
 /// 무기 한 종류의 수치입니다. 무기마다 다른 점은 모두 이 구조체의 값입니다.
@@ -815,6 +818,7 @@ impl Default for Tuning {
                 radius: 0.35,
                 speed: 4.0,
                 crawl_speed: 0.8,
+                start_loadout: Loadout::new(WeaponKind::Sword, None),
             },
             weapons: WeaponTable {
                 sword: WeaponTuning {

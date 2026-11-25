@@ -6,6 +6,7 @@ use crate::ids::{MonsterId, NodeId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 use crate::kind::MonsterKind;
 use crate::kind::{StructureKind, WeaponKind};
+use crate::loadout::Loadout;
 use crate::loot::Seed;
 use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
@@ -184,10 +185,15 @@ impl Scenario {
         self.player_mut(id).life = Life::Dead;
     }
 
-    /// 플레이어가 드는 무기를 `kind`로 바꿉니다. 무기는 생명 상태와 따로 있으므로 쓰러졌거나 사망한 플레이어도 바뀝니다.
+    /// 플레이어가 드는 무기를 `kind`로 바꾸고 다른 칸을 비웁니다. 무기는 생명 상태와 따로 있으므로 쓰러졌거나 사망한 플레이어도 바뀝니다.
     /// 테스트가 「활을 든 사수」라는 상황을 만들 때 씁니다.
     pub fn give_weapon(&mut self, id: PlayerId, kind: WeaponKind) {
-        self.player_mut(id).weapon = kind;
+        self.arm(id, kind, None);
+    }
+
+    /// 플레이어의 두 칸을 `held`와 `spare`로 정합니다. 무기는 생명 상태와 따로 있으므로 쓰러졌거나 사망한 플레이어도 바뀝니다.
+    pub fn arm(&mut self, id: PlayerId, held: WeaponKind, spare: Option<WeaponKind>) {
+        self.player_mut(id).loadout = Loadout::new(held, spare);
     }
 
     /// 지금 누르고 있는 입력은 그대로 두고, 무기 전환 키(Q)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.

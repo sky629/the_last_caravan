@@ -1,5 +1,5 @@
 //! 플레이어입니다. 생명 상태(살아 있음, 쓰러짐, 사망), 이동, 상호작용(부활, 수리, 채집, 건설)을 다룹니다.
-//! 공격은 `weapon`이 합니다.
+//! 공격은 `weapon`이 합니다. 가진 무기는 `loadout`이 정합니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -7,6 +7,7 @@ use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
 use crate::ids::{NodeId, PlayerId, Team, TowerId};
 use crate::kind::WeaponKind;
+use crate::loadout::Loadout;
 use crate::math::Vec2;
 use crate::resources;
 use crate::stamina::Stamina;
@@ -25,9 +26,9 @@ pub struct Player {
     /// 마지막으로 조준한 방향입니다. 공격이 이 방향을 향합니다.
     pub facing: Vec2,
     pub life: Life,
-    /// 들고 있는 무기입니다. 생명 상태가 아니라 플레이어에게 있으므로, 쓰러졌다가 부활하거나 낮이 시작되어도 그대로입니다.
-    /// 새 원정이 시작되면 `WeaponKind::STARTING`으로 돌아갑니다.
-    pub weapon: WeaponKind,
+    /// 가진 무기입니다. 생명 상태가 아니라 플레이어에게 있으므로, 쓰러졌다가 부활하거나 낮이 시작되어도 그대로입니다.
+    /// 새 원정이 시작되면 `PlayerTuning::start_loadout`으로 돌아갑니다.
+    pub loadout: Loadout,
     /// 마지막으로 처리한 입력의 순서 번호입니다.
     pub last_input_seq: u32,
     /// 마지막으로 한 공격입니다. 이벤트가 아니라 상태이므로, 스냅샷을 한 번 놓친 클라이언트도 공격 효과를 그릴 수 있습니다.
@@ -145,7 +146,7 @@ impl Player {
             pos,
             facing: Vec2::new(1.0, 0.0),
             life: Life::alive(t.player.max_hp, t),
-            weapon: WeaponKind::STARTING,
+            loadout: t.player.start_loadout,
             last_input_seq: 0,
             last_attack: None,
         }
@@ -168,6 +169,11 @@ impl Player {
         } else {
             self.life = Life::alive(t.player.max_hp, t);
         }
+    }
+
+    /// 지금 드는 무기입니다.
+    pub fn weapon(&self) -> WeaponKind {
+        self.loadout.held()
     }
 
     pub fn is_alive(&self) -> bool {
@@ -237,7 +243,7 @@ impl Player {
             }
             | Life::Dead => 0.0,
         };
-        let weapon = t.weapons.get(self.weapon);
+        let weapon = t.weapons.get(self.weapon());
         UnitStats {
             move_speed,
             attack_damage: weapon.damage,

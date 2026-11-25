@@ -11,8 +11,8 @@ use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 use caravan_protocol::{
-    Snapshot, WireAngle, WireAttack, WireLife, WireMonster, WireMonsterKind, WireNode, WirePhase,
-    WirePile, WirePlayer, WireProjectile, WireTower, WireWagon, WireWeaponKind,
+    Snapshot, WireAngle, WireAttack, WireLife, WireLoadout, WireMonster, WireMonsterKind, WireNode,
+    WirePhase, WirePile, WirePlayer, WireProjectile, WireTower, WireWagon,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -58,8 +58,8 @@ pub struct PlayerView {
     pub life: WireLife,
     /// 마지막으로 한 공격과 공격한 무기입니다.
     pub last_attack: Option<WireAttack>,
-    /// 들고 있는 무기입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
-    pub weapon: WireWeaponKind,
+    /// 가진 두 칸의 무기입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub loadout: WireLoadout,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -247,7 +247,7 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
         facing,
         life: a.life,
         last_attack: a.last_attack,
-        weapon: a.weapon,
+        loadout: a.loadout,
     }
 }
 
@@ -304,7 +304,7 @@ pub fn effect_progress(playback_tick: f64, event_tick: u64, duration_ticks: f64)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::WirePos;
+    use caravan_protocol::{WirePos, WireWeaponKind};
 
     fn snapshot(tick: u64) -> Snapshot {
         Snapshot {
@@ -354,7 +354,10 @@ mod tests {
             },
             last_input_seq: 0,
             last_attack: None,
-            weapon: WireWeaponKind::Sword,
+            loadout: WireLoadout {
+                held: WireWeaponKind::Sword,
+                spare: None,
+            },
         }
     }
 
@@ -514,14 +517,18 @@ mod tests {
         older.players = vec![player(1, 8.0, 8.0, 100)];
         let mut newer = snapshot(11);
         newer.players = vec![player(1, 8.0, 8.0, 100)];
-        newer.players[0].weapon = WireWeaponKind::Bow;
+        newer.players[0].loadout = WireLoadout {
+            held: WireWeaponKind::Bow,
+            spare: Some(WireWeaponKind::Sword),
+        };
         let buffer = buffer_with(vec![older, newer]);
 
         let between = buffer.sample_at(10.9).unwrap();
-        assert_eq!(between.players[0].weapon, WireWeaponKind::Sword);
+        assert_eq!(between.players[0].loadout.held, WireWeaponKind::Sword);
 
         let after = buffer.sample_at(11.0).unwrap();
-        assert_eq!(after.players[0].weapon, WireWeaponKind::Bow);
+        assert_eq!(after.players[0].loadout.held, WireWeaponKind::Bow);
+        assert_eq!(after.players[0].loadout.spare, Some(WireWeaponKind::Sword));
     }
 
     #[test]

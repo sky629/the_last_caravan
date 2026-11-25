@@ -29,7 +29,7 @@ pub fn build_preview(me: &PlayerView, map_size: (u16, u16)) -> Option<Tile> {
 mod tests {
     use super::*;
     use caravan_protocol::{
-        WireBuildRefusal, WireCannotBuild, WireInteraction, WireTile, WireWeaponKind,
+        WireBuildRefusal, WireCannotBuild, WireInteraction, WireLoadout, WireTile, WireWeaponKind,
     };
     use caravan_rules::{AimDir, PlayerInput, PlayerInputs, Seed, Sim, Team, Tuning, Vec2};
 
@@ -43,7 +43,10 @@ mod tests {
             facing: Vec2::new(1.0, 0.0),
             life,
             last_attack: None,
-            weapon: WireWeaponKind::Sword,
+            loadout: WireLoadout {
+                held: WireWeaponKind::Sword,
+                spare: None,
+            },
         }
     }
 

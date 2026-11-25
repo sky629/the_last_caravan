@@ -8,7 +8,7 @@
 //!   부하를 시험할 때 씁니다.
 //! - `--stress`: 마차, 감시탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
 //!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
-//!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다.
+//!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다. 플레이어는 검과 활을 함께 가지고 시작합니다.
 //! - `--seed 42`: 모든 방의 무작위를 이 씨앗 하나로 정합니다. 씨앗을 주지 않으면 방마다, 서버를 실행할 때마다 다른 씨앗을 씁니다.
 //!   방을 만들 때 출력하는 씨앗을 이 옵션에 주면 같은 상태에서 다시 시작합니다.
 //!
@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
-use caravan_rules::{MonsterKind, NightPlan, Seed, Tuning, WavePlan};
+use caravan_rules::{Loadout, MonsterKind, NightPlan, Seed, Tuning, WavePlan, WeaponKind};
 use caravan_server::{GameServer, RoomSeeds};
 use caravan_ws_server::WsServer;
 use report::TickTimer;
@@ -134,6 +134,8 @@ fn tuning_from(options: &Options) -> Tuning {
         tuning.player.max_hp = u32::MAX;
         tuning.structures.watchtower.max_hp = u32::MAX;
         tuning.village.start_towers = tuning.spread_tower_sites(tuning.village.tower_limit);
+        // 부하 시험용 클라이언트(`--bow`)가 Q로 활을 들 수 있게 검과 활을 함께 가지고 시작합니다.
+        tuning.player.start_loadout = Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow));
         tuning.cycle.day_secs = tuning.dt();
         tuning.nights.spawn_interval_secs = tuning.dt();
     }
@@ -409,6 +411,21 @@ mod tests {
             tuning_from(&parse_args(&args(&["--seed", "42"])).unwrap()),
             Tuning::default(),
             "the seed is not a tuning number"
+        );
+    }
+
+    #[test]
+    fn stress_players_start_with_the_sword_and_the_bow() {
+        let tuning = tuning_from(&parse_args(&args(&["--stress"])).unwrap());
+        assert_eq!(tuning.validate(), Ok(()));
+        assert_eq!(
+            tuning.player.start_loadout,
+            Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow))
+        );
+        assert_eq!(
+            tuning_from(&parse_args(&[]).unwrap()).player.start_loadout,
+            Loadout::new(WeaponKind::Sword, None),
+            "a normal server starts with the sword alone"
         );
     }
 

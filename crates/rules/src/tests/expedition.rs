@@ -3,6 +3,7 @@
 use super::support::{SEED, Scenario};
 use crate::expedition::{Outcome, Phase};
 use crate::ids::PlayerId;
+use crate::kind::WeaponKind;
 use crate::loot::Seed;
 use crate::math::Vec2;
 use crate::sim::{JoinError, Sim};
@@ -361,6 +362,8 @@ fn play_a_scripted_expedition() -> String {
     let mut s = Scenario::default_game(|t| t.cycle.day_secs = 3.0);
     let a = s.sim.add_player().unwrap();
     let b = s.sim.add_player().unwrap();
+    s.arm(a, WeaponKind::Sword, Some(WeaponKind::Bow));
+    s.arm(b, WeaponKind::Sword, Some(WeaponKind::Bow));
     let mut trace = String::new();
     for tick in 0..800 {
         let phase = tick / 100;

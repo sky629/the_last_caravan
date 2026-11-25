@@ -9,9 +9,9 @@
 //! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Monster, MonsterKind, NightStep,
-    Outcome, Phase, Pile, Player, Projectile, RepairTarget, Sim, Tower, TowerState, Tuning,
-    WeaponKind,
+    BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Loadout, Monster, MonsterKind,
+    NightStep, Outcome, Phase, Pile, Player, Projectile, RepairTarget, Sim, Tower, TowerState,
+    Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -146,8 +146,24 @@ pub struct WirePlayer {
     pub last_input_seq: u32,
     /// 마지막으로 한 공격입니다. 클라이언트는 공격한 Tick을 스냅샷의 `tick`과 비교해서, 공격한 무기의 효과를 그립니다.
     pub last_attack: Option<WireAttack>,
-    /// 들고 있는 무기입니다. 쓰러졌거나 사망한 플레이어도 무기를 들고 있습니다.
-    pub weapon: WireWeaponKind,
+    /// 가진 무기입니다. 쓰러졌거나 사망한 플레이어도 무기를 가지고 있습니다.
+    pub loadout: WireLoadout,
+}
+
+/// 두 칸의 무기입니다. 든 무기는 언제나 있고, 다른 칸은 비어 있을 수 있습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireLoadout {
+    pub held: WireWeaponKind,
+    pub spare: Option<WireWeaponKind>,
+}
+
+impl WireLoadout {
+    fn of(loadout: &Loadout) -> WireLoadout {
+        WireLoadout {
+            held: WireWeaponKind::of(loadout.held()),
+            spare: loadout.spare().map(WireWeaponKind::of),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -440,7 +456,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
             tick: attack.tick,
             weapon: WireWeaponKind::of(attack.weapon),
         }),
-        weapon: WireWeaponKind::of(player.weapon),
+        loadout: WireLoadout::of(&player.loadout),
     }
 }
 

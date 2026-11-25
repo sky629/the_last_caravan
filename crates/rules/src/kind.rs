@@ -26,6 +26,7 @@ impl StructureKind {
 /// 플레이어가 드는 무기의 종류입니다. 종류마다 수치와 공격이 전달되는 방식은 `WeaponTable`에 있습니다.
 ///
 /// 이름은 무기의 이름이고 전달 방식의 이름이 아닙니다. 같은 전달 방식의 무기가 둘 이상 생겨도 종류만 늘고 방식은 그대로입니다.
+/// 처음 가지는 무기는 종류가 아니라 수치(`PlayerTuning::start_loadout`)가 정합니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum WeaponKind {
     /// 조준한 방향의 부채꼴 안에 있는 몬스터를 모두 베는 근접 무기입니다.
@@ -36,17 +37,4 @@ pub enum WeaponKind {
 
 impl WeaponKind {
     pub const ALL: [WeaponKind; 2] = [WeaponKind::Sword, WeaponKind::Bow];
-
-    /// 플레이어가 입장할 때와 새 원정이 시작될 때 드는 무기입니다.
-    pub const STARTING: WeaponKind = WeaponKind::Sword;
-
-    /// `Q`를 누르면 바뀌는 다음 무기입니다. `ALL`의 순서대로 돌고 마지막 다음은 처음입니다.
-    /// 부르는 곳은 `weapon::decide` 하나입니다.
-    pub fn next(self) -> WeaponKind {
-        let next = WeaponKind::ALL
-            .iter()
-            .position(|kind| *kind == self)
-            .map_or(0, |index| (index + 1) % WeaponKind::ALL.len());
-        WeaponKind::ALL[next]
-    }
 }
