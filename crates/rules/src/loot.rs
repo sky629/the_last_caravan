@@ -49,7 +49,7 @@ pub struct Chest {
 }
 
 /// 바닥에 놓인 무기입니다. 길을 막지 않고, 원정이 끝날 때까지 그 자리에 남습니다.
-/// 다른 플레이어가 줍는 일은 무기를 바꿔 놓는 일(`kind`가 바뀜)이므로, 번호와 자리는 그대로이고 무기의 수는 늘지도 줄지도 않습니다.
+/// 다른 플레이어가 줍는 일은 무기를 바꿔 놓는 일(`kind`가 바뀜)이므로, 번호와 자리는 그대로입니다. 내준 무기가 시작 무기와 같은 종류이면 바닥의 무기가 사라집니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroundWeapon {
     pub id: GroundWeaponId,
