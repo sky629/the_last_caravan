@@ -61,9 +61,11 @@ impl TextField {
         input
     }
 
-    /// 칸이 받지 않는 글자와 상한을 넘는 글자는 버립니다.
+    /// 칸이 받지 않는 글자와 상한을 넘는 글자는 버립니다. 맨 앞의 공백도 버립니다.
+    /// 이름의 규칙은 앞뒤의 공백을 지운 뒤에 글자를 세므로, 맨 앞의 공백을 받으면 칸의 상한과 규칙의 상한이 어긋나서 끝 글자가 잘립니다.
     pub fn push(&mut self, c: char) {
-        if self.text.chars().count() >= self.field.max_chars() {
+        if self.text.chars().count() >= self.field.max_chars() || (c == ' ' && self.text.is_empty())
+        {
             return;
         }
         if let Some(c) = self.field.accept(c) {
@@ -186,6 +188,16 @@ mod tests {
         for c in text.chars() {
             form.press(FormKey::Char(c));
         }
+    }
+
+    #[test]
+    fn a_space_in_front_is_not_taken_so_the_last_letter_is_not_cut_off() {
+        let name = TextField::new(Field::Name, " ABCDEFGHIJKL");
+        assert_eq!(name.text(), "ABCDEFGHIJKL");
+
+        let mut typed = TextField::new(Field::Name, "");
+        " A B".chars().for_each(|c| typed.push(c));
+        assert_eq!(typed.text(), "A B", "a space inside the name stays");
     }
 
     #[test]

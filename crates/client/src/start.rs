@@ -125,11 +125,6 @@ pub fn setup(mut commands: Commands) {
     });
 }
 
-/// 시작 화면이 떠 있는 동안 참입니다.
-pub fn on_start_screen(flow: Res<ClientFlow>) -> bool {
-    flow.0.form().is_some()
-}
-
 /// 방에 들어가서 세계를 그리고 있는 동안 참입니다.
 pub fn in_room(flow: Res<ClientFlow>) -> bool {
     flow.joined().is_some()
@@ -140,33 +135,49 @@ pub fn playing(flow: Res<ClientFlow>) -> bool {
     flow.0.session().is_some()
 }
 
-/// 키보드 이벤트를 읽는 동안 기억할 것입니다.
+/// 키보드 이벤트를 읽는 동안 기억할 것입니다. 시작 화면이 떠 있는 동안에만 값이 있고, 방에 있는 동안에는 비어 있습니다.
 #[derive(Default)]
 pub struct KeyState {
-    /// Ctrl이나 Cmd를 누르고 있습니다. 수정 키는 `ButtonInput`이 아니라 이벤트에서 따라갑니다.
-    modifier_down: bool,
+    held: HeldKeys,
     /// 웹은 클립보드를 비동기로 읽으므로, 읽는 중인 일을 다음 프레임에 이어서 확인합니다.
     paste: Option<ClipboardRead>,
 }
 
+/// 시작 화면에서 누르고 있는 키입니다.
+#[derive(Default)]
+struct HeldKeys {
+    /// Ctrl이나 Cmd를 누르고 있습니다. 수정 키는 `ButtonInput`이 아니라 이벤트에서 따라갑니다.
+    modifier_down: bool,
+    /// 시작 화면에서 누르기 시작해서 아직 떼지 않은 키입니다. 방에서 누르기 시작한 키가 시작 화면으로 돌아온 뒤에 되풀이되어도 글자가 되지 않게 합니다.
+    pressed_here: Vec<KeyCode>,
+}
+
 /// 키보드 이벤트 하나를 읽어서 폼에 줄 키를 `keys`에 더합니다. 붙여 넣기 키이면 참을 돌려줍니다.
-fn read_event(modifier_down: &mut bool, event: &KeyboardInput, keys: &mut Vec<FormKey>) -> bool {
+fn read_event(held: &mut HeldKeys, event: &KeyboardInput, keys: &mut Vec<FormKey>) -> bool {
     if matches!(
         event.key_code,
         KeyCode::ControlLeft | KeyCode::ControlRight | KeyCode::SuperLeft | KeyCode::SuperRight
     ) {
-        *modifier_down = event.state.is_pressed();
+        held.modifier_down = event.state.is_pressed();
         return false;
     }
     if !event.state.is_pressed() {
+        held.pressed_here.retain(|code| *code != event.key_code);
         return false;
+    }
+    if event.repeat {
+        if !held.pressed_here.contains(&event.key_code) {
+            return false;
+        }
+    } else if !held.pressed_here.contains(&event.key_code) {
+        held.pressed_here.push(event.key_code);
     }
     match &event.logical_key {
         Key::Backspace => keys.push(FormKey::Backspace),
         // 키를 누르고 있을 때 되풀이되는 것은 글자 지우기뿐입니다. 입장과 칸 이동이 되풀이되면 안 됩니다.
         Key::Tab if !event.repeat => keys.push(FormKey::Tab),
         Key::Enter if !event.repeat => keys.push(FormKey::Enter),
-        Key::Character(letter) if *modifier_down => {
+        Key::Character(letter) if held.modifier_down => {
             return letter.eq_ignore_ascii_case("v") && !event.repeat;
         }
         _ => {
@@ -178,6 +189,8 @@ fn read_event(modifier_down: &mut bool, event: &KeyboardInput, keys: &mut Vec<Fo
 }
 
 /// 키보드 이벤트를 읽어서 `Flow::on_key`에 넘기고, 돌아온 일을 실행합니다.
+/// 시작 화면이 아닐 때도 프레임마다 실행해서 이벤트를 읽어 버립니다. 그래서 방에서 누른 키와 방에 있는 동안 끝난 붙여 넣기가
+/// 시작 화면으로 돌아온 뒤에 칸에 들어가지 않습니다.
 pub fn read_form_keys(
     mut events: MessageReader<KeyboardInput>,
     mut focus_lost: MessageReader<KeyboardFocusLost>,
@@ -186,12 +199,18 @@ pub fn read_form_keys(
     mut flow: ResMut<ClientFlow>,
     mut clipboard: ResMut<Clipboard>,
 ) {
+    if flow.0.form().is_none() {
+        events.clear();
+        focus_lost.clear();
+        *state = KeyState::default();
+        return;
+    }
     if focus_lost.read().count() > 0 {
-        state.modifier_down = false;
+        state.held = HeldKeys::default();
     }
     let mut keys = Vec::new();
     for event in events.read() {
-        if read_event(&mut state.modifier_down, event, &mut keys) {
+        if read_event(&mut state.held, event, &mut keys) {
             state.paste = Some(clipboard.fetch_text());
         }
     }
@@ -305,9 +324,9 @@ mod tests {
 
     /// 이벤트를 차례로 읽어서 (폼에 간 키, 붙여 넣기를 청한 횟수)를 돌려줍니다.
     fn read(events: &[KeyboardInput]) -> (Vec<FormKey>, usize) {
-        let (mut modifier_down, mut keys, mut pastes) = (false, Vec::new(), 0);
+        let (mut held, mut keys, mut pastes) = (HeldKeys::default(), Vec::new(), 0);
         for event in events {
-            if read_event(&mut modifier_down, event, &mut keys) {
+            if read_event(&mut held, event, &mut keys) {
                 pastes += 1;
             }
         }
@@ -381,6 +400,27 @@ mod tests {
                 FormKey::Backspace
             ]
         );
+    }
+
+    #[test]
+    fn a_key_that_was_already_down_when_the_start_screen_appeared_types_nothing_until_pressed_again()
+     {
+        let repeated = KeyboardInput {
+            repeat: true,
+            ..letter("d")
+        };
+        let released = KeyboardInput {
+            state: ButtonState::Released,
+            ..letter("d")
+        };
+        let (keys, _) = read(&[
+            repeated.clone(),
+            repeated.clone(),
+            released,
+            letter("d"),
+            repeated,
+        ]);
+        assert_eq!(keys, vec![FormKey::Char('d'), FormKey::Char('d')]);
     }
 
     #[test]

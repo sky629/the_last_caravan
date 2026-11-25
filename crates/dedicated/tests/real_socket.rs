@@ -193,9 +193,9 @@ impl TestClient {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if let ServerMsg::Roster(roster) = self.next(left.max(Duration::from_millis(1)))
-                && ready(&roster)
+                && ready(&roster.members)
             {
-                return roster;
+                return roster.members;
             }
         }
     }

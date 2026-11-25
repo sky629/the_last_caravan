@@ -12,6 +12,7 @@ use caravan_protocol::{
 };
 use caravan_rules::{Team, Vec2 as Ground};
 
+use crate::camera::{FollowedSetting, WagonMarkerNode};
 use crate::camp::StrikeRegistry;
 use crate::characters::Spawned;
 use crate::config;
@@ -190,9 +191,17 @@ pub fn spawn_world(
     });
 }
 
-/// 방을 떠났을 때 방의 세계를 모두 지웁니다. 지형과 번호로 추적하는 개체를 지우고, 추적하는 표를 비우고, 그릴 모습과 `Scene`을 없앱니다.
-/// 다음 방에 들어가면 `spawn_world`가 처음부터 다시 만듭니다.
-pub fn clear_world(mut commands: Commands, entities: Query<Entity, With<RoomEntity>>) {
+/// 방을 떠났을 때 방의 세계를 모두 지웁니다. 지형과 번호로 추적하는 개체를 지우고, 추적하는 표를 비우고, 그릴 모습과 `Scene`을 없애고,
+/// 화면 가장자리의 마차 표시를 숨기고, 카메라가 따라가던 세계의 모습을 잊습니다. 다음 방에 들어가면 `spawn_world`가 처음부터 다시 만듭니다.
+pub fn clear_world(
+    mut commands: Commands,
+    entities: Query<Entity, With<RoomEntity>>,
+    mut wagon_marker: Query<&mut Visibility, With<WagonMarkerNode>>,
+) {
+    for mut visibility in &mut wagon_marker {
+        *visibility = Visibility::Hidden;
+    }
+    commands.insert_resource(FollowedSetting::default());
     for entity in &entities {
         commands.entity(entity).despawn();
     }
@@ -355,6 +364,12 @@ mod tests {
             "the ground, blocks, players, a scarecrow, a tower, a node, a pile, a chest, a weapon, racks and a number: {in_the_room}"
         );
         assert!(app.world().contains_resource::<Scene>());
+        let marker = app
+            .world_mut()
+            .spawn((WagonMarkerNode, Visibility::Inherited))
+            .id();
+        app.world_mut()
+            .insert_resource(FollowedSetting(Some(crowded_frame().setting())));
 
         app.world_mut().resource_mut::<ClientFlow>().0.leave();
         // 같은 프레임에 이전 방의 스냅샷이 남아 있어도 그리지 않고 지웁니다.
@@ -363,6 +378,15 @@ mod tests {
         assert_eq!(drawn(&mut app), 0, "nothing of the room is left");
         assert!(!app.world().contains_resource::<Scene>());
         assert!(app.world().resource::<CurrentFrame>().0.is_none());
+        assert_eq!(
+            app.world().get::<Visibility>(marker),
+            Some(&Visibility::Hidden),
+            "the wagon marker at the edge of the screen does not stay on the start screen"
+        );
+        assert!(
+            app.world().resource::<FollowedSetting>().0.is_none(),
+            "the camera forgets the room it followed"
+        );
     }
 
     #[test]

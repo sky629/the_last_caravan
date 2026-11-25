@@ -255,17 +255,11 @@ impl Hud {
     }
 }
 
-/// 방에 들어가기 전, 거절, 접속이 끊긴 뒤에 화면 가운데에 띄울 안내입니다.
-/// 이유가 길 수 있으므로 짧은 제목을 크게, 이유를 그 아래에 작게 나눠서 보여 줍니다.
+/// 방에 들어가기 전과 첫 스냅샷을 기다리는 동안 화면 가운데에 띄울 안내입니다.
+/// 끝난 세션(거절, 끊김, 접속 실패)에는 안내가 없습니다. `Flow`가 곧바로 시작 화면으로 돌아가서 이유를 시작 화면에 보여 주기 때문입니다.
 fn session_banner(session: &Session, frame: Option<&Frame>) -> Option<Banner> {
-    if let Some(problem) = session.problem() {
-        return Some(Banner {
-            title: problem.heading.to_uppercase(),
-            detail: Some(problem.reason),
-            tone: BannerTone::Bad,
-        });
-    }
     match session {
+        _ if session.is_over() => None,
         Session::InRoom(_) if frame.is_some() => None,
         Session::InRoom(_) => Some(Banner {
             title: "Waiting for the first snapshot...".to_string(),
@@ -640,8 +634,8 @@ fn whole_secs(secs: f32) -> u32 {
 mod tests {
     use super::*;
     use caravan_protocol::{
-        ClientEvent, PlayerName, RejectReason, RoomCode, ServerMsg, Welcome, WireNode, WireShot,
-        WireTile, WireTower, WireWagon,
+        ClientEvent, PlayerName, RejectReason, RoomCode, ServerMsg, Welcome, WireNode, WireRoster,
+        WireShot, WireTile, WireTower, WireWagon,
     };
     use caravan_rules::{Seed, Sim, Team, Tuning, Vec2};
 
@@ -1467,7 +1461,10 @@ mod tests {
                 name: name.to_string(),
             })
             .collect();
-        session.on_event(ClientEvent::Message(ServerMsg::Roster(members)));
+        session.on_event(ClientEvent::Message(ServerMsg::Roster(WireRoster {
+            revision: 1,
+            members,
+        })));
         session
     }
 
@@ -1657,17 +1654,15 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_join_shows_the_reason() {
+    fn a_refused_join_leaves_the_banner_to_the_start_screen() {
         let mut session = Session::new(request("test"), DEFAULT_SERVER.to_string());
         session.on_event(ClientEvent::Connected);
         session.on_event(ClientEvent::Message(ServerMsg::JoinRejected {
             reason: RejectReason::RoomFull { capacity: 4 },
         }));
         let hud = Hud::of(&session, None, INVITE);
-        let banner = hud.banner.unwrap();
-        assert_eq!(banner.title, "JOIN REJECTED");
-        assert_eq!(banner.detail.as_deref(), Some("Room is full (4 / 4)"));
-        assert_eq!(banner.tone, BannerTone::Bad);
+        assert_eq!(hud.banner, None, "the start screen shows the reason");
+        assert_eq!(hud.connection, "Join rejected: Room is full (4 / 4)");
         assert_eq!(hud.me, None);
     }
 
@@ -1678,13 +1673,7 @@ mod tests {
             reason: "the server closed the connection".to_string(),
         });
         let hud = Hud::of(&session, None, INVITE);
-        let banner = hud.banner.unwrap();
-        assert_eq!(banner.title, "DISCONNECTED");
-        assert_eq!(
-            banner.detail.as_deref(),
-            Some("the server closed the connection")
-        );
-        assert_eq!(banner.tone, BannerTone::Bad);
+        assert_eq!(hud.banner, None);
         assert_eq!(
             hud.connection,
             "Disconnected: the server closed the connection"
@@ -1702,15 +1691,12 @@ mod tests {
 
         let hud = Hud::of(&session, None, INVITE);
 
-        let banner = hud.banner.unwrap();
-        assert_eq!(banner.title, "CANNOT REACH THE SERVER");
-        assert_eq!(
-            banner.detail.as_deref(),
-            Some(
-                "Could not open ws://192.168.0.7:7777. Check the address and that the server is running."
-            )
+        assert_eq!(hud.banner, None);
+        assert!(
+            hud.connection.contains("ws://192.168.0.7:7777"),
+            "{}",
+            hud.connection
         );
-        assert_eq!(banner.tone, BannerTone::Bad);
         assert!(!hud.connection.contains("Unknown error"));
     }
 

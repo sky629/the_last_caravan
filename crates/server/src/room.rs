@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use caravan_protocol::{
-    InputMsg, LinkId, PlayerName, RoomCode, ServerMsg, Snapshot, Welcome, WireMember,
+    InputMsg, LinkId, PlayerName, RoomCode, ServerMsg, Snapshot, Welcome, WireMember, WireRoster,
 };
 use caravan_rules::{JoinError, PlayerId, PlayerInputs, Seed, Sim, Tuning};
 
@@ -28,6 +28,8 @@ pub(crate) struct Room {
     input_stale_ticks: u32,
     /// 마지막으로 보낸 명단입니다. 명단이 이 값과 달라졌을 때만 다시 보냅니다.
     sent_roster: Vec<WireMember>,
+    /// 지금까지 보낸 명단의 수입니다. 명단마다 이 번호를 붙여서 받는 쪽이 더 새로운 명단을 알아봅니다.
+    roster_revision: u32,
 }
 
 impl Room {
@@ -38,6 +40,7 @@ impl Room {
             seats: BTreeMap::new(),
             input_stale_ticks,
             sent_roster: Vec::new(),
+            roster_revision: 0,
         }
     }
 
@@ -106,16 +109,19 @@ impl Room {
 
     /// 명단이 마지막으로 보낸 것과 달라졌으면 모든 접속에 보낼 일을 돌려주고 보낸 명단을 바꿉니다.
     fn roster_if_changed(&mut self) -> Vec<Out> {
-        let roster = self.roster();
-        if roster == self.sent_roster {
+        let members = self.roster();
+        if members == self.sent_roster {
             return Vec::new();
         }
-        let outs = self
-            .seats
+        self.roster_revision += 1;
+        let roster = WireRoster {
+            revision: self.roster_revision,
+            members: members.clone(),
+        };
+        self.sent_roster = members;
+        self.seats
             .values()
             .map(|seat| Out::Send(seat.link, ServerMsg::Roster(roster.clone())))
-            .collect();
-        self.sent_roster = roster;
-        outs
+            .collect()
     }
 }

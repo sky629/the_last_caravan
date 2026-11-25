@@ -57,6 +57,7 @@ fn main() {
         .init_resource::<supplies::SupplyRegistry>()
         .init_resource::<loot::LootRegistry>()
         .init_resource::<camp::StrikeRegistry>()
+        .init_resource::<camera::FollowedSetting>()
         .add_systems(
             Startup,
             (
@@ -74,7 +75,7 @@ fn main() {
             (
                 (
                     net::pump_network,
-                    start::read_form_keys.run_if(start::on_start_screen),
+                    start::read_form_keys,
                     start::draw_form,
                     net::advance_playback,
                     view::clear_world

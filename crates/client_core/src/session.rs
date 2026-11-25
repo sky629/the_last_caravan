@@ -15,7 +15,7 @@
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, ServerMsg,
-    Snapshot, Welcome, WireMember, check_welcome,
+    Snapshot, Welcome, WireMember, WireRoster, check_welcome,
 };
 use caravan_rules::Vec2;
 
@@ -34,6 +34,8 @@ pub enum Session {
     /// `Join`을 보내고 `Welcome`이나 `JoinRejected`를 기다립니다.
     Joining {
         request: JoinRequest,
+        /// 입장 안내보다 먼저 도착한 명단입니다. 브라우저는 메시지를 보낸 순서와 다르게 넘겨줄 수 있으므로, 버리지 않고 입장한 뒤에 씁니다.
+        early_roster: Option<WireRoster>,
     },
     /// 방에 들어간 뒤의 값은 다른 상태보다 훨씬 크므로 `Box`에 둡니다. 상태 하나를 옮길 때마다 가장 큰 상태의 크기를 복사하지 않게 합니다.
     InRoom(Box<Joined>),
@@ -67,6 +69,8 @@ pub struct Joined {
     pub welcome: Welcome,
     /// 방에 있는 사람입니다. 서버가 `Roster`를 보낼 때마다 바뀝니다.
     pub roster: Vec<WireMember>,
+    /// 받아들인 명단의 번호입니다. 아직 받아들인 명단이 없으면 0입니다.
+    roster_revision: u32,
     snapshots: SnapshotBuffer,
     inputs: InputSender,
 }
@@ -77,9 +81,26 @@ impl Joined {
             room,
             name,
             roster: Vec::new(),
+            roster_revision: 0,
             snapshots: SnapshotBuffer::new(welcome.tick_hz),
             inputs: InputSender::new(welcome.tick_hz),
             welcome,
+        }
+    }
+}
+
+impl Joined {
+    /// 서버가 보낸 명단을 받아들입니다. 이미 받아들인 것보다 오래된 명단과, 이름이 규칙에 맞지 않거나 방의 정원보다 긴 명단은 버립니다.
+    /// 이름은 화면에 그대로 그리므로, 서버가 보낸 값이라도 믿기 전에 확인합니다.
+    fn take_roster(&mut self, roster: WireRoster) {
+        let usable = roster.members.len() <= self.welcome.capacity as usize
+            && roster
+                .members
+                .iter()
+                .all(|member| PlayerName::parse(&member.name).is_ok());
+        if usable && roster.revision > self.roster_revision {
+            self.roster_revision = roster.revision;
+            self.roster = roster.members;
         }
     }
 }
@@ -100,14 +121,25 @@ impl Session {
                 };
                 *self = Session::Joining {
                     request: request.clone(),
+                    early_roster: None,
                 };
                 Some(join)
             }
-            (Session::Joining { request }, ClientEvent::Message(ServerMsg::Welcome(welcome))) => {
+            (
+                Session::Joining {
+                    request,
+                    early_roster,
+                },
+                ClientEvent::Message(ServerMsg::Welcome(welcome)),
+            ) => {
                 // 서버가 보낸 값을 처음 믿기 전에 확인합니다. 여기를 통과한 값은 화면 코드가 다시 확인하지 않습니다.
                 *self = match checked_room(&welcome) {
                     Ok(room) => {
-                        Session::InRoom(Box::new(Joined::new(room, request.name.clone(), welcome)))
+                        let mut joined = Joined::new(room, request.name.clone(), welcome);
+                        if let Some(roster) = early_roster.take() {
+                            joined.take_roster(roster);
+                        }
+                        Session::InRoom(Box::new(joined))
                     }
                     Err(reason) => Session::Failed {
                         reason: format!("the server sent an unusable welcome: {reason}"),
@@ -123,8 +155,20 @@ impl Session {
                 joined.snapshots.push(*snapshot);
                 None
             }
-            (Session::InRoom(joined), ClientEvent::Message(ServerMsg::Roster(members))) => {
-                joined.roster = members;
+            (Session::InRoom(joined), ClientEvent::Message(ServerMsg::Roster(roster))) => {
+                joined.take_roster(roster);
+                None
+            }
+            (
+                Session::Joining { early_roster, .. },
+                ClientEvent::Message(ServerMsg::Roster(roster)),
+            ) => {
+                let newer = early_roster
+                    .as_ref()
+                    .is_none_or(|held| roster.revision > held.revision);
+                if newer {
+                    *early_roster = Some(roster);
+                }
                 None
             }
             (Session::Connecting { server, .. }, ClientEvent::Disconnected { reason }) => {
@@ -238,7 +282,7 @@ impl Session {
                 Some(room) => format!("Connecting... (room {room})"),
                 None => "Connecting... (new room)".to_string(),
             },
-            (Session::Joining { request }, None) => match &request.room {
+            (Session::Joining { request, .. }, None) => match &request.room {
                 Some(room) => format!("Joining room {room}..."),
                 None => "Creating a room...".to_string(),
             },
@@ -338,7 +382,13 @@ mod tests {
                 name: "KANG".to_string(),
             })
         );
-        assert_eq!(session, Session::Joining { request: request() });
+        assert_eq!(
+            session,
+            Session::Joining {
+                request: request(),
+                early_roster: None
+            }
+        );
     }
 
     #[test]
@@ -482,6 +532,61 @@ mod tests {
         assert!(session.frame().is_some());
     }
 
+    fn roster(revision: u32, names: &[&str]) -> ClientEvent {
+        let members = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| WireMember {
+                id: index as u32 + 1,
+                name: name.to_string(),
+            })
+            .collect();
+        message(ServerMsg::Roster(WireRoster { revision, members }))
+    }
+
+    fn names(session: &Session) -> Vec<&str> {
+        let Session::InRoom(joined) = session else {
+            panic!("not in a room: {session:?}");
+        };
+        joined.roster.iter().map(|m| m.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_roster_that_arrives_before_the_welcome_is_kept_for_the_room() {
+        let mut session = connecting();
+        session.on_event(ClientEvent::Connected);
+        session.on_event(roster(1, &["KANG"]));
+        session.on_event(roster(2, &["KANG", "MIRO"]));
+        session.on_event(roster(1, &["KANG"]));
+
+        session.on_event(message(welcome(1)));
+
+        assert_eq!(names(&session), ["KANG", "MIRO"], "the newest one is used");
+    }
+
+    #[test]
+    fn a_roster_older_than_the_one_in_use_is_dropped() {
+        let mut session = in_room();
+        session.on_event(roster(2, &["KANG", "MIRO"]));
+
+        session.on_event(roster(1, &["KANG"]));
+        assert_eq!(names(&session), ["KANG", "MIRO"]);
+
+        session.on_event(roster(3, &["MIRO"]));
+        assert_eq!(names(&session), ["MIRO"]);
+    }
+
+    #[test]
+    fn a_roster_with_a_name_against_the_rules_or_more_members_than_the_room_holds_is_dropped() {
+        let mut session = in_room();
+        session.on_event(roster(1, &["KANG"]));
+
+        session.on_event(roster(2, &["KANG", "not a name!"]));
+        session.on_event(roster(3, &["A", "B", "C", "D", "E"]));
+
+        assert_eq!(names(&session), ["KANG"]);
+    }
+
     #[test]
     fn a_snapshot_before_welcome_is_ignored() {
         let mut session = connecting();
@@ -490,7 +595,13 @@ mod tests {
             session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(1))))),
             None
         );
-        assert_eq!(session, Session::Joining { request: request() });
+        assert_eq!(
+            session,
+            Session::Joining {
+                request: request(),
+                early_roster: None
+            }
+        );
         assert!(session.newest_snapshot().is_none());
     }
 

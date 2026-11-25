@@ -16,8 +16,8 @@ use caravan_protocol::{
     WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife,
     WireLoadout, WireMember, WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome,
     WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt, WireRect,
-    WireRepairTarget, WireShot, WireStruck, WireTile, WireTower, WireTowerState, WireVec2,
-    WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server, encode_client,
+    WireRepairTarget, WireRoster, WireShot, WireStruck, WireTile, WireTower, WireTowerState,
+    WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server, encode_client,
     encode_server,
 };
 
@@ -258,20 +258,24 @@ fn join_rejected_reasons_match_golden_bytes() {
 }
 
 #[test]
-fn the_roster_is_variant_three_then_the_members_in_order() {
+fn the_roster_is_variant_three_then_the_revision_then_the_members_in_order() {
     assert_server_wire(
-        ServerMsg::Roster(vec![
-            WireMember {
-                id: 1,
-                name: "KANG".to_string(),
-            },
-            WireMember {
-                id: 2,
-                name: "MIRO".to_string(),
-            },
-        ]),
+        ServerMsg::Roster(WireRoster {
+            revision: 5,
+            members: vec![
+                WireMember {
+                    id: 1,
+                    name: "KANG".to_string(),
+                },
+                WireMember {
+                    id: 2,
+                    name: "MIRO".to_string(),
+                },
+            ],
+        }),
         &[
             0x03, // Roster 변형
+            0x05, // 명단의 번호
             0x02, // 목록: 길이 2
             0x01, 0x04, b'K', b'A', b'N', b'G', // 번호 1, 이름 글자 4개
             0x02, 0x04, b'M', b'I', b'R', b'O', // 번호 2, 이름 글자 4개

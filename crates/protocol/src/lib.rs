@@ -32,7 +32,7 @@ pub use loopback::{LoopbackClient, LoopbackConnector, LoopbackServer, loopback};
 pub use messages::{ClientMsg, InputMsg, PROTOCOL_VERSION, RejectReason, ServerMsg, WireVec2};
 pub use player_name::{NameError, PlayerName};
 pub use room_code::{RoomCode, RoomCodeError};
-pub use roster::WireMember;
+pub use roster::{WireMember, WireRoster};
 pub use snapshot::{
     Snapshot, WireAttack, WireBuildRefusal, WireCannotBuild, WireChest, WireGroundWeapon,
     WireInteraction, WireLife, WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode,

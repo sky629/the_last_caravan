@@ -655,7 +655,12 @@ mod tests {
                 name: "MIRO".to_string(),
             },
         ];
-        flow.on_event(ClientEvent::Message(ServerMsg::Roster(members.clone())));
+        flow.on_event(ClientEvent::Message(ServerMsg::Roster(
+            caravan_protocol::WireRoster {
+                revision: 1,
+                members: members.clone(),
+            },
+        )));
         assert_eq!(
             flow.session()
                 .and_then(Session::joined)

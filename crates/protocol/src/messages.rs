@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::roster::WireMember;
+use crate::roster::WireRoster;
 use crate::snapshot::Snapshot;
 use crate::welcome::Welcome;
 
@@ -81,14 +81,14 @@ impl WireVec2 {
 pub enum ServerMsg {
     /// 입장을 받아들였다는 답입니다. 세계의 고정된 정보를 담고 있으므로 접속마다 한 번만 보냅니다.
     Welcome(Welcome),
-    /// 입장을 거절했다는 답입니다. 서버는 이 메시지를 보낸 뒤 접속을 닫습니다.
+    /// 입장을 거절했다는 답입니다. 서버는 접속을 닫지 않고, 이유를 읽은 클라이언트가 닫기를 기다립니다.
     JoinRejected { reason: RejectReason },
     /// Tick마다 보내는 방 전체의 상태입니다. 상자에 담는 까닭은 스냅샷이 커서, 상자에 담지 않으면 이 열거형과 이것을 감싼 모든 열거형이
     /// 가장 큰 변형의 크기를 가지기 때문입니다. 전송 형식은 상자에 담지 않은 값과 같습니다.
     Snapshot(Box<Snapshot>),
     /// 방에 있는 사람의 이름입니다. 입장한 접속에 한 번 보내고, 그 뒤에는 누가 들어오거나 나갈 때만 방의 모든 접속에 보냅니다.
-    /// 번호가 작은 플레이어부터입니다. 이름은 스냅샷에 넣지 않으므로 Tick마다 보내는 크기가 이름의 길이와 관계가 없습니다.
-    Roster(Vec<WireMember>),
+    /// 이름은 스냅샷에 넣지 않으므로 Tick마다 보내는 크기가 이름의 길이와 관계가 없습니다.
+    Roster(WireRoster),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

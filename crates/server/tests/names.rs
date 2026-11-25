@@ -24,8 +24,9 @@ fn rosters(client: &mut LoopbackClient) -> Vec<Vec<(u32, String)>> {
     drain(client)
         .into_iter()
         .filter_map(|event| match event {
-            ClientEvent::Message(ServerMsg::Roster(members)) => Some(
-                members
+            ClientEvent::Message(ServerMsg::Roster(roster)) => Some(
+                roster
+                    .members
                     .into_iter()
                     .map(|WireMember { id, name }| (id, name))
                     .collect(),
@@ -241,6 +242,29 @@ fn the_roster_reaches_everyone_when_a_player_joins_and_when_a_player_leaves() {
         rosters(&mut a),
         vec![who(&[(1, "KANG")])],
         "the one who stays learns that the other left"
+    );
+}
+
+#[test]
+fn every_new_roster_of_a_room_has_a_larger_number_than_the_one_before() {
+    let mut rig = rig();
+    let (mut a, _) = rig.join_as(Some("test"), "KANG");
+    let (b, _) = rig.join_as(Some("test"), "MIRO");
+    drop(b);
+    rig.pump();
+
+    let revisions: Vec<u32> = drain(&mut a)
+        .into_iter()
+        .filter_map(|event| match event {
+            ClientEvent::Message(ServerMsg::Roster(roster)) => Some(roster.revision),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        revisions,
+        [1, 2, 3],
+        "joined, joined by another, left alone"
     );
 }
 

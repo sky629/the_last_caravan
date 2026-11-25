@@ -1,8 +1,10 @@
 //! Bevy 시스템 테스트가 함께 쓰는 도구입니다. 화면과 GPU 없이 입장을 마친 화면 흐름을 만듭니다.
 
 use caravan_client_core::{Flow, Frame, LaunchOptions, Memory};
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use caravan_protocol::{
-    ClientEvent, RoomCode, ServerMsg, Welcome, WireMember, WirePhase, WireWagon,
+    ClientEvent, RoomCode, ServerMsg, Welcome, WireMember, WirePhase, WireRoster, WireWagon,
 };
 use caravan_rules::{Seed, Sim, Tuning};
 
@@ -32,7 +34,9 @@ pub fn joined_flow() -> ClientFlow {
 }
 
 /// 서버가 보낸 명단이 도착한 것으로 합니다. 각 항목은 (플레이어 번호, 이름)입니다.
+/// 부를 때마다 더 큰 번호를 붙이므로, 나중에 부른 명단이 앞의 명단을 대신합니다.
 pub fn deliver_roster(flow: &mut ClientFlow, members: &[(u32, &str)]) {
+    static REVISION: AtomicU32 = AtomicU32::new(1);
     let members = members
         .iter()
         .map(|(id, name)| WireMember {
@@ -41,7 +45,10 @@ pub fn deliver_roster(flow: &mut ClientFlow, members: &[(u32, &str)]) {
         })
         .collect();
     flow.0
-        .on_event(ClientEvent::Message(ServerMsg::Roster(members)));
+        .on_event(ClientEvent::Message(ServerMsg::Roster(WireRoster {
+            revision: REVISION.fetch_add(1, Ordering::Relaxed),
+            members,
+        })));
 }
 
 /// 플레이어와 몬스터가 없는 빈 방의 모습입니다. 단계만 정합니다.
