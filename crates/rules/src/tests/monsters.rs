@@ -5,6 +5,27 @@ use crate::expedition::{Outcome, Phase};
 use crate::math::{Rect, Vec2};
 
 #[test]
+fn a_standing_scarecrow_neither_walks_nor_attacks_whatever_its_numbers_say() {
+    let mut s = Scenario::with_tuning(|t| {
+        let scarecrow = &mut t.monsters.scarecrow;
+        scarecrow.speed = 1.0;
+        scarecrow.attack_damage = 50;
+        scarecrow.attack_reach = 1.0;
+        scarecrow.aggro_range = 6.0;
+    });
+    let a = s.player_at(5.0, 5.0);
+    let scarecrow = s.scarecrow_at(6.0, 5.0);
+
+    s.run_ticks(s.ticks(3.0));
+
+    let after = s.monster(scarecrow).unwrap();
+    assert_eq!(after.pos, Vec2::new(6.0, 5.0));
+    assert_eq!(after.last_attack_tick, None);
+    assert_eq!(s.player(a).hp(), s.sim.tuning().player.max_hp);
+    assert_eq!(s.sim.wagon().hp, s.sim.tuning().wagon.max_hp);
+}
+
+#[test]
 fn a_monster_walks_to_the_wagon_and_hits_it() {
     let mut s = Scenario::open_field();
     s.monster_at(12.0, 18.0);

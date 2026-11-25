@@ -9,11 +9,13 @@ use crate::kind::{StructureKind, WeaponKind};
 use crate::loadout::Loadout;
 use crate::loot::Seed;
 use crate::math::{Rect, Vec2};
-use crate::monster::Monster;
+use crate::monster::{Monster, Order};
 use crate::player::{Life, Player};
 use crate::sim::Sim;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::{GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
+use crate::tuning::{
+    CampLayout, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan,
+};
 use crate::world::Tile;
 
 /// 시나리오가 쓰는 씨앗입니다.
@@ -58,6 +60,7 @@ impl Scenario {
                     chest_sites: vec![],
                     player_spawns: vec![Vec2::new(10.0, 10.0)],
                     spatial_cell: 2.0,
+                    camp: without_camp(Vec2::new(10.0, 10.0)),
                 },
                 nights: NightTuning {
                     spawn_distance: 12.0,
@@ -88,8 +91,16 @@ impl Scenario {
         Scenario::started(Tuning::default(), adjust)
     }
 
+    /// 원정을 시험하는 테스트는 야영지를 보지 않으므로, 테스트가 어떤 벽을 세워도 수치 검사를 통과하도록 야영지를 비웁니다.
     fn started(mut tuning: Tuning, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
         adjust(&mut tuning);
+        let first_spawn = tuning
+            .map
+            .player_spawns
+            .first()
+            .copied()
+            .unwrap_or(Vec2::ZERO);
+        tuning.map.camp = without_camp(first_spawn);
         assert_eq!(tuning.validate(), Ok(()), "the scenario's tuning is valid");
         Scenario {
             sim: Sim::new(tuning, SEED),
@@ -105,6 +116,17 @@ impl Scenario {
 
     pub fn monster_at(&mut self, x: f32, y: f32) -> MonsterId {
         self.sim.spawn_monster(Vec2::new(x, y))
+    }
+
+    /// `(x, y)`에 제자리에 서 있는 허수아비를 놓습니다. 야영지가 아닌 원정의 방에 두고, 허수아비의 명령(`Order::Stand`)을 시험할 때 씁니다.
+    pub fn scarecrow_at(&mut self, x: f32, y: f32) -> MonsterId {
+        let t = self.sim.tuning().clone();
+        self.sim.world_mut().spawn_monster(
+            MonsterKind::Scarecrow,
+            Order::Stand,
+            Vec2::new(x, y),
+            &t,
+        )
     }
 
     pub fn monster(&self, id: MonsterId) -> Option<&Monster> {
@@ -354,6 +376,15 @@ pub(crate) fn chest_tuning(t: &mut Tuning, contents: WeaponKind, guards: u32) {
             WeaponKind::Crossbow => t.weapons.crossbow.chest_weight = weight,
             WeaponKind::Rifle => t.weapons.rifle.chest_weight = weight,
         }
+    }
+}
+
+/// 허수아비도 진열대도 없는 야영지의 배치입니다. 진열대는 모두 `spot`에 놓입니다.
+fn without_camp(spot: Vec2) -> CampLayout {
+    CampLayout {
+        scarecrows: vec![],
+        first_rack: spot,
+        rack_step: Vec2::ZERO,
     }
 }
 

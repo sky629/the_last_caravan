@@ -46,7 +46,7 @@ pub use ids::{
 pub use input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 pub use kind::{MonsterKind, StructureKind, WeaponKind};
 pub use loadout::Loadout;
-pub use loot::{Chest, GroundWeapon, Prompt, Seed};
+pub use loot::{Chest, GroundWeapon, Prompt, Rack, Seed};
 pub use math::{Rect, Vec2};
 pub use monster::{Monster, Order};
 pub use player::{Interaction, LastAttack, Life, Player, RepairTarget};
@@ -56,9 +56,9 @@ pub use sim::{JoinError, Sim};
 pub use stamina::Stamina;
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
-    ArcTuning, CycleTuning, Delivery, GuardTuning, HealTuning, HitscanTuning, LootTuning, MapSpec,
-    MonsterTable, MonsterTuning, NightPlan, NightTuning, PlayerTuning, ProjectileTuning,
-    RepairTuning, ResourceTuning, ReviveTuning, SprintTuning, StructureTable, StructureTuning,
-    Tuning, VillageTuning, WagonTuning, WavePlan, WeaponTable, WeaponTuning,
+    ArcTuning, CampLayout, CycleTuning, Delivery, GuardTuning, HealTuning, HitscanTuning,
+    LootTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan, NightTuning, PlayerTuning,
+    ProjectileTuning, RepairTuning, ResourceTuning, ReviveTuning, SprintTuning, StructureTable,
+    StructureTuning, Tuning, VillageTuning, WagonTuning, WavePlan, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;

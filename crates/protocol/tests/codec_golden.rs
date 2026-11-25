@@ -32,7 +32,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 6);
+    assert_eq!(PROTOCOL_VERSION, 7);
 }
 
 #[test]
@@ -102,11 +102,18 @@ fn welcome_carries_the_fixed_world() {
                     tile: WireTile { x: 9, y: 22 },
                 }],
                 player_radius: 0.5,
-                monster_kinds: vec![MonsterKindInfo {
-                    kind: WireMonsterKind::Grunt,
-                    radius: 0.25,
-                    max_hp: 60,
-                }],
+                monster_kinds: vec![
+                    MonsterKindInfo {
+                        kind: WireMonsterKind::Grunt,
+                        radius: 0.25,
+                        max_hp: 60,
+                    },
+                    MonsterKindInfo {
+                        kind: WireMonsterKind::Scarecrow,
+                        radius: 0.25,
+                        max_hp: 60,
+                    },
+                ],
                 weapons: vec![
                     WeaponInfo {
                         kind: WireWeaponKind::Sword,
@@ -162,8 +169,11 @@ fn welcome_carries_the_fixed_world() {
             0x01, // nodes: 길이 1
             0x01, 0x09, 0x16, // id 1, tile 9 22
             0x00, 0x00, 0x00, 0x3F, // player_radius 0.5
-            0x01, // monster_kinds: 길이 1
+            0x02, // monster_kinds: 길이 2
             0x00, // Grunt
+            0x00, 0x00, 0x80, 0x3E, // radius 0.25
+            0x3C, // max_hp 60
+            0x01, // Scarecrow
             0x00, 0x00, 0x80, 0x3E, // radius 0.25
             0x3C, // max_hp 60
             0x06, // weapons: 길이 6

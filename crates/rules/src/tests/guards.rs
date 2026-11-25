@@ -25,7 +25,7 @@ fn guards(s: &Scenario) -> Vec<Monster> {
 fn post_of(monster: &Monster) -> Tile {
     match monster.order {
         Order::Guard { post } => post,
-        Order::Raid => panic!("{monster:?} is not a guard"),
+        Order::Raid | Order::Stand => panic!("{monster:?} is not a guard"),
     }
 }
 

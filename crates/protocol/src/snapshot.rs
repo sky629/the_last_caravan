@@ -347,6 +347,7 @@ pub struct WireMonster {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WireMonsterKind {
     Grunt,
+    Scarecrow,
 }
 
 impl WireMonsterKind {
@@ -354,6 +355,7 @@ impl WireMonsterKind {
     pub fn of(kind: MonsterKind) -> WireMonsterKind {
         match kind {
             MonsterKind::Grunt => WireMonsterKind::Grunt,
+            MonsterKind::Scarecrow => WireMonsterKind::Scarecrow,
         }
     }
 }

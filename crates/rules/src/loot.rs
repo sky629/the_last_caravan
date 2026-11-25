@@ -57,6 +57,13 @@ pub struct GroundWeapon {
     pub kind: WeaponKind,
 }
 
+/// 야영지의 무기 진열대입니다. 무기 종류마다 하나이고, 원정이 시작되면 사라집니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rack {
+    pub kind: WeaponKind,
+    pub pos: Vec2,
+}
+
 /// F를 누르면 무엇을 하게 되는지 화면에 알리는 안내입니다. 부활, 수리, 채집은 따로 안내하지 않습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prompt {

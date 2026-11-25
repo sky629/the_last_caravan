@@ -223,11 +223,13 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
         .collect();
     assert_eq!(sites, expected, "the nodes of the map, numbered from 1");
     assert_eq!(world.player_radius, 0.35);
-    let [grunt] = world.monster_kinds[..] else {
-        panic!("one monster kind expected");
+    let [grunt, scarecrow] = world.monster_kinds[..] else {
+        panic!("the grunt and the scarecrow expected");
     };
     assert_eq!(grunt.kind, WireMonsterKind::Grunt);
     assert_eq!((grunt.radius, grunt.max_hp), (0.4, 60));
+    assert_eq!(scarecrow.kind, WireMonsterKind::Scarecrow);
+    assert_eq!((scarecrow.radius, scarecrow.max_hp), (0.4, 60));
 }
 
 #[test]

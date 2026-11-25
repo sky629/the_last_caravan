@@ -3,7 +3,7 @@
 use crate::expedition::{self, Advance, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
-use crate::loot::{self, Chest, GroundWeapon, Prompt, Seed};
+use crate::loot::{self, Chest, GroundWeapon, Prompt, Rack, Seed};
 use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
@@ -15,7 +15,7 @@ use crate::spawn::SpawnPlan;
 use crate::structures::{self, Tower, Wagon};
 use crate::tuning::{MapSpec, Tuning};
 use crate::weapon;
-use crate::world::{Ctx, World};
+use crate::world::{Ctx, Layout, World};
 
 /// 방 하나의 게임입니다. 바깥 코드는 `&Sim`으로 상태를 읽고,
 /// `add_player`, `remove_player`, `step`으로만 상태를 바꿉니다.
@@ -50,7 +50,7 @@ impl Sim {
     /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만들고,
     /// 몬스터가 나타날 자리가 없는 수치에서는 이 함수가 멈춥니다.
     pub fn new(tuning: Tuning, seed: Seed) -> Sim {
-        let mut world = World::new(&tuning);
+        let mut world = World::new(&tuning, Layout::Expedition);
         let spawns = SpawnPlan::new(&world.tiles, &tuning)
             .expect("a validated tuning has a spot where night monsters appear");
         expedition::begin_day(
@@ -185,7 +185,7 @@ impl Sim {
     fn reset_expedition(&mut self) {
         self.expedition += 1;
         self.phase = expedition::opening_phase(&self.tuning);
-        self.world.restart(&self.tuning);
+        self.world.restart(&self.tuning, Layout::Expedition);
         // 나간 플레이어가 있으면 한 지점에 둘이 몰릴 수 있으므로, 원정을 시작할 때마다 지점을 다시 정합니다.
         // 겹치지 않는 플레이어는 자기 지점에 그대로 돌아갑니다.
         let mut assigned: Vec<usize> = Vec::with_capacity(self.world.players.len());
@@ -287,6 +287,11 @@ impl Sim {
     /// 바닥에 놓인 무기를 번호가 작은 무기부터 차례로 돌려줍니다.
     pub fn ground_weapons(&self) -> impl Iterator<Item = &GroundWeapon> {
         self.world.ground_weapons.iter()
+    }
+
+    /// 야영지의 무기 진열대입니다. 야영지에만 있습니다.
+    pub fn racks(&self) -> impl Iterator<Item = &Rack> {
+        self.world.racks.iter()
     }
 
     /// `id`가 지금 F를 누르면 하게 되는 일이 화면에 안내할 만한 것이면 그 안내입니다. 부활, 수리, 채집은 안내하지 않습니다.
