@@ -14,6 +14,7 @@ pub struct LinkId(pub u64);
 pub enum ServerEvent {
     Connected(LinkId),
     /// 이미 해석한 메시지입니다. 해석할 수 없는 데이터를 보낸 접속은 접속 방식이 닫습니다.
+    /// 형식이 바뀐 빌드의 입장 요청은 해석할 수 없지만 닫지 않습니다. 접속 방식이 `VersionMismatch`로 답하고, 게임 서버는 이 접속이 입장하지 않은 채 기한을 넘기면 닫습니다.
     Message(LinkId, ClientMsg),
     /// 접속 방식이 한도를 넘은 접속을 직접 닫았습니다. 값은 운영자가 로그로 읽는 이유 문장입니다.
     /// 이 접속의 `Disconnected`가 바로 이어서 옵니다.

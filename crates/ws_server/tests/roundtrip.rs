@@ -142,6 +142,87 @@ async fn an_undecodable_frame_closes_only_that_link() {
     assert!(matches!(good.next().await, Some(Ok(Message::Binary(_)))));
 }
 
+/// 프로토콜 7의 입장 요청입니다. 방 코드가 `Option`이 아니었고 이름이 없었으므로, 지금의 모양으로는 해석되지 않습니다.
+const PROTOCOL_7_JOIN: [u8; 7] = [0, 7, 4, b't', b'e', b's', b't'];
+
+#[tokio::test]
+async fn a_join_in_the_form_of_another_version_is_refused_with_that_reason_and_the_link_stays_open()
+{
+    let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+    let (mut client, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    let link = connected_link(&mut server).await;
+
+    client
+        .send(Message::binary(PROTOCOL_7_JOIN.to_vec()))
+        .await
+        .unwrap();
+
+    match client.next().await {
+        Some(Ok(Message::Binary(bytes))) => assert_eq!(
+            decode_server(&bytes),
+            Ok(ServerMsg::JoinRejected {
+                reason: RejectReason::VersionMismatch {
+                    server: PROTOCOL_VERSION
+                }
+            })
+        ),
+        other => panic!("expected the reason, got {other:?}"),
+    }
+    // 서버는 이유를 읽은 클라이언트가 닫기를 기다립니다. 게임 스레드에는 아무것도 가지 않고, 접속은 닫히지 않습니다.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(server.poll().is_none(), "the game thread hears nothing");
+    let join = ClientMsg::Join {
+        version: PROTOCOL_VERSION,
+        room: None,
+        name: "KANG".to_string(),
+    };
+    client
+        .send(Message::binary(encode_client(&join)))
+        .await
+        .unwrap();
+    match next_event(&mut server, Duration::from_secs(5)).await {
+        ServerEvent::Message(from, msg) => assert_eq!((from, msg), (link, join)),
+        other => panic!("the link was still open for a Join of this version, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_second_join_of_another_version_and_one_after_joining_close_the_link() {
+    let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();
+    let url = format!("ws://{}", server.local_addr());
+    let (mut twice, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let twice_link = connected_link(&mut server).await;
+    twice
+        .send(Message::binary(PROTOCOL_7_JOIN.to_vec()))
+        .await
+        .unwrap();
+    assert!(matches!(twice.next().await, Some(Ok(Message::Binary(_)))));
+    twice
+        .send(Message::binary(PROTOCOL_7_JOIN.to_vec()))
+        .await
+        .unwrap();
+    match next_event(&mut server, Duration::from_secs(5)).await {
+        ServerEvent::Disconnected(gone) => assert_eq!(gone, twice_link),
+        other => panic!("expected the link to close, got {other:?}"),
+    }
+
+    let (mut late, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let late_link = connected_link(&mut server).await;
+    late.send(input_frame(1)).await.unwrap();
+    assert!(matches!(
+        next_event(&mut server, Duration::from_secs(5)).await,
+        ServerEvent::Message(..)
+    ));
+    late.send(Message::binary(PROTOCOL_7_JOIN.to_vec()))
+        .await
+        .unwrap();
+    match next_event(&mut server, Duration::from_secs(5)).await {
+        ServerEvent::Disconnected(gone) => assert_eq!(gone, late_link),
+        other => panic!("expected the link to close, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn a_client_that_stops_reading_is_disconnected() {
     let mut server = WsServer::bind("127.0.0.1:0", ServerLimits::default()).unwrap();

@@ -40,24 +40,24 @@ fn the_protocol_version_matches_these_golden_bytes() {
 fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name() {
     assert_client_wire(
         ClientMsg::Join {
-            version: 6,
+            version: PROTOCOL_VERSION,
             room: Some("test".to_string()),
             name: "KANG".to_string(),
         },
         &[
             0x00, // Join 변형
-            0x06, // version
+            0x08, // version
             0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
             0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
         ],
     );
     assert_client_wire(
         ClientMsg::Join {
-            version: 6,
+            version: PROTOCOL_VERSION,
             room: None,
             name: "KANG".to_string(),
         },
-        &[0x00, 0x06, 0x00, 0x04, b'K', b'A', b'N', b'G'],
+        &[0x00, 0x08, 0x00, 0x04, b'K', b'A', b'N', b'G'],
     );
 }
 

@@ -7,6 +7,9 @@
 //!
 //! 네트워크 스레드는 열린 접속, 받은 메시지, 한도를 넘어 닫은 이유, 닫힌 접속을 크기가 정해진 채널 하나로 게임 스레드에 알립니다.
 //! 접속 수, 메시지 크기, 메시지 빈도, 대기열 크기의 한계는 모두 `ServerLimits`에서 읽습니다.
+//!
+//! 해석할 수 없는 메시지를 보낸 접속은 닫습니다. 다만 다른 `version`의 입장 요청(`DecodeError::foreign_join_version`)은 게임 스레드를 거치지 않고
+//! 여기서 `VersionMismatch`로 답합니다. 형식이 바뀐 이전 클라이언트가 이유 없이 끊기지 않게 하려는 것입니다.
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -15,8 +18,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use caravan_protocol::{
-    ClientMsg, LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport, decode_client,
-    encode_server,
+    ClientMsg, LinkId, PROTOCOL_VERSION, RejectReason, ServerEvent, ServerLimits, ServerMsg,
+    ServerTransport, decode_client, encode_server,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -304,6 +307,9 @@ async fn serve_link(
     let mut rate = RateWindow::new();
     // 한도를 넘어서 접속을 닫을 때의 이유입니다. 게임 스레드가 로그에 남길 수 있게 알립니다.
     let mut limit_reached = None;
+    // 게임 스레드에 메시지를 하나라도 넘겼는지와, 다른 버전의 입장 요청에 이미 답했는지입니다.
+    let mut forwarded = false;
+    let mut refused_a_version = false;
     loop {
         tokio::select! {
             frame = ws.next() => {
@@ -323,7 +329,21 @@ async fn serve_link(
                     Some(Ok(Message::Binary(bytes))) => match decode_client(&bytes) {
                         // 게임 스레드의 처리가 밀리면 여기서 기다립니다. 그동안 이 소켓을 읽지 않습니다.
                         Ok(msg) => {
+                            forwarded = true;
                             if inbound.send(Inbound::Message(link, msg)).await.is_err() {
+                                break;
+                            }
+                        }
+                        // 형식이 바뀐 빌드의 입장 요청은 게임 스레드가 해석할 수 없으므로 여기서 이유를 답합니다.
+                        // 닫지는 않습니다. 브라우저는 닫힘을 그 이유보다 먼저 알릴 수 있어서, 이유를 읽은 클라이언트가 닫기를 기다리고
+                        // 게임 스레드는 입장하지 않은 접속을 입장 기한에 닫습니다.
+                        Err(err) if err.foreign_join_version().is_some() && !forwarded && !refused_a_version => {
+                            refused_a_version = true;
+                            let refusal = encode_server(&ServerMsg::JoinRejected {
+                                reason: RejectReason::VersionMismatch { server: PROTOCOL_VERSION },
+                            });
+                            let write = tokio::time::timeout(limits.write_timeout, ws.send(Message::binary(refusal)));
+                            if !matches!(write.await, Ok(Ok(()))) {
                                 break;
                             }
                         }
