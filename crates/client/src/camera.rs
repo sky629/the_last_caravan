@@ -73,7 +73,8 @@ pub fn follow(
     };
     // 발이 아니라 몸통의 가운데가 화면의 가운데에 오게 합니다.
     let target = convert::screen_pos(me.pos) + Vec2::new(0.0, config::PLAYER_BODY.y * 0.5);
-    let current = (followed.0 == Some(frame.setting()))
+    // 방을 새로 그린 첫 프레임에도 곧바로 옮깁니다. 이전 방에서 카메라가 있던 자리에서 미끄러져 오지 않게 합니다.
+    let current = (!scene.is_added() && followed.0 == Some(frame.setting()))
         .then(|| convert::to_rules(camera.translation.truncate()));
     followed.0 = Some(frame.setting());
 
@@ -136,7 +137,7 @@ mod tests {
     use super::*;
     use crate::net::CurrentFrame;
     use crate::palette;
-    use crate::testing::{YOU, joined_session};
+    use crate::testing::{YOU, joined_flow};
     use crate::view;
     use bevy::time::TimeUpdateStrategy;
     use caravan_client_core::{Frame, PlayerView};
@@ -149,7 +150,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<ColorMaterial>()
-            .insert_resource(joined_session())
+            .insert_resource(joined_flow())
             .init_resource::<CurrentFrame>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 50,
@@ -265,6 +266,22 @@ mod tests {
         assert!(
             camera_at(&mut app).distance(body_center(32.0, 30.0)) < 1e-3,
             "the expedition number is the same, but the world was laid out again"
+        );
+    }
+
+    #[test]
+    fn a_room_drawn_anew_puts_the_camera_on_the_character_at_once_even_in_the_same_stage() {
+        let mut app = app();
+        show(&mut app, 1, 30.0, 30.0);
+
+        // 방을 떠났다가 같은 단계의 다른 방에 들어간 것과 같습니다. 세계를 지우고 새로 그립니다.
+        // 두 방의 캐릭터가 가까워서(따라가는 거리 안이어서) 장면이 새로 생긴 것만이 곧바로 옮기는 이유입니다.
+        app.world_mut().remove_resource::<Scene>();
+        show(&mut app, 1, 33.0, 30.0);
+
+        assert!(
+            camera_at(&mut app).distance(body_center(33.0, 30.0)) < 1e-3,
+            "no sliding in from where the camera was in the other room"
         );
     }
 

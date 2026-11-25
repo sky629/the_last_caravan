@@ -114,6 +114,15 @@ impl StartForm {
         }
     }
 
+    /// Enter가 하는 일의 안내입니다. 방 코드 칸이 비어 있으면 새 방을 만든다고 알려 줍니다.
+    pub fn enter_hint(&self) -> &'static str {
+        if self.room.text().trim().is_empty() {
+            "ENTER  CREATE A NEW ROOM"
+        } else {
+            "ENTER  JOIN"
+        }
+    }
+
     fn focused(&mut self) -> &mut TextField {
         match self.focus {
             Field::Name => &mut self.name,
@@ -293,6 +302,18 @@ mod tests {
         assert_eq!(form.notice.as_deref(), Some("Enter a name"));
         assert_eq!(form.focus, Field::Name);
         assert_eq!(form.room.text(), "k7m2q", "what was typed stays");
+    }
+
+    #[test]
+    fn the_enter_hint_says_whether_a_room_is_made_or_joined() {
+        assert_eq!(
+            StartForm::new("KANG", "", None).enter_hint(),
+            "ENTER  CREATE A NEW ROOM"
+        );
+        assert_eq!(
+            StartForm::new("KANG", "k7m2q", None).enter_hint(),
+            "ENTER  JOIN"
+        );
     }
 
     #[test]

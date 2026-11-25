@@ -45,7 +45,7 @@ tokio-tungstenite = "0.30"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 ewebsock = "0.8"
 bevy = { version = "0.20", default-features = false, features = ["2d", "ui"] }
-web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Storage"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

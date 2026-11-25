@@ -106,7 +106,7 @@ pub fn sync_towers(
                     ))
                     .add_children(&bar.entities())
                     .id();
-                registry.0.insert(tower.id, entity);
+                registry.0.insert(&mut commands, tower.id, entity);
             }
         }
     }

@@ -207,7 +207,7 @@ pub fn sync_characters(
             }
             None => {
                 let entity = spawn_character(&mut commands, &palette, &player_kit, &look);
-                spawned.players.insert(player.id, entity);
+                spawned.players.insert(&mut commands, player.id, entity);
             }
         }
     }
@@ -236,7 +236,7 @@ pub fn sync_characters(
                     bar_fill: &palette.bar_monster,
                 };
                 let entity = spawn_character(&mut commands, &palette, &kit, &look);
-                spawned.monsters.insert(monster.id, entity);
+                spawned.monsters.insert(&mut commands, monster.id, entity);
             }
         }
     }
@@ -250,7 +250,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
-    use crate::testing::{YOU, joined_session};
+    use crate::testing::{YOU, joined_flow};
     use crate::view;
     use caravan_client_core::Frame;
     use caravan_protocol::{WireLoadout, WireMonsterKind, WirePhase, WireWagon, WireWeaponKind};
@@ -262,7 +262,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<ColorMaterial>()
-            .insert_resource(joined_session())
+            .insert_resource(joined_flow())
             .init_resource::<CurrentFrame>()
             .init_resource::<Spawned>()
             .add_systems(Startup, crate::palette::setup_palette)

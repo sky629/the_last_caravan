@@ -95,10 +95,10 @@ pub enum BannerTone {
 }
 
 impl Hud {
-    /// 접속 상태와 지금 그릴 방의 모습에서 HUD에 표시할 내용을 만듭니다. 방에 들어가기 전에는 `frame`이 없습니다.
-    pub fn of(session: &Session, frame: Option<&Frame>) -> Hud {
-        let mut hud = Hud {
-            connection: session.status_text(),
+    /// 아무것도 표시하지 않는 HUD입니다. 시작 화면에서는 방에 관한 값이 없으므로 이 값을 그립니다.
+    pub fn none() -> Hud {
+        Hud {
+            connection: String::new(),
             room: None,
             expedition: None,
             day: None,
@@ -116,6 +116,14 @@ impl Hud {
             action: None,
             bleed: None,
             refusal: None,
+        }
+    }
+
+    /// 접속 상태와 지금 그릴 방의 모습에서 HUD에 표시할 내용을 만듭니다. 방에 들어가기 전에는 `frame`이 없습니다.
+    pub fn of(session: &Session, frame: Option<&Frame>) -> Hud {
+        let mut hud = Hud {
+            connection: session.status_text(),
+            ..Hud::none()
         };
         if let Some(joined) = session.joined() {
             hud.room = Some(format!("ROOM {}", joined.room));

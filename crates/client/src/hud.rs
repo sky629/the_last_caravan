@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 use caravan_client_core::{BannerTone, Hud, Meter, Tone};
 
-use crate::net::{ClientSession, CurrentFrame};
+use crate::net::{ClientFlow, CurrentFrame};
 
 const METER_WIDTH: f32 = 260.0;
 const ACTION_WIDTH: f32 = 380.0;
@@ -281,15 +281,11 @@ pub fn setup(mut commands: Commands) {
 
 /// 입장한 직후 한 번, 동료의 막대와 야영지의 준비 목록의 줄을 만듭니다.
 /// 수는 `Welcome`이 알려 준 방의 정원에서 정합니다. `Session`이 입장할 때 정원의 상한을 확인했으므로 그대로 믿습니다.
-pub fn build_roster(
-    mut commands: Commands,
-    session: Res<ClientSession>,
-    mut nodes: ResMut<HudNodes>,
-) {
+pub fn build_roster(mut commands: Commands, flow: Res<ClientFlow>, mut nodes: ResMut<HudNodes>) {
     if nodes.roster_built {
         return;
     }
-    let Some(joined) = session.0.joined() else {
+    let Some(joined) = flow.joined() else {
         return;
     };
     // 내 막대는 따로 있으므로 동료 막대는 정원보다 하나 적습니다.
@@ -359,14 +355,18 @@ fn show_meter(
 
 /// HUD의 내용을 이번 프레임의 값으로 맞춥니다.
 pub fn update(
-    session: Res<ClientSession>,
+    flow: Res<ClientFlow>,
     frame: Res<CurrentFrame>,
     nodes: Res<HudNodes>,
     mut texts: Query<(&mut Text, &mut TextColor)>,
     mut slots: Query<(&MeterSlot, &mut Node), Without<MeterFill>>,
     mut fills: Query<(&mut Node, &mut BackgroundColor), With<MeterFill>>,
 ) {
-    let hud = Hud::of(&session.0, frame.0.as_ref());
+    // 시작 화면에는 방에 관한 값이 없으므로 모든 칸을 비웁니다.
+    let hud = match flow.0.session() {
+        Some(session) => Hud::of(session, frame.0.as_ref()),
+        None => Hud::none(),
+    };
 
     set_text(&mut texts, nodes.connection, &hud.connection);
     set_text(&mut texts, nodes.room, hud.room.as_deref().unwrap_or(""));
