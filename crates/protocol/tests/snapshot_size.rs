@@ -21,6 +21,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
         last_attack: Some(WireAttack {
             tick: 100_000,
             weapon: WireWeaponKind::Bow,
+            trace_end: None,
         }),
         loadout: WireLoadout {
             held: WireWeaponKind::Bow,
@@ -155,10 +156,10 @@ fn encoded_len(snapshot: Snapshot) -> usize {
 
 /// 300마리 스냅샷 하나의 한계(바이트)입니다. 몬스터 번호가 16383 이하일 때, 몬스터 하나는 9바이트이므로 300마리가 2700바이트입니다.
 /// 서 있는 감시탑 하나가 사격 중일 때 약 14바이트이므로 40개가 약 560바이트이고, 나머지(플레이어 4명, 마차, 채집 지점, 바닥의 무기 4개, 머리)가 약 150바이트입니다.
-/// 측정한 3,417바이트(탄환 없음)와 3,473바이트(탄환 8개)보다 한계가 각각 5%와 4% 큽니다.
+/// 이 한계 아래에서 가장 큰 경우는 `the_worst_case_...` 시험이 확인합니다.
 const BOUND_BYTES: usize = 3_600;
 /// 몬스터 번호가 16384 이상이면 번호가 3바이트가 되어 몬스터 하나가 10바이트입니다. 오래 이어진 방에서 이 크기가 됩니다.
-/// 감시탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,757바이트이고, 한계가 5% 큽니다.
+/// 감시탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,761바이트이고, 한계가 5% 큽니다.
 const BOUND_BYTES_WITH_LARGE_IDS: usize = 3_950;
 
 #[test]
@@ -208,4 +209,59 @@ fn one_projectile_costs_seven_bytes_and_grows_the_snapshot_linearly() {
     let base = encoded_len(crowded_snapshot(10_000, 0, 130));
     let more = encoded_len(crowded_snapshot(10_000, 0, 230));
     assert_eq!(more - base, 100 * 7);
+}
+
+/// 한 원정에서 바닥에 놓일 수 있는 무기의 가장 큰 수입니다. 낮마다 상자가 셋이고 원정이 사흘이며 상자마다 무기가 하나입니다.
+const MOST_WEAPONS_ON_THE_GROUND: u32 = 9;
+
+/// 네 플레이어가 모두 소총을 쏜 직후이고, 바닥에 무기가 가장 많이 놓인 스냅샷입니다.
+fn four_rifle_traces_and_the_most_weapons_on_the_ground(projectiles: u32) -> Snapshot {
+    let mut snapshot = crowded_snapshot(10_000, 300, projectiles);
+    for (i, player) in snapshot.players.iter_mut().enumerate() {
+        player.last_attack = Some(WireAttack {
+            tick: 100_000,
+            weapon: WireWeaponKind::Rifle,
+            trace_end: Some(WirePos {
+                x: 3000 + 500 * i as u16,
+                y: 2500 - 300 * i as u16,
+            }),
+        });
+    }
+    snapshot.ground_weapons = (1..=MOST_WEAPONS_ON_THE_GROUND)
+        .map(|id| WireGroundWeapon {
+            id,
+            pos: WirePos {
+                x: 800 * id as u16,
+                y: 1500,
+            },
+            kind: WireWeaponKind::Rifle,
+        })
+        .collect();
+    snapshot
+}
+
+#[test]
+fn the_worst_case_of_four_rifle_traces_and_nine_weapons_on_the_ground_stays_under_the_bound() {
+    let base = encoded_len(crowded_snapshot(10_000, 300, 0));
+    let worst = encoded_len(four_rifle_traces_and_the_most_weapons_on_the_ground(0));
+    let with_arrows = encoded_len(four_rifle_traces_and_the_most_weapons_on_the_ground(8));
+    println!(
+        "300 monsters, 40 towers, 4 players: {base} bytes; with 4 rifle traces and 9 weapons on the ground: {worst} bytes; with 8 projectiles as well: {with_arrows} bytes"
+    );
+    assert!(worst < BOUND_BYTES, "{worst} bytes");
+    assert!(with_arrows < BOUND_BYTES, "{with_arrows} bytes");
+}
+
+#[test]
+fn a_rifle_trace_costs_four_bytes_more_than_an_attack_without_one() {
+    // 끝 자리는 `WirePos`이고, 두 축이 모두 2바이트로 기록되는 크기(128 이상)입니다.
+    let without = encoded_len(crowded_snapshot(10_000, 300, 0));
+    let mut snapshot = crowded_snapshot(10_000, 300, 0);
+    snapshot.players[0].last_attack = Some(WireAttack {
+        tick: 100_000,
+        weapon: WireWeaponKind::Rifle,
+        trace_end: Some(WirePos { x: 3000, y: 2500 }),
+    });
+
+    assert_eq!(encoded_len(snapshot) - without, 4);
 }

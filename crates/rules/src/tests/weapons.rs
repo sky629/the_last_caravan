@@ -357,7 +357,8 @@ fn the_last_attack_remembers_the_weapon_that_attacked_after_a_switch() {
         s.player(a).last_attack,
         Some(LastAttack {
             tick: 1,
-            weapon: WeaponKind::Sword
+            weapon: WeaponKind::Sword,
+            trace_end: None
         }),
         "the swing of tick 1 was a sword swing"
     );

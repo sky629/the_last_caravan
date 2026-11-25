@@ -55,6 +55,8 @@ pub const BAR_BORDER: f32 = 1.0;
 // 효과. 시간은 서버 Tick으로 셉니다.
 pub const SWING_TICKS: f64 = 4.0;
 pub const SHOT_TICKS: f64 = 3.0;
+/// 소총의 사격 선이 보이는 시간입니다. 쿨다운(1.5초)이 길어서 선이 사라진 뒤에 다음 사격이 오므로, 부채꼴보다 오래 남겨서 쏜 자리를 알아볼 수 있게 합니다.
+pub const TRACE_TICKS: f64 = 6.0;
 pub const SWING_ARC_STEPS: usize = 10;
 /// 탄환의 선에서 꼬리의 길이(타일)입니다. 머리는 탄환의 위치이고, 꼬리는 날아온 쪽으로 이만큼 늘어납니다.
 pub const BULLET_TAIL_TILES: f32 = 0.6;
@@ -79,6 +81,7 @@ pub const WEAPON_BOW: Color = Color::srgb(0.55, 0.85, 0.40);
 pub const WEAPON_GREATSWORD: Color = Color::srgb(0.95, 0.45, 0.30);
 pub const WEAPON_SPEAR: Color = Color::srgb(0.95, 0.80, 0.35);
 pub const WEAPON_CROSSBOW: Color = Color::srgb(0.30, 0.78, 0.85);
+pub const WEAPON_RIFLE: Color = Color::srgb(0.88, 0.45, 0.82);
 pub const SHADOW: Color = Color::srgb(0.07, 0.09, 0.07);
 pub const YOU: Color = Color::srgb(1.00, 0.84, 0.25);
 pub const ALLY: Color = Color::srgb(0.35, 0.65, 1.00);
@@ -100,6 +103,8 @@ pub const WAGON_MARKER: Color = Color::srgb(1.00, 0.72, 0.38);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
 /// 활과 석궁의 탄환입니다.
 pub const BULLET: Color = Color::srgb(1.00, 0.97, 0.75);
+/// 소총의 사격 선입니다. 활의 탄환(연한 노랑)과 구분되는 밝은 흰색입니다.
+pub const TRACE: Color = Color::srgb(1.00, 1.00, 1.00);
 /// 건설이 거절된 타일의 테두리입니다.
 pub const REFUSAL: Color = Color::srgb(1.00, 0.35, 0.30);
 /// 건설 키를 누르면 감시탑이 놓일 타일의 테두리입니다.

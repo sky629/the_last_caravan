@@ -39,14 +39,17 @@ pub enum WeaponKind {
     Spear,
     /// 한 줄로 늘어선 몬스터를 여러 마리 꿰뚫는 탄환을 쏘는 원거리 무기입니다.
     Crossbow,
+    /// 쏜 순간 조준선 위의 처음 닿는 몬스터 한 마리를 맞히는 원거리 무기입니다. 날아가는 탄환이 없습니다.
+    Rifle,
 }
 
 impl WeaponKind {
-    pub const ALL: [WeaponKind; 5] = [
+    pub const ALL: [WeaponKind; 6] = [
         WeaponKind::Sword,
         WeaponKind::Bow,
         WeaponKind::Greatsword,
         WeaponKind::Spear,
         WeaponKind::Crossbow,
+        WeaponKind::Rifle,
     ];
 }

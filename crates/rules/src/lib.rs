@@ -56,9 +56,9 @@ pub use sim::{JoinError, Sim};
 pub use stamina::Stamina;
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
-    ArcTuning, CycleTuning, Delivery, GuardTuning, HealTuning, LootTuning, MapSpec, MonsterTable,
-    MonsterTuning, NightPlan, NightTuning, PlayerTuning, ProjectileTuning, RepairTuning,
-    ResourceTuning, ReviveTuning, SprintTuning, StructureTable, StructureTuning, Tuning,
-    VillageTuning, WagonTuning, WavePlan, WeaponTable, WeaponTuning,
+    ArcTuning, CycleTuning, Delivery, GuardTuning, HealTuning, HitscanTuning, LootTuning, MapSpec,
+    MonsterTable, MonsterTuning, NightPlan, NightTuning, PlayerTuning, ProjectileTuning,
+    RepairTuning, ResourceTuning, ReviveTuning, SprintTuning, StructureTable, StructureTuning,
+    Tuning, VillageTuning, WagonTuning, WavePlan, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;

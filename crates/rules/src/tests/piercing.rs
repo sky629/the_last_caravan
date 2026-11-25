@@ -214,10 +214,10 @@ fn a_projectile_with_hits_left_ends_at_the_end_of_its_range() {
     let in_reach = s.monster_at(6.0, 10.0);
     let out_of_reach = s.monster_at(14.0, 10.0);
     let damage = bow_damage(&s);
-    let range = match s.sim.tuning().weapons.bow.delivery {
-        Delivery::Projectile(spec) => spec.range,
-        Delivery::Arc(_) => panic!("the bow shoots projectiles"),
+    let Delivery::Projectile(spec) = s.sim.tuning().weapons.bow.delivery else {
+        panic!("the bow shoots projectiles");
     };
+    let range = spec.range;
 
     shoot_once(&mut s, 0);
     run_until_landed(&mut s);

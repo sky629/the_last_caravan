@@ -70,6 +70,8 @@ pub enum Delivery {
     Arc(ArcTuning),
     /// 탄환을 쏩니다. 탄환은 직선으로 날아가며 닿는 순서대로 `pierce`마리를 맞히고 사라집니다.
     Projectile(ProjectileTuning),
+    /// 쏜 순간 조준 방향의 선 위에서 처음 닿는 몬스터 한 마리를 맞힙니다. 날아가는 것이 없으므로 같은 Tick에 결과가 정해집니다.
+    Hitscan(HitscanTuning),
 }
 
 /// 부채꼴로 공격하는 방식의 수치입니다.
@@ -96,6 +98,13 @@ pub struct ProjectileTuning {
     pub pierce: u32,
 }
 
+/// 조준선 위의 몬스터를 곧바로 맞히는 방식의 수치입니다. 선의 굵기는 0이라서 몬스터의 몸 안으로 선이 지나가야 맞습니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitscanTuning {
+    /// 플레이어의 중심에서 선이 닿는 거리(타일)입니다. 막힌 타일에 닿으면 거기서 끝납니다.
+    pub range: f32,
+}
+
 /// 상자에서 나올 무게의 상한입니다. 무게의 합이 `u32`에 들어가므로 상자의 내용을 뽑는 계산이 넘치지 않습니다.
 const MAX_CHEST_WEIGHT: u32 = 1000;
 
@@ -113,6 +122,7 @@ pub struct WeaponTable {
     pub greatsword: WeaponTuning,
     pub spear: WeaponTuning,
     pub crossbow: WeaponTuning,
+    pub rifle: WeaponTuning,
 }
 
 impl WeaponTable {
@@ -123,6 +133,7 @@ impl WeaponTable {
             WeaponKind::Greatsword => &self.greatsword,
             WeaponKind::Spear => &self.spear,
             WeaponKind::Crossbow => &self.crossbow,
+            WeaponKind::Rifle => &self.rifle,
         }
     }
 
@@ -141,6 +152,7 @@ const BOW_DAMAGE: u32 = 15;
 const GREATSWORD_DAMAGE: u32 = 45;
 const SPEAR_DAMAGE: u32 = 30;
 const CROSSBOW_DAMAGE: u32 = 20;
+const RIFLE_DAMAGE: u32 = 60;
 
 /// 테스트하는 동안 모든 무기의 피해량에 곱하는 배수입니다. 서비스하기 전에 1로 내립니다.
 /// 무기마다 따로 올리지 않고 이 값 하나로 올리므로, 무기 사이의 피해량 비율은 정상 값과 같습니다.
@@ -818,6 +830,7 @@ impl Tuning {
     /// - 부채꼴의 절반 각도는 0도 이상 180도 이하입니다.
     /// - 탄환의 속도와 사거리는 유한하고 0보다 큽니다. 0이면 탄환이 사라지지 않아서 스냅샷이 끝없이 커집니다.
     /// - 탄환이 맞힐 수 있는 몬스터의 수는 1 이상입니다. 0이면 탄환이 아무도 맞히지 못합니다.
+    /// - 곧바로 맞히는 무기의 사거리는 유한하고 0보다 큽니다. 0이면 아무것도 맞히지 못합니다.
     /// - 탄환의 반지름은 유한하고 0 이상이며, √2를 곱한 값이 플레이어의 반지름보다 짧습니다. 탄환은 플레이어의 중심에서 나가므로,
     ///   벽이나 장애물의 모서리에 붙어 선 플레이어가 쏘는 탄환이 처음부터 막힌 곳에 닿으면 안 되기 때문입니다.
     ///
@@ -861,6 +874,9 @@ impl Tuning {
                             shot.radius, self.player.radius
                         ));
                     }
+                }
+                Delivery::Hitscan(shot) => {
+                    check_positive(&format!("{kind:?} hitscan range"), shot.range)?;
                 }
             }
         }
@@ -1001,6 +1017,12 @@ impl Default for Tuning {
                         radius: 0.15,
                         pierce: 4,
                     }),
+                    chest_weight: 1,
+                },
+                rifle: WeaponTuning {
+                    damage: RIFLE_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 1.5,
+                    delivery: Delivery::Hitscan(HitscanTuning { range: 12.0 }),
                     chest_weight: 1,
                 },
             },

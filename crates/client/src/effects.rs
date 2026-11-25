@@ -1,6 +1,6 @@
-//! 짧게 보이는 효과입니다. 플레이어의 부채꼴 공격, 활과 석궁의 탄환, 감시탑의 사격, 감시탑이 놓일 타일과 건설이 거절된 타일을 선으로 그립니다.
+//! 짧게 보이는 효과입니다. 플레이어의 부채꼴 공격, 소총의 사격 선, 활과 석궁의 탄환, 감시탑의 사격, 감시탑이 놓일 타일과 건설이 거절된 타일을 선으로 그립니다.
 //!
-//! 효과는 이벤트가 아니라 상태에서 그립니다. 스냅샷에 마지막 공격 Tick과 마지막 사격이 들어 있으므로,
+//! 효과는 이벤트가 아니라 상태에서 그립니다. 스냅샷에 마지막 공격 Tick(소총이면 사격 선이 끝난 자리도)과 마지막 사격이 들어 있으므로,
 //! 화면에 그리는 Tick이 그 직후이면 효과를 그립니다. 탄환은 스냅샷의 탄환 목록에서 그립니다.
 //! 그래서 모든 클라이언트가 같은 효과를 같은 때에 봅니다.
 
@@ -20,7 +20,7 @@ pub fn configure_gizmos(mut store: ResMut<GizmoConfigStore>) {
     config.line.width = config::EFFECT_LINE_WIDTH;
 }
 
-/// 공격과 탄환과 사격 효과, 감시탑이 놓일 타일, 내 건설이 거절된 타일을 그립니다.
+/// 공격과 사격 선과 탄환과 사격 효과, 감시탑이 놓일 타일, 내 건설이 거절된 타일을 그립니다.
 pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Gizmos) {
     let Some(frame) = &frame.0 else {
         return;
@@ -33,6 +33,10 @@ pub fn draw_effects(frame: Res<CurrentFrame>, scene: Res<Scene>, mut gizmos: Giz
         let arc = swing_arc(&scene, attack.weapon);
         if let (Some(progress), Some((radius, half_angle))) = (progress, arc) {
             draw_swing(&mut gizmos, player, progress, radius, half_angle);
+        }
+        let trace_progress = effect_progress(frame.tick, attack.tick, config::TRACE_TICKS);
+        if let (Some(progress), Some(end)) = (trace_progress, attack.trace_end) {
+            draw_trace(&mut gizmos, player, end.to_tiles(), progress);
         }
     }
     for projectile in &frame.projectiles {
@@ -76,7 +80,7 @@ fn swing_arc(scene: &Scene, weapon: WireWeaponKind) -> Option<(f32, f32)> {
             reach,
             half_angle_deg,
         } => Some((scene.player.radius + reach, half_angle_deg.to_radians())),
-        WireDelivery::Projectile => None,
+        WireDelivery::Projectile | WireDelivery::Hitscan => None,
     }
 }
 
@@ -108,6 +112,21 @@ fn draw_swing(
         gizmos.line_2d(center, last, color);
     }
     gizmos.linestrip_2d(arc, color);
+}
+
+/// 소총의 사격 선입니다. 쏜 플레이어의 지금 위치에서 서버가 정한 끝까지 가슴 높이에 긋고, 시간이 갈수록 옅어집니다.
+fn draw_trace(gizmos: &mut Gizmos, player: &PlayerView, end: Ground, progress: f32) {
+    let (from, to) = trace_line(player, end);
+    gizmos.line_2d(from, to, config::TRACE.with_alpha(1.0 - progress));
+}
+
+/// 사격 선의 화면 좌표(시작, 끝)입니다. 둘 다 가슴 높이입니다. 선의 시작은 서버가 보내지 않고 쏜 플레이어의 위치에서 긋습니다.
+fn trace_line(player: &PlayerView, end: Ground) -> (Vec2, Vec2) {
+    let lift = Vec2::new(0.0, config::PLAYER_BODY.y * 0.4);
+    (
+        convert::screen_pos(player.pos) + lift,
+        convert::screen_pos(end) + lift,
+    )
 }
 
 /// 탄환의 선입니다. 머리는 탄환의 위치이고 꼬리는 날아온 쪽으로 `BULLET_TAIL_TILES`만큼 늘어납니다. 둘 다 가슴 높이입니다.
@@ -168,6 +187,22 @@ mod tests {
         }
     }
 
+    fn rifleman_at(x: f32, y: f32) -> PlayerView {
+        PlayerView {
+            id: 1,
+            team: caravan_rules::Team::CARAVAN,
+            pos: Ground::new(x, y),
+            facing: Ground::new(1.0, 0.0),
+            life: WireLife::Dead,
+            last_attack: None,
+            loadout: caravan_protocol::WireLoadout {
+                held: WireWeaponKind::Rifle,
+                spare: None,
+            },
+            prompt: None,
+        }
+    }
+
     /// 화면 좌표에서 가슴 높이를 빼고 지면 위치로 되돌립니다.
     fn on_ground(screen: Vec2) -> Ground {
         convert::ground_pos(screen - Vec2::new(0.0, config::PLAYER_BODY.y * 0.4))
@@ -197,6 +232,32 @@ mod tests {
         assert!(
             (length - config::BULLET_TAIL_TILES).abs() < 1e-3,
             "{length}"
+        );
+    }
+
+    #[test]
+    fn the_trace_starts_at_the_player_where_he_stands_now_and_ends_where_the_server_says() {
+        let player = rifleman_at(10.0, 8.0);
+
+        let (from, to) = trace_line(&player, Ground::new(16.5, 8.0));
+
+        let from_on_ground = on_ground(from);
+        let to_on_ground = on_ground(to);
+        assert!(
+            (from_on_ground.x - 10.0).abs() < 1e-3 && (from_on_ground.y - 8.0).abs() < 1e-3,
+            "{from_on_ground:?}"
+        );
+        assert!(
+            (to_on_ground.x - 16.5).abs() < 1e-3 && (to_on_ground.y - 8.0).abs() < 1e-3,
+            "{to_on_ground:?}"
+        );
+
+        let moved = rifleman_at(10.0, 9.0);
+        let (from_after_moving, _) = trace_line(&moved, Ground::new(16.5, 8.0));
+        let from_after_moving = on_ground(from_after_moving);
+        assert!(
+            (from_after_moving.y - 9.0).abs() < 1e-3,
+            "the line follows the player: {from_after_moving:?}"
         );
     }
 }

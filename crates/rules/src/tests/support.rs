@@ -352,6 +352,7 @@ pub(crate) fn chest_tuning(t: &mut Tuning, contents: WeaponKind, guards: u32) {
             WeaponKind::Greatsword => t.weapons.greatsword.chest_weight = weight,
             WeaponKind::Spear => t.weapons.spear.chest_weight = weight,
             WeaponKind::Crossbow => t.weapons.crossbow.chest_weight = weight,
+            WeaponKind::Rifle => t.weapons.rifle.chest_weight = weight,
         }
     }
 }

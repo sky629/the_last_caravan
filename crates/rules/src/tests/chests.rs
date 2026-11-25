@@ -94,7 +94,8 @@ fn a_chest_never_holds_the_sword_and_every_other_weapon_comes_out_of_some_chest(
             WeaponKind::Bow,
             WeaponKind::Greatsword,
             WeaponKind::Spear,
-            WeaponKind::Crossbow
+            WeaponKind::Crossbow,
+            WeaponKind::Rifle
         ])
     );
 }
@@ -111,8 +112,8 @@ fn the_same_seed_places_the_same_chests_and_other_seeds_place_other_ones() {
 /// 상자가 놓이는 자리는 무기 표와 관계없이 같고, 내용은 상자에서 나오는 무기의 목록이 바뀌면 달라집니다.
 const SEED_7_FIRST_DAY: [(Tile, WeaponKind); 3] = [
     (Tile::new(17, 32), WeaponKind::Bow),
-    (Tile::new(32, 17), WeaponKind::Crossbow),
-    (Tile::new(49, 49), WeaponKind::Spear),
+    (Tile::new(32, 17), WeaponKind::Rifle),
+    (Tile::new(49, 49), WeaponKind::Bow),
 ];
 
 #[test]
