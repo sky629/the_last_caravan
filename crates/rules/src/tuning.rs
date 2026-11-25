@@ -13,7 +13,7 @@ use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::loadout::Loadout;
 use crate::math::{Rect, Vec2};
 use crate::spawn::SpawnPlan;
-use crate::world::{Tile, TileMap, World};
+use crate::world::{Layout, Tile, TileMap, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tuning {
@@ -34,6 +34,8 @@ pub struct Tuning {
     pub guards: GuardTuning,
     pub loot: LootTuning,
     pub cycle: CycleTuning,
+    /// 야영지와 결과 화면, 원정을 시작하는 방법입니다.
+    pub camp: CampTuning,
     pub nights: NightTuning,
     pub map: MapSpec,
 }
@@ -205,12 +207,16 @@ pub struct MonsterTuning {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MonsterTable {
     pub grunt: MonsterTuning,
+    /// 야영지의 허수아비입니다. 움직이지 않고 공격하지 않으므로 속도와 공격의 수치는 쓰이지 않습니다.
+    /// 반지름은 몬스터가 걷는 길의 격자를 정하는 `largest_radius`에 들어가므로 `grunt`보다 크게 하지 않습니다.
+    pub scarecrow: MonsterTuning,
 }
 
 impl MonsterTable {
     pub fn get(&self, kind: MonsterKind) -> &MonsterTuning {
         match kind {
             MonsterKind::Grunt => &self.grunt,
+            MonsterKind::Scarecrow => &self.scarecrow,
         }
     }
 
@@ -357,8 +363,26 @@ pub struct CycleTuning {
     pub day_secs: f32,
     /// 밤의 무리를 모두 처치한 뒤 다음 날의 낮이 시작되기까지의 시간입니다.
     pub dawn_secs: f32,
-    /// 원정의 결과를 보여 주는 시간입니다. 이 시간이 지나면 새 원정이 시작됩니다.
-    pub restart_secs: f32,
+}
+
+/// 원정을 시작하는 방법입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    /// 방은 야영지에서 시작하고, 결과를 본 뒤 야영지로 돌아갑니다.
+    WhenReady,
+    /// 야영지 없이 방이 만들어지자마자, 그리고 결과 화면이 끝날 때마다 곧바로 원정을 시작합니다.
+    /// 사람의 조작 없이 원정이 진행되어야 하는 부하 시험(`--stress`)만 씁니다.
+    AtOnce,
+}
+
+/// 야영지와 결과 화면의 수치입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CampTuning {
+    pub start: Start,
+    /// 모두가 준비한 뒤 원정이 시작되기까지의 시간입니다.
+    pub countdown_secs: f32,
+    /// 결과 화면을 보여 주는 가장 긴 시간입니다. 모두가 확인하면 더 일찍 끝납니다.
+    pub debrief_secs: f32,
 }
 
 /// 밤 하나입니다. 무리는 목록의 순서대로 나옵니다.
@@ -440,6 +464,28 @@ pub struct MapSpec {
     pub player_spawns: Vec<Vec2>,
     /// 주변 몬스터를 찾는 격자의 칸 크기입니다.
     pub spatial_cell: f32,
+    /// 야영지에 놓이는 허수아비와 무기 진열대의 자리입니다.
+    pub camp: CampLayout,
+}
+
+/// 야영지의 배치입니다. 야영지는 원정과 같은 지도이고, 채집 지점과 상자 대신 이것들이 놓입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CampLayout {
+    /// 허수아비가 서는 자리입니다. 한 줄로 세우면 석궁이 여러 마리를 꿰뚫는 것을 시험할 수 있습니다.
+    pub scarecrows: Vec<Vec2>,
+    /// 첫째 진열대의 자리입니다. 진열대는 무기 종류마다 하나이고, `WeaponKind::ALL`의 순서로 `rack_step`씩 떨어져 놓입니다.
+    pub first_rack: Vec2,
+    pub rack_step: Vec2,
+}
+
+impl CampLayout {
+    /// 진열대마다 진열하는 무기와 자리입니다. 무기 종류를 더하면 진열대도 저절로 하나 늘어납니다.
+    pub fn racks(&self) -> impl Iterator<Item = (WeaponKind, Vec2)> + '_ {
+        WeaponKind::ALL
+            .iter()
+            .enumerate()
+            .map(|(index, kind)| (*kind, self.first_rack + self.rack_step * index as f32))
+    }
 }
 
 impl Tuning {
@@ -528,6 +574,20 @@ impl Tuning {
         if self.nights.max_alive == 0 {
             return Err("max_alive must be at least 1".to_string());
         }
+        // 허수아비는 맞아도 HP가 줄지 않는 야영지에서만 놓입니다. 원정에 나오면 처치할 수 없는 몬스터가 됩니다.
+        let expedition_kinds = self
+            .nights
+            .plans
+            .iter()
+            .flat_map(|plan| plan.waves.iter().map(|wave| wave.kind))
+            .chain([self.guards.kind]);
+        for kind in expedition_kinds {
+            if kind == MonsterKind::Scarecrow {
+                return Err(
+                    "the scarecrow stands only in the camp, not in waves or as a guard".to_string(),
+                );
+            }
+        }
         // HP가 0인 개체는 만들어지는 순간 쓰러지거나 제거되므로, 모든 최대 HP는 1 이상이어야 합니다.
         let all_hp = [self.player.max_hp, self.wagon.max_hp]
             .into_iter()
@@ -607,7 +667,7 @@ impl Tuning {
         for (name, value) in [
             ("day_secs", self.cycle.day_secs),
             ("dawn_secs", self.cycle.dawn_secs),
-            ("restart_secs", self.cycle.restart_secs),
+            ("camp countdown_secs", self.camp.countdown_secs),
             ("first_wave_delay_secs", self.nights.first_wave_delay_secs),
             ("between_waves_secs", self.nights.between_waves_secs),
             ("spawn_interval_secs", self.nights.spawn_interval_secs),
@@ -726,13 +786,14 @@ impl Tuning {
                 ));
             }
         }
+        check_positive("camp debrief_secs", self.camp.debrief_secs)?;
         check_not_negative("guards chase_range", self.guards.chase_range)?;
         if !map.nodes.is_empty() && resources.node_amount == 0 {
             return Err("node_amount must be at least 1 when the map has gather nodes".to_string());
         }
 
-        // 아래 검사는 규칙이 실제로 쓰는 타일 지도를 읽습니다.
-        let tiles = World::new(self).tiles;
+        // 아래 검사는 규칙이 원정의 첫날에 실제로 쓰는 타일 지도를 읽습니다.
+        let tiles = World::new(self, Layout::Expedition).tiles;
         check_spawns(
             "player_spawns",
             &map.player_spawns,
@@ -746,6 +807,33 @@ impl Tuning {
         }
         self.validate_chest_sites(&tiles, &wagon_tiles)?;
         SpawnPlan::new(&tiles, self)?;
+        self.validate_camp(bounds)?;
+        Ok(())
+    }
+
+    /// 야영지의 배치를 검사합니다. 허수아비와 진열대는 맵 안에 있고 장애물과 마차에 겹치지 않아야 합니다.
+    /// 규칙이 야영지에서 실제로 쓰는 타일 지도를 읽습니다. 야영지에는 채집 지점과 상자가 없으므로 그 타일은 보지 않습니다.
+    fn validate_camp(&self, bounds: Rect) -> Result<(), String> {
+        let tiles = World::new(self, Layout::Camp).tiles;
+        let radius = self.monsters.scarecrow.radius;
+        let mut near = Vec::new();
+        let spots = self
+            .map
+            .camp
+            .scarecrows
+            .iter()
+            .map(|spot| ("scarecrow", *spot))
+            .chain(self.map.camp.racks().map(|(_, spot)| ("weapon rack", spot)));
+        for (name, spot) in spots {
+            tiles.blocked_rects_near(spot, radius, &mut near);
+            let clear = bounds.shrink(radius).contains(spot)
+                && near.iter().all(|solid| solid.distance_to(spot) >= radius);
+            if !clear {
+                return Err(format!(
+                    "the camp {name} at {spot:?} must stand inside the map, clear of obstacles and the wagon"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1048,6 +1136,16 @@ impl Default for Tuning {
                     aggro_range: 5.0,
                     separation_speed: 1.0,
                 },
+                scarecrow: MonsterTuning {
+                    max_hp: 60,
+                    radius: 0.4,
+                    speed: 0.0,
+                    attack_damage: 0,
+                    attack_reach: 0.0,
+                    attack_cooldown_secs: 1.0,
+                    aggro_range: 0.0,
+                    separation_speed: 0.0,
+                },
             },
             wagon: WagonTuning {
                 max_hp: 500,
@@ -1115,7 +1213,11 @@ impl Default for Tuning {
             cycle: CycleTuning {
                 day_secs: 90.0,
                 dawn_secs: 4.0,
-                restart_secs: 5.0,
+            },
+            camp: CampTuning {
+                start: Start::WhenReady,
+                countdown_secs: 3.0,
+                debrief_secs: 60.0,
             },
             nights: NightTuning {
                 plans: vec![
@@ -1194,6 +1296,16 @@ impl MapSpec {
                 Vec2::new(37.0, 32.0),
             ],
             spatial_cell: 2.0,
+            // 허수아비는 마차의 동쪽에 한 줄로, 진열대는 마차의 북쪽에 한 줄로 섭니다.
+            camp: CampLayout {
+                scarecrows: vec![
+                    Vec2::new(40.5, 32.0),
+                    Vec2::new(41.5, 32.0),
+                    Vec2::new(42.5, 32.0),
+                ],
+                first_rack: Vec2::new(29.0, 36.5),
+                rack_step: Vec2::new(1.2, 0.0),
+            },
         }
     }
 }

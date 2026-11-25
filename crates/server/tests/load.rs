@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use caravan_protocol::{ServerMsg, encode_server};
 use caravan_rules::{MonsterKind, NightPlan, Tuning, WavePlan};
-use common::rig_with;
+use common::rig_in_expedition;
 
 /// 이 크기를 넘으면 접속 하나의 전송량이 측정한 값보다 늘어난 것입니다.
 /// 몬스터 번호가 16383 이하이므로 몬스터 하나는 9바이트이고, 300마리가 2700바이트입니다. 감시탑 40개가 약 560바이트를 더하고,
@@ -39,7 +39,7 @@ fn crowd_tuning() -> Tuning {
 
 #[test]
 fn the_snapshot_of_a_real_300_monster_crowd_stays_under_the_bound() {
-    let mut rig = rig_with(crowd_tuning());
+    let mut rig = rig_in_expedition(crowd_tuning());
     let (mut client, _) = rig.join_ok("load");
 
     let mut largest = (0, 0);

@@ -100,6 +100,43 @@ fn night_monsters_must_appear_beyond_the_village_and_somewhere_on_the_map() {
 }
 
 #[test]
+fn the_camp_spots_must_be_inside_the_map_clear_of_obstacles_and_the_wagon() {
+    let rejected_scarecrow = |spot: Vec2| {
+        let mut t = Tuning::default();
+        t.map.camp.scarecrows = vec![spot];
+        t.validate().expect_err("the scarecrow should be refused")
+    };
+    assert!(rejected_scarecrow(Vec2::new(32.0, 32.0)).contains("camp scarecrow"));
+    assert!(
+        rejected_scarecrow(Vec2::new(26.0, 24.5)).contains("camp scarecrow"),
+        "on an obstacle"
+    );
+    assert!(
+        rejected_scarecrow(Vec2::new(63.9, 10.0)).contains("camp scarecrow"),
+        "the body would stick out of the map"
+    );
+    assert!(
+        rejected_scarecrow(Vec2::new(70.0, 10.0)).contains("camp scarecrow"),
+        "off the map"
+    );
+
+    let rejected_rack = |first_rack: Vec2| {
+        let mut t = Tuning::default();
+        t.map.camp.first_rack = first_rack;
+        t.validate().expect_err("the rack should be refused")
+    };
+    assert!(rejected_rack(Vec2::new(32.0, 32.0)).contains("camp weapon rack"));
+    assert!(
+        rejected_rack(Vec2::new(26.0, 24.5)).contains("camp weapon rack"),
+        "on an obstacle"
+    );
+
+    let mut t = Tuning::default();
+    t.map.camp.scarecrows = Vec::new();
+    assert_eq!(t.validate(), Ok(()), "a camp without scarecrows is fine");
+}
+
+#[test]
 fn a_gather_node_must_be_on_a_free_tile_of_the_map_outside_the_village() {
     let rejected = |nodes: Vec<Tile>| {
         let mut t = Tuning::default();

@@ -1,8 +1,29 @@
 //! 몬스터의 목표 선택, 이동, 공격을 확인합니다.
 
-use super::support::{Scenario, nights};
-use crate::expedition::{Outcome, Phase};
+use super::support::{Scenario, nights, outcome};
+use crate::expedition::Outcome;
 use crate::math::{Rect, Vec2};
+
+#[test]
+fn a_standing_scarecrow_neither_walks_nor_attacks_whatever_its_numbers_say() {
+    let mut s = Scenario::with_tuning(|t| {
+        let scarecrow = &mut t.monsters.scarecrow;
+        scarecrow.speed = 1.0;
+        scarecrow.attack_damage = 50;
+        scarecrow.attack_reach = 1.0;
+        scarecrow.aggro_range = 6.0;
+    });
+    let a = s.player_at(5.0, 5.0);
+    let scarecrow = s.scarecrow_at(6.0, 5.0);
+
+    s.run_ticks(s.ticks(3.0));
+
+    let after = s.monster(scarecrow).unwrap();
+    assert_eq!(after.pos, Vec2::new(6.0, 5.0));
+    assert_eq!(after.last_attack_tick, None);
+    assert_eq!(s.player(a).hp(), s.sim.tuning().player.max_hp);
+    assert_eq!(s.sim.wagon().hp, s.sim.tuning().wagon.max_hp);
+}
 
 #[test]
 fn a_monster_walks_to_the_wagon_and_hits_it() {
@@ -266,17 +287,12 @@ fn a_wave_of_300_monsters_runs_to_victory() {
 
     s.run_until(3000, |sim| {
         most_alive = most_alive.max(sim.monsters().count());
-        matches!(sim.phase(), Phase::Over { .. })
+        outcome(sim).is_some()
     });
 
-    assert!(
-        matches!(
-            s.sim.phase(),
-            Phase::Over {
-                outcome: Outcome::Victory,
-                ..
-            }
-        ),
+    assert_eq!(
+        outcome(&s.sim),
+        Some(Outcome::Victory),
         "the wave is cleared"
     );
     assert!(

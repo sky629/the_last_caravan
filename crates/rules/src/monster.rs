@@ -2,6 +2,7 @@
 //!
 //! 몬스터에게는 명령(`Order`)이 있습니다. 낮에 채집 지점 곁에 놓인 몬스터는 자리를 지키고(`Guard`),
 //! 밤에 나타난 몬스터와 밤이 된 뒤의 낮의 몬스터는 마차를 향합니다(`Raid`). 명령을 바꾸는 곳은 `expedition::nightfall` 하나입니다.
+//! 야영지의 허수아비는 제자리에 서 있습니다(`Stand`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -37,6 +38,8 @@ pub enum Order {
     Guard { post: Tile },
     /// 마차를 향합니다. 가는 길에 `aggro_range` 안에 들어온 플레이어나 감시탑을 쫓습니다.
     Raid,
+    /// 제자리에 서 있습니다. 아무것도 쫓지 않고 공격하지 않습니다. 야영지의 허수아비가 받는 명령입니다.
+    Stand,
 }
 
 impl Monster {
@@ -93,7 +96,7 @@ impl TileFields {
             .filter_map(|goal| match goal {
                 Goal::Player(id) => chase_tile(world, *id),
                 Goal::Post(tile) => Some(*tile),
-                Goal::Tower | Goal::Wagon => None,
+                Goal::Tower | Goal::Wagon | Goal::Stay => None,
             })
             .collect();
         self.entries.retain(|tile, _| needed.contains(tile));
@@ -134,6 +137,8 @@ enum Goal {
     Wagon,
     /// 지키는 자리로 돌아갑니다. 공격할 대상이 없습니다.
     Post(Tile),
+    /// 움직이지도 공격하지도 않습니다.
+    Stay,
 }
 
 /// 한 몬스터가 이번 Tick에 하기로 결정한 일입니다.
@@ -213,6 +218,7 @@ fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Go
     match monster.order {
         Order::Raid => raid_goal(world, monster, ctx, paths),
         Order::Guard { post } => guard_goal(world, monster, post, ctx),
+        Order::Stand => Goal::Stay,
     }
 }
 
@@ -309,6 +315,7 @@ fn plan(
             Goal::Tower => Some(paths.towers()),
             Goal::Player(id) => chase_tile(world, id).and_then(|tile| fields.get(tile)),
             Goal::Post(post) => fields.get(post),
+            Goal::Stay => None,
         };
         // 흐름장이 알려 주는 다음 타일이 없으면(도착 타일 안이거나 길이 없으면) 목표의 가장 가까운 점으로 곧바로 걸어갑니다.
         let aim = field
@@ -357,7 +364,7 @@ fn approached(goal: Goal, world: &World, monster: &Monster, t: &Tuning) -> Optio
     let target = match goal {
         Goal::Player(id) => Target::Player(id),
         Goal::Wagon => Target::Wagon,
-        Goal::Post(_) => return None,
+        Goal::Post(_) | Goal::Stay => return None,
         Goal::Tower => {
             let nearest = world
                 .towers

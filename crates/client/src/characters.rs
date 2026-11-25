@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 use caravan_client_core::{MonsterView, PlayerView, bar_fraction};
-use caravan_protocol::WireLife;
+use caravan_protocol::{WireLife, WireMonsterKind};
 use caravan_rules::Vec2 as Ground;
 
 use crate::config;
@@ -143,19 +143,29 @@ fn player_look(player: &PlayerView, scene: &Scene, palette: &Palette) -> Look {
 }
 
 /// 몬스터의 HP 막대는 피해를 입었을 때만 보입니다. 수백 마리가 막대를 모두 달고 있으면 화면이 복잡해집니다.
+/// 허수아비는 맞아도 HP가 줄지 않으므로 막대가 없고, 맞은 피해는 숫자로 보입니다(`camp::sync_strikes`).
+/// `match`가 모든 종류를 다루므로, 몬스터 종류를 추가하면 여기서 컴파일 오류가 납니다.
 fn monster_look(
     monster: &MonsterView,
     footprint: &Footprint,
     max_hp: u32,
     palette: &Palette,
 ) -> Look {
+    let (body, body_size, bar) = match monster.kind {
+        WireMonsterKind::Grunt => (
+            &palette.monster,
+            config::MONSTER_BODY,
+            (monster.hp < max_hp).then(|| bar_fraction(monster.hp, max_hp)),
+        ),
+        WireMonsterKind::Scarecrow => (&palette.scarecrow, config::SCARECROW_BODY, None),
+    };
     Look {
         foot: monster.pos,
         facing: monster.facing,
         radius: footprint.radius,
-        body: palette.monster.clone(),
-        body_size: config::MONSTER_BODY,
-        bar: (monster.hp < max_hp).then(|| bar_fraction(monster.hp, max_hp)),
+        body: body.clone(),
+        body_size,
+        bar,
     }
 }
 
@@ -478,6 +488,48 @@ mod tests {
                 .unwrap();
             assert_eq!(body.0, material, "player {id}");
         }
+    }
+
+    #[test]
+    fn a_scarecrow_is_straw_coloured_taller_than_a_grunt_and_never_shows_an_hp_bar() {
+        let mut app = app();
+        let scarecrow = MonsterView {
+            kind: WireMonsterKind::Scarecrow,
+            ..monster(2, 4.0, 3.0, 10)
+        };
+        show(
+            &mut app,
+            frame(vec![], vec![monster(1, 3.0, 3.0, 10), scarecrow]),
+        );
+
+        let palette = app.world().resource::<Palette>();
+        assert_ne!(palette.scarecrow, palette.monster);
+        let body_of = |app: &App, id: u32| {
+            let parts = *app.world().get::<Parts>(monster_entity(app, id)).unwrap();
+            (
+                app.world()
+                    .get::<MeshMaterial2d<ColorMaterial>>(parts.body)
+                    .unwrap()
+                    .0
+                    .clone(),
+                app.world().get::<Transform>(parts.body).unwrap().scale.y,
+                *app.world()
+                    .get::<Visibility>(parts.bar.entities()[0])
+                    .unwrap(),
+            )
+        };
+        let (grunt_color, grunt_height, grunt_bar) = body_of(&app, 1);
+        let (scarecrow_color, scarecrow_height, scarecrow_bar) = body_of(&app, 2);
+        assert_eq!(grunt_color, palette.monster);
+        assert_eq!(scarecrow_color, palette.scarecrow);
+        assert_eq!(grunt_height, config::MONSTER_BODY.y);
+        assert_eq!(scarecrow_height, config::SCARECROW_BODY.y);
+        assert_eq!(
+            grunt_bar,
+            Visibility::Inherited,
+            "a hurt grunt shows its bar"
+        );
+        assert_eq!(scarecrow_bar, Visibility::Hidden, "a scarecrow never does");
     }
 
     #[test]

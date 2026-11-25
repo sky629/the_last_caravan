@@ -1,9 +1,11 @@
 //! `Sim`은 방 하나의 게임 상태 전체이며, 규칙 크레이트의 공개 진입점입니다.
 
-use crate::expedition::{self, Advance, Phase};
+use crate::camp::Camp;
+use crate::debrief::{Debrief, Report};
+use crate::expedition::{self, Outcome, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
-use crate::loot::{self, Chest, GroundWeapon, Prompt, Seed};
+use crate::loot::{self, Chest, GroundWeapon, Prompt, Rack, Seed};
 use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
@@ -12,10 +14,11 @@ use crate::projectile::{self, Projectile};
 use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
 use crate::spawn::SpawnPlan;
+use crate::stage::Stage;
 use crate::structures::{self, Tower, Wagon};
-use crate::tuning::{MapSpec, Tuning};
+use crate::tuning::{MapSpec, Start, Tuning};
 use crate::weapon;
-use crate::world::{Ctx, World};
+use crate::world::{Ctx, Layout, World};
 
 /// 방 하나의 게임입니다. 바깥 코드는 `&Sim`으로 상태를 읽고,
 /// `add_player`, `remove_player`, `step`으로만 상태를 바꿉니다.
@@ -25,9 +28,9 @@ pub struct Sim {
     seed: Seed,
     /// 방이 만들어진 뒤 실행한 Tick의 수입니다. 줄어들지 않으므로 스냅샷의 Tick 번호는 계속 커집니다.
     tick: u64,
-    /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
+    /// 이 방에서 시작한 원정의 수입니다. 첫 원정을 시작하기 전의 야영지에서는 0이고, 원정을 시작할 때마다 1씩 늘어납니다.
     expedition: u32,
-    phase: Phase,
+    stage: Stage,
     world: World,
     /// 마차와 감시탑으로 가는 공유 이동 경로입니다. 세계의 배치가 바뀌면 다음 `sync`가 다시 만듭니다.
     paths: Paths,
@@ -46,24 +49,19 @@ pub enum JoinError {
 }
 
 impl Sim {
-    /// 플레이어가 없는 방을 만들고 첫 원정의 첫날을 시작합니다. 무작위는 `seed`에서 정해지므로, 같은 수치와 씨앗과 입력은 같은 결과를 냅니다.
+    /// 플레이어가 없는 방을 야영지로 만듭니다. `CampTuning::start`가 `Start::AtOnce`이면 야영지 없이 첫 원정의 첫날을 시작합니다.
+    /// 무작위는 `seed`에서 정해지므로, 같은 수치와 씨앗과 입력은 같은 결과를 냅니다.
     /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만들고,
     /// 몬스터가 나타날 자리가 없는 수치에서는 이 함수가 멈춥니다.
     pub fn new(tuning: Tuning, seed: Seed) -> Sim {
-        let mut world = World::new(&tuning);
-        let spawns = SpawnPlan::new(&world.tiles, &tuning)
+        let world = World::new(&tuning, Layout::Camp);
+        // 몬스터가 서는 자리는 원정의 첫날의 타일 지도(채집 지점과 시작 감시탑이 있음)에서 정합니다.
+        let spawns = SpawnPlan::new(&World::new(&tuning, Layout::Expedition).tiles, &tuning)
             .expect("a validated tuning has a spot where night monsters appear");
-        expedition::begin_day(
-            &mut world,
-            &spawns,
-            seed_of_expedition(seed, FIRST_EXPEDITION),
-            1,
-            &tuning,
-        );
-        Sim {
+        let mut sim = Sim {
             seed,
-            expedition: FIRST_EXPEDITION,
-            phase: expedition::opening_phase(&tuning),
+            expedition: 0,
+            stage: Stage::Camp(Camp::new()),
             paths: Paths::new(&world, &tuning),
             monster_grid: MonsterGrid::new(world.tiles.bounds(), tuning.map.spatial_cell),
             tile_fields: TileFields::new(),
@@ -72,12 +70,17 @@ impl Sim {
             tick: 0,
             next_player: 1,
             tuning,
+        };
+        if sim.tuning.camp.start == Start::AtOnce {
+            sim.begin_expedition();
         }
+        sim
     }
 
     /// 새 플레이어를 최대 HP의 살아 있는 상태로 등장 지점에 추가하고 번호를 돌려줍니다.
     /// 등장 지점은 방에 있는 플레이어가 가장 적게 쓰는 지점 중 가장 앞의 것으로 정하므로, 먼저 나간 플레이어의 자리를 새 플레이어가 이어받습니다.
-    /// 원정이 진행되는 도중에도 곧바로 참가합니다. 방이 가득 차 있으면 거절합니다.
+    /// 원정이 진행되는 도중에도 곧바로 참가하고, 야영지에서는 준비하지 않은 상태로, 결과 화면에서는 확인하지 않은 상태로 들어옵니다.
+    /// 방이 가득 차 있으면 거절합니다.
     pub fn add_player(&mut self) -> Result<PlayerId, JoinError> {
         if self.world.players.len() >= self.tuning.max_players {
             return Err(JoinError::RoomFull {
@@ -95,6 +98,9 @@ impl Sim {
         let team = self.team_for_new_player();
         let player = Player::new(id, team, slot, spawn, &self.tuning);
         self.world.players.insert(id, player);
+        if let Stage::Camp(camp) = &mut self.stage {
+            camp.settle(&self.world);
+        }
         Ok(id)
     }
 
@@ -116,37 +122,92 @@ impl Sim {
     }
 
     /// 플레이어를 즉시 제거합니다. 없는 번호는 무시하므로 같은 퇴장을 두 번 처리해도 안전합니다.
-    /// 이 플레이어를 부활시키던 플레이어는 다음 Tick에 대상이 사라진 것을 보고 부활을 멈추고, 이 플레이어가 들고 있던 자원은 그 자리에 떨어집니다.
+    /// 원정 중이면 이 플레이어를 부활시키던 플레이어는 다음 Tick에 대상이 사라진 것을 보고 부활을 멈추고, 이 플레이어가 들고 있던 자원은 그 자리에 떨어집니다.
     /// 가진 무기도 그 자리에 떨어지지만, 시작 무기와 같은 종류의 무기는 떨어지지 않습니다.
+    /// 야영지와 결과 화면에서는 아무것도 떨어지지 않습니다. 이 단계의 것은 다음 단계로 이어지지 않기 때문입니다.
     pub fn remove_player(&mut self, id: PlayerId) {
-        self.world.remove_player(id, &self.tuning);
+        match &mut self.stage {
+            Stage::Expedition(_) => self.world.remove_player(id, &self.tuning),
+            Stage::Camp(camp) => {
+                self.world.players.remove(&id);
+                camp.settle(&self.world);
+            }
+            Stage::Debrief(debrief) => {
+                debrief.forget(id);
+                self.world.players.remove(&id);
+            }
+        }
     }
 
     /// 게임을 Tick 하나만큼 진행합니다. `inputs`는 이번 Tick의 플레이어별 입력이고,
-    /// 목록에 없는 플레이어는 아무것도 누르지 않은 것으로 봅니다.
-    ///
-    /// 모든 공격은 같은 상태를 보고 결정한 뒤 한꺼번에 적용합니다. 그래서 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다.
+    /// 목록에 없는 플레이어는 아무것도 누르지 않은 것으로 봅니다. 단계마다 하는 일이 다릅니다.
     pub fn step(&mut self, inputs: &PlayerInputs) {
         self.tick += 1;
+        match &self.stage {
+            Stage::Camp(_) => self.practice(inputs),
+            Stage::Expedition(_) => self.simulate(inputs),
+            Stage::Debrief(_) => self.wait_for_confirmations(inputs),
+        }
+    }
+
+    /// 야영지의 Tick입니다. 준비와 카운트다운을 먼저 정하고, 원정이 시작되지 않으면 플레이어가 움직이고 무기를 써 봅니다.
+    /// 야영지에서는 아무것도 피해를 받지 않습니다. 공격이 허수아비에 닿은 피해는 화면에 보여 주려고 적기만 합니다.
+    /// 몬스터(허수아비)와 감시탑은 행동하지 않고, 건설은 거절됩니다.
+    fn practice(&mut self, inputs: &PlayerInputs) {
+        let Stage::Camp(camp) = &mut self.stage else {
+            return;
+        };
+        if camp.advance(&self.world, inputs, &self.tuning) {
+            self.begin_expedition();
+            return;
+        }
+        self.monster_grid.rebuild(&self.world.monsters);
+        let ctx = Ctx {
+            t: &self.tuning,
+            inputs,
+            grid: &self.monster_grid,
+            tick: self.tick,
+            practice: true,
+        };
+        let mut hits = Vec::new();
+        player::update_interactions(&mut self.world, &ctx);
+        player::update_sprint(&mut self.world, &ctx);
+        player::move_players(&mut self.world, &ctx);
+        weapon::use_weapons(&mut self.world, &ctx, &mut hits);
+        projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
+        if let Stage::Camp(camp) = &mut self.stage {
+            camp.note_strikes(&hits, self.tick);
+        }
+    }
+
+    /// 결과 화면의 Tick입니다. 세계는 멈춰 있고, 확인 키와 남은 시간만 봅니다.
+    /// 날던 탄환은 그 자리에 멈추고, 끝난 탄환은 스냅샷에 한 번 실렸으므로 지웁니다.
+    fn wait_for_confirmations(&mut self, inputs: &PlayerInputs) {
+        projectile::remove_landed(&mut self.world);
+        let Stage::Debrief(debrief) = &mut self.stage else {
+            return;
+        };
+        if debrief.advance(&self.world, inputs) {
+            match self.tuning.camp.start {
+                Start::WhenReady => self.enter_camp(),
+                Start::AtOnce => self.begin_expedition(),
+            }
+        }
+    }
+
+    /// 원정의 Tick입니다. 모든 공격은 같은 상태를 보고 결정한 뒤 한꺼번에 적용합니다. 그래서 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다.
+    fn simulate(&mut self, inputs: &PlayerInputs) {
         let expedition_seed = self.expedition_seed();
-        match expedition::advance_phase(
-            &mut self.phase,
+        let Stage::Expedition(phase) = &mut self.stage else {
+            return;
+        };
+        expedition::advance_phase(
+            phase,
             &mut self.world,
             &self.spawns,
             expedition_seed,
             &self.tuning,
-        ) {
-            Advance::Frozen => {
-                // 결과 화면 동안 세계는 멈춥니다. 날던 탄환은 그 자리에 멈추고, 끝난 탄환은 스냅샷에 한 번 실렸으므로 지웁니다.
-                projectile::remove_landed(&mut self.world);
-                return;
-            }
-            Advance::StartNewExpedition => {
-                self.reset_expedition();
-                return;
-            }
-            Advance::Simulate => {}
-        }
+        );
 
         self.paths.sync(&self.world, &self.tuning);
         self.monster_grid.rebuild(&self.world.monsters);
@@ -155,6 +216,7 @@ impl Sim {
             inputs,
             grid: &self.monster_grid,
             tick: self.tick,
+            practice: false,
         };
         let mut hits = Vec::new();
         player::update_interactions(&mut self.world, &ctx);
@@ -177,16 +239,57 @@ impl Sim {
         player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);
         loot::finish_openings(&mut self.world, &self.tuning);
-        expedition::settle_outcome(&mut self.phase, &self.world, &self.tuning);
+        let Stage::Expedition(phase) = &mut self.stage else {
+            return;
+        };
+        if let Some(outcome) = expedition::settle_outcome(phase, &self.world, &self.tuning) {
+            let day = expedition::day_of(*phase);
+            self.conclude(outcome, day);
+        }
     }
 
-    /// 새 원정을 시작합니다. 이전 원정에서 이어받는 것은 방에 있는 플레이어뿐입니다.
-    /// 모든 플레이어는 최대 HP의 살아 있는 상태로 등장 지점에 돌아가고, 사망 상태도 초기화됩니다.
-    fn reset_expedition(&mut self) {
+    /// 새 원정을 시작합니다. 이전 원정과 야영지에서 이어받는 것은 방에 있는 플레이어뿐입니다.
+    /// 모든 플레이어는 시작 무기와 최대 HP의 살아 있는 상태로 등장 지점에 돌아가고, 사망 상태도 초기화됩니다.
+    /// 원정의 씨앗은 방의 씨앗과 원정의 번호로만 정해지므로, 야영지에 머문 시간은 원정이 뽑는 것을 바꾸지 않습니다.
+    pub(crate) fn begin_expedition(&mut self) {
         self.expedition += 1;
-        self.phase = expedition::opening_phase(&self.tuning);
-        self.world.restart(&self.tuning);
-        // 나간 플레이어가 있으면 한 지점에 둘이 몰릴 수 있으므로, 원정을 시작할 때마다 지점을 다시 정합니다.
+        self.world.restart(&self.tuning, Layout::Expedition);
+        self.return_players_to_spawns();
+        let expedition_seed = self.expedition_seed();
+        expedition::begin_day(
+            &mut self.world,
+            &self.spawns,
+            expedition_seed,
+            1,
+            &self.tuning,
+        );
+        self.stage = Stage::Expedition(expedition::opening_phase(&self.tuning));
+    }
+
+    /// 원정을 끝내고 결과 화면을 엽니다. 세계는 끝난 모습 그대로 멈춥니다.
+    fn conclude(&mut self, outcome: Outcome, day: u32) {
+        let report = Report { outcome, day };
+        self.stage = Stage::Debrief(Debrief::new(report, &self.tuning));
+    }
+
+    /// 결과 화면이면 끝난 원정의 결과입니다.
+    pub fn debrief(&self) -> Option<&Debrief> {
+        match &self.stage {
+            Stage::Debrief(debrief) => Some(debrief),
+            Stage::Camp(_) | Stage::Expedition(_) => None,
+        }
+    }
+
+    /// 야영지로 돌아갑니다. 모든 플레이어는 시작 무기와 최대 HP로 등장 지점에 섭니다.
+    fn enter_camp(&mut self) {
+        self.world.restart(&self.tuning, Layout::Camp);
+        self.return_players_to_spawns();
+        self.stage = Stage::Camp(Camp::new());
+    }
+
+    /// 모든 플레이어를 시작 무기와 최대 HP의 살아 있는 상태로 자기 등장 지점에 돌려놓습니다.
+    fn return_players_to_spawns(&mut self) {
+        // 나간 플레이어가 있으면 한 지점에 둘이 몰릴 수 있으므로, 돌려놓을 때마다 지점을 다시 정합니다.
         // 겹치지 않는 플레이어는 자기 지점에 그대로 돌아갑니다.
         let mut assigned: Vec<usize> = Vec::with_capacity(self.world.players.len());
         for player in self.world.players.values_mut() {
@@ -198,14 +301,6 @@ impl Sim {
             assigned.push(slot);
             player.reset(slot, spawn_point(&self.tuning.map, slot), &self.tuning);
         }
-        let expedition_seed = self.expedition_seed();
-        expedition::begin_day(
-            &mut self.world,
-            &self.spawns,
-            expedition_seed,
-            1,
-            &self.tuning,
-        );
     }
 
     /// 진영을 정하는 곳은 이 함수 하나입니다. 협동 모드는 모두를 같은 편으로 둡니다.
@@ -222,7 +317,7 @@ impl Sim {
         &self.tuning
     }
 
-    /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
+    /// 이 방에서 시작한 원정의 수입니다. 원정 중에는 몇 번째 원정인지이고, 첫 원정이 1입니다. 첫 원정 전의 야영지에서는 0입니다.
     pub fn expedition_number(&self) -> u32 {
         self.expedition
     }
@@ -237,8 +332,17 @@ impl Sim {
         seed_of_expedition(self.seed, self.expedition)
     }
 
-    pub fn phase(&self) -> Phase {
-        self.phase
+    /// 방이 지금 무엇을 하는지입니다.
+    pub fn stage(&self) -> &Stage {
+        &self.stage
+    }
+
+    /// 원정 중이면 원정의 단계입니다. 야영지와 결과 화면에서는 없습니다.
+    pub fn phase(&self) -> Option<Phase> {
+        match &self.stage {
+            Stage::Expedition(phase) => Some(*phase),
+            Stage::Camp(_) | Stage::Debrief(_) => None,
+        }
     }
 
     /// 번호가 작은 플레이어부터 차례로 돌려줍니다.
@@ -287,6 +391,11 @@ impl Sim {
     /// 바닥에 놓인 무기를 번호가 작은 무기부터 차례로 돌려줍니다.
     pub fn ground_weapons(&self) -> impl Iterator<Item = &GroundWeapon> {
         self.world.ground_weapons.iter()
+    }
+
+    /// 야영지의 무기 진열대입니다. 야영지에만 있습니다.
+    pub fn racks(&self) -> impl Iterator<Item = &Rack> {
+        self.world.racks.iter()
     }
 
     /// `id`가 지금 F를 누르면 하게 되는 일이 화면에 안내할 만한 것이면 그 안내입니다. 부활, 수리, 채집은 안내하지 않습니다.
@@ -382,8 +491,19 @@ impl Sim {
         &mut self.world
     }
 
+    /// 원정 중인 방의 단계를 바꿉니다. 원정 중이 아니면 테스트가 잘못 만든 것이므로 멈춥니다.
     pub(crate) fn set_phase(&mut self, phase: Phase) {
-        self.phase = phase;
+        assert!(
+            matches!(self.stage, Stage::Expedition(_)),
+            "set_phase needs an expedition"
+        );
+        self.stage = Stage::Expedition(phase);
+    }
+
+    /// 원정을 `outcome`으로 끝냅니다. 원정의 끝을 시험하는 테스트가 씁니다.
+    pub(crate) fn end_expedition(&mut self, outcome: Outcome) {
+        let day = self.phase().map_or(1, expedition::day_of);
+        self.conclude(outcome, day);
     }
 
     pub(crate) fn spawn_monster(&mut self, pos: Vec2) -> crate::ids::MonsterId {
@@ -392,9 +512,6 @@ impl Sim {
             .spawn_monster(kind, crate::monster::Order::Raid, pos, &self.tuning)
     }
 }
-
-/// 방이 만들어질 때 시작하는 원정의 번호입니다.
-const FIRST_EXPEDITION: u32 = 1;
 
 /// 방의 `expedition`번째 원정의 씨앗입니다. 방의 씨앗에서 원정의 번호로 이어 간 씨앗이라서, 원정마다 다르고 같은 방의 같은 원정은 언제나 같습니다.
 fn seed_of_expedition(room: Seed, expedition: u32) -> Seed {

@@ -29,6 +29,8 @@ pub enum CannotBuild {
     TileTaken,
     /// 그 자리에 놓으면 걸어서 마차에 갈 수 없는 곳이 생깁니다.
     WouldBlockPath,
+    /// 야영지에서는 건설할 수 없습니다. 다른 이유보다 먼저 나옵니다.
+    InCamp,
 }
 
 /// 플레이어가 건설 키를 누르고 있지만 세울 수 없는 상태입니다. 이벤트가 아니라 상태이므로, 스냅샷을 하나 놓쳐도 화면이 같은 안내를 그립니다.
@@ -137,7 +139,12 @@ pub(crate) fn start_builds(world: &mut World, ctx: &Ctx, requests: &[PlayerId]) 
             .and_then(|input| input.aim.get())
             .unwrap_or(player.facing);
         let here = world.tiles.tile_at(player.pos);
-        let verdict = match front_tile(player.pos, facing, world.tiles.size()) {
+        let front = front_tile(player.pos, facing, world.tiles.size());
+        let verdict = match front {
+            _ if ctx.practice => Err(BuildRefusal {
+                tile: front.unwrap_or(here),
+                why: CannotBuild::InCamp,
+            }),
             None => Err(BuildRefusal {
                 tile: here,
                 why: CannotBuild::OutsideVillage,

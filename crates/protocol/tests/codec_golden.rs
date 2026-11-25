@@ -11,13 +11,13 @@
 //! 이 테스트가 실패하면 전송 형식이 바뀐 것입니다. 기대 바이트를 고칠 때 `PROTOCOL_VERSION`도 함께 올립니다.
 
 use caravan_protocol::{
-    ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RejectReason, ServerMsg,
-    Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
-    WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMonster,
-    WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
-    WirePos, WireProjectile, WirePrompt, WireRect, WireRepairTarget, WireShot, WireTile, WireTower,
-    WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server,
-    encode_client, encode_server,
+    ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RackInfo, RejectReason,
+    ServerMsg, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal,
+    WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife,
+    WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase,
+    WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt, WireRect, WireRepairTarget,
+    WireShot, WireStruck, WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind,
+    WorldInfo, decode_client, decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -32,7 +32,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 6);
+    assert_eq!(PROTOCOL_VERSION, 7);
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn join_is_variant_zero_then_version_then_room_text() {
 }
 
 #[test]
-fn input_is_the_sequence_number_two_vectors_and_six_buttons() {
+fn input_is_the_sequence_number_two_vectors_and_eight_buttons() {
     assert_client_wire(
         ClientMsg::Input(InputMsg {
             seq: 300,
@@ -59,6 +59,8 @@ fn input_is_the_sequence_number_two_vectors_and_six_buttons() {
             build: true,
             sprint: true,
             switch_weapon: true,
+            toggle_ready: true,
+            confirm: true,
         }),
         &[
             0x01, // Input 변형
@@ -73,6 +75,8 @@ fn input_is_the_sequence_number_two_vectors_and_six_buttons() {
             0x01, // build
             0x01, // sprint
             0x01, // switch_weapon
+            0x01, // toggle_ready
+            0x01, // confirm
         ],
     );
 }
@@ -102,11 +106,18 @@ fn welcome_carries_the_fixed_world() {
                     tile: WireTile { x: 9, y: 22 },
                 }],
                 player_radius: 0.5,
-                monster_kinds: vec![MonsterKindInfo {
-                    kind: WireMonsterKind::Grunt,
-                    radius: 0.25,
-                    max_hp: 60,
-                }],
+                monster_kinds: vec![
+                    MonsterKindInfo {
+                        kind: WireMonsterKind::Grunt,
+                        radius: 0.25,
+                        max_hp: 60,
+                    },
+                    MonsterKindInfo {
+                        kind: WireMonsterKind::Scarecrow,
+                        radius: 0.25,
+                        max_hp: 60,
+                    },
+                ],
                 weapons: vec![
                     WeaponInfo {
                         kind: WireWeaponKind::Sword,
@@ -142,6 +153,16 @@ fn welcome_carries_the_fixed_world() {
                         delivery: WireDelivery::Hitscan,
                     },
                 ],
+                racks: vec![
+                    RackInfo {
+                        kind: WireWeaponKind::Sword,
+                        pos: WirePos { x: 512, y: 4672 },
+                    },
+                    RackInfo {
+                        kind: WireWeaponKind::Bow,
+                        pos: WirePos { x: 666, y: 4672 },
+                    },
+                ],
             },
         }),
         &[
@@ -162,8 +183,11 @@ fn welcome_carries_the_fixed_world() {
             0x01, // nodes: 길이 1
             0x01, 0x09, 0x16, // id 1, tile 9 22
             0x00, 0x00, 0x00, 0x3F, // player_radius 0.5
-            0x01, // monster_kinds: 길이 1
+            0x02, // monster_kinds: 길이 2
             0x00, // Grunt
+            0x00, 0x00, 0x80, 0x3E, // radius 0.25
+            0x3C, // max_hp 60
+            0x01, // Scarecrow
             0x00, 0x00, 0x80, 0x3E, // radius 0.25
             0x3C, // max_hp 60
             0x06, // weapons: 길이 6
@@ -179,6 +203,11 @@ fn welcome_carries_the_fixed_world() {
             0x00, 0x00, 0x70, 0x41, // half_angle_deg 15.0
             0x04, 0x01, // Crossbow, Projectile
             0x05, 0x02, // Rifle, Hitscan
+            0x02, // racks: 길이 2
+            0x00, // Sword
+            0x80, 0x04, 0xC0, 0x24, // pos 512, 4672
+            0x01, // Bow
+            0x9A, 0x05, 0xC0, 0x24, // pos 666, 4672
         ],
     );
 }
@@ -438,18 +467,35 @@ fn every_phase_matches_golden_bytes() {
         &quiet_bytes(&[0x02, 0x02, 0x00, 0x00, 0x80, 0x40]),
     );
     assert_server_wire(
-        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Over {
-            outcome: WireOutcome::Victory,
-            secs_left: 5.0,
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Camp {
+            ready: vec![1, 2],
+            starting_in: Some(3.0),
+            struck: vec![WireStruck {
+                monster: 1,
+                tick: 5,
+                amount: 25,
+            }],
         }))),
-        &quiet_bytes(&[0x03, 0x00, 0x00, 0x00, 0xA0, 0x40]),
+        // Camp, 준비 2명(1, 2), 남은 3.0초, 맞은 허수아비 1개(번호 1, Tick 5, 피해 25)
+        &quiet_bytes(&[
+            0x03, 0x02, 0x01, 0x02, 0x01, 0x00, 0x00, 0x40, 0x40, 0x01, 0x01, 0x05, 0x19,
+        ]),
     );
     assert_server_wire(
-        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Over {
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Debrief {
+            outcome: WireOutcome::Victory,
+            secs_left: 5.0,
+            confirmed: vec![],
+        }))),
+        &quiet_bytes(&[0x04, 0x00, 0x00, 0x00, 0xA0, 0x40, 0x00]),
+    );
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Debrief {
             outcome: WireOutcome::Defeat,
             secs_left: 5.0,
+            confirmed: vec![2],
         }))),
-        &quiet_bytes(&[0x03, 0x01, 0x00, 0x00, 0xA0, 0x40]),
+        &quiet_bytes(&[0x04, 0x01, 0x00, 0x00, 0xA0, 0x40, 0x01, 0x02]),
     );
 }
 

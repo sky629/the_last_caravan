@@ -1,6 +1,7 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
 //! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸이 있고,
+//! 야영지에서는 그 아래에 준비 목록과 `R` 안내와 시작까지 남은 시간이 있고,
 //! 아래 가운데에 F를 누르면 하게 되는 일의 안내와 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 방 코드가 있고, 화면 가운데에 원정의 결과나 접속 문제가 크게 나옵니다.
 
@@ -59,6 +60,11 @@ pub struct HudNodes {
     stash: Entity,
     carry: Entity,
     weapon: Entity,
+    /// 야영지의 준비 목록입니다. 한 줄씩 담는 상자이고, 줄은 방의 정원만큼 입장한 뒤에 만듭니다.
+    camp_rows_box: Entity,
+    camp_rows: Vec<Entity>,
+    camp_hint: Entity,
+    camp_countdown: Entity,
     hint: Entity,
     banner_title: Entity,
     banner_detail: Entity,
@@ -161,6 +167,16 @@ pub fn setup(mut commands: Commands) {
     let stash = text_node(&mut commands, 22.0, TEXT);
     let carry = text_node(&mut commands, 22.0, TEXT);
     let weapon = text_node(&mut commands, 22.0, TEXT);
+    // 야영지에서는 이 아래에 준비 목록이 나옵니다.
+    let camp_rows_box = commands
+        .spawn(column(Node {
+            align_items: AlignItems::FlexEnd,
+            margin: UiRect::top(px(14)),
+            ..default()
+        }))
+        .id();
+    let camp_hint = text_node(&mut commands, 24.0, TEXT);
+    let camp_countdown = text_node(&mut commands, 30.0, TEXT);
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
@@ -170,7 +186,17 @@ pub fn setup(mut commands: Commands) {
             align_items: AlignItems::FlexEnd,
             ..default()
         })
-        .add_children(&[day, timer, expedition, stash, carry, weapon]);
+        .add_children(&[
+            day,
+            timer,
+            expedition,
+            stash,
+            carry,
+            weapon,
+            camp_rows_box,
+            camp_hint,
+            camp_countdown,
+        ]);
 
     // 아래 가운데: F를 누르면 하게 되는 일, 출혈 시간, 건설과 수리의 거절 이유, 부활이나 수리나 건설의 진행 막대.
     let hint = text_node(&mut commands, 24.0, TEXT);
@@ -234,6 +260,10 @@ pub fn setup(mut commands: Commands) {
         stash,
         carry,
         weapon,
+        camp_rows_box,
+        camp_rows: Vec::new(),
+        camp_hint,
+        camp_countdown,
         hint,
         banner_title,
         banner_detail,
@@ -249,8 +279,8 @@ pub fn setup(mut commands: Commands) {
     });
 }
 
-/// 입장한 직후 한 번, 동료의 막대를 만듭니다.
-/// 막대의 수는 `Welcome`이 알려 준 방의 정원에서 정합니다. `Session`이 입장할 때 정원의 상한을 확인했으므로 그대로 믿습니다.
+/// 입장한 직후 한 번, 동료의 막대와 야영지의 준비 목록의 줄을 만듭니다.
+/// 수는 `Welcome`이 알려 준 방의 정원에서 정합니다. `Session`이 입장할 때 정원의 상한을 확인했으므로 그대로 믿습니다.
 pub fn build_roster(
     mut commands: Commands,
     session: Res<ClientSession>,
@@ -268,6 +298,11 @@ pub fn build_roster(
         let row = meter_node(&mut commands, METER_WIDTH);
         commands.entity(nodes.allies_panel).add_child(row);
         nodes.allies.push(row);
+    }
+    for _ in 0..joined.welcome.capacity {
+        let row = text_node(&mut commands, 22.0, TEXT);
+        commands.entity(nodes.camp_rows_box).add_child(row);
+        nodes.camp_rows.push(row);
     }
     nodes.roster_built = true;
 }
@@ -348,6 +383,22 @@ pub fn update(
         &mut texts,
         nodes.weapon,
         hud.weapon.as_deref().unwrap_or(""),
+    );
+    let camp = hud.camp.as_ref();
+    for (index, row) in nodes.camp_rows.iter().enumerate() {
+        let line = camp.and_then(|panel| panel.rows.get(index));
+        set_text(&mut texts, *row, line.map_or("", String::as_str));
+    }
+    set_text(
+        &mut texts,
+        nodes.camp_hint,
+        camp.map_or("", |panel| panel.hint.as_str()),
+    );
+    set_text(
+        &mut texts,
+        nodes.camp_countdown,
+        camp.and_then(|panel| panel.countdown.as_deref())
+            .unwrap_or(""),
     );
     set_text(&mut texts, nodes.hint, hud.hint.as_deref().unwrap_or(""));
     set_text(&mut texts, nodes.bleed, hud.bleed.as_deref().unwrap_or(""));

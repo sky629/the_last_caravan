@@ -2,7 +2,7 @@
 //!
 //! 시나리오는 20 x 20 맵이고 마차는 (17, 17)에서 (19, 19)까지입니다. 마차의 서쪽 곁 (16.5, 18.5)에 서면 마차의 가장자리까지 0.15타일입니다.
 
-use super::support::Scenario;
+use super::support::{Scenario, outcome};
 use crate::expedition::{NightStep, Outcome, Phase};
 use crate::ids::PlayerId;
 use crate::input::{AimDir, MoveDir, PlayerInput};
@@ -320,13 +320,7 @@ fn a_wagon_with_no_hp_left_is_not_a_repair_target_and_the_expedition_fails() {
     s.run_ticks(1);
 
     assert!(s.player(a).interaction().is_none());
-    assert!(matches!(
-        s.sim.phase(),
-        Phase::Over {
-            outcome: Outcome::Defeat,
-            ..
-        }
-    ));
+    assert_eq!(outcome(&s.sim), Some(Outcome::Defeat));
 }
 
 // 수리의 비용

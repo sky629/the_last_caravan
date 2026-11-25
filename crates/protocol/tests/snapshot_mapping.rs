@@ -4,11 +4,11 @@
 use caravan_protocol::{
     Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
     WireDelivery, WireInteraction, WireLife, WireLoadout, WireMonsterKind, WireOutcome, WirePhase,
-    WirePos, WirePrompt, WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
+    WirePos, WirePrompt, WireRepairTarget, WireStruck, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
-    AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Tile,
-    Tuning, Vec2, WavePlan, WeaponKind,
+    AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Start,
+    Tile, Tuning, Vec2, WavePlan, WeaponKind,
 };
 
 fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
@@ -41,14 +41,41 @@ fn a_monster_right_beside_the_wagon(t: &mut Tuning) {
 /// 규칙이 `Tuning::validate`를 통과하는 수치만 받으므로, 바꾼 수치도 같은 검사를 거칩니다.
 fn sim_with(adjust: impl FnOnce(&mut Tuning)) -> Sim {
     let mut tuning = Tuning::default();
+    tuning.camp.start = Start::AtOnce;
     adjust(&mut tuning);
     tuning.validate().expect("the adjusted numbers are valid");
     Sim::new(tuning, Seed(1))
 }
 
 #[test]
-fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
+fn a_fresh_room_is_the_camp_with_the_scarecrows_and_nobody_ready() {
     let mut sim = Sim::new(Tuning::default(), Seed(1));
+    sim.add_player().unwrap();
+    let snapshot = Snapshot::from_sim(&sim);
+
+    assert_eq!(snapshot.expedition, 0, "no expedition has started");
+    assert_eq!(
+        snapshot.phase,
+        WirePhase::Camp {
+            ready: vec![],
+            starting_in: None,
+            struck: vec![]
+        }
+    );
+    let kinds: Vec<WireMonsterKind> = snapshot.monsters.iter().map(|m| m.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![WireMonsterKind::Scarecrow; 3],
+        "three scarecrows"
+    );
+    assert!(snapshot.monsters.iter().all(|m| m.hp == 60));
+    assert!(snapshot.chests.is_empty() && snapshot.nodes.is_empty());
+    assert_eq!(snapshot.stash, 0);
+}
+
+#[test]
+fn a_fresh_expedition_maps_to_the_numbers_in_the_tuning_table() {
+    let mut sim = sim_with(|_| {});
     sim.add_player().unwrap();
     let snapshot = Snapshot::from_sim(&sim);
 
@@ -223,11 +250,13 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
         .collect();
     assert_eq!(sites, expected, "the nodes of the map, numbered from 1");
     assert_eq!(world.player_radius, 0.35);
-    let [grunt] = world.monster_kinds[..] else {
-        panic!("one monster kind expected");
+    let [grunt, scarecrow] = world.monster_kinds[..] else {
+        panic!("the grunt and the scarecrow expected");
     };
     assert_eq!(grunt.kind, WireMonsterKind::Grunt);
     assert_eq!((grunt.radius, grunt.max_hp), (0.4, 60));
+    assert_eq!(scarecrow.kind, WireMonsterKind::Scarecrow);
+    assert_eq!((scarecrow.radius, scarecrow.max_hp), (0.4, 60));
 }
 
 #[test]
@@ -370,6 +399,116 @@ fn a_refused_build_shows_the_reason_and_the_tile_on_the_wire() {
     );
 }
 
+/// 야영지에서 시작하는 방입니다. 허수아비 하나가 플레이어의 등장 지점 (32, 29.5)의 동쪽 1.5타일 (33.5, 29.5)에 섭니다.
+fn camp_with_a_scarecrow_beside_the_start() -> Sim {
+    sim_with(|t| {
+        t.camp.start = Start::WhenReady;
+        t.map.camp.scarecrows = vec![Vec2::new(33.5, 29.5)];
+    })
+}
+
+fn press(input: PlayerInput, id: caravan_rules::PlayerId) -> PlayerInputs {
+    PlayerInputs::from([(id, input)])
+}
+
+#[test]
+fn a_camp_maps_who_is_ready_and_the_seconds_until_the_expedition_starts() {
+    let mut sim = camp_with_a_scarecrow_beside_the_start();
+    let a = sim.add_player().unwrap();
+    let b = sim.add_player().unwrap();
+    let ready = PlayerInput {
+        toggle_ready: true,
+        ..PlayerInput::default()
+    };
+    assert_eq!(Snapshot::from_sim(&sim).expedition, 0);
+
+    step(&mut sim, &press(ready, a), 1);
+    let snapshot = Snapshot::from_sim(&sim);
+    assert_eq!(
+        snapshot.phase,
+        WirePhase::Camp {
+            ready: vec![a.0],
+            starting_in: None,
+            struck: vec![]
+        },
+        "one ready player does not start the countdown"
+    );
+
+    step(&mut sim, &press(ready, b), 1);
+    assert_eq!(
+        Snapshot::from_sim(&sim).phase,
+        WirePhase::Camp {
+            ready: vec![a.0, b.0],
+            starting_in: Some(3.0),
+            struck: vec![]
+        },
+        "countdown_secs is 3, shown as seconds"
+    );
+
+    step(&mut sim, &PlayerInputs::new(), 20);
+    assert_eq!(
+        Snapshot::from_sim(&sim).phase,
+        WirePhase::Camp {
+            ready: vec![a.0, b.0],
+            starting_in: Some(2.0),
+            struck: vec![]
+        }
+    );
+}
+
+#[test]
+fn a_scarecrow_that_was_hit_is_on_the_wire_with_the_tick_and_the_damage() {
+    let mut sim = camp_with_a_scarecrow_beside_the_start();
+    let fighter = sim.add_player().unwrap();
+    let scarecrow = sim.monsters().next().expect("the camp has a scarecrow").id;
+    let swing = PlayerInput {
+        aim: AimDir::new(1.0, 0.0),
+        attack: true,
+        ..PlayerInput::default()
+    };
+
+    step(&mut sim, &press(swing, fighter), 1);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let WirePhase::Camp { struck, .. } = snapshot.phase else {
+        panic!("the room is in the camp");
+    };
+    assert_eq!(
+        struck,
+        vec![WireStruck {
+            monster: scarecrow.0,
+            tick: snapshot.tick,
+            amount: sim.tuning().weapons.sword.damage
+        }]
+    );
+    assert_eq!(
+        snapshot.monsters[0].hp,
+        sim.tuning().monsters.scarecrow.max_hp
+    );
+}
+
+#[test]
+fn building_in_the_camp_shows_the_camp_as_the_reason_on_the_wire() {
+    let mut sim = camp_with_a_scarecrow_beside_the_start();
+    let builder = sim.add_player().unwrap();
+    let building = PlayerInput {
+        build: true,
+        aim: AimDir::new(0.0, -1.0),
+        ..PlayerInput::default()
+    };
+
+    step(&mut sim, &press(building, builder), 3);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let WireLife::Alive { build_refusal, .. } = snapshot.players[0].life else {
+        panic!("alive");
+    };
+    assert_eq!(
+        build_refusal.map(|refusal| refusal.why),
+        Some(WireCannotBuild::InCamp)
+    );
+}
+
 #[test]
 fn a_destroyed_tower_is_gone_from_the_wire() {
     // 감시탑은 마차의 남쪽 가장자리에 붙어 서고, 몬스터는 동쪽에서 나타나 감시탑 하나만 노리고 한 번에 부숩니다.
@@ -491,9 +630,10 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
 }
 
 #[test]
-fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
+fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_camp() {
     // 몬스터가 마차 바로 옆에서 나타나고, 플레이어를 쫓지 않으므로 마차만 공격합니다. 플레이어가 있어야 실패로 판정됩니다.
     let mut sim = sim_with(|t| {
+        t.camp.debrief_secs = 5.0;
         t.wagon.max_hp = 1;
         t.monsters.grunt.aggro_range = 0.1;
         a_monster_right_beside_the_wagon(t);
@@ -504,7 +644,7 @@ fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
     for _ in 0..100 {
         sim.step(&none);
         let snapshot = Snapshot::from_sim(&sim);
-        if matches!(snapshot.phase, WirePhase::Over { .. }) {
+        if matches!(snapshot.phase, WirePhase::Debrief { .. }) {
             over = Some(snapshot);
             break;
         }
@@ -512,20 +652,22 @@ fn an_expedition_that_ends_shows_its_outcome_and_the_seconds_until_the_next() {
     let over = over.expect("the wagon falls and the expedition ends");
     assert_eq!(
         over.phase,
-        WirePhase::Over {
+        WirePhase::Debrief {
             outcome: WireOutcome::Defeat,
-            secs_left: 5.0
+            secs_left: 5.0,
+            confirmed: vec![],
         },
-        "restart_secs is 5, shown as seconds"
+        "debrief_secs is 5, shown as seconds"
     );
     assert_eq!(over.wagon.hp, 0);
 
     step(&mut sim, &none, 20);
     assert_eq!(
         Snapshot::from_sim(&sim).phase,
-        WirePhase::Over {
+        WirePhase::Debrief {
             outcome: WireOutcome::Defeat,
-            secs_left: 4.0
+            secs_left: 4.0,
+            confirmed: vec![],
         }
     );
 }
@@ -828,6 +970,51 @@ fn a_shot_arrow_is_on_the_wire_with_its_position_and_direction_and_is_gone_when_
         Snapshot::from_sim(&sim).projectiles.is_empty(),
         "an arrow that ended is removed from the snapshot"
     );
+}
+
+#[test]
+fn the_welcome_lists_one_rack_for_each_weapon_in_whichever_stage_the_room_is() {
+    let expected: Vec<(WireWeaponKind, Vec2)> = Tuning::default()
+        .map
+        .camp
+        .racks()
+        .map(|(kind, pos)| (WireWeaponKind::of(kind), pos))
+        .collect();
+    assert_eq!(expected.len(), WeaponKind::ALL.len());
+
+    for start in [Start::WhenReady, Start::AtOnce] {
+        let mut sim = sim_with(|t| t.camp.start = start);
+        let first = sim.add_player().unwrap();
+
+        let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
+
+        let racks: Vec<(WireWeaponKind, Vec2)> = welcome
+            .world
+            .racks
+            .iter()
+            .map(|rack| (rack.kind, rack.pos.to_tiles()))
+            .collect();
+        assert_eq!(racks.len(), expected.len(), "{start:?}");
+        for ((kind, pos), (want_kind, want_pos)) in racks.iter().zip(&expected) {
+            assert_eq!(kind, want_kind, "{start:?}");
+            assert!(
+                (pos.x - want_pos.x).abs() <= WirePos::MAX_ERROR_TILES
+                    && (pos.y - want_pos.y).abs() <= WirePos::MAX_ERROR_TILES,
+                "{start:?}: {pos:?} for {want_pos:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_welcome_lists_the_nodes_of_the_expedition_even_while_the_room_is_in_the_camp() {
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
+    assert_eq!(sim.nodes().count(), 0, "the camp has no gather nodes");
+    let first = sim.add_player().unwrap();
+
+    let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
+
+    assert_eq!(welcome.world.nodes.len(), Tuning::default().map.nodes.len());
 }
 
 #[test]

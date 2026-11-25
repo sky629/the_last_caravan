@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use super::support::{Scenario, chest_tuning, nights};
+use super::support::{Scenario, chest_tuning, nights, phase};
 use crate::expedition::Phase;
 use crate::input::PlayerInputs;
 use crate::kind::WeaponKind;
@@ -24,9 +24,16 @@ fn layout(sim: &Sim) -> Layout {
         .collect()
 }
 
-/// 기본 맵과 기본 수치의 방을 씨앗 `seed`로 만듭니다.
+/// 야영지를 거치지 않고 첫날이 시작된 방입니다. 야영지에 상자가 없으므로, 상자를 시험하려면 원정을 시작해야 합니다.
+fn started(tuning: Tuning, seed: u64) -> Sim {
+    let mut sim = Sim::new(tuning, Seed(seed));
+    sim.begin_expedition();
+    sim
+}
+
+/// 기본 맵과 기본 수치로 첫날이 시작된 방을 씨앗 `seed`로 만듭니다.
 fn default_sim(seed: u64) -> Sim {
-    Sim::new(Tuning::default(), Seed(seed))
+    started(Tuning::default(), seed)
 }
 
 /// 낮이 1초이고 밤마다 몬스터가 하나인 기본 맵의 방입니다.
@@ -34,7 +41,7 @@ fn quick_days(seed: u64) -> Sim {
     let mut tuning = Tuning::default();
     tuning.cycle.day_secs = 1.0;
     tuning.nights.plans = nights(&[&[1], &[1], &[1]]);
-    Sim::new(tuning, Seed(seed))
+    started(tuning, seed)
 }
 
 /// 밤마다 몬스터를 모두 처치하면서 `days`일째 낮까지 진행하고, 날마다 낮이 시작된 때의 상자를 모읍니다.
@@ -43,7 +50,7 @@ fn layouts_of_days(mut sim: Sim, days: u32) -> Vec<Layout> {
     let mut found = vec![layout(&sim)];
     for day in 2..=days {
         let mut ticks = 0;
-        while !matches!(sim.phase(), Phase::Day { day: today, .. } if today == day) {
+        while !matches!(phase(&sim), Phase::Day { day: today, .. } if today == day) {
             sim.world_mut().monsters.clear();
             sim.step(&inputs);
             ticks += 1;
@@ -57,7 +64,7 @@ fn layouts_of_days(mut sim: Sim, days: u32) -> Vec<Layout> {
 fn post_of(monster: &Monster) -> Tile {
     match monster.order {
         Order::Guard { post } => post,
-        Order::Raid => panic!("{monster:?} is not a guard"),
+        Order::Raid | Order::Stand => panic!("{monster:?} is not a guard"),
     }
 }
 
@@ -132,7 +139,7 @@ fn the_sites_do_not_depend_on_the_weapon_table() {
 
         assert_eq!(
             sites(&default_sim(seed)),
-            sites(&Sim::new(other, Seed(seed))),
+            sites(&started(other, seed)),
             "seed {seed}"
         );
     }
@@ -157,7 +164,7 @@ fn chest_ids_are_not_reused_on_the_next_day() {
     let before: Vec<_> = sim.chests().map(|chest| chest.id).collect();
     let inputs = PlayerInputs::new();
 
-    while !matches!(sim.phase(), Phase::Day { day: 2, .. }) {
+    while !matches!(phase(&sim), Phase::Day { day: 2, .. }) {
         sim.world_mut().monsters.clear();
         sim.step(&inputs);
     }
@@ -174,11 +181,10 @@ fn chest_ids_are_not_reused_on_the_next_day() {
 #[test]
 fn a_new_expedition_draws_its_own_chests_and_repeats_for_the_same_room_seed() {
     let second_expedition = || {
-        let mut s = Scenario::default_game(|t| t.cycle.restart_secs = 0.1);
+        let mut s = Scenario::default_game(|_| {});
         let first = layout(&s.sim);
         s.player_at(32.0, 29.5);
-        s.set_wagon_hp(0);
-        s.run_until(200, |sim| sim.expedition_number() == 2);
+        s.restart_expedition();
         (first, layout(&s.sim))
     };
 
@@ -192,12 +198,11 @@ fn a_new_expedition_draws_its_own_chests_and_repeats_for_the_same_room_seed() {
 
 #[test]
 fn a_new_expedition_removes_the_old_chests_and_places_new_ones_with_new_ids() {
-    let mut s = Scenario::default_game(|t| t.cycle.restart_secs = 0.1);
+    let mut s = Scenario::default_game(|_| {});
     let old: Vec<_> = s.sim.chests().map(|chest| chest.id).collect();
     s.player_at(32.0, 29.5);
-    s.set_wagon_hp(0);
 
-    s.run_until(200, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
 
     let new: Vec<_> = s.sim.chests().map(|chest| chest.id).collect();
     assert_eq!(old.len(), 3);
@@ -232,7 +237,7 @@ fn after_nightfall_a_player_walks_onto_the_tile_the_chest_stood_on() {
         t.nights.plans = nights(&[&[1], &[1]]);
         chest_tuning(t, WeaponKind::Spear, 0);
     });
-    s.run_until(200, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    s.run_until(200, |sim| matches!(phase(sim), Phase::Night { .. }));
     let a = s.player_at(2.5, 4.5);
     s.hold_move(a, 0.0, -1.0);
 
@@ -252,7 +257,7 @@ fn a_player_standing_on_a_site_when_the_day_starts_is_pushed_off_the_chest() {
         t.nights.plans = nights(&[&[1], &[1]]);
         chest_tuning(t, WeaponKind::Spear, 0);
     });
-    s.run_until(200, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    s.run_until(200, |sim| matches!(phase(sim), Phase::Night { .. }));
     assert_eq!(s.sim.chests().count(), 0, "the chest left at nightfall");
     let a = s.player_at(2.5, 2.5);
     s.clear_monsters();
@@ -262,7 +267,7 @@ fn a_player_standing_on_a_site_when_the_day_starts_is_pushed_off_the_chest() {
         (s.player(a).pos.x - 2.5).abs() < 1e-3 && (s.player(a).pos.y - 2.5).abs() < 1e-3,
         "a player who gives no input stays where they stand at night"
     );
-    while !matches!(s.sim.phase(), Phase::Day { day: 2, .. }) {
+    while !matches!(phase(&s.sim), Phase::Day { day: 2, .. }) {
         s.clear_monsters();
         s.run_ticks(1);
     }
@@ -339,7 +344,7 @@ fn at_nightfall_the_unopened_chests_vanish_and_their_guards_march_to_the_wagon()
     assert_eq!(s.sim.chests().count(), 3);
     assert_eq!(s.sim.monsters().count(), 9);
 
-    s.run_until(100, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    s.run_until(100, |sim| matches!(phase(sim), Phase::Night { .. }));
 
     assert_eq!(s.sim.chests().count(), 0);
     assert!(

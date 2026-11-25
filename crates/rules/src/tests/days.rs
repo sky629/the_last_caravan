@@ -1,6 +1,6 @@
 //! 날의 흐름을 확인합니다: 낮과 밤, 밤의 무리와 등장하는 자리, 새벽에 낮이 시작될 때 이어지는 것과 회복되는 것, 성공과 새 원정.
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, nights, outcome, phase};
 use crate::expedition::{NightStep, Outcome, Phase};
 use crate::tuning::Tuning;
 
@@ -8,7 +8,7 @@ use crate::tuning::Tuning;
 fn run_until_fully_spawned(s: &mut Scenario) {
     s.run_until(2000, |sim| {
         matches!(
-            sim.phase(),
+            phase(sim),
             Phase::Night {
                 step: NightStep::Fighting { to_spawn: 0, .. },
                 ..
@@ -42,7 +42,7 @@ fn the_expedition_starts_on_the_first_day() {
     let s = Scenario::default_game(|_| {});
 
     assert_eq!(
-        s.sim.phase(),
+        phase(&s.sim),
         Phase::Day {
             day: 1,
             ticks_left: s.ticks(90.0)
@@ -58,7 +58,7 @@ fn the_first_night_begins_when_the_day_time_is_over() {
 
     s.run_ticks(day - 1);
     assert_eq!(
-        s.sim.phase(),
+        phase(&s.sim),
         Phase::Day {
             day: 1,
             ticks_left: 1
@@ -67,7 +67,7 @@ fn the_first_night_begins_when_the_day_time_is_over() {
 
     s.run_ticks(1);
     assert!(matches!(
-        s.sim.phase(),
+        phase(&s.sim),
         Phase::Night {
             day: 1,
             step: NightStep::Waiting { next_wave: 1, .. }
@@ -78,7 +78,7 @@ fn the_first_night_begins_when_the_day_time_is_over() {
 #[test]
 fn the_first_wave_appears_after_the_delay_one_monster_at_a_time() {
     let mut s = short_days(&[&[6]]);
-    s.run_until(100, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    s.run_until(100, |sim| matches!(phase(sim), Phase::Night { .. }));
     let delay = s.ticks(s.sim.tuning().nights.first_wave_delay_secs);
     let interval = s.ticks(s.sim.tuning().nights.spawn_interval_secs);
 
@@ -105,7 +105,7 @@ fn a_wave_is_not_cleared_while_monsters_are_still_to_come() {
     s.run_ticks(1);
 
     assert!(matches!(
-        s.sim.phase(),
+        phase(&s.sim),
         Phase::Night {
             step: NightStep::Fighting { wave: 1, .. },
             ..
@@ -120,7 +120,7 @@ fn the_next_wave_comes_after_a_pause_once_the_wave_is_cleared() {
 
     let pause = s.ticks(s.sim.tuning().nights.between_waves_secs);
     assert!(matches!(
-        s.sim.phase(),
+        phase(&s.sim),
         Phase::Night {
             day: 1,
             step: NightStep::Waiting { next_wave: 2, .. }
@@ -131,7 +131,7 @@ fn the_next_wave_comes_after_a_pause_once_the_wave_is_cleared() {
 
     s.run_ticks(2);
     assert!(matches!(
-        s.sim.phase(),
+        phase(&s.sim),
         Phase::Night {
             step: NightStep::Fighting { wave: 2, .. },
             ..
@@ -149,18 +149,18 @@ fn clearing_the_last_wave_of_a_night_brings_the_dawn_and_then_the_next_day() {
 
     let dawn = s.ticks(s.sim.tuning().cycle.dawn_secs);
     assert_eq!(
-        s.sim.phase(),
+        phase(&s.sim),
         Phase::Dawn {
             next_day: 2,
             ticks_left: dawn
         }
     );
     s.run_ticks(dawn - 1);
-    assert!(matches!(s.sim.phase(), Phase::Dawn { next_day: 2, .. }));
+    assert!(matches!(phase(&s.sim), Phase::Dawn { next_day: 2, .. }));
 
     s.run_ticks(1);
     assert_eq!(
-        s.sim.phase(),
+        phase(&s.sim),
         Phase::Day {
             day: 2,
             ticks_left: s.ticks(0.5)
@@ -185,7 +185,7 @@ fn the_next_day_keeps_the_village_and_restores_every_player() {
     let positions: Vec<_> = [hurt, downed, dead].map(|id| s.player(id).pos).to_vec();
 
     defeat_the_current_wave(&mut s);
-    s.run_until(400, |sim| matches!(sim.phase(), Phase::Day { day: 2, .. }));
+    s.run_until(400, |sim| matches!(phase(sim), Phase::Day { day: 2, .. }));
 
     for (id, pos) in [hurt, downed, dead].into_iter().zip(positions) {
         assert!(s.player(id).is_alive(), "player {id:?} is up again");
@@ -199,61 +199,63 @@ fn the_next_day_keeps_the_village_and_restores_every_player() {
 }
 
 #[test]
-fn clearing_every_night_is_a_victory_and_a_new_expedition_starts_on_the_first_day() {
+fn clearing_every_night_is_a_victory() {
     let mut s = short_days(&[&[1], &[1]]);
     s.player_at(2.0, 2.0);
     defeat_the_current_wave(&mut s);
-    s.run_until(400, |sim| matches!(sim.phase(), Phase::Day { day: 2, .. }));
-    assert!(
-        !matches!(s.sim.phase(), Phase::Over { .. }),
-        "a night is left"
-    );
+    s.run_until(400, |sim| matches!(phase(sim), Phase::Day { day: 2, .. }));
+    assert_eq!(outcome(&s.sim), None, "a night is left");
 
     defeat_the_current_wave(&mut s);
 
-    let restart = s.ticks(s.sim.tuning().cycle.restart_secs);
-    assert!(
-        matches!(
-            s.sim.phase(),
-            Phase::Over {
-                outcome: Outcome::Victory,
-                ..
-            }
-        ),
-        "got {:?}",
-        s.sim.phase()
-    );
-    s.run_ticks(restart - 2);
-    assert_eq!(
-        s.sim.expedition_number(),
-        1,
-        "the result is still on the screen"
-    );
-    s.run_ticks(2);
-    assert_eq!(s.sim.expedition_number(), 2);
-    assert!(matches!(s.sim.phase(), Phase::Day { day: 1, .. }));
+    assert_eq!(outcome(&s.sim), Some(Outcome::Victory));
+    assert_eq!(s.sim.expedition_number(), 1);
 }
 
 #[test]
-fn a_failure_by_day_starts_a_new_expedition_on_the_first_day() {
+fn a_failure_by_day_ends_the_expedition() {
     let mut s = short_days(&[&[1], &[1]]);
     s.player_at(2.0, 2.0);
     defeat_the_current_wave(&mut s);
-    s.run_until(400, |sim| matches!(sim.phase(), Phase::Day { day: 2, .. }));
+    s.run_until(400, |sim| matches!(phase(sim), Phase::Day { day: 2, .. }));
 
     s.set_wagon_hp(0);
     s.run_ticks(1);
-    assert!(matches!(
-        s.sim.phase(),
-        Phase::Over {
-            outcome: Outcome::Defeat,
-            ..
-        }
-    ));
 
-    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 1);
-    assert_eq!(s.sim.expedition_number(), 2);
-    assert!(matches!(s.sim.phase(), Phase::Day { day: 1, .. }));
+    assert_eq!(outcome(&s.sim), Some(Outcome::Defeat));
+}
+
+#[test]
+fn the_result_names_the_day_the_expedition_ended_on() {
+    let reported_day = |s: &Scenario| s.sim.debrief().expect("the result is shown").report().day;
+
+    let mut won = short_days(&[&[1], &[1]]);
+    won.player_at(2.0, 2.0);
+    defeat_the_current_wave(&mut won);
+    won.run_until(400, |sim| matches!(phase(sim), Phase::Day { day: 2, .. }));
+    defeat_the_current_wave(&mut won);
+    assert_eq!(reported_day(&won), 2, "a victory ends on the last day");
+
+    let mut lost_by_day = short_days(&[&[1], &[1]]);
+    lost_by_day.player_at(2.0, 2.0);
+    lost_by_day.set_wagon_hp(0);
+    lost_by_day.run_ticks(1);
+    assert_eq!(reported_day(&lost_by_day), 1);
+
+    let mut lost_at_dawn = short_days(&[&[1], &[1]]);
+    lost_at_dawn.player_at(2.0, 2.0);
+    defeat_the_current_wave(&mut lost_at_dawn);
+    assert!(matches!(
+        phase(&lost_at_dawn.sim),
+        Phase::Dawn { next_day: 2, .. }
+    ));
+    lost_at_dawn.set_wagon_hp(0);
+    lost_at_dawn.run_ticks(1);
+    assert_eq!(
+        reported_day(&lost_at_dawn),
+        1,
+        "the dawn belongs to the night that has just passed"
+    );
 }
 
 #[test]
@@ -332,14 +334,14 @@ fn the_alive_cap_pauses_the_spawning_until_monsters_are_gone() {
     assert_eq!(monster_count(&s), 5);
     assert!(
         matches!(
-            s.sim.phase(),
+            phase(&s.sim),
             Phase::Night {
                 step: NightStep::Fighting { to_spawn: 7, .. },
                 ..
             }
         ),
         "the rest waits, got {:?}",
-        s.sim.phase()
+        phase(&s.sim)
     );
 
     s.clear_monsters();

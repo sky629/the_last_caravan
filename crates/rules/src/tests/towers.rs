@@ -4,7 +4,6 @@
 
 use super::support::Scenario;
 use crate::build::CannotBuild;
-use crate::expedition::{Outcome, Phase};
 use crate::input::PlayerInput;
 use crate::math::Rect;
 use crate::structures::{Shot, TowerState};
@@ -424,9 +423,8 @@ fn a_new_expedition_removes_the_towers_and_refills_the_stash() {
     let mut s = field_with_tower();
     s.player_at(15.0, 3.0);
     s.set_stash(3);
-    s.set_wagon_hp(0);
 
-    s.run_until(400, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
 
     assert_eq!(s.sim.towers().count(), 0);
     assert_eq!(s.sim.stash(), s.sim.tuning().wagon.start_stash);
@@ -436,8 +434,7 @@ fn a_new_expedition_removes_the_towers_and_refills_the_stash() {
 fn a_new_expedition_frees_the_tiles_the_towers_stood_on() {
     let mut s = field_with_tower();
     let a = s.player_at(5.0, 17.5);
-    s.set_wagon_hp(0);
-    s.run_until(400, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
     // 원정이 시작되면 플레이어는 등장 지점으로 돌아갑니다. 다시 (5, 17.5)로 옮겨서 감시탑이 있던 자리를 지나 걷게 합니다.
     s.sim.world_mut().players.get_mut(&a).unwrap().pos = crate::math::Vec2::new(5.0, 17.5);
 
@@ -462,11 +459,7 @@ fn start_towers_stand_at_full_hp_when_the_expedition_begins_and_again_after_a_ne
     assert_eq!(standing, vec![(sites[0], 300), (sites[1], 300)]);
 
     s.set_tower_hp(10);
-    s.sim.set_phase(Phase::Over {
-        outcome: Outcome::Defeat,
-        ticks_left: 1,
-    });
-    s.run_ticks(1);
+    s.restart_expedition();
 
     assert_eq!(s.sim.expedition_number(), 2);
     let standing: Vec<(Tile, u32)> = s

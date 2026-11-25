@@ -4,7 +4,7 @@
 //! 시나리오는 20 x 20 맵이고 마차는 (17, 17)에서 (19, 19)까지입니다. 채집 지점 (2, 2)는 마을의 범위(10타일) 밖에 있고,
 //! 지점마다 몬스터가 둘 지킵니다. 지키는 자리는 지점의 이웃 타일 가운데 상하좌우가 먼저이므로 동쪽 (3, 2)와 서쪽 (1, 2)입니다.
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, nights, phase};
 use crate::expedition::{NightStep, Phase};
 use crate::math::Vec2;
 use crate::monster::{Monster, Order};
@@ -25,7 +25,7 @@ fn guards(s: &Scenario) -> Vec<Monster> {
 fn post_of(monster: &Monster) -> Tile {
     match monster.order {
         Order::Guard { post } => post,
-        Order::Raid => panic!("{monster:?} is not a guard"),
+        Order::Raid | Order::Stand => panic!("{monster:?} is not a guard"),
     }
 }
 
@@ -174,7 +174,7 @@ fn at_nightfall_a_guard_heads_for_the_wagon_instead_of_going_back_to_its_post() 
             .all(|m| matches!(m.order, Order::Guard { .. }))
     );
 
-    s.run_until(100, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    s.run_until(100, |sim| matches!(phase(sim), Phase::Night { .. }));
     assert!(
         guards(&s).iter().all(|m| m.order == Order::Raid),
         "the day's monsters take the order of the night's"
@@ -214,7 +214,7 @@ fn guards_that_were_killed_by_day_are_not_there_at_night() {
     let killed = guards(&s)[0].id;
     s.sim.world_mut().monsters.retain(|m| m.id != killed);
 
-    s.run_until(100, |sim| matches!(sim.phase(), Phase::Night { .. }));
+    s.run_until(100, |sim| matches!(phase(sim), Phase::Night { .. }));
 
     assert_eq!(guards(&s).len(), 1);
 }
@@ -234,7 +234,7 @@ fn two_short_days() -> Scenario {
 fn clear_the_night(s: &mut Scenario, day: u32) {
     s.run_until(2000, |sim| {
         matches!(
-            sim.phase(),
+            phase(sim),
             Phase::Night {
                 step: NightStep::Fighting { to_spawn: 0, .. },
                 ..
@@ -244,7 +244,7 @@ fn clear_the_night(s: &mut Scenario, day: u32) {
     s.clear_monsters();
     s.run_until(
         2000,
-        |sim| matches!(sim.phase(), Phase::Day { day: d, .. } if d == day),
+        |sim| matches!(phase(sim), Phase::Day { day: d, .. } if d == day),
     );
 }
 
@@ -268,13 +268,11 @@ fn every_new_day_places_the_guards_again_exactly_once() {
 fn a_new_expedition_starts_with_its_guards_too() {
     let mut s = two_short_days();
     s.player_at(10.0, 10.0);
-    s.set_wagon_hp(0);
-
-    s.run_until(2000, |sim| sim.expedition_number() == 2);
+    s.restart_expedition();
     s.run_ticks(3);
 
     assert_eq!(guards(&s).len(), 2, "two, not four");
-    assert!(matches!(s.sim.phase(), Phase::Day { day: 1, .. }));
+    assert!(matches!(phase(&s.sim), Phase::Day { day: 1, .. }));
 }
 
 #[test]
@@ -283,7 +281,7 @@ fn a_night_is_not_cleared_while_a_guard_who_became_a_raider_is_alive() {
     let guard_ids: Vec<_> = guards(&s).iter().map(|m| m.id).collect();
     s.run_until(2000, |sim| {
         matches!(
-            sim.phase(),
+            phase(sim),
             Phase::Night {
                 step: NightStep::Fighting { to_spawn: 0, .. },
                 ..
@@ -299,14 +297,14 @@ fn a_night_is_not_cleared_while_a_guard_who_became_a_raider_is_alive() {
 
     assert!(
         matches!(
-            s.sim.phase(),
+            phase(&s.sim),
             Phase::Night {
                 step: NightStep::Fighting { .. },
                 ..
             }
         ),
         "the former guards still count, got {:?}",
-        s.sim.phase()
+        phase(&s.sim)
     );
 }
 

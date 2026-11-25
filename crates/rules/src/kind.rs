@@ -7,10 +7,13 @@
 pub enum MonsterKind {
     /// 마차를 향해 걸어가서 근접 공격을 하는 기본 몬스터입니다.
     Grunt,
+    /// 야영지에 서 있는 허수아비입니다. 무기를 시험하는 과녁이고, 움직이지 않고 공격하지 않습니다.
+    /// 야영지에서는 아무것도 피해를 받지 않으므로 쓰러지지 않습니다.
+    Scarecrow,
 }
 
 impl MonsterKind {
-    pub const ALL: [MonsterKind; 1] = [MonsterKind::Grunt];
+    pub const ALL: [MonsterKind; 2] = [MonsterKind::Grunt, MonsterKind::Scarecrow];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -8,7 +8,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use caravan_client_core as core;
 use caravan_protocol::{
-    MonsterKindInfo, NodeInfo, WeaponInfo, WireDelivery, WireMonsterKind, WireWeaponKind,
+    MonsterKindInfo, NodeInfo, RackInfo, WeaponInfo, WireDelivery, WireMonsterKind, WireWeaponKind,
 };
 use caravan_rules::{Team, Vec2 as Ground};
 
@@ -32,6 +32,8 @@ pub struct Scene {
     pub nodes: Vec<NodeInfo>,
     /// 채집 지점이 가득 찼을 때의 양입니다. 지점의 막대를 그리는 기준입니다.
     pub node_amount: u32,
+    /// 야영지의 무기 진열대입니다. 진열대는 야영지의 스냅샷일 때만 그립니다.
+    pub racks: Vec<RackInfo>,
     /// 무기마다 공격이 전달되는 방식입니다. 근접 효과를 그리는 거리와 각도가 여기에서 옵니다.
     weapons: Vec<WeaponInfo>,
     monsters: Vec<MonsterLook>,
@@ -174,6 +176,7 @@ pub fn spawn_world(
         map_size: (map_size.x as u16, map_size.y as u16),
         nodes: world.nodes.clone(),
         node_amount: world.node_amount,
+        racks: world.racks.clone(),
         weapons: world.weapons.clone(),
         monsters,
     });

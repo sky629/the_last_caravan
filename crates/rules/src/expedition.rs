@@ -1,11 +1,11 @@
 //! 원정의 진행입니다. 원정은 첫날의 낮부터 성공이나 실패까지의 한 판이고, 날마다 낮 한 번과 밤 한 번이 있습니다.
 //! 낮의 시간이 끝나면 밤이 되고, 밤의 무리를 한 마리씩 등장시키고, 무리를 모두 처치하면 다음 날의 낮이 시작됩니다.
-//! 마지막 밤을 막거나 실패하면 결과를 보여 주고 새 원정을 시작합니다.
+//! 마지막 밤을 막거나 실패하면 원정이 끝나고, 방은 결과 화면(`Stage::Debrief`)으로 넘어갑니다.
 //!
 //! 단계를 바꾸는 곳은 이 파일의 `advance_phase`와 `settle_outcome` 둘뿐입니다.
 //! 단계가 바뀔 때 함께 일어나는 일(낮이 시작되면 모든 플레이어가 회복되고 낮의 몬스터가 놓이고, 밤이 되면 낮의 몬스터가 마차를 향함)도
 //! 단계를 바꾸는 바로 그 자리에서 부르므로, 단계와 그 일이 어긋날 수 없습니다.
-//! 첫날의 낮은 `Sim`이 원정을 시작하면서 `begin_day`를 불러 시작합니다.
+//! 첫날의 낮은 `Sim::begin_expedition`이 `begin_day`를 불러 시작합니다.
 
 use crate::loot::{self, Seed};
 use crate::math::Vec2;
@@ -22,10 +22,10 @@ use crate::world::World;
 ///   새 원정 -> Day{1} --낮의 시간이 끝남--> Night{1, Waiting{1}} --대기--> Night{1, Fighting{1}}
 ///   Night{d, Fighting{w}} --몬스터가 모두 사라짐--> Night{d, Waiting{w + 1}}                (그 밤의 마지막 무리가 아니면)
 ///   Night{d, Fighting{마지막 무리}} --몬스터가 모두 사라짐--> Dawn{d + 1} --대기--> Day{d + 1}    (마지막 밤이 아니면)
-///   Night{마지막 밤, Fighting{마지막 무리}} --몬스터가 모두 사라짐--> Over{Victory}
-///   Over를 뺀 모든 단계 --마차 HP 0, 또는 살아 있는 플레이어 없음--> Over{Defeat}
-///   Over{..} --대기--> 새 원정 (Sim::reset_expedition)
+///   Night{마지막 밤, Fighting{마지막 무리}} --몬스터가 모두 사라짐--> 원정이 끝남(Victory)
+///   모든 단계 --마차 HP 0, 또는 살아 있는 플레이어 없음--> 원정이 끝남(Defeat)
 /// ```
+/// 원정이 끝나면 `settle_outcome`이 결과를 돌려주고, `Sim`이 방을 결과 화면으로 옮깁니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     /// `day`번째 날의 낮입니다. `ticks_left`가 지나면 밤이 됩니다.
@@ -34,8 +34,6 @@ pub enum Phase {
     Night { day: u32, step: NightStep },
     /// 밤의 무리를 모두 처치했고, `ticks_left`가 지나면 `next_day`번째 날의 낮이 시작됩니다.
     Dawn { next_day: u32, ticks_left: u32 },
-    /// 결과를 보여 주는 동안 세계가 멈춥니다. 카운트다운이 끝나면 새 원정이 시작됩니다.
-    Over { outcome: Outcome, ticks_left: u32 },
 }
 
 /// 밤 안에서의 진행입니다. 무리의 번호는 그 밤 안에서 1부터 셉니다.
@@ -68,14 +66,6 @@ pub(crate) fn opening_phase(t: &Tuning) -> Phase {
     }
 }
 
-/// `Sim::step`이 이번 Tick의 나머지를 어떻게 처리할지 정합니다.
-pub(crate) enum Advance {
-    Simulate,
-    /// 결과를 보여 주는 중이므로 세계를 진행하지 않습니다.
-    Frozen,
-    StartNewExpedition,
-}
-
 /// Tick의 맨 앞에서 카운트다운을 진행하고, 때가 되면 밤이나 낮을 시작하거나 몬스터를 한 마리 등장시킵니다.
 pub(crate) fn advance_phase(
     phase: &mut Phase,
@@ -83,21 +73,8 @@ pub(crate) fn advance_phase(
     spawns: &SpawnPlan,
     expedition: Seed,
     t: &Tuning,
-) -> Advance {
+) {
     match *phase {
-        Phase::Over {
-            outcome,
-            ticks_left,
-        } => {
-            if ticks_left <= 1 {
-                return Advance::StartNewExpedition;
-            }
-            *phase = Phase::Over {
-                outcome,
-                ticks_left: ticks_left - 1,
-            };
-            Advance::Frozen
-        }
         Phase::Day { day, ticks_left } => {
             *phase = if ticks_left > 1 {
                 Phase::Day {
@@ -114,7 +91,6 @@ pub(crate) fn advance_phase(
                     },
                 }
             };
-            Advance::Simulate
         }
         Phase::Dawn {
             next_day,
@@ -132,39 +108,35 @@ pub(crate) fn advance_phase(
                 };
                 begin_day(world, spawns, expedition, next_day, t);
             }
-            Advance::Simulate
         }
-        Phase::Night { day, step } => {
-            match step {
-                NightStep::Waiting {
-                    next_wave,
-                    ticks_left,
-                } => {
-                    if ticks_left > 1 {
-                        *phase = Phase::Night {
-                            day,
-                            step: NightStep::Waiting {
-                                next_wave,
-                                ticks_left: ticks_left - 1,
-                            },
-                        };
-                    } else {
-                        let to_spawn = t.nights.wave(day, next_wave).map_or(0, |wave| wave.count);
-                        *phase = Phase::Night {
-                            day,
-                            step: NightStep::Fighting {
-                                wave: next_wave,
-                                to_spawn,
-                                spawn_in_ticks: 0,
-                            },
-                        };
-                        spawn_next(phase, world, spawns, t);
-                    }
+        Phase::Night { day, step } => match step {
+            NightStep::Waiting {
+                next_wave,
+                ticks_left,
+            } => {
+                if ticks_left > 1 {
+                    *phase = Phase::Night {
+                        day,
+                        step: NightStep::Waiting {
+                            next_wave,
+                            ticks_left: ticks_left - 1,
+                        },
+                    };
+                } else {
+                    let to_spawn = t.nights.wave(day, next_wave).map_or(0, |wave| wave.count);
+                    *phase = Phase::Night {
+                        day,
+                        step: NightStep::Fighting {
+                            wave: next_wave,
+                            to_spawn,
+                            spawn_in_ticks: 0,
+                        },
+                    };
+                    spawn_next(phase, world, spawns, t);
                 }
-                NightStep::Fighting { .. } => spawn_next(phase, world, spawns, t),
             }
-            Advance::Simulate
-        }
+            NightStep::Fighting { .. } => spawn_next(phase, world, spawns, t),
+        },
     }
 }
 
@@ -243,21 +215,22 @@ fn spawn_next(phase: &mut Phase, world: &mut World, spawns: &SpawnPlan, t: &Tuni
     );
 }
 
-/// Tick의 맨 끝에서 원정이 끝났는지, 무리를 모두 처치했는지 판정합니다.
+/// 단계가 속한 날입니다. 새벽은 막 지난 밤의 날입니다.
+pub(crate) fn day_of(phase: Phase) -> u32 {
+    match phase {
+        Phase::Day { day, .. } | Phase::Night { day, .. } => day,
+        Phase::Dawn { next_day, .. } => next_day.saturating_sub(1),
+    }
+}
+
+/// Tick의 맨 끝에서 원정이 끝났는지, 무리를 모두 처치했는지 판정합니다. 원정이 끝났으면 결과를 돌려주고, 단계는 그대로 둡니다.
 /// 실패를 먼저 검사하므로, 마지막 몬스터가 죽은 Tick에 마차도 부서졌다면 실패입니다. 실패는 낮에도 밤에도 같습니다.
 /// 플레이어가 한 명도 없는 방은 실패하지 않습니다.
-pub(crate) fn settle_outcome(phase: &mut Phase, world: &World, t: &Tuning) {
-    if matches!(phase, Phase::Over { .. }) {
-        return;
-    }
+pub(crate) fn settle_outcome(phase: &mut Phase, world: &World, t: &Tuning) -> Option<Outcome> {
     let defeated = !world.players.is_empty()
         && (world.wagon.hp == 0 || world.players.values().all(|player| !player.is_alive()));
     if defeated {
-        *phase = Phase::Over {
-            outcome: Outcome::Defeat,
-            ticks_left: t.ticks(t.cycle.restart_secs),
-        };
-        return;
+        return Some(Outcome::Defeat);
     }
     if let Phase::Night {
         day,
@@ -267,24 +240,22 @@ pub(crate) fn settle_outcome(phase: &mut Phase, world: &World, t: &Tuning) {
     } = *phase
         && world.monsters.is_empty()
     {
-        *phase = if wave < t.nights.wave_count(day) {
-            Phase::Night {
+        if wave < t.nights.wave_count(day) {
+            *phase = Phase::Night {
                 day,
                 step: NightStep::Waiting {
                     next_wave: wave + 1,
                     ticks_left: t.ticks(t.nights.between_waves_secs),
                 },
-            }
+            };
         } else if day < t.day_count() {
-            Phase::Dawn {
+            *phase = Phase::Dawn {
                 next_day: day + 1,
                 ticks_left: t.ticks(t.cycle.dawn_secs),
-            }
+            };
         } else {
-            Phase::Over {
-                outcome: Outcome::Victory,
-                ticks_left: t.ticks(t.cycle.restart_secs),
-            }
-        };
+            return Some(Outcome::Victory);
+        }
     }
+    None
 }

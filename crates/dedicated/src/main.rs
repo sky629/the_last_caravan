@@ -9,6 +9,7 @@
 //! - `--stress`: 마차, 감시탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
 //!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
 //!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다. 플레이어는 검과 활을 함께 가지고 시작합니다.
+//!   사람의 조작 없이 원정이 진행되어야 하므로 야영지를 건너뜁니다. 방은 만들어지자마자 첫날을 시작하고, 결과를 한 Tick만 보여 준 뒤 새 원정을 시작합니다.
 //! - `--seed 42`: 모든 방의 무작위를 이 씨앗 하나로 정합니다. 씨앗을 주지 않으면 방마다, 서버를 실행할 때마다 다른 씨앗을 씁니다.
 //!   방을 만들 때 출력하는 씨앗을 이 옵션에 주면 같은 상태에서 다시 시작합니다.
 //!
@@ -22,7 +23,7 @@ use std::time::{Duration, Instant};
 mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
-use caravan_rules::{Loadout, MonsterKind, NightPlan, Seed, Tuning, WavePlan, WeaponKind};
+use caravan_rules::{Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WeaponKind};
 use caravan_server::{GameServer, RoomSeeds};
 use caravan_ws_server::WsServer;
 use report::TickTimer;
@@ -138,6 +139,8 @@ fn tuning_from(options: &Options) -> Tuning {
         tuning.player.start_loadout = Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow));
         tuning.cycle.day_secs = tuning.dt();
         tuning.nights.spawn_interval_secs = tuning.dt();
+        tuning.camp.start = Start::AtOnce;
+        tuning.camp.debrief_secs = tuning.dt();
     }
     tuning
 }
@@ -359,6 +362,24 @@ mod tests {
             tuning.nights.plans,
             Tuning::default().nights.plans,
             "wave sizes stay"
+        );
+    }
+
+    #[test]
+    fn stress_skips_the_camp_and_starts_a_new_expedition_one_tick_after_each_result() {
+        let tuning = tuning_from(&parse_args(&args(&["--stress"])).unwrap());
+        assert_eq!(tuning.camp.start, Start::AtOnce);
+        assert_eq!(tuning.ticks(tuning.camp.debrief_secs), 1);
+        let sim = caravan_rules::Sim::new(tuning, Seed(1));
+        assert_eq!(sim.expedition_number(), 1, "no camp and no waiting");
+        assert!(sim.phase().is_some());
+
+        let normal = tuning_from(&parse_args(&[]).unwrap());
+        assert_eq!(normal.camp.start, Start::WhenReady);
+        assert_eq!(
+            caravan_rules::Sim::new(normal, Seed(1)).expedition_number(),
+            0,
+            "a normal server starts every room in the camp"
         );
     }
 

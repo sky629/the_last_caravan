@@ -1,4 +1,4 @@
-//! 한 원정 동안 변하는 상태(`World`), 한 Tick 동안 규칙이 읽는 값(`Ctx`),
+//! 한 원정과 그 앞의 야영지 동안 변하는 상태(`World`), 한 Tick 동안 규칙이 읽는 값(`Ctx`),
 //! 그리고 피해가 상태로 바뀌는 유일한 곳(`World::apply_hits`)입니다.
 //!
 //! 공격하는 쪽(플레이어, 감시탑, 몬스터)은 피해를 직접 적용하지 않고 `Hit`만 만듭니다.
@@ -23,7 +23,7 @@ use crate::ids::{
 };
 use crate::input::PlayerInputs;
 use crate::kind::{MonsterKind, StructureKind, WeaponKind};
-use crate::loot::{Chest, GroundWeapon};
+use crate::loot::{Chest, GroundWeapon, Rack};
 use crate::math::Vec2;
 use crate::monster::{Monster, Order};
 use crate::player::Player;
@@ -36,7 +36,7 @@ use crate::tuning::Tuning;
 pub use tiles::Tile;
 pub(crate) use tiles::{TileMap, TileUse};
 
-/// 원정 동안 변하는 상태 전체입니다. `Sim`이 하나만 가집니다.
+/// 원정과 야영지 동안 변하는 상태 전체입니다. `Sim`이 하나만 가집니다.
 /// 순회 순서가 번호 순서로 정해지도록 `HashMap` 대신 `BTreeMap`을 씁니다. 그래야 같은 입력이 항상 같은 결과를 냅니다.
 pub(crate) struct World {
     pub players: BTreeMap<PlayerId, Player>,
@@ -59,6 +59,8 @@ pub(crate) struct World {
     pub chests: Vec<Chest>,
     /// 바닥에 놓인 무기입니다. 번호가 작은 무기가 앞에 옵니다. 원정이 끝날 때까지 남습니다.
     pub ground_weapons: Vec<GroundWeapon>,
+    /// 야영지의 무기 진열대입니다. 야영지에만 있고 `WeaponKind::ALL`의 순서입니다.
+    pub racks: Vec<Rack>,
     /// 읽기만 할 수 있습니다. `TileMap::set`은 이 모듈 밖에서 부를 수 없습니다.
     pub tiles: TileMap,
     /// 감시탑이 생기거나, 서거나, 사라질 때마다 올라가고 줄어들지 않습니다.
@@ -72,6 +74,15 @@ pub(crate) struct World {
     next_ground_weapon: u32,
 }
 
+/// 세계를 어떤 모습으로 놓는지입니다. 두 모습은 같은 지도를 씁니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Layout {
+    /// 야영지입니다. 채집 지점, 상자, 감시탑이 없고, 허수아비와 무기 진열대가 있습니다. 보관함은 비어 있습니다.
+    Camp,
+    /// 원정의 첫날이 시작되기 직전입니다. 채집 지점이 가득 차 있고, 감시탑은 `village.start_towers`에 적힌 것뿐이고, 보관함에는 시작 자원이 있습니다.
+    Expedition,
+}
+
 /// 원정이 시작될 때의 지면입니다. 장애물과 마차에 채집 지점을 더한 타일 지도와, 가득 찬 채집 지점입니다.
 fn ground(t: &Tuning) -> (TileMap, Vec<GatherNode>) {
     let nodes = resources::nodes_of(t);
@@ -83,22 +94,21 @@ fn ground(t: &Tuning) -> (TileMap, Vec<GatherNode>) {
 }
 
 impl World {
-    /// 원정이 시작될 때의 세계입니다. 플레이어, 몬스터, 떨어진 자원은 없고, 감시탑은 `village.start_towers`에 적힌 것뿐입니다.
-    /// 보관함에는 시작 자원이 있고, 채집 지점은 가득 차 있습니다.
-    pub fn new(t: &Tuning) -> World {
-        let (tiles, nodes) = ground(t);
+    /// 플레이어가 없는 세계를 `layout`의 모습으로 만듭니다.
+    pub fn new(t: &Tuning, layout: Layout) -> World {
         let mut world = World {
             players: BTreeMap::new(),
             monsters: Vec::new(),
             projectiles: Vec::new(),
             towers: BTreeMap::new(),
             wagon: Wagon::new(t),
-            nodes,
+            nodes: Vec::new(),
             piles: Vec::new(),
-            stash: t.wagon.start_stash,
+            stash: 0,
             chests: Vec::new(),
             ground_weapons: Vec::new(),
-            tiles,
+            racks: Vec::new(),
+            tiles: TileMap::from_map(&t.map),
             layout_revision: 0,
             next_monster: 1,
             next_projectile: 1,
@@ -107,24 +117,44 @@ impl World {
             next_chest: 1,
             next_ground_weapon: 1,
         };
-        world.place_start_towers(t);
+        world.restart(t, layout);
         world
     }
 
-    /// 새 원정을 위해 몬스터, 탄환, 감시탑, 마차, 보관함, 채집 지점, 떨어진 자원, 무기 상자, 바닥의 무기, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
-    /// 번호를 세는 값은 되돌리지 않으므로 이전 원정의 번호가 다시 쓰이지 않습니다.
-    pub fn restart(&mut self, t: &Tuning) {
+    /// 플레이어만 남기고 세계를 `layout`의 모습으로 다시 놓습니다. 몬스터(허수아비 포함), 탄환, 감시탑, 떨어진 자원, 무기 상자, 바닥의 무기, 진열대를 모두 치우고,
+    /// 마차를 최대 HP로 되돌리고, 타일 지도를 다시 만듭니다. 야영지에서 생긴 것은 원정으로 이어지지 않고, 원정에서 생긴 것은 야영지로 이어지지 않습니다.
+    /// 번호를 세는 값은 되돌리지 않으므로 이전에 쓴 번호가 다시 쓰이지 않습니다. `layout_revision`이 올라가므로 이동 경로는 다음 `sync`에서 다시 만들어집니다.
+    pub fn restart(&mut self, t: &Tuning, layout: Layout) {
         self.monsters.clear();
         self.projectiles.clear();
         self.towers.clear();
         self.piles.clear();
         self.chests.clear();
         self.ground_weapons.clear();
+        self.racks.clear();
         self.wagon = Wagon::new(t);
-        self.stash = t.wagon.start_stash;
-        (self.tiles, self.nodes) = ground(t);
         self.layout_revision += 1;
-        self.place_start_towers(t);
+        match layout {
+            Layout::Expedition => {
+                (self.tiles, self.nodes) = ground(t);
+                self.stash = t.wagon.start_stash;
+                self.place_start_towers(t);
+            }
+            Layout::Camp => {
+                self.tiles = TileMap::from_map(&t.map);
+                self.nodes = Vec::new();
+                self.stash = 0;
+                for spot in &t.map.camp.scarecrows {
+                    self.spawn_monster(MonsterKind::Scarecrow, Order::Stand, *spot, t);
+                }
+                self.racks = t
+                    .map
+                    .camp
+                    .racks()
+                    .map(|(kind, pos)| Rack { kind, pos })
+                    .collect();
+            }
+        }
     }
 
     /// 원정이 시작될 때 이미 서 있는 감시탑을 최대 HP로 놓습니다.
@@ -258,6 +288,8 @@ pub(crate) struct Ctx<'a> {
     pub inputs: &'a PlayerInputs,
     pub grid: &'a MonsterGrid,
     pub tick: u64,
+    /// 야영지의 Tick이면 참입니다. 건설 요청을 받지 않습니다(`build::start_builds`).
+    pub practice: bool,
 }
 
 /// 피해를 받거나 쫓기는 대상입니다.
