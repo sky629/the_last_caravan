@@ -105,7 +105,7 @@ impl Session {
                 None
             }
             (Session::InRoom(joined), ClientEvent::Message(ServerMsg::Snapshot(snapshot))) => {
-                joined.snapshots.push(snapshot);
+                joined.snapshots.push(*snapshot);
                 None
             }
             (Session::Connecting { server, .. }, ClientEvent::Disconnected { reason }) => {
@@ -347,7 +347,7 @@ mod tests {
         session.on_event(ClientEvent::Disconnected {
             reason: "closed".to_string(),
         });
-        session.on_event(message(ServerMsg::Snapshot(snapshot(1))));
+        session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(1)))));
         assert!(matches!(session, Session::Failed { .. }));
         assert!(session.frame().is_none());
     }
@@ -442,9 +442,9 @@ mod tests {
             "nothing to draw before a snapshot"
         );
 
-        session.on_event(message(ServerMsg::Snapshot(snapshot(5))));
-        session.on_event(message(ServerMsg::Snapshot(snapshot(4))));
-        session.on_event(message(ServerMsg::Snapshot(snapshot(6))));
+        session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(5)))));
+        session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(4)))));
+        session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(6)))));
         session.advance(0.016);
 
         assert_eq!(session.newest_snapshot().map(|s| s.tick), Some(6));
@@ -456,7 +456,7 @@ mod tests {
         let mut session = connecting();
         session.on_event(ClientEvent::Connected);
         assert_eq!(
-            session.on_event(message(ServerMsg::Snapshot(snapshot(1)))),
+            session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(1))))),
             None
         );
         assert_eq!(session, Session::Joining { room: room() });
@@ -510,7 +510,7 @@ mod tests {
             "Disconnected: the server closed the connection"
         );
         assert_eq!(
-            session.on_event(message(ServerMsg::Snapshot(snapshot(9)))),
+            session.on_event(message(ServerMsg::Snapshot(Box::new(snapshot(9))))),
             None
         );
         assert!(session.frame().is_none());

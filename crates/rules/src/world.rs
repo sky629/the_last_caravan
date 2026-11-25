@@ -18,9 +18,10 @@ mod tiles;
 use std::collections::BTreeMap;
 
 use crate::collision::Body;
-use crate::ids::{MonsterId, PileId, PlayerId, ProjectileId, Team, TowerId};
+use crate::ids::{GroundWeaponId, MonsterId, PileId, PlayerId, ProjectileId, Team, TowerId};
 use crate::input::PlayerInputs;
-use crate::kind::{MonsterKind, StructureKind};
+use crate::kind::{MonsterKind, StructureKind, WeaponKind};
+use crate::loot::GroundWeapon;
 use crate::math::Vec2;
 use crate::monster::{Monster, Order};
 use crate::player::Player;
@@ -52,6 +53,8 @@ pub(crate) struct World {
     pub piles: Vec<Pile>,
     /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
     pub stash: u32,
+    /// 바닥에 놓인 무기입니다. 번호가 작은 무기가 앞에 옵니다. 원정이 끝날 때까지 남습니다.
+    pub ground_weapons: Vec<GroundWeapon>,
     /// 읽기만 할 수 있습니다. `TileMap::set`은 이 모듈 밖에서 부를 수 없습니다.
     pub tiles: TileMap,
     /// 감시탑이 생기거나, 서거나, 사라질 때마다 올라가고 줄어들지 않습니다.
@@ -61,6 +64,7 @@ pub(crate) struct World {
     next_projectile: u32,
     next_tower: u32,
     next_pile: u32,
+    next_ground_weapon: u32,
 }
 
 /// 원정이 시작될 때의 지면입니다. 장애물과 마차에 채집 지점을 더한 타일 지도와, 가득 찬 채집 지점입니다.
@@ -87,24 +91,27 @@ impl World {
             nodes,
             piles: Vec::new(),
             stash: t.wagon.start_stash,
+            ground_weapons: Vec::new(),
             tiles,
             layout_revision: 0,
             next_monster: 1,
             next_projectile: 1,
             next_tower: 1,
             next_pile: 1,
+            next_ground_weapon: 1,
         };
         world.place_start_towers(t);
         world
     }
 
-    /// 새 원정을 위해 몬스터, 탄환, 감시탑, 마차, 보관함, 채집 지점, 떨어진 자원, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
+    /// 새 원정을 위해 몬스터, 탄환, 감시탑, 마차, 보관함, 채집 지점, 떨어진 자원, 바닥의 무기, 타일 지도를 처음 상태로 되돌립니다. 플레이어는 그대로입니다.
     /// 번호를 세는 값은 되돌리지 않으므로 이전 원정의 번호가 다시 쓰이지 않습니다.
     pub fn restart(&mut self, t: &Tuning) {
         self.monsters.clear();
         self.projectiles.clear();
         self.towers.clear();
         self.piles.clear();
+        self.ground_weapons.clear();
         self.wagon = Wagon::new(t);
         self.stash = t.wagon.start_stash;
         (self.tiles, self.nodes) = ground(t);
@@ -161,11 +168,22 @@ impl World {
         Some(tower)
     }
 
-    /// 플레이어를 방에서 내보냅니다. 든 자원은 그 자리에 떨어집니다. 없는 번호는 무시합니다.
+    /// 플레이어를 방에서 내보냅니다. 든 자원과 가진 무기는 그 자리에 떨어집니다. 없는 번호는 무시합니다.
     pub fn remove_player(&mut self, id: PlayerId) {
         if let Some(player) = self.players.remove(&id) {
             self.add_pile(player.pos, player.carried());
+            for kind in player.loadout.weapons() {
+                self.drop_weapon(player.pos, kind);
+            }
         }
+    }
+
+    /// `pos`에 무기를 놓습니다. 번호는 새로 받고 다시 사용하지 않습니다.
+    pub fn drop_weapon(&mut self, pos: Vec2, kind: WeaponKind) -> GroundWeaponId {
+        let id = GroundWeaponId(self.next_ground_weapon);
+        self.next_ground_weapon += 1;
+        self.ground_weapons.push(GroundWeapon { id, pos, kind });
+        id
     }
 
     /// `pos`에 자원 `amount`가 떨어진 더미를 놓습니다. 양이 0이면 놓지 않습니다. 번호는 새로 받고 다시 사용하지 않습니다.

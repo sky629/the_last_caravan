@@ -11,8 +11,9 @@ use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 use caravan_protocol::{
-    Snapshot, WireAngle, WireAttack, WireLife, WireLoadout, WireMonster, WireMonsterKind, WireNode,
-    WirePhase, WirePile, WirePlayer, WireProjectile, WireTower, WireWagon,
+    Snapshot, WireAngle, WireAttack, WireGroundWeapon, WireLife, WireLoadout, WireMonster,
+    WireMonsterKind, WireNode, WirePhase, WirePile, WirePlayer, WireProjectile, WirePrompt,
+    WireTower, WireWagon,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -40,6 +41,8 @@ pub struct Frame {
     pub nodes: Vec<WireNode>,
     /// 땅에 떨어진 자원입니다. 움직이지 않으므로 위치를 섞지 않습니다.
     pub piles: Vec<WirePile>,
+    /// 바닥에 놓인 무기입니다. 움직이지 않으므로 위치를 섞지 않습니다.
+    pub ground_weapons: Vec<WireGroundWeapon>,
     pub players: Vec<PlayerView>,
     pub monsters: Vec<MonsterView>,
     /// 날아가는 탄환과 한 Tick 전에 끝난 탄환입니다. 끝난 탄환은 끝난 자리에 그려집니다.
@@ -60,6 +63,8 @@ pub struct PlayerView {
     pub last_attack: Option<WireAttack>,
     /// 가진 두 칸의 무기입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
     pub loadout: WireLoadout,
+    /// F를 누르면 하게 되는 일 가운데 화면에 안내할 것입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub prompt: Option<WirePrompt>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -226,6 +231,7 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
         towers: older.towers.clone(),
         nodes: older.nodes.clone(),
         piles: older.piles.clone(),
+        ground_weapons: older.ground_weapons.clone(),
         players,
         monsters,
         projectiles,
@@ -248,6 +254,7 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
         life: a.life,
         last_attack: a.last_attack,
         loadout: a.loadout,
+        prompt: a.prompt,
     }
 }
 
@@ -322,6 +329,7 @@ mod tests {
             towers: Vec::new(),
             nodes: Vec::new(),
             piles: Vec::new(),
+            ground_weapons: Vec::new(),
             players: Vec::new(),
             monsters: Vec::new(),
             projectiles: Vec::new(),
@@ -358,6 +366,7 @@ mod tests {
                 held: WireWeaponKind::Sword,
                 spare: None,
             },
+            prompt: None,
         }
     }
 

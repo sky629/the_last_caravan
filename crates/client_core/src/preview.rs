@@ -47,6 +47,7 @@ mod tests {
                 held: WireWeaponKind::Sword,
                 spare: None,
             },
+            prompt: None,
         }
     }
 

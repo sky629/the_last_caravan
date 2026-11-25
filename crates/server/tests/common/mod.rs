@@ -118,7 +118,7 @@ pub fn snapshots(client: &mut LoopbackClient) -> Vec<Snapshot> {
     drain(client)
         .into_iter()
         .filter_map(|event| match event {
-            ClientEvent::Message(ServerMsg::Snapshot(snapshot)) => Some(snapshot),
+            ClientEvent::Message(ServerMsg::Snapshot(snapshot)) => Some(*snapshot),
             _ => None,
         })
         .collect()

@@ -156,7 +156,7 @@ impl TestClient {
             if let ServerMsg::Snapshot(snapshot) = self.next(left.max(Duration::from_millis(1)))
                 && ready(&snapshot)
             {
-                return snapshot;
+                return *snapshot;
             }
         }
     }

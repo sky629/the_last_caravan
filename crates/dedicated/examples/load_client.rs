@@ -160,7 +160,7 @@ fn run(options: &Options) -> Result<(), String> {
                             projectiles: peak.projectiles,
                         };
                     }
-                    latest = Some(snapshot);
+                    latest = Some(*snapshot);
                 }
                 Err(err) => return Err(format!("bad message from the server: {err}")),
             },
@@ -191,6 +191,7 @@ fn run(options: &Options) -> Result<(), String> {
                     aim: WireVec2::new(angle.cos(), angle.sin()),
                     attack: !options.passive,
                     interact: false,
+                    interact_pressed: false,
                     build: false,
                     sprint: false,
                     switch_weapon,

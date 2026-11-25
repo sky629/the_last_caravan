@@ -23,7 +23,7 @@ pub enum ClientMsg {
     Input(InputMsg),
 }
 
-/// 플레이어가 한 Tick 동안 요청하는 조작입니다. 클라이언트가 서버에 보내는 게임 정보는 이 여덟 필드가 전부입니다.
+/// 플레이어가 한 Tick 동안 요청하는 조작입니다. 클라이언트가 서버에 보내는 게임 정보는 이 아홉 필드가 전부입니다.
 /// 필드를 더하려면 이 구조체를 고쳐야 하므로 변경이 바로 드러납니다. 위치나 피해량 같은 필드를 넣어서는 안 됩니다.
 ///
 /// 값은 믿을 수 없는 입력입니다. 서버가 `caravan_rules`의 `MoveDir::new`와 `AimDir::new`로 검사하고 고칩니다.
@@ -39,6 +39,9 @@ pub struct InputMsg {
     pub attack: bool,
     /// 상호작용 키(F)를 누르고 있습니다.
     pub interact: bool,
+    /// 상호작용 키(F)를 누른 순간입니다. 누르고 있는 상태가 아니라 눌렀다는 사실 하나이고, 클라이언트는 키를 누른 입력에 한 번만 실어서 보냅니다.
+    /// 무엇을 줍는지와 줍는 결과는 서버가 정하고, 바뀐 무기는 스냅샷으로 돌아옵니다.
+    pub interact_pressed: bool,
     /// 건설 키(B)를 누르고 있습니다. 어느 타일에 세울지는 서버가 플레이어의 위치와 조준 방향에서 정하므로, 타일의 좌표는 보내지 않습니다.
     pub build: bool,
     /// 달리기 키(Shift)를 누르고 있습니다. 달릴 수 있는지(움직이는지, 게이지가 남았는지)는 서버가 정합니다.
@@ -70,8 +73,9 @@ pub enum ServerMsg {
     Welcome(Welcome),
     /// 입장을 거절했다는 답입니다. 서버는 이 메시지를 보낸 뒤 접속을 닫습니다.
     JoinRejected { reason: RejectReason },
-    /// Tick마다 보내는 방 전체의 상태입니다.
-    Snapshot(Snapshot),
+    /// Tick마다 보내는 방 전체의 상태입니다. 상자에 담는 까닭은 스냅샷이 커서, 상자에 담지 않으면 이 열거형과 이것을 감싼 모든 열거형이
+    /// 가장 큰 변형의 크기를 가지기 때문입니다. 전송 형식은 상자에 담지 않은 값과 같습니다.
+    Snapshot(Box<Snapshot>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

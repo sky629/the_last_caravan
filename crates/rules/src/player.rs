@@ -5,9 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
-use crate::ids::{NodeId, PlayerId, Team, TowerId};
+use crate::ids::{GroundWeaponId, NodeId, PlayerId, Team, TowerId};
 use crate::kind::WeaponKind;
 use crate::loadout::Loadout;
+use crate::loot::{self, Prompt};
 use crate::math::Vec2;
 use crate::resources;
 use crate::stamina::Stamina;
@@ -300,6 +301,11 @@ impl Player {
 pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     let holding = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.interact);
+    let pressed = |id: PlayerId| {
+        ctx.inputs
+            .get(&id)
+            .is_some_and(|input| input.interact_pressed)
+    };
     let holding_build = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.build);
 
     // 읽기: 이번 Tick에 플레이어마다 가지게 될 상호작용을 정합니다.
@@ -308,6 +314,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let mut repairs: Vec<RepairTarget> = Vec::new();
     let mut gathers: Vec<(PlayerId, NodeId)> = Vec::new();
     let mut build_requests: Vec<PlayerId> = Vec::new();
+    let mut pickups: Vec<(PlayerId, GroundWeaponId)> = Vec::new();
     for player in world.players.values() {
         if let Some(Interaction::Reviving {
             target,
@@ -337,11 +344,19 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
             next.insert(player.id, Some(Interaction::Building { tower: *tower }));
             continue;
         }
-        let mut chosen = if holding(player.id) {
+        // F를 한 번 두드리기만 해도 더 높은 순위의 대상이 있으면 줍기를 막습니다. 하지만 일을 시작하는 것은 누르고 있을 때뿐입니다.
+        let target = if holding(player.id) || pressed(player.id) {
             choose_interaction(world, player, &claimed, t)
         } else {
             None
         };
+        if target.is_none()
+            && pressed(player.id)
+            && let Some(weapon) = loot::nearest_ground_weapon(world, player, t)
+        {
+            pickups.push((player.id, weapon));
+        }
+        let mut chosen = if holding(player.id) { target } else { None };
         match chosen {
             Some(Interaction::Reviving { target, .. }) => {
                 claimed.insert(target);
@@ -410,11 +425,13 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     }
     apply_repairs(world, &repairs, t);
     resources::apply_gathers(world, &gathers, t);
+    loot::apply_pickups(world, &pickups);
     build::start_builds(world, ctx, &build_requests);
 }
 
 /// 새로 시작할 상호작용을 고릅니다. 범위 안에 있는 것 가운데 다음 순서로 고르고, 같은 종류 안에서는 가장 가까운 것입니다.
 /// 쓰러진 동료의 부활, 손상된 감시탑의 수리, 손상된 마차의 수리, 채집 지점의 채집.
+/// 이 뒤에 바닥의 무기 줍기가 있지만, 줍기는 시간이 걸리는 일이 아니라서 `Interaction`이 아니고 `update_interactions`가 따로 처리합니다.
 fn choose_interaction(
     world: &World,
     me: &Player,
@@ -425,6 +442,29 @@ fn choose_interaction(
         .or_else(|| nearest_damaged_tower(world, me, t))
         .or_else(|| damaged_wagon_in_reach(world, me, t))
         .or_else(|| resources::nearest_gatherable_node(world, me, t))
+}
+
+/// 살아 있고 하는 일이 없는 `me`가 지금 F를 누르면 하게 되는 일이 화면에 안내할 만한 것이면 그 안내입니다.
+/// 서버가 F를 처리할 때와 같은 우선순위(`choose_interaction`, 그 뒤에 줍기)로 정하므로 안내가 서버의 판정과 어긋나지 않습니다.
+/// 부활, 수리, 채집이 우선하면 안내가 없습니다. 다른 플레이어가 이미 부활시키는 동료는 서버처럼 고르지 않습니다.
+pub(crate) fn prompt(world: &World, me: &Player, t: &Tuning) -> Option<Prompt> {
+    if !me.is_free_to_act() {
+        return None;
+    }
+    let claimed: BTreeSet<PlayerId> = world
+        .players
+        .values()
+        .filter_map(|other| match other.interaction() {
+            Some(Interaction::Reviving { target, .. }) => Some(*target),
+            _ => None,
+        })
+        .collect();
+    match choose_interaction(world, me, &claimed, t) {
+        Some(_) => None,
+        None => loot::nearest_ground_weapon(world, me, t)
+            .and_then(|id| world.ground_weapons.iter().find(|weapon| weapon.id == id))
+            .map(|weapon| Prompt::TakeWeapon(weapon.kind)),
+    }
 }
 
 /// 범위 안의 쓰러진 동료 가운데 가장 가까운 동료의 부활입니다. 이미 다른 플레이어가 부활시키는 동료(`claimed`)는 고르지 않습니다.

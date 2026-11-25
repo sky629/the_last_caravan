@@ -242,6 +242,7 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
         aim: WireVec2::new(f32::NAN, f32::NAN),
         attack: false,
         interact: false,
+        interact_pressed: false,
         build: false,
         sprint: false,
         switch_weapon: false,

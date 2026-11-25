@@ -8,6 +8,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use caravan_client_core::{TILE_HEIGHT_PX, TILE_WIDTH_PX};
+use caravan_protocol::WireWeaponKind;
 
 use crate::config;
 
@@ -31,6 +32,7 @@ pub struct Palette {
     pub node: Handle<ColorMaterial>,
     pub node_empty: Handle<ColorMaterial>,
     pub pile: Handle<ColorMaterial>,
+    pub weapons: WeaponPaints,
     pub shadow: Handle<ColorMaterial>,
     pub you: Handle<ColorMaterial>,
     pub ally: Handle<ColorMaterial>,
@@ -46,6 +48,26 @@ pub struct Palette {
     pub bar_tower: Handle<ColorMaterial>,
     pub bar_site: Handle<ColorMaterial>,
     pub bar_node: Handle<ColorMaterial>,
+}
+
+/// 바닥에 놓인 무기의 재질입니다. 무기마다 색이 다릅니다.
+pub struct WeaponPaints {
+    sword: Handle<ColorMaterial>,
+    bow: Handle<ColorMaterial>,
+    greatsword: Handle<ColorMaterial>,
+    spear: Handle<ColorMaterial>,
+}
+
+impl WeaponPaints {
+    /// `match`가 모든 무기를 다루므로, 무기를 추가하면 여기서 컴파일 오류가 납니다.
+    pub fn of(&self, kind: WireWeaponKind) -> Handle<ColorMaterial> {
+        match kind {
+            WireWeaponKind::Sword => self.sword.clone(),
+            WireWeaponKind::Bow => self.bow.clone(),
+            WireWeaponKind::Greatsword => self.greatsword.clone(),
+            WireWeaponKind::Spear => self.spear.clone(),
+        }
+    }
 }
 
 /// 시작할 때 한 번 실행해서 `Palette`를 넣습니다.
@@ -64,6 +86,12 @@ pub fn setup_palette(
         node: paint(config::NODE),
         node_empty: paint(config::NODE_EMPTY),
         pile: paint(config::PILE),
+        weapons: WeaponPaints {
+            sword: paint(config::WEAPON_SWORD),
+            bow: paint(config::WEAPON_BOW),
+            greatsword: paint(config::WEAPON_GREATSWORD),
+            spear: paint(config::WEAPON_SPEAR),
+        },
         shadow: paint(config::SHADOW),
         you: paint(config::YOU),
         ally: paint(config::ALLY),

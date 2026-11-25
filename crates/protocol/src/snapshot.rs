@@ -9,9 +9,9 @@
 //! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Loadout, Monster, MonsterKind,
-    NightStep, Outcome, Phase, Pile, Player, Projectile, RepairTarget, Sim, Tower, TowerState,
-    Tuning, WeaponKind,
+    BuildRefusal, CannotBuild, GatherNode, GroundWeapon, Interaction, Life, Loadout, Monster,
+    MonsterKind, NightStep, Outcome, Phase, Pile, Player, Projectile, Prompt, RepairTarget, Sim,
+    Tower, TowerState, Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,8 @@ pub struct Snapshot {
     pub players: Vec<WirePlayer>,
     /// 번호가 작은 몬스터부터입니다.
     pub monsters: Vec<WireMonster>,
+    /// 바닥에 놓인 무기입니다. 번호가 작은 무기부터이고, 주워 간 무기는 없습니다.
+    pub ground_weapons: Vec<WireGroundWeapon>,
     /// 날아가는 탄환과 이번 Tick에 끝난 탄환입니다. 번호가 작은 탄환부터입니다. 끝난 탄환이 한 번 실리므로 클라이언트가 탄환이 닿은 자리까지 그립니다.
     pub projectiles: Vec<WireProjectile>,
 }
@@ -98,6 +100,14 @@ pub struct WirePile {
     pub amount: u32,
 }
 
+/// 바닥에 놓인 무기 하나입니다. 다른 플레이어가 줍고 맞바꾸면 `kind`가 바뀝니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireGroundWeapon {
+    pub id: u32,
+    pub pos: WirePos,
+    pub kind: WireWeaponKind,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WireTower {
     pub id: u32,
@@ -148,6 +158,23 @@ pub struct WirePlayer {
     pub last_attack: Option<WireAttack>,
     /// 가진 무기입니다. 쓰러졌거나 사망한 플레이어도 무기를 가지고 있습니다.
     pub loadout: WireLoadout,
+    /// F를 누르면 하게 되는 일 가운데 화면에 안내할 것입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
+    pub prompt: Option<WirePrompt>,
+}
+
+/// F를 누르면 하게 되는 일입니다. 부활, 수리, 채집은 안내하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WirePrompt {
+    TakeWeapon(WireWeaponKind),
+}
+
+impl WirePrompt {
+    /// `match`가 모든 안내를 다루므로, 규칙에 안내를 추가하면 여기서 컴파일 오류가 납니다.
+    fn of(prompt: Prompt) -> WirePrompt {
+        match prompt {
+            Prompt::TakeWeapon(kind) => WirePrompt::TakeWeapon(WireWeaponKind::of(kind)),
+        }
+    }
 }
 
 /// 두 칸의 무기입니다. 든 무기는 언제나 있고, 다른 칸은 비어 있을 수 있습니다.
@@ -337,6 +364,7 @@ impl Snapshot {
                 .map(|player| wire_player(sim, player))
                 .collect(),
             monsters: sim.monsters().map(wire_monster).collect(),
+            ground_weapons: sim.ground_weapons().map(wire_ground_weapon).collect(),
             projectiles: sim.projectiles().map(wire_projectile).collect(),
         }
     }
@@ -423,6 +451,14 @@ fn wire_pile(pile: &Pile) -> WirePile {
     }
 }
 
+fn wire_ground_weapon(weapon: &GroundWeapon) -> WireGroundWeapon {
+    WireGroundWeapon {
+        id: weapon.id.0,
+        pos: WirePos::from_tiles(weapon.pos),
+        kind: WireWeaponKind::of(weapon.kind),
+    }
+}
+
 fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
     let tuning = sim.tuning();
     let life = match &player.life {
@@ -461,6 +497,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
             weapon: WireWeaponKind::of(attack.weapon),
         }),
         loadout: WireLoadout::of(&player.loadout),
+        prompt: sim.prompt(player.id).map(WirePrompt::of),
     }
 }
 

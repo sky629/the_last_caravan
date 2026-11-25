@@ -39,11 +39,11 @@ mod tests;
 
 pub use build::{BuildRefusal, CannotBuild, front_tile};
 pub use expedition::{NightStep, Outcome, Phase};
-pub use ids::{MonsterId, NodeId, PileId, PlayerId, ProjectileId, Team, TowerId};
+pub use ids::{GroundWeaponId, MonsterId, NodeId, PileId, PlayerId, ProjectileId, Team, TowerId};
 pub use input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 pub use kind::{MonsterKind, StructureKind, WeaponKind};
 pub use loadout::Loadout;
-pub use loot::Seed;
+pub use loot::{GroundWeapon, Prompt, Seed};
 pub use math::{Rect, Vec2};
 pub use monster::{Monster, Order};
 pub use player::{Interaction, LastAttack, Life, Player, RepairTarget};
@@ -53,7 +53,7 @@ pub use sim::{JoinError, Sim};
 pub use stamina::Stamina;
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
-    ArcTuning, CycleTuning, Delivery, GuardTuning, HealTuning, MapSpec, MonsterTable,
+    ArcTuning, CycleTuning, Delivery, GuardTuning, HealTuning, LootTuning, MapSpec, MonsterTable,
     MonsterTuning, NightPlan, NightTuning, PlayerTuning, ProjectileTuning, RepairTuning,
     ResourceTuning, ReviveTuning, SprintTuning, StructureTable, StructureTuning, Tuning,
     VillageTuning, WagonTuning, WavePlan, WeaponTable, WeaponTuning,

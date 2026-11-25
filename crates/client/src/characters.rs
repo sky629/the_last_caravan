@@ -290,6 +290,7 @@ mod tests {
                 held: WireWeaponKind::Sword,
                 spare: None,
             },
+            prompt: None,
         }
     }
 
@@ -319,6 +320,7 @@ mod tests {
             towers: Vec::new(),
             nodes: Vec::new(),
             piles: Vec::new(),
+            ground_weapons: Vec::new(),
             players,
             monsters,
             projectiles: Vec::new(),

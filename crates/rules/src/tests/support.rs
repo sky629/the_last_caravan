@@ -145,6 +145,11 @@ impl Scenario {
         self.sim.world_mut().add_pile(Vec2::new(x, y), amount);
     }
 
+    /// `(x, y)`에 무기 `kind`가 놓여 있게 합니다.
+    pub fn weapon_at(&mut self, x: f32, y: f32, kind: WeaponKind) {
+        self.sim.world_mut().drop_weapon(Vec2::new(x, y), kind);
+    }
+
     /// 처음 놓은 감시탑의 HP를 바꿉니다. 쏘는 동안의 쿨다운과 마지막 사격은 그대로 둡니다.
     pub fn set_tower_hp(&mut self, hp: u32) {
         let tower = self
@@ -194,6 +199,16 @@ impl Scenario {
     /// 플레이어의 두 칸을 `held`와 `spare`로 정합니다. 무기는 생명 상태와 따로 있으므로 쓰러졌거나 사망한 플레이어도 바뀝니다.
     pub fn arm(&mut self, id: PlayerId, held: WeaponKind, spare: Option<WeaponKind>) {
         self.player_mut(id).loadout = Loadout::new(held, spare);
+    }
+
+    /// 지금 누르고 있는 입력은 그대로 두고, 상호작용 키(F)를 이 Tick에 누른 순간으로 만듭니다. 이 함수가 한 Tick을 진행합니다.
+    /// 누른 Tick에는 키를 누르고 있는 상태이기도 합니다. 이어서 누르고 있게 하려면 `hold_interact`를 따로 부릅니다.
+    pub fn press_interact_key(&mut self, id: PlayerId) {
+        let mut inputs = self.held.clone();
+        let input = inputs.entry(id).or_default();
+        input.interact = true;
+        input.interact_pressed = true;
+        self.sim.step(&inputs);
     }
 
     /// 지금 누르고 있는 입력은 그대로 두고, 무기 전환 키(Q)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.

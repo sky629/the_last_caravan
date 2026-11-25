@@ -44,6 +44,7 @@ fn snapshot_of(monsters: u32) -> Snapshot {
         nodes: vec![],
         piles: vec![],
         players: vec![],
+        ground_weapons: vec![],
         monsters: (1..=monsters)
             .map(|id| WireMonster {
                 id,
@@ -79,7 +80,7 @@ fn collect(client: &mut WsClient, stop: impl Fn(&ClientEvent) -> bool) -> Vec<Cl
 #[test]
 fn a_snapshot_with_thousands_of_monsters_fits_under_the_limit() {
     let snapshot = snapshot_of(10_000);
-    let bytes = encode_server(&ServerMsg::Snapshot(snapshot.clone()));
+    let bytes = encode_server(&ServerMsg::Snapshot(Box::new(snapshot.clone())));
     assert!(
         bytes.len() < MAX_SERVER_MESSAGE_BYTES,
         "{} bytes",
@@ -94,7 +95,7 @@ fn a_snapshot_with_thousands_of_monsters_fits_under_the_limit() {
     let Some(ClientEvent::Message(ServerMsg::Snapshot(received))) = events.last() else {
         panic!("expected the snapshot last, got {events:?}");
     };
-    assert_eq!(received, &snapshot);
+    assert_eq!(**received, snapshot);
 }
 
 #[test]

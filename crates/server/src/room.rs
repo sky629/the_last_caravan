@@ -78,7 +78,7 @@ impl Room {
         let snapshot = Snapshot::from_sim(&self.sim);
         self.members
             .values()
-            .map(|member| Out::Send(member.link, ServerMsg::Snapshot(snapshot.clone())))
+            .map(|member| Out::Send(member.link, ServerMsg::Snapshot(Box::new(snapshot.clone()))))
             .collect()
     }
 }

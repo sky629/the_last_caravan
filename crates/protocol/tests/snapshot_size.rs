@@ -3,10 +3,10 @@
 //! 한계는 측정한 크기에 약 7%의 여유를 둔 값입니다. 한계를 넘으면 접속 하나가 쓰는 대역폭이 늘어난 것이므로, 다음 단계의 설계를 다시 정해야 합니다.
 
 use caravan_protocol::{
-    ServerMsg, Snapshot, WireAngle, WireAttack, WireInteraction, WireLife, WireLoadout,
-    WireMonster, WireMonsterKind, WireNightStep, WireNode, WirePhase, WirePile, WirePlayer,
-    WirePos, WireProjectile, WireShot, WireTile, WireTower, WireTowerState, WireWagon,
-    WireWeaponKind, encode_server,
+    ServerMsg, Snapshot, WireAngle, WireAttack, WireGroundWeapon, WireInteraction, WireLife,
+    WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode, WirePhase, WirePile,
+    WirePlayer, WirePos, WireProjectile, WirePrompt, WireShot, WireTile, WireTower, WireTowerState,
+    WireWagon, WireWeaponKind, encode_server,
 };
 
 /// 몬스터와 탄환의 번호가 `first_id`부터 이어지는 스냅샷입니다. 모든 좌표 값은 2바이트로 기록되는 크기(128 이상)입니다.
@@ -26,6 +26,8 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
             held: WireWeaponKind::Bow,
             spare: Some(WireWeaponKind::Sword),
         },
+        // 네 명이 모두 바닥의 무기 곁에 서 있는 경우입니다.
+        prompt: Some(WirePrompt::TakeWeapon(WireWeaponKind::Spear)),
     };
     Snapshot {
         tick: 100_000,
@@ -121,6 +123,17 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
                 hp: 60,
             })
             .collect(),
+        // 플레이어가 나가면서 떨어뜨린 무기 넷입니다.
+        ground_weapons: (1..=4)
+            .map(|id| WireGroundWeapon {
+                id,
+                pos: WirePos {
+                    x: 1000 * id as u16,
+                    y: 1500,
+                },
+                kind: WireWeaponKind::Greatsword,
+            })
+            .collect(),
         projectiles: (0..projectiles)
             .map(|i| WireProjectile {
                 id: first_id + i,
@@ -135,7 +148,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
 }
 
 fn encoded_len(snapshot: Snapshot) -> usize {
-    encode_server(&ServerMsg::Snapshot(snapshot)).len()
+    encode_server(&ServerMsg::Snapshot(Box::new(snapshot))).len()
 }
 
 /// 300마리 스냅샷 하나의 한계(바이트)입니다. 몬스터 번호가 16383 이하일 때, 몬스터 하나는 9바이트이므로 300마리가 2700바이트입니다.

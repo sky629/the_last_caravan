@@ -53,7 +53,7 @@ fn the_snapshot_of_a_real_300_monster_crowd_stays_under_the_bound() {
         spent += took;
         worst = worst.max(took);
         for snapshot in common::snapshots(&mut client) {
-            let bytes = encode_server(&ServerMsg::Snapshot(snapshot.clone())).len();
+            let bytes = encode_server(&ServerMsg::Snapshot(Box::new(snapshot.clone()))).len();
             if snapshot.monsters.len() >= largest.0 {
                 largest = (snapshot.monsters.len(), bytes);
             }

@@ -3,7 +3,7 @@
 use crate::expedition::{self, Advance, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
-use crate::loot::Seed;
+use crate::loot::{GroundWeapon, Prompt, Seed};
 use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
@@ -110,7 +110,7 @@ impl Sim {
     }
 
     /// 플레이어를 즉시 제거합니다. 없는 번호는 무시하므로 같은 퇴장을 두 번 처리해도 안전합니다.
-    /// 이 플레이어를 부활시키던 플레이어는 다음 Tick에 대상이 사라진 것을 보고 부활을 멈추고, 이 플레이어가 들고 있던 자원은 그 자리에 떨어집니다.
+    /// 이 플레이어를 부활시키던 플레이어는 다음 Tick에 대상이 사라진 것을 보고 부활을 멈추고, 이 플레이어가 들고 있던 자원과 가진 무기는 그 자리에 떨어집니다.
     pub fn remove_player(&mut self, id: PlayerId) {
         self.world.remove_player(id);
     }
@@ -260,6 +260,18 @@ impl Sim {
     /// 번호가 작은 채집 지점부터 차례로 돌려줍니다.
     pub fn nodes(&self) -> impl Iterator<Item = &GatherNode> {
         self.world.nodes.iter()
+    }
+
+    /// 바닥에 놓인 무기를 번호가 작은 무기부터 차례로 돌려줍니다.
+    pub fn ground_weapons(&self) -> impl Iterator<Item = &GroundWeapon> {
+        self.world.ground_weapons.iter()
+    }
+
+    /// `id`가 지금 F를 누르면 하게 되는 일이 화면에 안내할 만한 것이면 그 안내입니다. 부활, 수리, 채집은 안내하지 않습니다.
+    /// `F`의 우선순위를 고르는 함수(`player::choose_interaction`)가 정하므로 서버가 실제로 하는 일과 어긋나지 않고, 따로 저장하는 값이 없습니다.
+    pub fn prompt(&self, id: PlayerId) -> Option<Prompt> {
+        let player = self.player(id)?;
+        player::prompt(&self.world, player, &self.tuning)
     }
 
     /// 땅에 떨어진 자원을 번호가 작은 더미부터 차례로 돌려줍니다.

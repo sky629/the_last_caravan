@@ -5,7 +5,7 @@
 
 use caravan_protocol::{
     WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireLoadout, WireNightStep,
-    WireOutcome, WirePhase, WireRepairTarget, WireTowerState, WireWeaponKind,
+    WireOutcome, WirePhase, WirePrompt, WireRepairTarget, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::Team;
 
@@ -29,6 +29,8 @@ pub struct Hud {
     pub carry: Option<String>,
     /// 내가 들고 있는 무기와 바꾸는 키입니다. 내 캐릭터가 화면에 있으면 항상 있고, 쓰러졌어도 무기는 들고 있습니다.
     pub weapon: Option<String>,
+    /// F를 누르면 하게 되는 일의 안내입니다. 서버가 정해서 스냅샷에 실어 보내고, 내 캐릭터의 것만 표시합니다.
+    pub hint: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
     pub banner: Option<Banner>,
     pub me: Option<Meter>,
@@ -90,6 +92,7 @@ impl Hud {
             stash: None,
             carry: None,
             weapon: None,
+            hint: None,
             banner: None,
             me: None,
             stamina: None,
@@ -133,6 +136,7 @@ impl Hud {
         if let Some(me) = frame.player(you) {
             hud.me = Some(my_meter(me));
             hud.weapon = Some(weapon_text(me.loadout));
+            hud.hint = me.prompt.map(prompt_text);
             hud.stamina = stamina_meter(me);
             hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
@@ -392,8 +396,15 @@ fn weapon_text(loadout: WireLoadout) -> String {
     format!("WEAPON  [{held}]  {spare}  [Q]")
 }
 
+/// F를 누르면 하게 되는 일의 안내 문구입니다. `match`가 모든 안내를 다루므로, 안내를 추가하면 여기서 컴파일 오류가 납니다.
+fn prompt_text(prompt: WirePrompt) -> String {
+    match prompt {
+        WirePrompt::TakeWeapon(kind) => format!("F  TAKE {}", weapon_name(kind)),
+    }
+}
+
 /// 무기의 이름입니다. `match`가 모든 무기를 다루므로, 무기를 추가하면 여기서 컴파일 오류가 납니다.
-fn weapon_name(weapon: WireWeaponKind) -> &'static str {
+pub fn weapon_name(weapon: WireWeaponKind) -> &'static str {
     match weapon {
         WireWeaponKind::Sword => "SWORD",
         WireWeaponKind::Bow => "BOW",
@@ -504,6 +515,7 @@ mod tests {
             life,
             last_attack: None,
             loadout: loadout(WireWeaponKind::Sword, None),
+            prompt: None,
         }
     }
 
@@ -523,6 +535,7 @@ mod tests {
             stash: 7,
             nodes: vec![WireNode { id: 1, amount: 9 }],
             piles: Vec::new(),
+            ground_weapons: Vec::new(),
             towers: vec![WireTower {
                 id: 1,
                 tile: WireTile { x: 15, y: 11 },
@@ -692,6 +705,30 @@ mod tests {
         archer.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         let bow = Hud::of(&session, Some(&frame(vec![archer])));
         assert_eq!(bow.weapon.as_deref(), Some("WEAPON  [BOW]  SWORD  [Q]"));
+    }
+
+    #[test]
+    fn the_hint_names_what_f_does_and_only_for_me() {
+        let session = session_in_room();
+        let mut me = player(YOU, alive(100));
+        me.prompt = Some(WirePrompt::TakeWeapon(WireWeaponKind::Spear));
+        let mut ally = player(2, alive(100));
+        ally.prompt = Some(WirePrompt::TakeWeapon(WireWeaponKind::Bow));
+
+        let hud = Hud::of(&session, Some(&frame(vec![me, ally])));
+        assert_eq!(hud.hint.as_deref(), Some("F  TAKE SPEAR"));
+
+        let quiet = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
+        assert_eq!(quiet.hint, None, "nothing to do with F");
+        assert_eq!(Hud::of(&session, None).hint, None);
+
+        let mut ally_only = player(2, alive(100));
+        ally_only.prompt = Some(WirePrompt::TakeWeapon(WireWeaponKind::Bow));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), ally_only])),
+        );
+        assert_eq!(hud.hint, None, "an ally's hint is not mine");
     }
 
     #[test]

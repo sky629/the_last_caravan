@@ -146,6 +146,7 @@ trunk serve
 | `Q` | 가진 두 칸의 무기를 서로 바꿉니다. 한 칸만 차 있으면 아무것도 바뀌지 않습니다. 누르고 있어도 한 번만 바뀝니다. 화면 오른쪽 위의 `WEAPON  [SWORD]  -  [Q]`나 `WEAPON  [BOW]  SWORD  [Q]`가 가진 무기를 알려 주고, 대괄호가 든 무기입니다. 부활, 수리, 채집, 건설 중이거나 쓰러졌을 때는 바뀌지 않습니다. |
 | `B`를 누르고 있기 | 바라보는 쪽의 이웃한 타일에 감시탑을 짓습니다(비용 10, 3초). 키를 누르기 전에도 그 타일이 밝은 테두리로 보입니다. 마차에서 10타일 안이어야 하고, 마차로 가는 길을 막을 수 없습니다. 세울 수 없으면 그 타일을 빨간 테두리로 표시하고 이유를 화면 아래에 알립니다. 짓는 동안 이동과 공격을 할 수 없고, 짓는 중에 `B`를 떼거나 쓰러지면 건설이 취소되고 비용을 돌려받습니다. |
 | `F`를 누르고 있기 | 가까이 쓰러진 동료가 있으면 부활시키고(5초), 없으면 가까이 있는 손상된 감시탑을 수리하고(1.5초에 HP 30, 자원 1), 그것도 없으면 가까이 있는 손상된 마차를 수리하고(1.5초에 HP 30, 자원 1), 그것도 없으면 가까이 있는 채집 지점에서 자원을 0.5초에 1씩 채집합니다(최대 10). 그동안 이동과 공격을 할 수 없습니다. 채집한 자원은 마차 곁(1.5타일 안)에 가면 자동으로 보관함에 들어가고, 쓰러지거나 접속을 끊으면 그 자리에 떨어지며, 살아 있는 플레이어가 가까이 가면 자동으로 줍습니다. |
+| `F`를 누른 순간 | 바닥의 무기 곁(1타일 안)에서 누르면 그 무기를 줍습니다. 빈 칸이 있으면 빈 칸에 들어가고, 없으면 든 무기와 바뀌어서 이전에 든 무기가 그 자리에 떨어집니다. 누르고 있어도 한 번만 줍고, 위의 부활, 수리, 채집을 할 수 있는 곳에서는 줍지 않습니다. 줍을 수 있는 무기 곁에 서면 화면 아래 가운데에 `F  TAKE SPEAR` 같은 안내가 나옵니다. |
 
 수리는 한 번(1.5초)마다 보관함에서 자원 1을 내고, 마지막 한 번이 HP를 30보다 적게 회복시켜도 같습니다. HP가 거의 없는 감시탑을 가득 수리하면 자원 10(건설 비용과 같습니다)이 들고, 마차는 17이 듭니다. 여럿이 같은 Tick에 수리하면 번호가 작은 플레이어부터 내고, 보관함이 모자라면 나중 플레이어의 그 수리는 회복시키지 못합니다. 보관함이 비용을 낼 수 없는 동안에도 플레이어는 그 수리를 계속하고 채집으로 바뀌지 않으며, 화면 아래에 `CANNOT REPAIR: NOT ENOUGH IN THE STASH`가 나옵니다. 자원이 생기면 이 문구가 사라지고 다음 수리부터 회복시킵니다. 마차 곁의 회복은 자원을 쓰지 않습니다.
 
@@ -212,7 +213,7 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 1. `advance_phase`가 낮, 밤, 새벽, 결과 화면의 카운트다운을 줄이고, 때가 되면 밤이나 낮을 시작하거나 몬스터를 한 마리 등장시킵니다. 결과 화면의 동안에는 여기서 Tick이 끝납니다.
 2. `Paths::sync`가 마차와 감시탑으로 가는 이동 경로를 필요하면 다시 만듭니다.
 3. `MonsterGrid::rebuild`가 몬스터의 위치를 격자에 넣습니다.
-4. `update_interactions`가 `F`와 `B`를 처리합니다. 부활, 감시탑 수리, 마차 수리, 채집의 순서로 대상을 고르고, 수리의 비용을 보관함에서 내고(플레이어 번호 순서), 건설의 시작과 거절을 판정합니다.
+4. `update_interactions`가 `F`와 `B`를 처리합니다. 부활, 감시탑 수리, 마차 수리, 채집의 순서로 대상을 고르고, 수리의 비용을 보관함에서 내고(플레이어 번호 순서), 건설의 시작과 거절을 판정합니다. `F`를 누른 순간에 더 높은 순위의 대상이 없으면 가장 가까운 바닥의 무기를 줍습니다(플레이어 번호 순서).
 5. `advance_construction`이 건설을 진행하고 끝내거나 취소합니다.
 6. 건설이 이동 경로를 바꿨을 수 있으므로 `Paths::sync`를 한 번 더 부릅니다.
 7. `update_sprint`가 플레이어마다 이번 Tick에 달리는지 정하고 달리기 게이지를 줄이거나 채웁니다. 4번과 5번이 정한 하고 있는 일을 읽으므로 그 뒤에 부릅니다.
@@ -258,7 +259,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 9. `crates/protocol/src/transport.rs`의 `ServerTransport`와 `ClientTransport`는 접속 방식을 트레이트로 정의한 인터페이스이고, 구현이 지켜야 하는 약속이 문서 주석에 있습니다.
 10. `crates/protocol/src/codec.rs`의 `decode_exact`는 트레이트 경계(`T: DeserializeOwned`)를 가진 제네릭 함수의 예입니다.
 11. `crates/protocol/src/loopback.rs`는 같은 트레이트의 두 번째 구현이며, `std::sync::mpsc` 채널로 같은 프로세스 안에서 메시지를 옮깁니다.
-12. `crates/server/src/input.rs`는 불규칙하게 도착하는 입력을 Tick마다 하나씩 넘기는 입력으로 바꾸고, `Option`으로 「아직 받은 입력이 없음」을 표현합니다. 입력이 늦는 Tick에는 마지막 입력을 다시 쓰는데, 누른 순간인 `Q`는 `PlayerInput::held`가 지워서 되풀이되지 않게 합니다.
+12. `crates/server/src/input.rs`는 불규칙하게 도착하는 입력을 Tick마다 하나씩 넘기는 입력으로 바꾸고, `Option`으로 「아직 받은 입력이 없음」을 표현합니다. 입력이 늦는 Tick에는 마지막 입력을 다시 쓰는데, 누른 순간인 `Q`와 `F`는 `PlayerInput::held`가 지워서 되풀이되지 않게 합니다.
 13. `crates/server/src/room.rs`와 `crates/server/src/hub.rs`에서는 허브가 접속 방식을 직접 부르지 않고 할 일을 `Out` 목록으로 돌려주는 방식과, 접속 상태를 열거형(`LinkState`)으로 표현하는 방식을 봅니다.
 14. `crates/server/src/clock.rs`는 고정 간격의 Tick 일정과 밀린 Tick의 상한을 다루며, 현재 시각을 인자로 받으므로 테스트가 가짜 시각을 쓸 수 있습니다.
 15. `crates/server/src/lib.rs`의 `GameServer`는 접속 방식을 `Box<dyn ServerTransport>`로 가지는 트레이트 객체의 예입니다.
@@ -268,7 +269,7 @@ Rust와 게임 개발을 처음 공부한다면 다음 순서로 읽습니다. �
 19. `crates/client_core/src/session.rs`의 `Session`은 열거형으로 만든 상태 기계이며, 방에 들어간 뒤에만 필요한 값을 `InRoom(Joined)` 안에만 둡니다.
 20. `crates/client_core/src/interp.rs`에서는 스냅샷을 보관하고 일정한 지연을 두고 두 스냅샷 사이를 보간(interpolation)하는 방법을 배웁니다. 탄환은 번호로 앞뒤 스냅샷의 같은 탄환을 찾아서 위치를 섞고, 앞쪽 스냅샷에만 있는 탄환(끝난 탄환)은 끝난 자리에 그립니다.
 21. `crates/client_core/src/iso.rs`는 지면 좌표를 쿼터뷰 화면 좌표로 바꾸는 투영과 그 역변환, 그리고 화면에서 아래쪽에 있는 개체를 앞에 그리는 순서(`depth`)를 다룹니다. `crates/client_core/src/camera.rs`는 카메라가 내 캐릭터를 따라가는 속도와, 화면 밖의 마차를 가리키는 표시의 자리를 Bevy 없이 계산하는 순수 함수(`follow`, `wagon_marker`)이고, `crates/client_core/src/preview.rs`는 건설 키를 누르기 전에 감시탑이 놓일 타일을 서버와 같은 함수(`front_tile`)로 정합니다.
-22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭과 `Q`를 잃지 않도록 기억하고 입력에 한 번만 싣습니다.
+22. `crates/client_core/src/input.rs`의 `InputSender`는 프레임보다 느린 주기로 입력을 보내면서, 두 입력 사이에 눌렀다 뗀 클릭과 `Q`와 `F`를 잃지 않도록 기억하고 입력에 한 번만 싣습니다.
 23. `crates/client/src/main.rs`에서는 Bevy의 `App`, 플러그인, `.chain()`으로 순서를 고정한 시스템 목록, 그리고 `#[cfg(target_arch = "wasm32")]`로 PC와 웹의 코드를 나누는 조건부 컴파일을 봅니다.
 24. `crates/client/src/net.rs`는 Bevy의 리소스와 시스템 매개변수(`Res`, `ResMut`, `NonSendMut`)의 예이고, 다른 스레드로 옮길 수 없는 웹의 WebSocket을 non-send 리소스로 보관합니다.
 25. `crates/client/src/effects.rs`는 부채꼴 공격과 탄환과 감시탑의 사격을 상태에서 선으로 그리고, 부채꼴의 거리와 각도는 입장 안내의 무기 표에서 읽습니다. `crates/client/src/view.rs`, `crates/client/src/towers.rs`, `crates/client/src/supplies.rs`, `crates/client/src/characters.rs`에서는 Bevy의 개체(entity)와 컴포넌트를 만들고 갱신하는 방법을 배우며, `characters.rs`의 테스트는 `MinimalPlugins`로 창 없이 Bevy 시스템을 시험합니다.

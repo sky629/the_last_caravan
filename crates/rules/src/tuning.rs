@@ -32,6 +32,7 @@ pub struct Tuning {
     pub village: VillageTuning,
     pub resources: ResourceTuning,
     pub guards: GuardTuning,
+    pub loot: LootTuning,
     pub cycle: CycleTuning,
     pub nights: NightTuning,
     pub map: MapSpec,
@@ -275,6 +276,13 @@ pub struct GuardTuning {
     /// 지키는 자리의 중심에서 플레이어의 중심까지 잰, 플레이어를 쫓기 시작하는 거리입니다.
     /// 몬스터가 아니라 자리에서 재므로, 몬스터가 쫓다가 자리에서 이 거리를 넘으면 돌아갑니다.
     pub chase_range: f32,
+}
+
+/// 바닥의 무기의 수치입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LootTuning {
+    /// 플레이어의 가장자리에서 바닥의 무기까지 잰, 무기를 주울 수 있는 거리입니다.
+    pub take_reach: f32,
 }
 
 /// 시설 한 종류의 수치입니다.
@@ -947,6 +955,7 @@ impl Default for Tuning {
                 per_node: 2,
                 chase_range: 6.0,
             },
+            loot: LootTuning { take_reach: 1.0 },
             resources: ResourceTuning {
                 node_amount: 15,
                 carry_capacity: 10,

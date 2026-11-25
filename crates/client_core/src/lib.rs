@@ -21,7 +21,7 @@ mod preview;
 mod session;
 
 pub use fps::FpsMeter;
-pub use hud::{Banner, BannerTone, Hud, Meter, Tone, bar_fraction};
+pub use hud::{Banner, BannerTone, Hud, Meter, Tone, bar_fraction, weapon_name};
 pub use input::Controls;
 pub use interp::{Frame, MonsterView, PlayerView, ProjectileView, effect_progress};
 pub use iso::{

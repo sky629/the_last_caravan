@@ -379,6 +379,7 @@ fn play_a_scripted_expedition() -> String {
                     aim: crate::input::AimDir::new((tick as f32 * 0.1 + offset).cos(), 0.5),
                     attack: tick % 3 != 0,
                     interact: phase % 2 == 1,
+                    interact_pressed: tick % 40 == 7,
                     build: phase % 4 == 3,
                     sprint: phase % 3 != 1,
                     switch_weapon: tick % 90 == 45,
