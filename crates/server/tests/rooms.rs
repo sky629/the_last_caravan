@@ -9,8 +9,8 @@ use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
     ServerLimits, ServerMsg, Welcome, WireLife, WireNightStep, WirePhase, check_welcome, loopback,
 };
-use caravan_rules::{PlayerId, Sim, Tuning};
-use caravan_server::{GameServer, Notice, ServerError, ServerStats};
+use caravan_rules::{PlayerId, Seed, Sim, Tuning};
+use caravan_server::{GameServer, Notice, RoomSeeds, ServerError, ServerStats};
 use common::{
     assert_near, drain, input, input_with, last_snapshot, player, player_ids, position, rig,
     rig_with, rig_with_limits, snapshots, ticks,
@@ -176,7 +176,10 @@ fn pump_reports_rooms_created_and_removed_with_the_joins_and_leaves() {
     assert_eq!(
         rig.pump(),
         [
-            Notice::RoomCreated { room: room.clone() },
+            Notice::RoomCreated {
+                room: room.clone(),
+                seed: Seed(1)
+            },
             Notice::Joined {
                 room: room.clone(),
                 player: PlayerId(1),
@@ -569,6 +572,7 @@ fn try_start(tuning: Tuning, limits: ServerLimits) -> Result<(), ServerError> {
         Box::new(transport),
         tuning,
         limits,
+        RoomSeeds::Fixed(Seed(1)),
         std::time::Instant::now(),
     )
     .map(|_| ())
@@ -640,7 +644,7 @@ fn the_default_limits_carry_the_default_tick_rate_and_nothing_faster() {
 
 /// 이 수치로 입장한 클라이언트가 입장 안내를 확인한 결과입니다.
 fn client_verdict(tuning: &Tuning) -> Result<(), String> {
-    let mut sim = Sim::new(tuning.clone());
+    let mut sim = Sim::new(tuning.clone(), Seed(1));
     let first = sim.add_player().expect("an empty room admits a player");
     let me = sim.player(first).expect("the player was just added");
     check_welcome(&Welcome::from_sim(&sim, me))
@@ -703,6 +707,7 @@ fn a_server_refuses_to_start_with_numbers_that_break_the_rules() {
             Box::new(transport),
             tuning,
             ServerLimits::default(),
+            RoomSeeds::Fixed(Seed(1)),
             std::time::Instant::now(),
         )
         .map(|_| ())
@@ -758,4 +763,57 @@ fn the_stats_count_rooms_members_monsters_and_ticks() {
     let after = rig.server.stats();
     assert_eq!((after.rooms, after.members), (1, 2));
     assert!(after.monsters < busy.monsters, "the empty room is gone");
+}
+
+fn created_seeds(notices: &[Notice]) -> Vec<Seed> {
+    notices
+        .iter()
+        .filter_map(|notice| match notice {
+            Notice::RoomCreated { seed, .. } => Some(*seed),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_fixed_seed_gives_every_room_that_seed_and_the_notice_names_it() {
+    let mut rig = common::rig_with_seeds(
+        Tuning::default(),
+        ServerLimits::default(),
+        RoomSeeds::Fixed(Seed(77)),
+    );
+    let (_a, first) = rig.join_noticed("one");
+    let (_b, second) = rig.join_noticed("two");
+
+    assert_eq!(created_seeds(&first), [Seed(77)]);
+    assert_eq!(created_seeds(&second), [Seed(77)]);
+    assert!(
+        first
+            .iter()
+            .any(|notice| notice.to_string() == "room one created (seed 77)")
+    );
+}
+
+#[test]
+fn fresh_seeds_give_every_new_room_a_different_seed_even_for_a_recreated_code() {
+    let mut rig = common::rig_with_seeds(
+        Tuning::default(),
+        ServerLimits::default(),
+        RoomSeeds::Fresh(Seed(5)),
+    );
+    let (a, first) = rig.join_noticed("one");
+    let (_b, second) = rig.join_noticed("two");
+    drop(a);
+    rig.run_ticks(1);
+    let (_again, third) = rig.join_noticed("one");
+
+    let seeds: Vec<Seed> = [first, second, third]
+        .iter()
+        .flat_map(|notices| created_seeds(notices))
+        .collect();
+    assert_eq!(seeds.len(), 3);
+    assert!(
+        seeds[0] != seeds[1] && seeds[1] != seeds[2] && seeds[0] != seeds[2],
+        "{seeds:?}"
+    );
 }

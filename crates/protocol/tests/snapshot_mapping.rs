@@ -7,8 +7,8 @@ use caravan_protocol::{
     WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
-    AimDir, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2,
-    WavePlan,
+    AimDir, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Tile, Tuning,
+    Vec2, WavePlan,
 };
 
 fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
@@ -43,12 +43,12 @@ fn sim_with(adjust: impl FnOnce(&mut Tuning)) -> Sim {
     let mut tuning = Tuning::default();
     adjust(&mut tuning);
     tuning.validate().expect("the adjusted numbers are valid");
-    Sim::new(tuning)
+    Sim::new(tuning, Seed(1))
 }
 
 #[test]
 fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
-    let mut sim = Sim::new(Tuning::default());
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
     sim.add_player().unwrap();
     let snapshot = Snapshot::from_sim(&sim);
 
@@ -114,7 +114,7 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
 
 #[test]
 fn welcome_describes_the_fixed_world_and_the_joining_player() {
-    let mut sim = Sim::new(Tuning::default());
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
     sim.add_player().unwrap();
     let second = sim.add_player().unwrap();
     let me = sim.player(second).unwrap();
@@ -690,7 +690,7 @@ fn a_shot_arrow_is_on_the_wire_with_its_position_and_direction_and_is_gone_when_
 
 #[test]
 fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
-    let mut sim = Sim::new(Tuning::default());
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
     let first = sim.add_player().unwrap();
 
     let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());

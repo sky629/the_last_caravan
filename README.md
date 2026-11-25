@@ -54,7 +54,7 @@ cargo run -p caravan_dedicated
 
 ```text
 listening on ws://127.0.0.1:7777
-room test created
+room test created (seed 8201742364921307566)
 player 1 joined room test (1 members)
 player 1 left room test (0 members)
 room test removed
@@ -67,6 +67,7 @@ room test removed
 | `--stats` | 1초마다 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 한 줄씩 출력합니다. 예를 들면 `stats rooms=1 members=2 monsters=87 ticks=20 tick_avg_ms=0.31 tick_max_ms=1.20`입니다. |
 | `--waves SIZE,SIZE,.../SIZE,...` | 밤마다 무리의 수와 무리마다 몬스터의 수를 바꿉니다. 밤은 `/`로, 무리는 `,`로 나누고, 밤의 수가 원정의 날 수입니다. `--waves 100,200,300`은 밤 하나에 무리 셋(100마리, 200마리, 300마리)을, `--waves 8,12/20,30,40`은 밤 둘(첫째 밤 8마리와 12마리, 둘째 밤 20마리, 30마리, 40마리)을 정합니다. |
 | `--stress` | 마차, 감시탑, 플레이어가 죽지 않게 하고, 감시탑을 상한(40개)만큼 미리 세우고, 낮을 한 Tick으로 줄이고, 몬스터를 Tick마다 한 마리씩 등장시킵니다. 새 원정이 시작될 때마다 감시탑이 다시 서 있습니다. |
+| `--seed N` | 모든 방의 무작위를 씨앗 `N`(0 이상의 정수) 하나로 정합니다. 주지 않으면 방마다, 서버를 실행할 때마다 다른 씨앗을 씁니다. 방을 만들 때 출력하는 `seed` 값을 이 옵션에 주면 같은 상태에서 다시 시작하므로, 판에서 본 일을 다시 만들 수 있습니다. |
 
 `--waves`와 `--stress`는 몬스터가 수백 마리일 때 서버의 Tick 시간과 스냅샷의 크기를 재기 위한 부하 시험용 옵션입니다. Tick 시간은 `--stats`를 붙여야 출력됩니다.
 부하 시험용 클라이언트(`crates/dedicated/examples/load_client.rs`)는 Bevy 없이 한 방에 접속해서 Tick마다 입력을 보내고, 받은 스냅샷의 크기와 몬스터 수를 1초마다 출력합니다.

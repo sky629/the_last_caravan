@@ -252,7 +252,7 @@ pub struct Problem {
 mod tests {
     use super::*;
     use caravan_protocol::InputMsg;
-    use caravan_rules::{Sim, Tuning};
+    use caravan_rules::{Seed, Sim, Tuning};
 
     fn room() -> RoomCode {
         RoomCode::parse("test").unwrap()
@@ -265,14 +265,14 @@ mod tests {
     }
 
     fn snapshot(tick: u64) -> Snapshot {
-        let mut snapshot = Snapshot::from_sim(&Sim::new(Tuning::default()));
+        let mut snapshot = Snapshot::from_sim(&Sim::new(Tuning::default(), Seed(1)));
         snapshot.tick = tick;
         snapshot
     }
 
     /// 플레이어 번호가 `you`인 입장 안내입니다.
     fn welcome(you: u32) -> ServerMsg {
-        let mut sim = Sim::new(Tuning::default());
+        let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
         welcome.you = you;

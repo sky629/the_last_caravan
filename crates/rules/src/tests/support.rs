@@ -6,6 +6,7 @@ use crate::ids::{MonsterId, NodeId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 use crate::kind::MonsterKind;
 use crate::kind::{StructureKind, WeaponKind};
+use crate::loot::Seed;
 use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
 use crate::player::{Life, Player};
@@ -13,6 +14,9 @@ use crate::sim::Sim;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{GuardTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
 use crate::world::Tile;
+
+/// 시나리오가 쓰는 씨앗입니다.
+pub(crate) const SEED: Seed = Seed(1);
 
 pub(crate) struct Scenario {
     pub sim: Sim,
@@ -75,7 +79,7 @@ impl Scenario {
         adjust(&mut tuning);
         assert_eq!(tuning.validate(), Ok(()), "the scenario's tuning is valid");
         Scenario {
-            sim: Sim::new(tuning),
+            sim: Sim::new(tuning, SEED),
             held: PlayerInputs::new(),
         }
     }

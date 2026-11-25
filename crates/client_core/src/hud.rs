@@ -453,7 +453,7 @@ mod tests {
         ClientEvent, RejectReason, RoomCode, ServerMsg, Welcome, WireNode, WireShot, WireTile,
         WireTower, WireWagon,
     };
-    use caravan_rules::{Sim, Team, Tuning, Vec2};
+    use caravan_rules::{Seed, Sim, Team, Tuning, Vec2};
 
     use crate::interp::PlayerView;
     use crate::launch::DEFAULT_SERVER;
@@ -461,7 +461,7 @@ mod tests {
     const YOU: u32 = 1;
 
     fn session_in_room() -> Session {
-        let mut sim = Sim::new(Tuning::default());
+        let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
         welcome.you = YOU;

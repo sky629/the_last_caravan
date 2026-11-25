@@ -9,8 +9,8 @@ use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, InputMsg, LoopbackClient, LoopbackConnector,
     PROTOCOL_VERSION, ServerLimits, ServerMsg, Snapshot, WirePlayer, WireVec2, loopback,
 };
-use caravan_rules::{Tuning, Vec2};
-use caravan_server::{GameServer, Notice};
+use caravan_rules::{Seed, Tuning, Vec2};
+use caravan_server::{GameServer, Notice, RoomSeeds};
 
 pub struct Rig {
     pub server: GameServer,
@@ -28,11 +28,15 @@ pub fn rig_with(tuning: Tuning) -> Rig {
 }
 
 pub fn rig_with_limits(tuning: Tuning, limits: ServerLimits) -> Rig {
+    rig_with_seeds(tuning, limits, RoomSeeds::Fixed(Seed(1)))
+}
+
+pub fn rig_with_seeds(tuning: Tuning, limits: ServerLimits, seeds: RoomSeeds) -> Rig {
     let (transport, connector) = loopback();
     let now = Instant::now();
     let period = Duration::from_secs(1) / tuning.tick_hz;
     Rig {
-        server: GameServer::new(Box::new(transport), tuning, limits, now)
+        server: GameServer::new(Box::new(transport), tuning, limits, seeds, now)
             .expect("the test tuning is valid"),
         connector,
         now,
@@ -73,6 +77,22 @@ impl Rig {
             Some(ClientEvent::Message(answer)) => (client, answer),
             other => panic!("expected an answer to Join, got {other:?}"),
         }
+    }
+
+    /// `join_ok`와 같지만, 입장을 처리하면서 서버가 알린 일도 함께 돌려줍니다.
+    pub fn join_noticed(&mut self, room: &str) -> (LoopbackClient, Vec<Notice>) {
+        let mut client = self.connector.connect();
+        assert!(matches!(client.poll(), Some(ClientEvent::Connected)));
+        client.send(&ClientMsg::Join {
+            version: PROTOCOL_VERSION,
+            room: room.to_string(),
+        });
+        let notices = self.pump();
+        assert!(matches!(
+            client.poll(),
+            Some(ClientEvent::Message(ServerMsg::Welcome(_)))
+        ));
+        (client, notices)
     }
 
     pub fn join_ok(&mut self, room: &str) -> (LoopbackClient, u32) {

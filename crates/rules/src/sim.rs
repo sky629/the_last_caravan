@@ -3,6 +3,7 @@
 use crate::expedition::{self, Advance, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
+use crate::loot::Seed;
 use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
@@ -20,6 +21,8 @@ use crate::world::{Ctx, World};
 /// `add_player`, `remove_player`, `step`으로만 상태를 바꿉니다.
 pub struct Sim {
     tuning: Tuning,
+    /// 이 방의 씨앗입니다. 원정마다 이 씨앗에서 이어 간 씨앗(`expedition_seed`)으로 무작위를 씁니다. 방이 만들어진 뒤 바뀌지 않습니다.
+    seed: Seed,
     /// 방이 만들어진 뒤 실행한 Tick의 수입니다. 줄어들지 않으므로 스냅샷의 Tick 번호는 계속 커집니다.
     tick: u64,
     /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
@@ -43,15 +46,16 @@ pub enum JoinError {
 }
 
 impl Sim {
-    /// 플레이어가 없는 방을 만들고 첫 원정의 첫날을 시작합니다.
+    /// 플레이어가 없는 방을 만들고 첫 원정의 첫날을 시작합니다. 무작위는 `seed`에서 정해지므로, 같은 수치와 씨앗과 입력은 같은 결과를 냅니다.
     /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만들고,
     /// 몬스터가 나타날 자리가 없는 수치에서는 이 함수가 멈춥니다.
-    pub fn new(tuning: Tuning) -> Sim {
+    pub fn new(tuning: Tuning, seed: Seed) -> Sim {
         let mut world = World::new(&tuning);
         let spawns = SpawnPlan::new(&world.tiles, &tuning)
             .expect("a validated tuning has a spot where night monsters appear");
         expedition::begin_day(&mut world, &spawns, &tuning);
         Sim {
+            seed,
             expedition: 1,
             phase: expedition::opening_phase(&tuning),
             paths: Paths::new(&world, &tuning),
@@ -204,6 +208,16 @@ impl Sim {
     /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
     pub fn expedition_number(&self) -> u32 {
         self.expedition
+    }
+
+    /// 방이 만들어질 때 받은 씨앗입니다.
+    pub fn seed(&self) -> Seed {
+        self.seed
+    }
+
+    /// 지금 원정의 씨앗입니다. 방의 `n`번째 원정은 방의 씨앗에서 `n`으로 이어 간 씨앗이라서, 원정마다 다르고 같은 방의 같은 원정은 언제나 같습니다.
+    pub fn expedition_seed(&self) -> Seed {
+        self.seed.derive(u64::from(self.expedition))
     }
 
     pub fn phase(&self) -> Phase {

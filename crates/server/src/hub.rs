@@ -2,16 +2,17 @@
 //! 접속 방식을 직접 호출하지 않고, 해야 할 일을 `Out` 목록으로 돌려줍니다. 그래서 동기 코드 하나가 모든 상태를 소유하고 잠금이 필요 없습니다.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
     ClientMsg, LinkId, PROTOCOL_VERSION, RejectReason, RoomCode, ServerEvent, ServerLimits,
     ServerMsg, Welcome,
 };
-use caravan_rules::{JoinError, PlayerId, Tuning};
+use caravan_rules::{JoinError, PlayerId, Seed, Tuning};
 
 use crate::room::Room;
-use crate::{Notice, ServerStats};
+use crate::{Notice, RoomSeeds, ServerStats};
 
 /// 허브가 요청하는 일입니다. `GameServer::apply`만 이 값을 실행합니다.
 pub(crate) enum Out {
@@ -35,22 +36,37 @@ enum LinkState {
     Closing,
 }
 
+/// 입장에 성공한 결과입니다.
+struct Admitted {
+    code: RoomCode,
+    player: PlayerId,
+    members: usize,
+    welcome: Welcome,
+    /// 이 입장이 방을 만들었으면 그 방의 씨앗입니다.
+    created_with: Option<Seed>,
+}
+
 pub(crate) struct Hub {
     tuning: Tuning,
     join_deadline: Duration,
     idle_timeout: Duration,
     input_stale_ticks: u32,
+    seeds: RoomSeeds,
+    /// 지금까지 만든 방의 수입니다. 방이 없어졌다가 같은 코드로 다시 만들어져도 다른 방이므로 센 값이 이어집니다.
+    rooms_created: u32,
     links: BTreeMap<LinkId, LinkState>,
     rooms: BTreeMap<RoomCode, Room>,
 }
 
 impl Hub {
-    pub fn new(tuning: Tuning, limits: ServerLimits) -> Hub {
+    pub fn new(tuning: Tuning, limits: ServerLimits, seeds: RoomSeeds) -> Hub {
         Hub {
             tuning,
             join_deadline: limits.join_deadline,
             idle_timeout: limits.idle_timeout,
             input_stale_ticks: limits.input_stale_ticks,
+            seeds,
+            rooms_created: 0,
             links: BTreeMap::new(),
             rooms: BTreeMap::new(),
         }
@@ -156,16 +172,18 @@ impl Hub {
         now: Instant,
     ) -> Vec<Out> {
         match self.admit(link, version, raw_room, now) {
-            Ok((code, player, members, welcome)) => {
-                let mut outs = vec![Out::Send(link, ServerMsg::Welcome(welcome))];
-                // 방은 플레이어가 있는 동안에만 있으므로, 입장한 뒤 플레이어가 한 명이면 이 입장이 방을 만들었습니다.
-                if members == 1 {
-                    outs.push(Out::Notice(Notice::RoomCreated { room: code.clone() }));
+            Ok(admitted) => {
+                let mut outs = vec![Out::Send(link, ServerMsg::Welcome(admitted.welcome))];
+                if let Some(seed) = admitted.created_with {
+                    outs.push(Out::Notice(Notice::RoomCreated {
+                        room: admitted.code.clone(),
+                        seed,
+                    }));
                 }
                 outs.push(Out::Notice(Notice::Joined {
-                    room: code,
-                    player,
-                    members,
+                    room: admitted.code,
+                    player: admitted.player,
+                    members: admitted.members,
                 }));
                 outs
             }
@@ -187,18 +205,23 @@ impl Hub {
         version: u32,
         raw_room: &str,
         now: Instant,
-    ) -> Result<(RoomCode, PlayerId, usize, Welcome), RejectReason> {
+    ) -> Result<Admitted, RejectReason> {
         if version != PROTOCOL_VERSION {
             return Err(RejectReason::VersionMismatch {
                 server: PROTOCOL_VERSION,
             });
         }
         let code = RoomCode::parse(raw_room).map_err(|_| RejectReason::BadRoomCode)?;
-        let (tuning, stale_ticks) = (&self.tuning, self.input_stale_ticks);
-        let room = self
-            .rooms
-            .entry(code.clone())
-            .or_insert_with(|| Room::new(tuning.clone(), stale_ticks));
+        let mut created_with = None;
+        let room = match self.rooms.entry(code.clone()) {
+            Entry::Occupied(occupied) => occupied.into_mut(),
+            Entry::Vacant(vacant) => {
+                self.rooms_created += 1;
+                let seed = self.seeds.for_room(self.rooms_created);
+                created_with = Some(seed);
+                vacant.insert(Room::new(self.tuning.clone(), seed, self.input_stale_ticks))
+            }
+        };
         let (player, welcome) = room
             .admit(link)
             .map_err(|JoinError::RoomFull { capacity }| RejectReason::RoomFull {
@@ -213,7 +236,13 @@ impl Hub {
                 deadline: now + self.idle_timeout,
             },
         );
-        Ok((code, player, members, welcome))
+        Ok(Admitted {
+            code,
+            player,
+            members,
+            welcome,
+            created_with,
+        })
     }
 
     /// 서버가 `reason` 때문에 접속을 닫습니다. 방에 있던 플레이어는 `Disconnected`를 기다리지 않고 바로 제거하므로,

@@ -138,11 +138,11 @@ fn check_count(name: &str, value: usize, max: usize) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::{MonsterKindInfo, WireRect};
-    use caravan_rules::{Sim, Tuning};
+    use caravan_rules::{Seed, Sim, Tuning};
 
     /// 기본 수치에서 서버가 보내는 입장 안내입니다.
     fn normal() -> Welcome {
-        let mut sim = Sim::new(Tuning::default());
+        let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         Welcome::from_sim(&sim, sim.player(first).unwrap())
     }

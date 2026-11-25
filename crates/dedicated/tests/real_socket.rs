@@ -18,8 +18,8 @@ use caravan_protocol::{
     ClientMsg, InputMsg, PROTOCOL_VERSION, ServerLimits, ServerMsg, Snapshot, WireVec2,
     decode_server, encode_client, loopback,
 };
-use caravan_rules::Tuning;
-use caravan_server::{GameServer, Notice};
+use caravan_rules::{Seed, Tuning};
+use caravan_server::{GameServer, Notice, RoomSeeds};
 use caravan_ws_server::WsServer;
 use tokio_tungstenite::tungstenite::stream::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::{Error, Message, WebSocket, connect};
@@ -43,8 +43,14 @@ impl RunningServer {
         let notices = Arc::new(Mutex::new(Vec::new()));
         let reported = Arc::clone(&notices);
         let thread = thread::spawn(move || {
-            let mut server = GameServer::new(Box::new(ws), tuning, limits, Instant::now())
-                .expect("the tuning is valid and fits the limits");
+            let mut server = GameServer::new(
+                Box::new(ws),
+                tuning,
+                limits,
+                RoomSeeds::Fixed(Seed(1)),
+                Instant::now(),
+            )
+            .expect("the tuning is valid and fits the limits");
             while !stopped.load(Ordering::Relaxed) {
                 let now = Instant::now();
                 let news = server.pump(now);
@@ -216,6 +222,7 @@ fn fastest_tick_hz_the_default_limits_carry() -> u32 {
                 Box::new(transport),
                 tuning,
                 ServerLimits::default(),
+                RoomSeeds::Fixed(Seed(1)),
                 Instant::now(),
             )
             .is_ok()
