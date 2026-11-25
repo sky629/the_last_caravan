@@ -116,6 +116,20 @@ fn welcome_carries_the_fixed_world() {
                         kind: WireWeaponKind::Bow,
                         delivery: WireDelivery::Projectile,
                     },
+                    WeaponInfo {
+                        kind: WireWeaponKind::Greatsword,
+                        delivery: WireDelivery::Arc {
+                            reach: 1.3,
+                            half_angle_deg: 90.0,
+                        },
+                    },
+                    WeaponInfo {
+                        kind: WireWeaponKind::Spear,
+                        delivery: WireDelivery::Arc {
+                            reach: 2.2,
+                            half_angle_deg: 15.0,
+                        },
+                    },
                 ],
             },
         }),
@@ -141,11 +155,17 @@ fn welcome_carries_the_fixed_world() {
             0x00, // Grunt
             0x00, 0x00, 0x80, 0x3E, // radius 0.25
             0x3C, // max_hp 60
-            0x02, // weapons: 길이 2
+            0x04, // weapons: 길이 4
             0x00, 0x00, // Sword, Arc
             0x00, 0x00, 0x80, 0x3F, // reach 1.0
             0x00, 0x00, 0x70, 0x42, // half_angle_deg 60.0
             0x01, 0x01, // Bow, Projectile
+            0x02, 0x00, // Greatsword, Arc
+            0x66, 0x66, 0xA6, 0x3F, // reach 1.3
+            0x00, 0x00, 0xB4, 0x42, // half_angle_deg 90.0
+            0x03, 0x00, // Spear, Arc
+            0xCD, 0xCC, 0x0C, 0x40, // reach 2.2
+            0x00, 0x00, 0x70, 0x41, // half_angle_deg 15.0
         ],
     );
 }

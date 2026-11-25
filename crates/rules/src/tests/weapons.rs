@@ -3,11 +3,13 @@
 
 use super::support::Scenario;
 use crate::expedition::{Outcome, Phase};
+use crate::ids::MonsterId;
 use crate::ids::PlayerId;
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::WeaponKind;
 use crate::loadout::Loadout;
 use crate::player::{Interaction, LastAttack};
+use crate::tuning::{ArcTuning, Delivery, WeaponTuning};
 use crate::world::Tile;
 
 fn attack_east() -> PlayerInput {
@@ -77,6 +79,128 @@ fn each_press_of_q_switches_between_the_two_weapons() {
 
     s.tap_switch_key(a);
     assert_eq!(s.player(a).weapon(), WeaponKind::Bow);
+}
+
+/// 근접 무기 `kind`의 행을 다른 무기의 행과 겹치지 않는 수치로 바꾼 시나리오입니다. 몬스터는 제자리에 서 있고 한 번에 죽지 않습니다.
+/// 행이 아니라 다른 무기의 수치를 읽는 코드는 이 시나리오에서 맞히는 몬스터가 달라져서 드러납니다.
+fn arc_weapon_with_its_own_numbers(kind: WeaponKind, row: WeaponTuning) -> Scenario {
+    Scenario::with_tuning(|t| {
+        t.monsters.grunt.max_hp = 1000;
+        t.monsters.grunt.speed = 0.0;
+        t.monsters.grunt.separation_speed = 0.0;
+        match kind {
+            WeaponKind::Greatsword => t.weapons.greatsword = row,
+            WeaponKind::Spear => t.weapons.spear = row,
+            other => panic!("{other:?} is not a swing weapon of these tests"),
+        }
+    })
+}
+
+fn arc_row(damage: u32, cooldown_secs: f32, reach: f32, half_angle_deg: f32) -> WeaponTuning {
+    WeaponTuning {
+        damage,
+        cooldown_secs,
+        delivery: Delivery::Arc(ArcTuning {
+            reach,
+            half_angle_deg,
+        }),
+        chest_weight: 1,
+    }
+}
+
+/// 플레이어(10, 10)에서 `degrees` 방향으로 `distance`만큼 떨어진 곳에 몬스터를 놓습니다. 0도는 동쪽(조준 방향)입니다.
+fn monster_at_angle(s: &mut Scenario, distance: f32, degrees: f32) -> MonsterId {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    s.monster_at(10.0 + cos * distance, 10.0 + sin * distance)
+}
+
+fn hp_of(s: &Scenario, id: MonsterId) -> u32 {
+    s.monster(id).expect("the monster is alive").hp
+}
+
+#[test]
+fn the_greatsword_swings_the_arc_and_damage_of_its_own_row() {
+    // 칼날 끝에서 몬스터의 가장자리까지의 닿는 거리는 중심 사이의 거리에서 두 반지름(0.35, 0.4)을 뺀 값입니다.
+    let mut s =
+        arc_weapon_with_its_own_numbers(WeaponKind::Greatsword, arc_row(7, 0.25, 2.0, 120.0));
+    let a = s.player_at(10.0, 10.0);
+    s.give_weapon(a, WeaponKind::Greatsword);
+    let in_reach = monster_at_angle(&mut s, 2.7, 0.0);
+    let beyond_reach = monster_at_angle(&mut s, 2.9, 90.0);
+    let wide_inside = monster_at_angle(&mut s, 1.0, 100.0);
+    let wide_outside = monster_at_angle(&mut s, 1.0, 140.0);
+    s.hold(a, attack_east());
+
+    s.run_ticks(1);
+
+    assert_eq!(hp_of(&s, in_reach), 1000 - 7);
+    assert_eq!(
+        hp_of(&s, wide_inside),
+        1000 - 7,
+        "100 degrees is inside 120"
+    );
+    assert_eq!(
+        hp_of(&s, beyond_reach),
+        1000,
+        "2.9 tiles is beyond 2.0 + 0.75"
+    );
+    assert_eq!(hp_of(&s, wide_outside), 1000, "140 degrees is outside 120");
+}
+
+#[test]
+fn the_greatsword_waits_for_the_cooldown_of_its_own_row() {
+    let mut s =
+        arc_weapon_with_its_own_numbers(WeaponKind::Greatsword, arc_row(7, 0.25, 2.0, 120.0));
+    let a = s.player_at(10.0, 10.0);
+    s.give_weapon(a, WeaponKind::Greatsword);
+    let monster = monster_at_angle(&mut s, 1.0, 0.0);
+    s.hold(a, attack_east());
+
+    s.run_ticks(11);
+
+    // 쿨다운 0.25초는 5 Tick이므로 1, 6, 11번째 Tick에 휘두릅니다.
+    assert_eq!(hp_of(&s, monster), 1000 - 3 * 7);
+}
+
+#[test]
+fn the_spear_swings_the_arc_and_damage_of_its_own_row() {
+    let mut s = arc_weapon_with_its_own_numbers(WeaponKind::Spear, arc_row(13, 0.35, 3.2, 25.0));
+    let a = s.player_at(10.0, 10.0);
+    s.give_weapon(a, WeaponKind::Spear);
+    let in_reach = monster_at_angle(&mut s, 3.9, 0.0);
+    let beyond_reach = monster_at_angle(&mut s, 4.1, 90.0);
+    let narrow_inside = monster_at_angle(&mut s, 2.0, 20.0);
+    let narrow_outside = monster_at_angle(&mut s, 2.0, 35.0);
+    s.hold(a, attack_east());
+
+    s.run_ticks(1);
+
+    assert_eq!(hp_of(&s, in_reach), 1000 - 13);
+    assert_eq!(
+        hp_of(&s, narrow_inside),
+        1000 - 13,
+        "20 degrees is inside 25"
+    );
+    assert_eq!(
+        hp_of(&s, beyond_reach),
+        1000,
+        "4.1 tiles is beyond 3.2 + 0.75"
+    );
+    assert_eq!(hp_of(&s, narrow_outside), 1000, "35 degrees is outside 25");
+}
+
+#[test]
+fn the_spear_waits_for_the_cooldown_of_its_own_row() {
+    let mut s = arc_weapon_with_its_own_numbers(WeaponKind::Spear, arc_row(13, 0.35, 3.2, 25.0));
+    let a = s.player_at(10.0, 10.0);
+    s.give_weapon(a, WeaponKind::Spear);
+    let monster = monster_at_angle(&mut s, 1.0, 0.0);
+    s.hold(a, attack_east());
+
+    s.run_ticks(15);
+
+    // 쿨다운 0.35초는 7 Tick이므로 1, 8, 15번째 Tick에 찌릅니다.
+    assert_eq!(hp_of(&s, monster), 1000 - 3 * 13);
 }
 
 #[test]

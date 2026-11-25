@@ -57,6 +57,8 @@ pub struct WeaponTuning {
     /// 공격한 뒤 다음 공격까지의 시간입니다. 쿨다운은 플레이어가 하나만 가지므로, 무기를 바꿔도 남은 시간이 이어집니다.
     pub cooldown_secs: f32,
     pub delivery: Delivery,
+    /// 상자에서 나올 무게입니다. 상자마다 무게에 비례하는 확률로 무기 하나가 나오고, 0이면 상자에서 나오지 않습니다.
+    pub chest_weight: u32,
 }
 
 /// 공격이 맞히는 곳까지 전달되는 방식입니다. 방식마다 그 방식에서만 의미가 있는 수치를 한 구조체로 가집니다.
@@ -90,6 +92,9 @@ pub struct ProjectileTuning {
     pub radius: f32,
 }
 
+/// 상자에서 나올 무게의 상한입니다. 무게의 합이 `u32`에 들어가므로 상자의 내용을 뽑는 계산이 넘치지 않습니다.
+const MAX_CHEST_WEIGHT: u32 = 1000;
+
 /// 부채꼴의 경계 각도에 대한 코사인입니다. 몬스터 방향과 조준 방향의 내적이 이 값 이상이면 부채꼴 안입니다.
 /// 규칙에서 삼각함수를 쓰는 곳은 이 함수 하나입니다.
 pub(crate) fn arc_cos(half_angle_deg: f32) -> f32 {
@@ -101,6 +106,8 @@ pub(crate) fn arc_cos(half_angle_deg: f32) -> f32 {
 pub struct WeaponTable {
     pub sword: WeaponTuning,
     pub bow: WeaponTuning,
+    pub greatsword: WeaponTuning,
+    pub spear: WeaponTuning,
 }
 
 impl WeaponTable {
@@ -108,6 +115,8 @@ impl WeaponTable {
         match kind {
             WeaponKind::Sword => &self.sword,
             WeaponKind::Bow => &self.bow,
+            WeaponKind::Greatsword => &self.greatsword,
+            WeaponKind::Spear => &self.spear,
         }
     }
 }
@@ -115,6 +124,8 @@ impl WeaponTable {
 /// 정상 피해량입니다. 서비스할 때의 값입니다.
 const SWORD_DAMAGE: u32 = 25;
 const BOW_DAMAGE: u32 = 15;
+const GREATSWORD_DAMAGE: u32 = 45;
+const SPEAR_DAMAGE: u32 = 30;
 
 /// 테스트하는 동안 모든 무기의 피해량에 곱하는 배수입니다. 서비스하기 전에 1로 내립니다.
 /// 무기마다 따로 올리지 않고 이 값 하나로 올리므로, 무기 사이의 피해량 비율은 정상 값과 같습니다.
@@ -693,6 +704,7 @@ impl Tuning {
 
     /// 모든 무기의 수치를 검사합니다. `validate`가 속도를 검사한 직후에 부릅니다.
     ///
+    /// - 상자에서 나올 무게는 상한(`MAX_CHEST_WEIGHT`) 이하입니다.
     /// - 쿨다운과 부채꼴의 닿는 거리는 유한하고 0 이상입니다. 쿨다운이 음수나 NaN이면 Tick 수로 바꾸는 계산이 깨집니다.
     /// - 부채꼴의 절반 각도는 0도 이상 180도 이하입니다.
     /// - 탄환의 속도와 사거리는 유한하고 0보다 큽니다. 0이면 탄환이 사라지지 않아서 스냅샷이 끝없이 커집니다.
@@ -706,6 +718,12 @@ impl Tuning {
         for kind in WeaponKind::ALL {
             let weapon = self.weapons.get(kind);
             check_not_negative(&format!("{kind:?} cooldown_secs"), weapon.cooldown_secs)?;
+            if weapon.chest_weight > MAX_CHEST_WEIGHT {
+                return Err(format!(
+                    "{kind:?} chest_weight {} is above the limit {MAX_CHEST_WEIGHT}",
+                    weapon.chest_weight
+                ));
+            }
             match weapon.delivery {
                 Delivery::Arc(arc) => {
                     check_not_negative(&format!("{kind:?} reach"), arc.reach)?;
@@ -828,6 +846,7 @@ impl Default for Tuning {
                         reach: 1.0,
                         half_angle_deg: 60.0,
                     }),
+                    chest_weight: 0,
                 },
                 bow: WeaponTuning {
                     damage: BOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
@@ -837,6 +856,25 @@ impl Default for Tuning {
                         range: 9.0,
                         radius: 0.15,
                     }),
+                    chest_weight: 1,
+                },
+                greatsword: WeaponTuning {
+                    damage: GREATSWORD_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 1.0,
+                    delivery: Delivery::Arc(ArcTuning {
+                        reach: 1.3,
+                        half_angle_deg: 90.0,
+                    }),
+                    chest_weight: 1,
+                },
+                spear: WeaponTuning {
+                    damage: SPEAR_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    cooldown_secs: 0.6,
+                    delivery: Delivery::Arc(ArcTuning {
+                        reach: 2.2,
+                        half_angle_deg: 15.0,
+                    }),
+                    chest_weight: 1,
                 },
             },
             sprint: SprintTuning {

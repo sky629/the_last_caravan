@@ -33,8 +33,17 @@ pub enum WeaponKind {
     Sword,
     /// 조준한 방향으로 탄환을 쏘는 원거리 무기입니다.
     Bow,
+    /// 느리지만 넓은 부채꼴을 크게 베는 근접 무기입니다.
+    Greatsword,
+    /// 좁은 부채꼴이지만 멀리 닿는 근접 무기입니다.
+    Spear,
 }
 
 impl WeaponKind {
-    pub const ALL: [WeaponKind; 2] = [WeaponKind::Sword, WeaponKind::Bow];
+    pub const ALL: [WeaponKind; 4] = [
+        WeaponKind::Sword,
+        WeaponKind::Bow,
+        WeaponKind::Greatsword,
+        WeaponKind::Spear,
+    ];
 }

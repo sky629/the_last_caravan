@@ -554,6 +554,41 @@ fn the_playtest_multiplier_raises_every_weapon_by_the_same_ratio() {
         bow * 25,
         "the bow is 60% of the sword at any multiplier"
     );
+    assert_eq!(
+        t.weapons.get(WeaponKind::Greatsword).damage,
+        45 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal greatsword damage is 45"
+    );
+    assert_eq!(
+        t.weapons.get(WeaponKind::Spear).damage,
+        30 * PLAYTEST_DAMAGE_MULTIPLIER,
+        "the normal spear damage is 30"
+    );
+}
+
+#[test]
+fn the_default_greatsword_and_spear_are_the_numbers_of_the_weapon_table() {
+    let t = Tuning::default();
+    let arc = |kind| match t.weapons.get(kind).delivery {
+        Delivery::Arc(arc) => (arc.reach, arc.half_angle_deg),
+        Delivery::Projectile(_) => panic!("{kind:?} swings an arc"),
+    };
+
+    assert_eq!(arc(WeaponKind::Greatsword), (1.3, 90.0));
+    assert_eq!(t.weapons.greatsword.cooldown_secs, 1.0);
+    assert_eq!(arc(WeaponKind::Spear), (2.2, 15.0));
+    assert_eq!(t.weapons.spear.cooldown_secs, 0.6);
+}
+
+#[test]
+fn a_chest_weight_above_the_limit_is_rejected_and_the_reason_names_the_weapon() {
+    let mut t = Tuning::default();
+    t.weapons.spear.chest_weight = 1000;
+    assert_eq!(t.validate(), Ok(()), "the limit itself is valid");
+
+    t.weapons.spear.chest_weight = 1001;
+    let why = t.validate().expect_err("a weight above the limit");
+    assert!(why.contains("Spear chest_weight"), "{why}");
 }
 
 #[test]
@@ -566,4 +601,6 @@ fn before_a_release_the_damage_is_the_normal_damage() {
     let t = Tuning::default();
     assert_eq!(t.weapons.get(WeaponKind::Sword).damage, 25);
     assert_eq!(t.weapons.get(WeaponKind::Bow).damage, 15);
+    assert_eq!(t.weapons.get(WeaponKind::Greatsword).damage, 45);
+    assert_eq!(t.weapons.get(WeaponKind::Spear).damage, 30);
 }

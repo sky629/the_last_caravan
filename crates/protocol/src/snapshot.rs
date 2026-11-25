@@ -170,6 +170,8 @@ impl WireLoadout {
 pub enum WireWeaponKind {
     Sword,
     Bow,
+    Greatsword,
+    Spear,
 }
 
 impl WireWeaponKind {
@@ -178,6 +180,8 @@ impl WireWeaponKind {
         match kind {
             WeaponKind::Sword => WireWeaponKind::Sword,
             WeaponKind::Bow => WireWeaponKind::Bow,
+            WeaponKind::Greatsword => WireWeaponKind::Greatsword,
+            WeaponKind::Spear => WireWeaponKind::Spear,
         }
     }
 }

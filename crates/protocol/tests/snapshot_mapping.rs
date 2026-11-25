@@ -729,6 +729,20 @@ fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
                 kind: WireWeaponKind::Bow,
                 delivery: WireDelivery::Projectile,
             },
+            WeaponInfo {
+                kind: WireWeaponKind::Greatsword,
+                delivery: WireDelivery::Arc {
+                    reach: 1.3,
+                    half_angle_deg: 90.0
+                },
+            },
+            WeaponInfo {
+                kind: WireWeaponKind::Spear,
+                delivery: WireDelivery::Arc {
+                    reach: 2.2,
+                    half_angle_deg: 15.0
+                },
+            },
         ]
     );
 }

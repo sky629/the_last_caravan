@@ -397,6 +397,8 @@ fn weapon_name(weapon: WireWeaponKind) -> &'static str {
     match weapon {
         WireWeaponKind::Sword => "SWORD",
         WireWeaponKind::Bow => "BOW",
+        WireWeaponKind::Greatsword => "GREATSWORD",
+        WireWeaponKind::Spear => "SPEAR",
     }
 }
 
@@ -690,6 +692,21 @@ mod tests {
         archer.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         let bow = Hud::of(&session, Some(&frame(vec![archer])));
         assert_eq!(bow.weapon.as_deref(), Some("WEAPON  [BOW]  SWORD  [Q]"));
+    }
+
+    #[test]
+    fn every_weapon_has_its_own_name_on_the_screen() {
+        let names: Vec<&str> = [
+            WireWeaponKind::Sword,
+            WireWeaponKind::Bow,
+            WireWeaponKind::Greatsword,
+            WireWeaponKind::Spear,
+        ]
+        .into_iter()
+        .map(weapon_name)
+        .collect();
+
+        assert_eq!(names, ["SWORD", "BOW", "GREATSWORD", "SPEAR"]);
     }
 
     #[test]
