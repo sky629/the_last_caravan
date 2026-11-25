@@ -4,9 +4,9 @@
 //! 모든 값은 지금 그리는 `Frame`에서 오므로, 막대는 그 피해를 일으킨 공격이 화면에 나타난 뒤에 줄어듭니다.
 
 use caravan_protocol::{
-    PROTOCOL_VERSION, RejectReason, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife,
-    WireLoadout, WireNightStep, WireOutcome, WirePhase, WirePrompt, WireRepairTarget,
-    WireTowerState, WireWeaponKind,
+    PROTOCOL_VERSION, RejectReason, RoomCode, WireBuildRefusal, WireCannotBuild, WireInteraction,
+    WireLife, WireLoadout, WireMember, WireNightStep, WireOutcome, WirePhase, WirePrompt,
+    WireRepairTarget, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::Team;
 
@@ -52,7 +52,9 @@ pub struct Hud {
 /// 야영지의 준비 목록입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CampPanel {
-    /// 방에 있는 플레이어마다 한 줄이고 번호 순서입니다. 내 줄에는 `(YOU)`가 붙고, 준비한 플레이어는 `READY`, 아니면 `...`입니다.
+    /// 방 코드와 C로 하게 되는 일입니다. 웹은 `ROOM k7m2q   C  COPY LINK`, PC는 `ROOM k7m2q   C  COPY CODE`이고, 복사한 직후에는 `ROOM k7m2q   LINK COPIED`처럼 바뀝니다.
+    pub room_line: String,
+    /// 방에 있는 플레이어마다 한 줄이고 번호 순서입니다. 줄은 플레이어의 이름이고(명단에 아직 없으면 `PLAYER 번호`), 내 줄에는 `(YOU)`가 붙고, 준비한 플레이어는 `READY`, 아니면 `...`입니다.
     pub rows: Vec<String>,
     /// 내가 R을 누르면 하게 되는 일입니다. 준비하지 않았으면 `R  READY`, 준비했으면 `R  CANCEL READY`입니다.
     pub hint: String,
@@ -94,6 +96,34 @@ pub enum BannerTone {
     Bad,
 }
 
+/// 야영지에서 C로 복사하는 것입니다. 웹은 링크를, PC는 방 코드를 복사합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InviteKind {
+    Link,
+    Code,
+}
+
+/// 초대의 지금 상태입니다. `copied`는 C를 눌러 복사한 직후의 잠시 동안 참이고, 안내 문구가 복사했다는 알림으로 바뀝니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Invite {
+    pub kind: InviteKind,
+    pub copied: bool,
+}
+
+impl Invite {
+    fn line(self, room: &RoomCode) -> String {
+        let what = match self.kind {
+            InviteKind::Link => "LINK",
+            InviteKind::Code => "CODE",
+        };
+        if self.copied {
+            format!("ROOM {room}   {what} COPIED")
+        } else {
+            format!("ROOM {room}   C  COPY {what}")
+        }
+    }
+}
+
 impl Hud {
     /// 아무것도 표시하지 않는 HUD입니다. 시작 화면에서는 방에 관한 값이 없으므로 이 값을 그립니다.
     pub fn none() -> Hud {
@@ -120,7 +150,7 @@ impl Hud {
     }
 
     /// 접속 상태와 지금 그릴 방의 모습에서 HUD에 표시할 내용을 만듭니다. 방에 들어가기 전에는 `frame`이 없습니다.
-    pub fn of(session: &Session, frame: Option<&Frame>) -> Hud {
+    pub fn of(session: &Session, frame: Option<&Frame>, invite: Invite) -> Hud {
         let mut hud = Hud {
             connection: session.status_text(),
             ..Hud::none()
@@ -139,7 +169,18 @@ impl Hud {
         match &frame.phase {
             WirePhase::Camp {
                 ready, starting_in, ..
-            } => hud.camp = Some(camp_panel(&frame.players, you, ready, *starting_in)),
+            } => {
+                // 야영지에서는 방 코드가 준비 목록 위의 줄에 있으므로 오른쪽 아래의 방 코드는 감춥니다.
+                hud.room = None;
+                hud.camp = Some(camp_panel(
+                    &frame.players,
+                    you,
+                    ready,
+                    *starting_in,
+                    &joined.roster,
+                    invite.line(&joined.room),
+                ));
+            }
             phase => {
                 // 보관함은 원정의 것이므로 야영지에서는 보이지 않습니다.
                 hud.expedition = Some(format!("EXPEDITION {}", frame.expedition));
@@ -274,14 +315,20 @@ fn camp_panel(
     you: u32,
     ready: &[u32],
     starting_in: Option<f32>,
+    roster: &[WireMember],
+    room_line: String,
 ) -> CampPanel {
     let rows = players
         .iter()
         .map(|player| {
+            let called = match roster.iter().find(|member| member.id == player.id) {
+                Some(member) => member.name.clone(),
+                None => format!("PLAYER {}", player.id),
+            };
             let name = if player.id == you {
-                format!("PLAYER {}  (YOU)", player.id)
+                format!("{called}  (YOU)")
             } else {
-                format!("PLAYER {}", player.id)
+                called
             };
             let state = if ready.contains(&player.id) {
                 "READY"
@@ -297,6 +344,7 @@ fn camp_panel(
         "R  READY"
     };
     CampPanel {
+        room_line,
         rows,
         hint: hint.to_string(),
         countdown: starting_in.map(|secs| format!("STARTING IN {}", whole_secs(secs))),
@@ -602,6 +650,10 @@ mod tests {
     use crate::start::JoinRequest;
 
     const YOU: u32 = 1;
+    const INVITE: Invite = Invite {
+        kind: InviteKind::Link,
+        copied: false,
+    };
 
     fn request(room: &str) -> JoinRequest {
         JoinRequest {
@@ -686,7 +738,7 @@ mod tests {
     #[test]
     fn the_day_wave_wagon_stash_and_room_are_shown() {
         let session = session_in_room();
-        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72))])));
+        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72))])), INVITE);
 
         assert_eq!(hud.day.as_deref(), Some("NIGHT 2 / 3"));
         assert_eq!(hud.timer.as_deref(), Some("WAVE 2 / 3"));
@@ -706,7 +758,7 @@ mod tests {
         let shown = |phase| {
             let mut frame = frame(vec![player(YOU, alive(100))]);
             frame.phase = phase;
-            let hud = Hud::of(&session, Some(&frame));
+            let hud = Hud::of(&session, Some(&frame), INVITE);
             (hud.day, hud.timer)
         };
         let text = |day: &str, timer: &str| (Some(day.to_string()), Some(timer.to_string()));
@@ -772,7 +824,7 @@ mod tests {
             ),
             player(4, WireLife::Dead),
         ];
-        let hud = Hud::of(&session, Some(&frame(players)));
+        let hud = Hud::of(&session, Some(&frame(players)), INVITE);
 
         let me = hud.me.unwrap();
         assert_eq!(me.label, "YOU  72 / 100");
@@ -796,7 +848,7 @@ mod tests {
     #[test]
     fn my_stamina_is_a_bar_under_my_hp_that_follows_the_percentage_from_the_server() {
         let session = session_in_room();
-        let full = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72))])));
+        let full = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72))])), INVITE);
         let meter = full.stamina.unwrap();
         assert_eq!(meter.label, "STAMINA");
         assert_eq!(meter.fraction, 1.0);
@@ -804,7 +856,7 @@ mod tests {
 
         for (percent, fraction) in [(40, 0.4), (1, 0.01), (0, 0.0)] {
             let me = player(YOU, alive_with_stamina(percent));
-            let hud = Hud::of(&session, Some(&frame(vec![me])));
+            let hud = Hud::of(&session, Some(&frame(vec![me])), INVITE);
             let meter = hud.stamina.expect("a living player has a gauge");
             assert!(
                 (meter.fraction - fraction).abs() < 1e-6,
@@ -813,7 +865,7 @@ mod tests {
             );
         }
         let over = player(YOU, alive_with_stamina(250));
-        let hud = Hud::of(&session, Some(&frame(vec![over])));
+        let hud = Hud::of(&session, Some(&frame(vec![over])), INVITE);
         assert_eq!(
             hud.stamina.unwrap().fraction,
             1.0,
@@ -831,21 +883,31 @@ mod tests {
                 revive_progress: None,
             },
         );
-        assert_eq!(Hud::of(&session, Some(&frame(vec![downed]))).stamina, None);
+        assert_eq!(
+            Hud::of(&session, Some(&frame(vec![downed])), INVITE).stamina,
+            None
+        );
         let dead = player(YOU, WireLife::Dead);
-        assert_eq!(Hud::of(&session, Some(&frame(vec![dead]))).stamina, None);
-        assert_eq!(Hud::of(&session, None).stamina, None);
+        assert_eq!(
+            Hud::of(&session, Some(&frame(vec![dead])), INVITE).stamina,
+            None
+        );
+        assert_eq!(Hud::of(&session, None, INVITE).stamina, None);
     }
 
     #[test]
     fn the_held_weapon_comes_first_in_brackets_and_an_empty_slot_is_a_dash() {
         let session = session_in_room();
-        let sword = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
+        let sword = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100))])),
+            INVITE,
+        );
         assert_eq!(sword.weapon.as_deref(), Some("WEAPON  [SWORD]  -  [Q]"));
 
         let mut archer = player(YOU, alive(100));
         archer.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
-        let bow = Hud::of(&session, Some(&frame(vec![archer])));
+        let bow = Hud::of(&session, Some(&frame(vec![archer])), INVITE);
         assert_eq!(bow.weapon.as_deref(), Some("WEAPON  [BOW]  SWORD  [Q]"));
     }
 
@@ -857,23 +919,28 @@ mod tests {
         let mut ally = player(2, alive(100));
         ally.prompt = Some(WirePrompt::TakeWeapon(WireWeaponKind::Bow));
 
-        let hud = Hud::of(&session, Some(&frame(vec![me, ally])));
+        let hud = Hud::of(&session, Some(&frame(vec![me, ally])), INVITE);
         assert_eq!(hud.hint.as_deref(), Some("F  TAKE SPEAR"));
 
         let mut at_a_chest = player(YOU, alive(100));
         at_a_chest.prompt = Some(WirePrompt::OpenChest);
-        let hud = Hud::of(&session, Some(&frame(vec![at_a_chest])));
+        let hud = Hud::of(&session, Some(&frame(vec![at_a_chest])), INVITE);
         assert_eq!(hud.hint.as_deref(), Some("F  OPEN CHEST"));
 
-        let quiet = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
+        let quiet = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100))])),
+            INVITE,
+        );
         assert_eq!(quiet.hint, None, "nothing to do with F");
-        assert_eq!(Hud::of(&session, None).hint, None);
+        assert_eq!(Hud::of(&session, None, INVITE).hint, None);
 
         let mut ally_only = player(2, alive(100));
         ally_only.prompt = Some(WirePrompt::TakeWeapon(WireWeaponKind::Bow));
         let hud = Hud::of(
             &session,
             Some(&frame(vec![player(YOU, alive(100)), ally_only])),
+            INVITE,
         );
         assert_eq!(hud.hint, None, "an ally's hint is not mine");
     }
@@ -910,16 +977,20 @@ mod tests {
         );
         downed.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         assert_eq!(
-            Hud::of(&session, Some(&frame(vec![downed])))
+            Hud::of(&session, Some(&frame(vec![downed])), INVITE)
                 .weapon
                 .as_deref(),
             Some("WEAPON  [BOW]  SWORD  [Q]")
         );
-        assert_eq!(Hud::of(&session, None).weapon, None);
+        assert_eq!(Hud::of(&session, None, INVITE).weapon, None);
 
         let mut ally = player(2, alive(100));
         ally.loadout = loadout(WireWeaponKind::Bow, None);
-        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100)), ally])));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), ally])),
+            INVITE,
+        );
         assert_eq!(
             hud.weapon.as_deref(),
             Some("WEAPON  [SWORD]  -  [Q]"),
@@ -934,6 +1005,7 @@ mod tests {
         let hud = Hud::of(
             &session,
             Some(&frame(vec![player(YOU, alive(100)), tired_ally])),
+            INVITE,
         );
         assert_eq!(hud.stamina.unwrap().fraction, 1.0, "only mine");
         assert_eq!(hud.allies[0].label, "P2  100 / 100");
@@ -958,6 +1030,7 @@ mod tests {
         let hud = Hud::of(
             &session,
             Some(&frame(vec![player(YOU, alive(72)), teammate])),
+            INVITE,
         );
         let labels: Vec<&str> = hud.allies.iter().map(|a| a.label.as_str()).collect();
         assert_eq!(labels, ["P2  40 / 100"]);
@@ -970,7 +1043,11 @@ mod tests {
             team: Team(2),
             ..player(2, alive(40))
         };
-        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(72)), rival])));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(72)), rival])),
+            INVITE,
+        );
         assert_eq!(hud.allies, []);
     }
 
@@ -984,7 +1061,11 @@ mod tests {
                 revive_progress: Some(0.4),
             },
         );
-        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100)), ally])));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), ally])),
+            INVITE,
+        );
         assert_eq!(hud.allies[0].label, "P2  REVIVING 40%");
     }
 
@@ -998,7 +1079,7 @@ mod tests {
                 revive_progress: None,
             },
         );
-        let hud_bleeding = Hud::of(&session, Some(&frame(vec![bleeding])));
+        let hud_bleeding = Hud::of(&session, Some(&frame(vec![bleeding])), INVITE);
         assert_eq!(
             hud_bleeding.bleed.as_deref(),
             Some("DOWNED  BLEEDING OUT IN 23s")
@@ -1013,7 +1094,7 @@ mod tests {
                 revive_progress: Some(0.25),
             },
         );
-        let hud_rescued = Hud::of(&session, Some(&frame(vec![rescued])));
+        let hud_rescued = Hud::of(&session, Some(&frame(vec![rescued])), INVITE);
         let action = hud_rescued.action.unwrap();
         assert_eq!(action.label, "BEING REVIVED");
         assert!((action.fraction - 0.25).abs() < 1e-6);
@@ -1036,7 +1117,7 @@ mod tests {
                 build_refusal: None,
             },
         );
-        let action = Hud::of(&session, Some(&frame(vec![reviver])))
+        let action = Hud::of(&session, Some(&frame(vec![reviver])), INVITE)
             .action
             .unwrap();
         assert_eq!(action.label, "REVIVING P2");
@@ -1060,7 +1141,7 @@ mod tests {
                 build_refusal: None,
             },
         );
-        let action = Hud::of(&session, Some(&frame(vec![repairer])))
+        let action = Hud::of(&session, Some(&frame(vec![repairer])), INVITE)
             .action
             .unwrap();
         assert_eq!(action.label, "REPAIRING TOWER  250 / 300");
@@ -1089,7 +1170,7 @@ mod tests {
             hp: 300,
             max_hp: 500,
         };
-        let action = Hud::of(&session, Some(&frame)).action.unwrap();
+        let action = Hud::of(&session, Some(&frame), INVITE).action.unwrap();
         assert_eq!(action.label, "REPAIRING WAGON  300 / 500");
         assert!((action.fraction - 0.6).abs() < 1e-6);
     }
@@ -1114,7 +1195,11 @@ mod tests {
     #[test]
     fn a_repair_the_stash_cannot_pay_says_so_and_keeps_showing_the_repair() {
         let session = session_in_room();
-        let hud = Hud::of(&session, Some(&frame(vec![repairer_of_the_wagon(true)])));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![repairer_of_the_wagon(true)])),
+            INVITE,
+        );
 
         assert_eq!(
             hud.refusal.as_deref(),
@@ -1130,7 +1215,11 @@ mod tests {
     #[test]
     fn a_repair_the_stash_can_pay_shows_no_refusal() {
         let session = session_in_room();
-        let hud = Hud::of(&session, Some(&frame(vec![repairer_of_the_wagon(false)])));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![repairer_of_the_wagon(false)])),
+            INVITE,
+        );
         assert_eq!(hud.refusal, None);
     }
 
@@ -1141,7 +1230,11 @@ mod tests {
             id: 2,
             ..repairer_of_the_wagon(true)
         };
-        let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100)), other])));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), other])),
+            INVITE,
+        );
         assert_eq!(hud.refusal, None);
     }
 
@@ -1159,7 +1252,7 @@ mod tests {
                 build_refusal: None,
             },
         );
-        let action = Hud::of(&session, Some(&frame(vec![gatherer])))
+        let action = Hud::of(&session, Some(&frame(vec![gatherer])), INVITE)
             .action
             .unwrap();
         assert_eq!(action.label, "GATHERING  9 / 15");
@@ -1184,7 +1277,7 @@ mod tests {
             },
         );
 
-        let action = Hud::of(&session, Some(&frame(vec![opener])))
+        let action = Hud::of(&session, Some(&frame(vec![opener])), INVITE)
             .action
             .unwrap();
 
@@ -1215,7 +1308,7 @@ mod tests {
                 build_refusal: None,
             },
         );
-        let hud = Hud::of(&session, Some(&frame(vec![carrying])));
+        let hud = Hud::of(&session, Some(&frame(vec![carrying])), INVITE);
         assert_eq!(hud.carry.as_deref(), Some("CARRY  7 / 10"));
 
         let downed = player(
@@ -1225,8 +1318,11 @@ mod tests {
                 revive_progress: None,
             },
         );
-        assert_eq!(Hud::of(&session, Some(&frame(vec![downed]))).carry, None);
-        assert_eq!(Hud::of(&session, None).carry, None);
+        assert_eq!(
+            Hud::of(&session, Some(&frame(vec![downed])), INVITE).carry,
+            None
+        );
+        assert_eq!(Hud::of(&session, None, INVITE).carry, None);
     }
 
     #[test]
@@ -1250,7 +1346,7 @@ mod tests {
             max_hp: 300,
             state: WireTowerState::Building { progress: 0.4 },
         });
-        let hud = Hud::of(&session, Some(&frame));
+        let hud = Hud::of(&session, Some(&frame), INVITE);
         let action = hud.action.unwrap();
         assert_eq!(action.label, "BUILDING TOWER");
         assert_eq!(action.fraction, 0.4);
@@ -1287,7 +1383,7 @@ mod tests {
                     }),
                 },
             );
-            let hud = Hud::of(&session, Some(&frame(vec![refused])));
+            let hud = Hud::of(&session, Some(&frame(vec![refused])), INVITE);
             let text = hud.refusal.expect("the reason is shown");
             assert_eq!(text, format!("CANNOT BUILD: {expected}"));
             texts.push(text);
@@ -1317,6 +1413,7 @@ mod tests {
         let hud = Hud::of(
             &session,
             Some(&frame(vec![player(YOU, alive(100)), refused])),
+            INVITE,
         );
         assert_eq!(hud.refusal, None);
     }
@@ -1340,7 +1437,7 @@ mod tests {
     fn the_camp_lists_every_player_with_who_is_ready_and_what_r_does() {
         let session = session_in_room();
 
-        let none_ready = Hud::of(&session, Some(&camp_frame(vec![], None)));
+        let none_ready = Hud::of(&session, Some(&camp_frame(vec![], None)), INVITE);
         let panel = none_ready.camp.expect("the camp shows the list");
         assert_eq!(
             panel.rows,
@@ -1349,7 +1446,7 @@ mod tests {
         assert_eq!(panel.hint, "R  READY");
         assert_eq!(panel.countdown, None);
 
-        let two_ready = Hud::of(&session, Some(&camp_frame(vec![1, 3], None)));
+        let two_ready = Hud::of(&session, Some(&camp_frame(vec![1, 3], None)), INVITE);
         let panel = two_ready.camp.unwrap();
         assert_eq!(
             panel.rows,
@@ -1362,14 +1459,69 @@ mod tests {
         );
     }
 
+    fn with_roster(mut session: Session, members: &[(u32, &str)]) -> Session {
+        let members = members
+            .iter()
+            .map(|(id, name)| WireMember {
+                id: *id,
+                name: name.to_string(),
+            })
+            .collect();
+        session.on_event(ClientEvent::Message(ServerMsg::Roster(members)));
+        session
+    }
+
+    #[test]
+    fn the_ready_list_shows_the_names_and_a_player_the_roster_lacks_keeps_a_number() {
+        let session = with_roster(session_in_room(), &[(1, "KANG"), (2, "MIRO")]);
+
+        let panel = Hud::of(&session, Some(&camp_frame(vec![2], None)), INVITE)
+            .camp
+            .unwrap();
+
+        assert_eq!(
+            panel.rows,
+            ["KANG  (YOU)  ...", "MIRO  READY", "PLAYER 3  ..."],
+            "player 3 has no name in the roster yet"
+        );
+    }
+
+    #[test]
+    fn the_camp_shows_the_room_code_with_what_c_copies_and_the_expedition_shows_it_below() {
+        let session = session_in_room();
+        let camp_frame = camp_frame(vec![], None);
+        let line = |kind, copied| {
+            let hud = Hud::of(&session, Some(&camp_frame), Invite { kind, copied });
+            assert_eq!(hud.room, None, "the camp has the room code in its list");
+            hud.camp.unwrap().room_line
+        };
+
+        assert_eq!(line(InviteKind::Link, false), "ROOM test   C  COPY LINK");
+        assert_eq!(line(InviteKind::Code, false), "ROOM test   C  COPY CODE");
+        assert_eq!(line(InviteKind::Link, true), "ROOM test   LINK COPIED");
+        assert_eq!(line(InviteKind::Code, true), "ROOM test   CODE COPIED");
+
+        let expedition = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100))])),
+            INVITE,
+        );
+        assert_eq!(expedition.room.as_deref(), Some("ROOM test"));
+        assert_eq!(expedition.camp, None);
+    }
+
     #[test]
     fn the_countdown_is_shown_only_while_everyone_is_ready_and_rounds_up() {
         let session = session_in_room();
         let shown = |starting_in| {
-            Hud::of(&session, Some(&camp_frame(vec![1, 2, 3], starting_in)))
-                .camp
-                .unwrap()
-                .countdown
+            Hud::of(
+                &session,
+                Some(&camp_frame(vec![1, 2, 3], starting_in)),
+                INVITE,
+            )
+            .camp
+            .unwrap()
+            .countdown
         };
 
         assert_eq!(shown(Some(3.0)), Some("STARTING IN 3".to_string()));
@@ -1381,7 +1533,7 @@ mod tests {
     fn the_camp_has_no_expedition_or_stash_and_other_stages_have_no_list() {
         let session = session_in_room();
 
-        let camp = Hud::of(&session, Some(&camp_frame(vec![], None)));
+        let camp = Hud::of(&session, Some(&camp_frame(vec![], None)), INVITE);
         assert_eq!(camp.expedition, None);
         assert_eq!(camp.stash, None);
         assert_eq!(
@@ -1390,7 +1542,11 @@ mod tests {
         );
         assert_eq!(camp.banner, None);
 
-        let expedition = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
+        let expedition = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100))])),
+            INVITE,
+        );
         assert_eq!(expedition.camp, None);
         assert!(expedition.stash.is_some());
         assert_eq!(expedition.carry.as_deref(), Some("CARRY  0 / 10"));
@@ -1405,7 +1561,7 @@ mod tests {
             secs_left: 59.6,
             confirmed: vec![],
         };
-        let failed = Hud::of(&session, Some(&frame)).banner.unwrap();
+        let failed = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
         assert_eq!(failed.title, "EXPEDITION FAILED");
         assert_eq!(
             failed.detail.as_deref(),
@@ -1418,7 +1574,7 @@ mod tests {
             secs_left: 40.0,
             confirmed: vec![2],
         };
-        let other_confirmed = Hud::of(&session, Some(&frame)).banner.unwrap();
+        let other_confirmed = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
         assert_eq!(
             other_confirmed.detail.as_deref(),
             Some("ENTER  BACK TO CAMP  (1 / 2)\nBACK TO CAMP IN 40s"),
@@ -1430,7 +1586,7 @@ mod tests {
             secs_left: 40.0,
             confirmed: vec![1],
         };
-        let i_confirmed = Hud::of(&session, Some(&frame)).banner.unwrap();
+        let i_confirmed = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
         assert_eq!(
             i_confirmed.detail.as_deref(),
             Some("WAITING FOR THE OTHERS  (1 / 2)\nBACK TO CAMP IN 40s")
@@ -1441,11 +1597,11 @@ mod tests {
             secs_left: 1.0,
             confirmed: vec![],
         };
-        assert_eq!(Hud::of(&session, Some(&frame)).camp, None);
-        let won = Hud::of(&session, Some(&frame)).banner.unwrap();
+        assert_eq!(Hud::of(&session, Some(&frame), INVITE).camp, None);
+        let won = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
         assert_eq!(won.title, "EXPEDITION SUCCESS");
         assert_eq!(won.tone, BannerTone::Good);
-        assert_eq!(Hud::of(&session, Some(&frame)).day, None);
+        assert_eq!(Hud::of(&session, Some(&frame), INVITE).day, None);
     }
 
     #[test]
@@ -1463,16 +1619,20 @@ mod tests {
                 revive_progress: None,
             },
         )]);
-        assert!(Hud::of(&session, Some(&downed)).bleed.is_some());
+        assert!(Hud::of(&session, Some(&downed), INVITE).bleed.is_some());
         downed.phase = debrief.clone();
-        assert_eq!(Hud::of(&session, Some(&downed)).bleed, None);
+        assert_eq!(Hud::of(&session, Some(&downed), INVITE).bleed, None);
 
         let mut me = player(YOU, alive(100));
         me.prompt = Some(WirePrompt::OpenChest);
         let mut beside_a_chest = frame(vec![me]);
-        assert!(Hud::of(&session, Some(&beside_a_chest)).hint.is_some());
+        assert!(
+            Hud::of(&session, Some(&beside_a_chest), INVITE)
+                .hint
+                .is_some()
+        );
         beside_a_chest.phase = debrief;
-        let hud = Hud::of(&session, Some(&beside_a_chest));
+        let hud = Hud::of(&session, Some(&beside_a_chest), INVITE);
         assert_eq!(hud.hint, None);
         assert_eq!(hud.action, None);
         assert!(hud.me.is_some(), "my own meter stays");
@@ -1503,7 +1663,7 @@ mod tests {
         session.on_event(ClientEvent::Message(ServerMsg::JoinRejected {
             reason: RejectReason::RoomFull { capacity: 4 },
         }));
-        let hud = Hud::of(&session, None);
+        let hud = Hud::of(&session, None, INVITE);
         let banner = hud.banner.unwrap();
         assert_eq!(banner.title, "JOIN REJECTED");
         assert_eq!(banner.detail.as_deref(), Some("Room is full (4 / 4)"));
@@ -1517,7 +1677,7 @@ mod tests {
         session.on_event(ClientEvent::Disconnected {
             reason: "the server closed the connection".to_string(),
         });
-        let hud = Hud::of(&session, None);
+        let hud = Hud::of(&session, None, INVITE);
         let banner = hud.banner.unwrap();
         assert_eq!(banner.title, "DISCONNECTED");
         assert_eq!(
@@ -1540,7 +1700,7 @@ mod tests {
             reason: "Unknown error".to_string(),
         });
 
-        let hud = Hud::of(&session, None);
+        let hud = Hud::of(&session, None, INVITE);
 
         let banner = hud.banner.unwrap();
         assert_eq!(banner.title, "CANNOT REACH THE SERVER");
@@ -1557,12 +1717,12 @@ mod tests {
     #[test]
     fn before_the_room_and_before_the_first_snapshot_a_waiting_notice_is_shown() {
         let connecting = Session::new(request("test"), DEFAULT_SERVER.to_string());
-        let banner = Hud::of(&connecting, None).banner.unwrap();
+        let banner = Hud::of(&connecting, None, INVITE).banner.unwrap();
         assert_eq!(banner.title, "Connecting... (room test)");
         assert_eq!(banner.tone, BannerTone::Info);
 
         let in_room = session_in_room();
-        let waiting = Hud::of(&in_room, None).banner.unwrap();
+        let waiting = Hud::of(&in_room, None, INVITE).banner.unwrap();
         assert_eq!(waiting.title, "Waiting for the first snapshot...");
     }
 }

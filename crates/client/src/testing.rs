@@ -1,7 +1,9 @@
 //! Bevy 시스템 테스트가 함께 쓰는 도구입니다. 화면과 GPU 없이 입장을 마친 화면 흐름을 만듭니다.
 
-use caravan_client_core::{Flow, LaunchOptions, Memory};
-use caravan_protocol::{ClientEvent, RoomCode, ServerMsg, Welcome};
+use caravan_client_core::{Flow, Frame, LaunchOptions, Memory};
+use caravan_protocol::{
+    ClientEvent, RoomCode, ServerMsg, Welcome, WireMember, WirePhase, WireWagon,
+};
 use caravan_rules::{Seed, Sim, Tuning};
 
 use crate::net::ClientFlow;
@@ -27,4 +29,39 @@ pub fn joined_flow() -> ClientFlow {
     flow.on_event(ClientEvent::Connected);
     flow.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
     ClientFlow(flow)
+}
+
+/// 서버가 보낸 명단이 도착한 것으로 합니다. 각 항목은 (플레이어 번호, 이름)입니다.
+pub fn deliver_roster(flow: &mut ClientFlow, members: &[(u32, &str)]) {
+    let members = members
+        .iter()
+        .map(|(id, name)| WireMember {
+            id: *id,
+            name: name.to_string(),
+        })
+        .collect();
+    flow.0
+        .on_event(ClientEvent::Message(ServerMsg::Roster(members)));
+}
+
+/// 플레이어와 몬스터가 없는 빈 방의 모습입니다. 단계만 정합니다.
+pub fn empty_frame(phase: WirePhase) -> Frame {
+    Frame {
+        tick: 1.0,
+        expedition: 1,
+        phase,
+        wagon: WireWagon {
+            hp: 500,
+            max_hp: 500,
+        },
+        stash: 0,
+        towers: Vec::new(),
+        nodes: Vec::new(),
+        piles: Vec::new(),
+        chests: Vec::new(),
+        ground_weapons: Vec::new(),
+        players: Vec::new(),
+        monsters: Vec::new(),
+        projectiles: Vec::new(),
+    }
 }

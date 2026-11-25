@@ -59,7 +59,7 @@ impl Registry {
         });
     }
 
-    #[cfg(test)]
+    /// 번호의 개체를 찾기만 합니다. `find`와 달리 이번 프레임에 보였다고 표시하지 않습니다.
     pub fn entity_of(&self, id: u32) -> Option<Entity> {
         self.entities.get(&id).map(|tracked| tracked.entity)
     }

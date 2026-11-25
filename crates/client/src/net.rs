@@ -7,9 +7,10 @@ use std::collections::VecDeque;
 use bevy::clipboard::Clipboard;
 use bevy::prelude::*;
 use caravan_client_core::{Command, Flow, Frame, Joined, Session};
-use caravan_protocol::{ClientEvent, ClientTransport, ServerMsg};
+use caravan_protocol::{ClientEvent, ClientTransport, ServerMsg, WirePhase};
 use caravan_ws_client::WsClient;
 
+use crate::config;
 use crate::input::HeldControls;
 use crate::storage;
 
@@ -35,6 +36,19 @@ impl ClientFlow {
 #[derive(Resource, Default)]
 pub struct CurrentFrame(pub Option<Frame>);
 
+/// 링크나 방 코드를 마지막으로 복사한 시각(초)입니다. 복사한 직후 잠시 동안 야영지의 안내가 복사했다는 알림으로 바뀝니다.
+#[derive(Resource, Default)]
+pub struct InviteFlash {
+    copied_at: Option<f64>,
+}
+
+impl InviteFlash {
+    pub fn copied(&self, now: f64) -> bool {
+        self.copied_at
+            .is_some_and(|at| now - at < config::INVITE_FLASH_SECS)
+    }
+}
+
 /// 앱이 시작할 때 `Flow`가 돌려준 일입니다. 첫 프레임에 실행합니다.
 #[derive(Resource)]
 pub struct StartupCommands(Vec<Command>);
@@ -44,6 +58,7 @@ pub fn install(app: &mut App, flow: Flow, first: Vec<Command>, debug_net: bool) 
     app.insert_resource(ClientFlow(flow))
         .insert_resource(StartupCommands(first))
         .init_resource::<CurrentFrame>()
+        .init_resource::<InviteFlash>()
         .insert_non_send(Net {
             transport: None,
             debug_net,
@@ -51,13 +66,14 @@ pub fn install(app: &mut App, flow: Flow, first: Vec<Command>, debug_net: bool) 
 }
 
 /// `Flow`가 돌려준 일을 순서대로 실행합니다. `Command`를 실행하는 곳은 이 함수 하나입니다.
-/// 접속을 열지 못하면 `Flow`에 끊김을 알리고, `Flow`가 돌려준 일도 이어서 실행합니다.
+/// 접속을 열지 못하면 `Flow`에 끊김을 알리고, `Flow`가 돌려준 일도 이어서 실행합니다. 클립보드에 복사했으면 참을 돌려줍니다.
 pub fn run_commands(
     commands: Vec<Command>,
     flow: &mut Flow,
     net: &mut Net,
     clipboard: &mut Clipboard,
-) {
+) -> bool {
+    let mut copied = false;
     let mut queue: VecDeque<Command> = commands.into();
     while let Some(command) = queue.pop_front() {
         match command {
@@ -81,13 +97,13 @@ pub fn run_commands(
             // 접속을 버리면 닫힙니다.
             Command::Disconnect => net.transport = None,
             Command::Save(text) => storage::save(&text),
-            Command::Copy(text) => {
-                if let Err(err) = clipboard.set_text(text) {
-                    warn!("cannot copy to the clipboard: {err}");
-                }
-            }
+            Command::Copy(text) => match clipboard.set_text(text) {
+                Ok(()) => copied = true,
+                Err(err) => warn!("cannot copy to the clipboard: {err}"),
+            },
         }
     }
+    copied
 }
 
 /// 첫 프레임에 시작 일을 실행하고, 접속 방식에 도착한 이벤트를 모두 `Flow`에 넘깁니다.
@@ -129,17 +145,32 @@ pub fn advance_playback(
     frame.0 = flow.0.session().and_then(Session::frame);
 }
 
-/// 방 안에서 Esc를 누르면 시작 화면으로 돌아갑니다. 입장하는 중에도 됩니다.
+/// 방 안의 키입니다. Esc는 시작 화면으로 돌아가고(입장하는 중에도 됩니다), 야영지에서 C는 링크나 방 코드를 복사합니다.
 pub fn read_room_keys(
     keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time<Real>>,
+    frame: Res<CurrentFrame>,
     mut net: NonSendMut<Net>,
     mut flow: ResMut<ClientFlow>,
+    mut flash: ResMut<InviteFlash>,
     mut clipboard: ResMut<Clipboard>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         let commands = flow.0.leave();
         run_commands(commands, &mut flow.0, &mut net, &mut clipboard);
     }
+    if invite_requested(&keys, frame.0.as_ref())
+        && let Some(command) = flow.0.copy_invite()
+        && run_commands(vec![command], &mut flow.0, &mut net, &mut clipboard)
+    {
+        flash.copied_at = Some(time.elapsed_secs_f64());
+    }
+}
+
+/// C를 눌렀고 야영지의 모습이 그려지고 있으면 참입니다. 안내가 야영지에만 보이므로 다른 때의 C는 무시합니다.
+fn invite_requested(keys: &ButtonInput<KeyCode>, frame: Option<&Frame>) -> bool {
+    keys.just_pressed(KeyCode::KeyC)
+        && frame.is_some_and(|frame| matches!(frame.phase, WirePhase::Camp { .. }))
 }
 
 /// 입력을 보낼 때가 되었으면 지금의 조작을 서버에 보냅니다.
@@ -192,6 +223,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::testing::empty_frame;
     use caravan_client_core::{LaunchOptions, Memory};
     use caravan_protocol::ClientMsg;
 
@@ -264,5 +296,53 @@ mod tests {
             &mut Clipboard::default(),
         );
         assert!(net.transport.is_none());
+    }
+
+    fn camp() -> Frame {
+        empty_frame(WirePhase::Camp {
+            ready: Vec::new(),
+            starting_in: None,
+            struck: Vec::new(),
+        })
+    }
+
+    fn day() -> Frame {
+        empty_frame(WirePhase::Day {
+            day: 1,
+            secs_left: 90.0,
+        })
+    }
+
+    fn pressed(key: KeyCode) -> ButtonInput<KeyCode> {
+        let mut keys = ButtonInput::default();
+        keys.press(key);
+        keys
+    }
+
+    #[test]
+    fn c_copies_the_invite_only_in_the_camp() {
+        let c = pressed(KeyCode::KeyC);
+        assert!(invite_requested(&c, Some(&camp())));
+        assert!(!invite_requested(&c, Some(&day())), "not on an expedition");
+        assert!(!invite_requested(&c, None), "no room is drawn yet");
+        assert!(!invite_requested(&pressed(KeyCode::KeyR), Some(&camp())));
+
+        let mut held = pressed(KeyCode::KeyC);
+        held.clear_just_pressed(KeyCode::KeyC);
+        assert!(
+            !invite_requested(&held, Some(&camp())),
+            "holding is not a press"
+        );
+    }
+
+    #[test]
+    fn the_copied_notice_lasts_a_short_time_and_never_shows_before_a_copy() {
+        let mut flash = InviteFlash::default();
+        assert!(!flash.copied(100.0));
+
+        flash.copied_at = Some(100.0);
+        assert!(flash.copied(100.0));
+        assert!(flash.copied(100.0 + config::INVITE_FLASH_SECS - 0.1));
+        assert!(!flash.copied(100.0 + config::INVITE_FLASH_SECS + 0.1));
     }
 }

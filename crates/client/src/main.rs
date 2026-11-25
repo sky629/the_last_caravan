@@ -94,6 +94,7 @@ fn main() {
                     loot::sync_racks.run_if(resource_exists::<view::Scene>),
                     camp::sync_strikes.run_if(resource_exists::<view::Scene>),
                     characters::sync_characters.run_if(resource_exists::<view::Scene>),
+                    characters::sync_name_labels.run_if(resource_exists::<view::Scene>),
                     effects::draw_effects.run_if(resource_exists::<view::Scene>),
                     hud::build_roster,
                     hud::update,

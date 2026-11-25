@@ -13,7 +13,7 @@
 
 use caravan_protocol::{ClientEvent, ClientMsg, PlayerName, RejectReason};
 
-use crate::hud::reject_text;
+use crate::hud::{InviteKind, reject_text};
 use crate::launch::{DEFAULT_SERVER, LaunchError, LaunchOptions};
 use crate::memory::Memory;
 use crate::session::Session;
@@ -209,6 +209,14 @@ impl Flow {
         }
         self.back_to_start(None);
         vec![Command::Disconnect]
+    }
+
+    /// C로 복사하는 것의 종류입니다. 페이지 주소가 있는 웹은 링크이고, PC는 방 코드입니다.
+    pub fn invite_kind(&self) -> InviteKind {
+        match self.page_url {
+            Some(_) => InviteKind::Link,
+            None => InviteKind::Code,
+        }
     }
 
     /// 야영지에서 C입니다. 웹은 `page_url?room=<코드>`를, PC는 방 코드를 복사합니다. 서버 주소가 기본값이 아니면 `&server=`를 붙입니다.
@@ -679,6 +687,7 @@ mod tests {
                 "http://127.0.0.1:8080/?room=k7m2q".to_string()
             ))
         );
+        assert_eq!(flow.invite_kind(), InviteKind::Link);
     }
 
     #[test]
@@ -713,6 +722,7 @@ mod tests {
         flow.on_event(ClientEvent::Message(welcome("k7m2q")));
 
         assert_eq!(flow.copy_invite(), Some(Command::Copy("k7m2q".to_string())));
+        assert_eq!(flow.invite_kind(), InviteKind::Code);
     }
 
     #[test]
