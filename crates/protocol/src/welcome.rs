@@ -9,6 +9,7 @@ use caravan_rules::{Delivery, MonsterKind, Player, Sim, Vec2, WeaponKind, nodes_
 use serde::{Deserialize, Serialize};
 
 use crate::RoomCode;
+use crate::seat_token::SeatToken;
 use crate::snapshot::{WireMonsterKind, WireWeaponKind};
 use crate::units::{WirePos, WireRect, WireTile};
 
@@ -24,6 +25,8 @@ pub struct Welcome {
     pub capacity: u32,
     /// 들어온 방의 코드입니다. 방 코드를 비우고 입장했으면 서버가 만든 코드입니다. 화면의 「ROOM」과 링크 복사가 씁니다.
     pub room: String,
+    /// 이 자리의 표식입니다. 클라이언트가 기기에 저장했다가 접속이 끊긴 뒤 다시 입장할 때 `Join`에 싣습니다. 비밀 값이므로 링크와 로그에 넣지 않습니다.
+    pub token: SeatToken,
     pub world: WorldInfo,
 }
 
@@ -109,8 +112,8 @@ impl WireDelivery {
 }
 
 impl Welcome {
-    /// `you`가 코드가 `room`인 방에 들어온 직후의 `sim`에서 입장 안내를 만듭니다.
-    pub fn from_sim(sim: &Sim, you: &Player, room: &RoomCode) -> Welcome {
+    /// `you`가 코드가 `room`인 방에 들어온 직후의 `sim`에서 입장 안내를 만듭니다. `token`은 `you`의 자리의 표식입니다.
+    pub fn from_sim(sim: &Sim, you: &Player, room: &RoomCode, token: SeatToken) -> Welcome {
         let tuning = sim.tuning();
         let map = &tuning.map;
         Welcome {
@@ -119,6 +122,7 @@ impl Welcome {
             tick_hz: tuning.tick_hz,
             capacity: tuning.max_players as u32,
             room: room.to_string(),
+            token,
             world: WorldInfo {
                 size: WirePos::from_tiles(Vec2::new(map.width, map.height)),
                 obstacles: map

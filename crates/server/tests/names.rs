@@ -4,8 +4,8 @@
 mod common;
 
 use caravan_protocol::{
-    ClientEvent, ClientTransport, LoopbackClient, RejectReason, ServerMsg, Welcome, WireMember,
-    encode_server,
+    ClientEvent, ClientMsg, ClientTransport, LoopbackClient, RejectReason, ServerMsg, Welcome,
+    WireMember, encode_server,
 };
 use caravan_rules::Tuning;
 use caravan_server::Notice;
@@ -14,7 +14,7 @@ use common::{NAME, Rig, drain, join_msg, rig, rig_with, snapshots};
 /// 입장을 받아들인 답에서 입장 안내를 꺼냅니다.
 fn welcome_of(answer: ServerMsg) -> Welcome {
     match answer {
-        ServerMsg::Welcome(welcome) => welcome,
+        ServerMsg::Welcome(welcome) => *welcome,
         other => panic!("expected Welcome, got {other:?}"),
     }
 }
@@ -28,7 +28,7 @@ fn rosters(client: &mut LoopbackClient) -> Vec<Vec<(u32, String)>> {
                 roster
                     .members
                     .into_iter()
-                    .map(|WireMember { id, name }| (id, name))
+                    .map(|WireMember { id, name, .. }| (id, name))
                     .collect(),
             ),
             _ => None,
@@ -236,7 +236,7 @@ fn the_roster_reaches_everyone_when_a_player_joins_and_when_a_player_leaves() {
     assert_eq!(rosters(&mut a), vec![both.clone()], "the one who was here");
     assert_eq!(rosters(&mut b), vec![both], "the newcomer, once");
 
-    drop(b);
+    b.send(&ClientMsg::Leave);
     rig.pump();
     assert_eq!(
         rosters(&mut a),
@@ -249,8 +249,8 @@ fn the_roster_reaches_everyone_when_a_player_joins_and_when_a_player_leaves() {
 fn every_new_roster_of_a_room_has_a_larger_number_than_the_one_before() {
     let mut rig = rig();
     let (mut a, _) = rig.join_as(Some("test"), "KANG");
-    let (b, _) = rig.join_as(Some("test"), "MIRO");
-    drop(b);
+    let (mut b, _) = rig.join_as(Some("test"), "MIRO");
+    b.send(&ClientMsg::Leave);
     rig.pump();
 
     let revisions: Vec<u32> = drain(&mut a)

@@ -151,7 +151,12 @@ mod tests {
         let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         let room = crate::RoomCode::parse("test").unwrap();
-        Welcome::from_sim(&sim, sim.player(first).unwrap(), &room)
+        Welcome::from_sim(
+            &sim,
+            sim.player(first).unwrap(),
+            &room,
+            crate::SeatToken([7; 16]),
+        )
     }
 
     fn rect(min_x: u16, min_y: u16, max_x: u16, max_y: u16) -> WireRect {

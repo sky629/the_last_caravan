@@ -119,6 +119,7 @@ fn run(options: &Options) -> Result<(), String> {
             version: PROTOCOL_VERSION,
             room: Some(options.room.clone()),
             name: options.name.clone(),
+            token: None,
         },
     )?;
 
@@ -152,6 +153,9 @@ fn run(options: &Options) -> Result<(), String> {
                 }
                 Ok(ServerMsg::JoinRejected { reason }) => {
                     return Err(format!("the server rejected the join: {reason:?}"));
+                }
+                Ok(ServerMsg::SeatTakenOver) => {
+                    return Err("another connection took this seat".to_string());
                 }
                 Ok(ServerMsg::Roster(_)) => {}
                 Ok(ServerMsg::Snapshot(snapshot)) => {

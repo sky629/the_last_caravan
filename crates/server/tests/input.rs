@@ -418,8 +418,9 @@ fn the_enter_key_confirms_the_result_once_and_the_ticks_without_a_message_do_not
     a.send(&press_ready(1));
     b.send(&press_ready(1));
     let mut result = None;
+    let mut seq = 2;
     for _ in 0..120 {
-        rig.run_ticks(20);
+        seq = rig.run_ticks_talking(&mut [&mut a, &mut b], seq, 20);
         let snapshot = last_snapshot(&mut a);
         if matches!(snapshot.phase, WirePhase::Debrief { .. }) {
             result = Some(snapshot);
@@ -429,7 +430,7 @@ fn the_enter_key_confirms_the_result_once_and_the_ticks_without_a_message_do_not
     let snapshot = result.expect("the expedition ended within two minutes");
     assert_eq!(confirmed_ids(&snapshot), Vec::<u32>::new());
 
-    a.send(&press_enter(2));
+    a.send(&press_enter(seq));
     rig.run_ticks(1);
     assert_eq!(confirmed_ids(&last_snapshot(&mut b)), vec![a_id]);
 

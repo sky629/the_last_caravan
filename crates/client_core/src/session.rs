@@ -6,12 +6,13 @@
 //!     |                        +--JoinRejected--> Rejected
 //!     |                        +--(상한을 넘은 Welcome)--> Failed
 //!     +--Disconnected--> Unreachable   (접속이 한 번도 열리지 않았습니다)
-//! (그 밖의 모든 상태) --Disconnected--> Disconnected   (Rejected, Failed, Unreachable는 사유를 유지합니다)
+//! InRoom --SeatTakenOver--> TakenOver   (같은 표식의 다른 접속이 자리를 이어받았습니다)
+//! (그 밖의 모든 상태) --Disconnected--> Disconnected   (Rejected, Failed, Unreachable, TakenOver는 사유를 유지합니다)
 //! ```
 //!
 //! 방에 들어간 뒤에 필요한 값(입장 안내, 명단, 스냅샷, 입력 순서 번호)은 `InRoom`에만 있습니다.
 //! 그래서 입장하기 전에 스냅샷을 그리거나 입력을 보내는 일은 값이 없어서 일어날 수 없습니다.
-//! 끝난 상태(Rejected, Disconnected, Unreachable, Failed)가 되면 `Flow`가 접속을 버리고 시작 화면으로 돌아갑니다.
+//! 끝난 상태(Rejected, Disconnected, Unreachable, Failed, TakenOver)가 되면 `Flow`가 접속을 버리고 시작 화면으로 돌아갑니다.
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, ServerMsg,
@@ -57,6 +58,8 @@ pub enum Session {
     Failed {
         reason: String,
     },
+    /// 같은 표식의 새 접속이 이 접속의 자리를 이어받았습니다. 서버는 이 접속을 닫지 않으므로, 이유를 읽은 쪽이 닫습니다.
+    TakenOver,
 }
 
 /// 방에 들어간 뒤의 상태입니다.
@@ -118,6 +121,7 @@ impl Session {
                     version: PROTOCOL_VERSION,
                     room: request.room.as_ref().map(|room| room.as_str().to_string()),
                     name: request.name.as_str().to_string(),
+                    token: None,
                 };
                 *self = Session::Joining {
                     request: request.clone(),
@@ -135,7 +139,7 @@ impl Session {
                 // 서버가 보낸 값을 처음 믿기 전에 확인합니다. 여기를 통과한 값은 화면 코드가 다시 확인하지 않습니다.
                 *self = match checked_room(&welcome) {
                     Ok(room) => {
-                        let mut joined = Joined::new(room, request.name.clone(), welcome);
+                        let mut joined = Joined::new(room, request.name.clone(), *welcome);
                         if let Some(roster) = early_roster.take() {
                             joined.take_roster(roster);
                         }
@@ -159,6 +163,10 @@ impl Session {
                 joined.take_roster(roster);
                 None
             }
+            (Session::InRoom(_), ClientEvent::Message(ServerMsg::SeatTakenOver)) => {
+                *self = Session::TakenOver;
+                None
+            }
             (
                 Session::Joining { early_roster, .. },
                 ClientEvent::Message(ServerMsg::Roster(roster)),
@@ -179,7 +187,10 @@ impl Session {
                 None
             }
             (
-                Session::Rejected { .. } | Session::Failed { .. } | Session::Unreachable { .. },
+                Session::Rejected { .. }
+                | Session::Failed { .. }
+                | Session::Unreachable { .. }
+                | Session::TakenOver,
                 ClientEvent::Disconnected { .. },
             ) => None,
             (_, ClientEvent::Disconnected { reason }) => {
@@ -191,7 +202,8 @@ impl Session {
         }
     }
 
-    /// 입장이 거절되었거나, 접속이 끊겼거나, 접속하지 못했거나, 시작하지 못해서 더 할 일이 없는 상태입니다. 이때 접속 방식을 닫아도 됩니다.
+    /// 입장이 거절되었거나, 접속이 끊겼거나, 접속하지 못했거나, 시작하지 못했거나, 자리를 다른 접속에 내주어서 더 할 일이 없는 상태입니다.
+    /// 이때 접속 방식을 닫아도 됩니다. `Flow`가 접속을 버리고 시작 화면으로 돌아갑니다.
     pub fn is_over(&self) -> bool {
         matches!(
             self,
@@ -199,6 +211,7 @@ impl Session {
                 | Session::Disconnected { .. }
                 | Session::Unreachable { .. }
                 | Session::Failed { .. }
+                | Session::TakenOver
         )
     }
 
@@ -244,7 +257,8 @@ impl Session {
             .map(ClientMsg::Input)
     }
 
-    /// 입장하지 못했거나 접속하지 못했거나 접속이 끊겼을 때, 그 이유를 화면에 크게 보여 주는 데 쓰는 값입니다. 그 밖의 상태에서는 없습니다.
+    /// 끝난 상태(`is_over`)의 이유입니다. `Flow`가 시작 화면으로 돌아가면서 안내 한 줄로 보여 주고, 접속 상태 문장(`status_text`)도 이 값으로 만듭니다.
+    /// 그 밖의 상태에서는 없습니다.
     pub fn problem(&self) -> Option<Problem> {
         match self {
             Session::Rejected { reason } => Some(Problem {
@@ -269,6 +283,10 @@ impl Session {
             Session::Failed { reason } => Some(Problem {
                 heading: "Cannot start",
                 reason: reason.clone(),
+            }),
+            Session::TakenOver => Some(Problem {
+                heading: "Seat taken over",
+                reason: "Another window took over this seat".to_string(),
             }),
             _ => None,
         }
@@ -308,7 +326,7 @@ fn transport_reason(reason: String) -> Option<String> {
     }
 }
 
-/// 접속하지 못한 이유입니다. `heading`은 짧은 제목이고 `reason`은 서버나 접속 방식이 알려 준 이유, 또는 사용자가 확인할 내용입니다.
+/// 끝난 상태의 이유입니다. `heading`은 짧은 제목이고 `reason`은 서버나 접속 방식이 알려 준 이유, 또는 사용자가 확인할 내용입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Problem {
     pub heading: &'static str,
@@ -318,7 +336,7 @@ pub struct Problem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::InputMsg;
+    use caravan_protocol::{InputMsg, SeatToken};
     use caravan_rules::{Seed, Sim, Tuning};
 
     fn room() -> RoomCode {
@@ -348,9 +366,14 @@ mod tests {
     fn welcome(you: u32) -> ServerMsg {
         let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
-        let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room());
+        let mut welcome = Welcome::from_sim(
+            &sim,
+            sim.player(first).unwrap(),
+            &room(),
+            SeatToken([7; 16]),
+        );
         welcome.you = you;
-        ServerMsg::Welcome(welcome)
+        ServerMsg::Welcome(Box::new(welcome))
     }
 
     fn message(msg: ServerMsg) -> ClientEvent {
@@ -380,6 +403,7 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 room: Some("test".to_string()),
                 name: "KANG".to_string(),
+                token: None,
             })
         );
         assert_eq!(
@@ -539,6 +563,7 @@ mod tests {
             .map(|(index, name)| WireMember {
                 id: index as u32 + 1,
                 name: name.to_string(),
+                here: true,
             })
             .collect();
         message(ServerMsg::Roster(WireRoster { revision, members }))

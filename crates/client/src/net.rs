@@ -225,7 +225,7 @@ mod tests {
     use super::*;
     use crate::testing::empty_frame;
     use caravan_client_core::{LaunchOptions, Memory};
-    use caravan_protocol::ClientMsg;
+    use caravan_protocol::{ClientMsg, PROTOCOL_VERSION};
 
     /// 보낸 메시지를 모아 두는 접속 방식입니다.
     struct Recorder(Rc<RefCell<Vec<ClientMsg>>>);
@@ -255,9 +255,10 @@ mod tests {
         let mut flow = start_screen();
         let mut clipboard = Clipboard::default();
         let join = ClientMsg::Join {
-            version: 8,
+            version: PROTOCOL_VERSION,
             room: None,
             name: "KANG".to_string(),
+            token: None,
         };
 
         run_commands(
@@ -285,9 +286,10 @@ mod tests {
             debug_net: false,
         };
         let join = ClientMsg::Join {
-            version: 8,
+            version: PROTOCOL_VERSION,
             room: None,
             name: "KANG".to_string(),
+            token: None,
         };
         run_commands(
             vec![Command::Send(join)],

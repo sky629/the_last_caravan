@@ -15,8 +15,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    ClientMsg, InputMsg, PROTOCOL_VERSION, ServerLimits, ServerMsg, Snapshot, Welcome, WireMember,
-    WireVec2, decode_server, encode_client, loopback,
+    ClientMsg, InputMsg, PROTOCOL_VERSION, SeatToken, ServerLimits, ServerMsg, Snapshot, Welcome,
+    WireMember, WireVec2, decode_server, encode_client, loopback,
 };
 use caravan_rules::{Seed, Tuning};
 use caravan_server::{GameServer, Notice, RoomSeeds, ServerSecret};
@@ -167,13 +167,24 @@ impl TestClient {
 
     /// 이름 `name`으로 입장하고, 받은 입장 안내를 돌려줍니다. `room`이 없으면 서버가 새 방을 만듭니다.
     fn join_as(&mut self, room: Option<&str>, name: &str) -> Welcome {
+        self.join_holding(room, name, None)
+    }
+
+    /// `join_as`와 같고, 자리의 표식 `token`을 함께 보냅니다.
+    fn join_holding(
+        &mut self,
+        room: Option<&str>,
+        name: &str,
+        token: Option<SeatToken>,
+    ) -> Welcome {
         self.send(&ClientMsg::Join {
             version: PROTOCOL_VERSION,
             room: room.map(str::to_string),
             name: name.to_string(),
+            token,
         });
         match self.next(Duration::from_secs(5)) {
-            ServerMsg::Welcome(welcome) => welcome,
+            ServerMsg::Welcome(welcome) => *welcome,
             other => panic!("expected Welcome, got {other:?}"),
         }
     }
@@ -257,6 +268,33 @@ fn a_player_without_a_room_code_gets_a_new_room_and_a_friend_who_knows_the_code_
     let seen_by_miro = miro.roster_where(Duration::from_secs(5), both);
     assert_eq!(names(seen_by_kang), expected);
     assert_eq!(names(seen_by_miro), expected);
+}
+
+#[test]
+fn a_player_who_drops_and_returns_with_the_saved_token_gets_the_same_seat() {
+    let server = RunningServer::start(Tuning::default());
+    let mut first = TestClient::connect(server.addr);
+    let welcome = first.join_as(None, "KANG");
+    let mut friend = TestClient::connect(server.addr);
+    friend.join_as(Some(&welcome.room), "MIRO");
+    drop(first);
+    server.wait_for_notice(|notice| matches!(notice, Notice::Held { .. }));
+
+    let mut back = TestClient::connect(server.addr);
+    let again = back.join_holding(Some(&welcome.room), "KANG", Some(welcome.token));
+
+    assert_eq!(again.you, welcome.you, "the same player");
+    assert_eq!(again.token, welcome.token, "the same seat");
+    server.wait_for_notice(|notice| matches!(notice, Notice::Returned { .. }));
+    let both = |roster: &[WireMember]| roster.len() == 2;
+    assert_eq!(back.roster_where(Duration::from_secs(5), both).len(), 2);
+    let notices = server.notices.lock().expect("the server thread is alive");
+    assert!(
+        !notices
+            .iter()
+            .any(|notice| matches!(notice, Notice::Left { .. })),
+        "the seat was never given up"
+    );
 }
 
 /// 기본 접속 한도에서 서버가 시작을 허락하는 가장 빠른 Tick 속도입니다.
@@ -344,5 +382,5 @@ fn a_link_cut_by_the_message_rate_limit_is_reported_with_the_limit_it_broke() {
             ServerLimits::default().max_messages_per_sec
         )
     );
-    server.wait_for_notice(|notice| matches!(notice, Notice::Left { members: 0, .. }));
+    server.wait_for_notice(|notice| matches!(notice, Notice::Held { .. }));
 }

@@ -11,11 +11,14 @@ pub struct WireRoster {
     pub members: Vec<WireMember>,
 }
 
-/// 방에 있는 사람 하나입니다. 네 명이 모두 12자 이름이면 명단 하나가 약 60바이트입니다.
+/// 방에 있는 사람 하나입니다. 네 명이 모두 12자 이름이면 명단 하나가 약 65바이트입니다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireMember {
     /// 플레이어 번호입니다. 스냅샷의 `WirePlayer::id`와 같습니다.
     pub id: u32,
     /// 서버가 `PlayerName`으로 검사한 이름입니다.
     pub name: String,
+    /// 자리에 있는지입니다. 거짓이면 접속이 끊겼거나, 입력이 멈췄거나, 야영지에서 조작이 없는 사람이고, 화면에 자리를 비웠다는 표시를 그립니다.
+    /// 캐릭터는 그 자리에 남아 있고 몬스터가 노리지 않습니다.
+    pub here: bool,
 }

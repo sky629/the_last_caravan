@@ -1,13 +1,14 @@
-//! 서버가 만드는 새 방의 코드입니다.
+//! 서버가 만드는 새 방의 코드와 자리의 표식입니다.
 //!
 //! 서버는 운영체제의 무작위를 직접 읽지 않으므로, 호출하는 쪽이 실행할 때마다 달라지는 비밀 값(`ServerSecret`)을 넘깁니다.
 //! 이 파일은 그 비밀 값과 지금까지 만든 수를 표준 라이브러리의 해시(`DefaultHasher`)에 넣어서 값을 만듭니다.
-//! 테스트는 고정된 비밀 값으로 같은 코드를 다시 만듭니다.
+//! 표식은 그런 값 두 개(16바이트)이고, 방 코드는 값 하나에서 다섯 글자를 뽑습니다. 표식은 서버 프로세스 하나의 수명 동안만 쓰이므로 해시 알고리즘이
+//! 바뀌어도 문제가 없습니다. 테스트는 고정된 비밀 값으로 같은 값을 다시 만듭니다.
 
 use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hasher};
 
-use caravan_protocol::RoomCode;
+use caravan_protocol::{RoomCode, SeatToken};
 
 use crate::ServerSecret;
 use crate::room::Room;
@@ -36,6 +37,14 @@ impl Mint {
         hasher.write_u64(self.secret.k1);
         hasher.write_u64(self.issued);
         hasher.finish()
+    }
+
+    /// 새 자리의 표식입니다. 비밀 값에서 나오고 이미 만든 어느 값과도 겹치지 않습니다.
+    pub fn token(&mut self) -> SeatToken {
+        let mut bytes = [0u8; 16];
+        bytes[..8].copy_from_slice(&self.next().to_le_bytes());
+        bytes[8..].copy_from_slice(&self.next().to_le_bytes());
+        SeatToken(bytes)
     }
 
     /// 지금 없는 방의 새 코드입니다. 있는 방과 겹치면 다시 만듭니다.
@@ -90,6 +99,23 @@ mod tests {
         };
         assert_eq!(codes(SECRET), codes(SECRET));
         assert_ne!(codes(SECRET), codes(ServerSecret { k0: 3, k1: 4 }));
+    }
+
+    #[test]
+    fn tokens_differ_each_time_and_follow_the_secret() {
+        let tokens = |secret| {
+            let mut mint = Mint::new(secret);
+            (0..50).map(|_| mint.token()).collect::<Vec<_>>()
+        };
+        let first = tokens(SECRET);
+        assert_eq!(
+            first,
+            tokens(SECRET),
+            "the same secret gives the same tokens"
+        );
+        assert_ne!(first, tokens(ServerSecret { k0: 3, k1: 4 }));
+        let distinct: std::collections::BTreeSet<_> = first.iter().map(|t| t.0).collect();
+        assert_eq!(distinct.len(), first.len(), "no token twice");
     }
 
     #[test]

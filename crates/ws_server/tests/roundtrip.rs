@@ -93,6 +93,7 @@ async fn messages_cross_a_real_socket_as_binary_frames_and_close_delivers_the_la
         version: PROTOCOL_VERSION,
         room: Some("test".to_string()),
         name: "TESTER".to_string(),
+        token: None,
     };
     client
         .send(Message::binary(encode_client(&join)))
@@ -176,6 +177,7 @@ async fn a_join_in_the_form_of_another_version_is_refused_with_that_reason_and_t
         version: PROTOCOL_VERSION,
         room: None,
         name: "KANG".to_string(),
+        token: None,
     };
     client
         .send(Message::binary(encode_client(&join)))

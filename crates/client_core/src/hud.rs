@@ -256,10 +256,9 @@ impl Hud {
 }
 
 /// 방에 들어가기 전과 첫 스냅샷을 기다리는 동안 화면 가운데에 띄울 안내입니다.
-/// 끝난 세션(거절, 끊김, 접속 실패)에는 안내가 없습니다. `Flow`가 곧바로 시작 화면으로 돌아가서 이유를 시작 화면에 보여 주기 때문입니다.
+/// 끝난 세션은 `Flow`가 곧바로 시작 화면으로 돌아가서 이유를 시작 화면에 보여 주므로, 이 함수에 오지 않습니다.
 fn session_banner(session: &Session, frame: Option<&Frame>) -> Option<Banner> {
     match session {
-        _ if session.is_over() => None,
         Session::InRoom(_) if frame.is_some() => None,
         Session::InRoom(_) => Some(Banner {
             title: "Waiting for the first snapshot...".to_string(),
@@ -634,8 +633,8 @@ fn whole_secs(secs: f32) -> u32 {
 mod tests {
     use super::*;
     use caravan_protocol::{
-        ClientEvent, PlayerName, RejectReason, RoomCode, ServerMsg, Welcome, WireNode, WireRoster,
-        WireShot, WireTile, WireTower, WireWagon,
+        ClientEvent, PlayerName, RejectReason, RoomCode, SeatToken, ServerMsg, Welcome, WireNode,
+        WireRoster, WireShot, WireTile, WireTower, WireWagon,
     };
     use caravan_rules::{Seed, Sim, Team, Tuning, Vec2};
 
@@ -660,11 +659,12 @@ mod tests {
         let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         let room = RoomCode::parse("test").unwrap();
-        let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room);
+        let mut welcome =
+            Welcome::from_sim(&sim, sim.player(first).unwrap(), &room, SeatToken([7; 16]));
         welcome.you = YOU;
         let mut session = Session::new(request("test"), DEFAULT_SERVER.to_string());
         session.on_event(ClientEvent::Connected);
-        session.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
+        session.on_event(ClientEvent::Message(ServerMsg::Welcome(Box::new(welcome))));
         session
     }
 
@@ -1459,6 +1459,7 @@ mod tests {
             .map(|(id, name)| WireMember {
                 id: *id,
                 name: name.to_string(),
+                here: true,
             })
             .collect();
         session.on_event(ClientEvent::Message(ServerMsg::Roster(WireRoster {
@@ -1651,53 +1652,6 @@ mod tests {
             old.contains("Update or reload") && old.contains('9'),
             "{old}"
         );
-    }
-
-    #[test]
-    fn a_refused_join_leaves_the_banner_to_the_start_screen() {
-        let mut session = Session::new(request("test"), DEFAULT_SERVER.to_string());
-        session.on_event(ClientEvent::Connected);
-        session.on_event(ClientEvent::Message(ServerMsg::JoinRejected {
-            reason: RejectReason::RoomFull { capacity: 4 },
-        }));
-        let hud = Hud::of(&session, None, INVITE);
-        assert_eq!(hud.banner, None, "the start screen shows the reason");
-        assert_eq!(hud.connection, "Join rejected: Room is full (4 / 4)");
-        assert_eq!(hud.me, None);
-    }
-
-    #[test]
-    fn a_lost_connection_is_stated_clearly_and_the_game_values_are_gone() {
-        let mut session = session_in_room();
-        session.on_event(ClientEvent::Disconnected {
-            reason: "the server closed the connection".to_string(),
-        });
-        let hud = Hud::of(&session, None, INVITE);
-        assert_eq!(hud.banner, None);
-        assert_eq!(
-            hud.connection,
-            "Disconnected: the server closed the connection"
-        );
-        assert_eq!(hud.day, None);
-        assert_eq!(hud.room, None);
-    }
-
-    #[test]
-    fn a_server_that_cannot_be_reached_is_named_with_a_hint() {
-        let mut session = Session::new(request("test"), "ws://192.168.0.7:7777".to_string());
-        session.on_event(ClientEvent::Disconnected {
-            reason: "Unknown error".to_string(),
-        });
-
-        let hud = Hud::of(&session, None, INVITE);
-
-        assert_eq!(hud.banner, None);
-        assert!(
-            hud.connection.contains("ws://192.168.0.7:7777"),
-            "{}",
-            hud.connection
-        );
-        assert!(!hud.connection.contains("Unknown error"));
     }
 
     #[test]

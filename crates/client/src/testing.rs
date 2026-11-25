@@ -4,7 +4,8 @@ use caravan_client_core::{Flow, Frame, LaunchOptions, Memory};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use caravan_protocol::{
-    ClientEvent, RoomCode, ServerMsg, Welcome, WireMember, WirePhase, WireRoster, WireWagon,
+    ClientEvent, RoomCode, SeatToken, ServerMsg, Welcome, WireMember, WirePhase, WireRoster,
+    WireWagon,
 };
 use caravan_rules::{Seed, Sim, Tuning};
 
@@ -18,7 +19,8 @@ pub fn joined_flow() -> ClientFlow {
     let mut sim = Sim::new(Tuning::default(), Seed(1));
     let first = sim.add_player().unwrap();
     let room = RoomCode::parse("test").unwrap();
-    let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room);
+    let mut welcome =
+        Welcome::from_sim(&sim, sim.player(first).unwrap(), &room, SeatToken([7; 16]));
     welcome.you = YOU;
     let launch = LaunchOptions::from_values(
         Some("test".to_string()),
@@ -29,7 +31,7 @@ pub fn joined_flow() -> ClientFlow {
     // 이름과 방 코드가 모두 있으므로 시작 화면 없이 접속을 시작합니다.
     let (mut flow, _) = Flow::new(launch, Memory::default(), None);
     flow.on_event(ClientEvent::Connected);
-    flow.on_event(ClientEvent::Message(ServerMsg::Welcome(welcome)));
+    flow.on_event(ClientEvent::Message(ServerMsg::Welcome(Box::new(welcome))));
     ClientFlow(flow)
 }
 
@@ -42,6 +44,7 @@ pub fn deliver_roster(flow: &mut ClientFlow, members: &[(u32, &str)]) {
         .map(|(id, name)| WireMember {
             id: *id,
             name: name.to_string(),
+            here: true,
         })
         .collect();
     flow.0

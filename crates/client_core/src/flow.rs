@@ -324,8 +324,13 @@ mod tests {
         let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         let room = RoomCode::parse(room).unwrap();
-        let welcome = caravan_protocol::Welcome::from_sim(&sim, sim.player(first).unwrap(), &room);
-        ServerMsg::Welcome(welcome)
+        let welcome = caravan_protocol::Welcome::from_sim(
+            &sim,
+            sim.player(first).unwrap(),
+            &room,
+            caravan_protocol::SeatToken([7; 16]),
+        );
+        ServerMsg::Welcome(Box::new(welcome))
     }
 
     fn rejected(reason: RejectReason) -> ClientEvent {
@@ -376,6 +381,7 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 room: Some("k7m2q".to_string()),
                 name: "KANG".to_string(),
+                token: None,
             })]
         );
 
@@ -397,6 +403,7 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 room: None,
                 name: "KANG".to_string(),
+                token: None,
             })]
         );
 
@@ -649,10 +656,12 @@ mod tests {
             caravan_protocol::WireMember {
                 id: 1,
                 name: "KANG".to_string(),
+                here: true,
             },
             caravan_protocol::WireMember {
                 id: 2,
                 name: "MIRO".to_string(),
+                here: true,
             },
         ];
         flow.on_event(ClientEvent::Message(ServerMsg::Roster(

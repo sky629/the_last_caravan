@@ -6,8 +6,9 @@ mod common;
 use std::time::Duration;
 
 use caravan_protocol::{
-    ClientEvent, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason, RoomCode,
-    ServerLimits, ServerMsg, Welcome, WireLife, WireNightStep, WirePhase, check_welcome, loopback,
+    ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
+    RoomCode, SeatToken, ServerLimits, ServerMsg, Welcome, WireLife, WireNightStep, WirePhase,
+    check_welcome, loopback,
 };
 use caravan_rules::{PlayerId, Seed, Sim, Tuning};
 use caravan_server::{GameServer, Notice, RoomSeeds, ServerError, ServerStats};
@@ -108,7 +109,7 @@ fn a_full_room_rejects_with_its_capacity_and_leaves_the_closing_to_the_client() 
         [ClientEvent::Disconnected { .. }]
     ));
     assert!(
-        matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("after its Join was rejected")),
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }] if reason.contains("told why it cannot stay")),
         "a client that never closes is closed by the server: {notices:?}"
     );
 }
@@ -155,11 +156,11 @@ fn input_before_join_closes_the_link_without_a_welcome() {
 }
 
 #[test]
-fn a_leaver_disappears_from_the_snapshots_of_the_others() {
+fn a_player_who_leaves_disappears_from_the_snapshots_of_the_others() {
     let mut rig = rig();
-    let (a, _) = rig.join_ok("test");
+    let (mut a, _) = rig.join_ok("test");
     let (mut b, _) = rig.join_ok("test");
-    drop(a);
+    a.send(&ClientMsg::Leave);
     rig.run_ticks(1);
     assert_eq!(player_ids(&snapshots(&mut b)[0]), [2]);
 }
@@ -167,9 +168,9 @@ fn a_leaver_disappears_from_the_snapshots_of_the_others() {
 #[test]
 fn the_last_leaver_removes_the_room_and_the_next_joiner_starts_fresh() {
     let mut rig = rig();
-    let (a, _) = rig.join_ok("test");
+    let (mut a, _) = rig.join_ok("test");
     rig.run_ticks(5);
-    drop(a);
+    a.send(&ClientMsg::Leave);
     rig.pump();
 
     let (mut c, c_id) = rig.join_ok("test");
@@ -208,7 +209,7 @@ fn pump_reports_rooms_created_and_removed_with_the_joins_and_leaves() {
         ],
         "only the first joiner creates the room"
     );
-    drop(first);
+    first.send(&ClientMsg::Leave);
     assert_eq!(
         rig.pump(),
         [Notice::Left {
@@ -217,7 +218,7 @@ fn pump_reports_rooms_created_and_removed_with_the_joins_and_leaves() {
             members: 1
         }]
     );
-    drop(second);
+    second.send(&ClientMsg::Leave);
     assert_eq!(
         rig.pump(),
         [
@@ -370,7 +371,7 @@ fn a_flood_of_events_is_spread_over_pumps_and_the_due_tick_still_runs() {
 }
 
 #[test]
-fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
+fn a_joined_link_that_goes_silent_is_closed_but_its_player_keeps_the_seat() {
     let mut rig = rig_with_limits(
         Tuning::default(),
         ServerLimits {
@@ -404,11 +405,11 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
     );
     assert_eq!(
         notices[1..],
-        [Notice::Left {
+        [Notice::Held {
             room,
-            player: PlayerId(2),
-            members: 1
-        }]
+            player: PlayerId(2)
+        }],
+        "the link is closed and the seat is held"
     );
     assert!(matches!(
         drain(&mut silent)[..],
@@ -419,8 +420,8 @@ fn a_joined_link_that_goes_silent_is_closed_and_its_player_leaves_the_room() {
     let last = snapshots(&mut talker).pop().unwrap();
     assert_eq!(
         player_ids(&last),
-        [1],
-        "the silent player is gone from the room"
+        [1, 2],
+        "the silent player is still in the room"
     );
 }
 
@@ -455,7 +456,7 @@ fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
     let mut rig = rig_in_expedition(tuning);
     let (mut a, _) = rig.join_ok("test");
     // 낮은 0.1초(2 Tick), 첫 무리는 그 뒤 3초(60 Tick)에 나타나므로 3.2초를 기다리면 싸우는 중입니다.
-    rig.run_ticks(64);
+    rig.run_ticks_talking(&mut [&mut a], 1, 64);
     let fighting = last_snapshot(&mut a);
     assert!(
         matches!(
@@ -531,8 +532,8 @@ fn a_player_who_joins_a_room_whose_expedition_has_started_joins_it_at_once() {
     let mut rig = rig();
     let (mut a, a_id) = rig.join_ok("test");
     a.send(&press_ready(1));
-    // 카운트다운은 3초(60 Tick)이고, 준비한 Tick에 시작해서 60 Tick 뒤에 원정이 시작됩니다.
-    rig.run_ticks(61);
+    // 카운트다운은 3초(60 Tick)이고, 준비한 Tick에 시작해서 60 Tick 뒤에 원정이 시작됩니다. 클라이언트는 Tick마다 입력을 보냅니다.
+    rig.run_ticks_talking(&mut [&mut a], 2, 61);
     let started = last_snapshot(&mut a);
     assert_eq!(started.expedition, 1);
     assert!(matches!(started.phase, WirePhase::Day { day: 1, .. }));
@@ -551,7 +552,7 @@ fn a_player_who_joins_a_room_whose_expedition_has_started_joins_it_at_once() {
 }
 
 #[test]
-fn a_second_join_on_one_link_closes_it_and_removes_its_player() {
+fn a_second_join_on_one_link_closes_it_and_holds_its_seat() {
     let mut rig = rig();
     let (mut a, _) = rig.join_ok("test");
     let (mut b, _) = rig.join_ok("test");
@@ -565,12 +566,12 @@ fn a_second_join_on_one_link_closes_it_and_removes_its_player() {
         "the link that broke the protocol is closed"
     );
     assert!(
-        matches!(&notices[..], [Notice::LinkClosed { reason, .. }, Notice::Left { members: 1, .. }] if reason.contains("Join again")),
-        "the closing is reported and its player leaves the room: {notices:?}"
+        matches!(&notices[..], [Notice::LinkClosed { reason, .. }, Notice::Held { .. }] if reason.contains("Join again")),
+        "the closing is reported and its seat is held: {notices:?}"
     );
 
     rig.run_ticks(1);
-    assert_eq!(player_ids(&last_snapshot(&mut b)), [2]);
+    assert_eq!(player_ids(&last_snapshot(&mut b)), [1, 2]);
 }
 
 #[test]
@@ -579,7 +580,8 @@ fn every_snapshot_carries_a_tick_larger_than_the_one_before() {
     let (mut a, _) = rig.join_ok("test");
     let mut seen = Vec::new();
     let mut visitor = None;
-    for step in 0..60 {
+    for (step, seq) in (0..60).zip(1..) {
+        a.send(&input(seq));
         // 중간에 사람이 들어오고 나가도 방의 Tick은 끊기지 않습니다.
         if step == 20 {
             visitor = Some(rig.join_ok("test"));
@@ -619,10 +621,10 @@ fn a_players_movement_in_one_room_is_not_visible_in_another_room() {
 #[test]
 fn after_a_player_leaves_the_room_keeps_running_for_the_one_who_stays() {
     let mut rig = rig();
-    let (a, a_id) = rig.join_ok("test");
+    let (mut a, a_id) = rig.join_ok("test");
     let (mut b, b_id) = rig.join_ok("test");
     rig.run_ticks(2);
-    drop(a);
+    a.send(&ClientMsg::Leave);
 
     b.send(&input_with(1, (0.0, -1.0), false));
     rig.run_ticks(3);
@@ -725,6 +727,7 @@ fn client_verdict(tuning: &Tuning) -> Result<(), String> {
         &sim,
         me,
         &RoomCode::parse("test").expect("a valid room code"),
+        SeatToken([0; 16]),
     ))
 }
 
@@ -813,9 +816,9 @@ fn the_stats_count_rooms_members_monsters_and_ticks() {
     let mut tuning = Tuning::default();
     tuning.cycle.day_secs = 0.1;
     let mut rig = rig_in_expedition(tuning);
-    let (_a1, _) = rig.join_ok("a");
-    let (_a2, _) = rig.join_ok("a");
-    let (b, _) = rig.join_ok("b");
+    let (mut a1, _) = rig.join_ok("a");
+    let (mut a2, _) = rig.join_ok("a");
+    let (mut b, _) = rig.join_ok("b");
     assert_eq!(
         rig.server.stats(),
         ServerStats {
@@ -828,7 +831,7 @@ fn the_stats_count_rooms_members_monsters_and_ticks() {
 
     // 낮이 시작될 때 방마다 낮의 몬스터가 스물다섯 마리(채집 지점 여덟 곳에 둘씩, 상자 세 곳에 셋씩) 놓입니다.
     // 낮이 끝나고 첫 무리가 나타난 뒤에는 방마다 밤의 몬스터가 더해집니다.
-    rig.run_ticks(64);
+    rig.run_ticks_talking(&mut [&mut a1, &mut a2, &mut b], 1, 64);
     let busy = rig.server.stats();
     assert_eq!((busy.rooms, busy.members, busy.ticks), (2, 3, 64));
     assert!(
@@ -837,7 +840,7 @@ fn the_stats_count_rooms_members_monsters_and_ticks() {
         busy.monsters
     );
 
-    drop(b);
+    b.send(&ClientMsg::Leave);
     rig.pump();
     let after = rig.server.stats();
     assert_eq!((after.rooms, after.members), (1, 2));
@@ -880,9 +883,9 @@ fn fresh_seeds_give_every_new_room_a_different_seed_even_for_a_recreated_code() 
         ServerLimits::default(),
         RoomSeeds::Fresh(Seed(5)),
     );
-    let (a, first) = rig.join_noticed("one");
+    let (mut a, first) = rig.join_noticed("one");
     let (_b, second) = rig.join_noticed("two");
-    drop(a);
+    a.send(&ClientMsg::Leave);
     rig.run_ticks(1);
     let (_again, third) = rig.join_noticed("one");
 

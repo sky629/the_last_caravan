@@ -6,11 +6,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::roster::WireRoster;
+use crate::seat_token::SeatToken;
 use crate::snapshot::Snapshot;
 use crate::welcome::Welcome;
 
 /// 전송 형식이 바뀔 때 올리는 번호입니다. 서버는 다른 번호로 입장을 요청한 클라이언트를 거절합니다.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// 클라이언트에서 서버로 가는 메시지입니다. 이 열거형이 클라이언트가 서버에 할 수 있는 말의 전부입니다.
 /// 위치, 피해량, 공격 대상, 명중 여부는 어디에도 없습니다. 서버가 모든 결과를 판정합니다.
@@ -23,8 +24,14 @@ pub enum ClientMsg {
         room: Option<String>,
         /// 플레이어의 이름입니다. 서버가 `PlayerName`으로 해석하고, 맞지 않으면 `BadName`으로 거절합니다.
         name: String,
+        /// 이 기기가 그 방에서 받았던 자리의 표식입니다. 서버가 아는 자리의 표식과 같으면 그 자리로 돌아가고,
+        /// 없거나 틀리면 새 플레이어로 들어갑니다. 표식은 비밀 값이므로 `Debug`로 출력해도 값이 보이지 않습니다.
+        token: Option<SeatToken>,
     },
     Input(InputMsg),
+    /// 플레이어가 스스로 방을 나갑니다. 서버는 자리를 곧바로 내놓고, 표식은 쓸 수 없게 됩니다.
+    /// 접속이 끊긴 것은 이 메시지가 아니고, 끊긴 자리는 정해진 시간 동안 남습니다.
+    Leave,
 }
 
 /// 플레이어가 한 Tick 동안 요청하는 조작입니다. 클라이언트가 서버에 보내는 게임 정보는 이 열한 필드가 전부입니다.
@@ -80,7 +87,8 @@ impl WireVec2 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ServerMsg {
     /// 입장을 받아들였다는 답입니다. 세계의 고정된 정보를 담고 있으므로 접속마다 한 번만 보냅니다.
-    Welcome(Welcome),
+    /// 상자에 담는 까닭은 `Snapshot`과 같습니다. 전송 형식은 상자에 담지 않은 값과 같습니다.
+    Welcome(Box<Welcome>),
     /// 입장을 거절했다는 답입니다. 서버는 접속을 닫지 않고, 이유를 읽은 클라이언트가 닫기를 기다립니다.
     JoinRejected { reason: RejectReason },
     /// Tick마다 보내는 방 전체의 상태입니다. 상자에 담는 까닭은 스냅샷이 커서, 상자에 담지 않으면 이 열거형과 이것을 감싼 모든 열거형이
@@ -89,6 +97,9 @@ pub enum ServerMsg {
     /// 방에 있는 사람의 이름입니다. 입장한 접속에 한 번 보내고, 그 뒤에는 누가 들어오거나 나갈 때만 방의 모든 접속에 보냅니다.
     /// 이름은 스냅샷에 넣지 않으므로 Tick마다 보내는 크기가 이름의 길이와 관계가 없습니다.
     Roster(WireRoster),
+    /// 같은 표식으로 새 접속이 이 접속의 자리를 이어받았다는 알림입니다. 서버는 이 접속을 닫지 않고, 알림을 읽은 클라이언트가 닫기를 기다립니다.
+    /// 브라우저는 닫힘을 이 메시지보다 먼저 알릴 수 있어서, 보내자마자 닫으면 이유가 화면에 나오지 않습니다.
+    SeatTakenOver,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

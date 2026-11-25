@@ -109,6 +109,7 @@ mod tests {
             version,
             room: Some("test".to_string()),
             name: "KANG".to_string(),
+            token: None,
         }
     }
 
