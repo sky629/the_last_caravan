@@ -24,6 +24,9 @@ pub struct PlayerInput {
     pub attack: bool,
     /// 상호작용 키(F)를 누르고 있습니다.
     pub interact: bool,
+    /// 상호작용 키(F)를 누른 순간입니다. 누르고 있는 상태가 아니라 이번 Tick에 한 번 눌렀다는 뜻이고, 바닥의 무기를 줍는 데 쓰입니다.
+    /// 입력이 늦는 Tick에 이전 입력을 다시 쓸 때는 `held`가 이 값을 지웁니다.
+    pub interact_pressed: bool,
     /// 건설 키(B)를 누르고 있습니다. 어느 타일에 세울지는 서버가 플레이어의 위치와 조준 방향에서 정합니다.
     pub build: bool,
     /// 달리기 키(Shift)를 누르고 있습니다. 움직이고 있고 게이지가 남아 있어야 달리고, 키를 누르고 있는 동안에는 게이지가 차지 않습니다.
@@ -34,11 +37,12 @@ pub struct PlayerInput {
 }
 
 impl PlayerInput {
-    /// 입력이 늦는 Tick에 다시 쓰는 사본입니다. 누르고 있는 상태는 그대로 두고, 누른 순간인 조작(`switch_weapon`)은 지웁니다.
+    /// 입력이 늦는 Tick에 다시 쓰는 사본입니다. 누르고 있는 상태는 그대로 두고, 누른 순간인 조작(`switch_weapon`, `interact_pressed`)은 지웁니다.
     /// 그래서 한 번 누른 키가 입력이 늦는 Tick마다 되풀이되지 않습니다. 누른 순간인 조작을 더하면 이 함수가 그 값도 지웁니다.
     pub fn held(self) -> PlayerInput {
         PlayerInput {
             switch_weapon: false,
+            interact_pressed: false,
             ..self
         }
     }

@@ -24,6 +24,8 @@ pub const OBSTACLE_HEIGHT: f32 = 28.0;
 pub const WAGON_HEIGHT: f32 = 20.0;
 pub const TOWER_HEIGHT: f32 = 64.0;
 pub const NODE_HEIGHT: f32 = 22.0;
+/// 무기 상자입니다. 채집 지점보다 낮고 작은 상자처럼 보입니다.
+pub const CHEST_HEIGHT: f32 = 16.0;
 /// 짓는 중인 감시탑(공사터)입니다.
 pub const SITE_HEIGHT: f32 = 24.0;
 
@@ -37,6 +39,12 @@ pub const DEAD_BODY_HEIGHT: f32 = 5.0;
 pub const NOSE_RADIUS: f32 = 3.0;
 /// 땅에 떨어진 자원을 나타내는 납작한 원의 가로와 세로 반지름입니다.
 pub const PILE_RADII: Vec2 = Vec2::new(9.0, 4.5);
+/// 바닥에 놓인 무기를 나타내는 납작한 원의 가로와 세로 반지름입니다. 자원 더미보다 크게 그려서 멀리서도 구분됩니다.
+pub const GROUND_WEAPON_RADII: Vec2 = Vec2::new(13.0, 6.5);
+/// 바닥에 놓인 무기의 이름이 원 위에 떠 있는 높이(픽셀)와 글자 크기입니다.
+pub const GROUND_WEAPON_LABEL_LIFT: f32 = 16.0;
+pub const GROUND_WEAPON_LABEL_SIZE: f32 = 13.0;
+pub const GROUND_WEAPON_LABEL: Color = Color::srgb(0.95, 0.95, 0.95);
 
 // HP 막대입니다. 몸통 위에 떠 있습니다.
 pub const BAR_SIZE: Vec2 = Vec2::new(28.0, 5.0);
@@ -61,8 +69,15 @@ pub const SITE: Color = Color::srgb(0.62, 0.55, 0.38);
 /// 채집 지점입니다. 자원이 다 떨어지면 어두운 색이 됩니다.
 pub const NODE: Color = Color::srgb(0.25, 0.72, 0.66);
 pub const NODE_EMPTY: Color = Color::srgb(0.30, 0.34, 0.34);
+/// 무기 상자입니다. 채집 지점(청록)과 감시탑(파랑)과 구분되는 황금색입니다.
+pub const CHEST: Color = Color::srgb(0.86, 0.64, 0.16);
 /// 땅에 떨어진 자원입니다.
 pub const PILE: Color = Color::srgb(1.00, 0.85, 0.30);
+/// 바닥에 놓인 무기의 색입니다. 무기마다 달라서, 이름을 읽기 전에도 어떤 무기인지 알 수 있습니다.
+pub const WEAPON_SWORD: Color = Color::srgb(0.85, 0.88, 0.92);
+pub const WEAPON_BOW: Color = Color::srgb(0.55, 0.85, 0.40);
+pub const WEAPON_GREATSWORD: Color = Color::srgb(0.95, 0.45, 0.30);
+pub const WEAPON_SPEAR: Color = Color::srgb(0.95, 0.80, 0.35);
 pub const SHADOW: Color = Color::srgb(0.07, 0.09, 0.07);
 pub const YOU: Color = Color::srgb(1.00, 0.84, 0.25);
 pub const ALLY: Color = Color::srgb(0.35, 0.65, 1.00);

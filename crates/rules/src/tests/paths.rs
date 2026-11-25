@@ -115,7 +115,7 @@ fn assert_layout_matches_towers(s: &mut Scenario) {
     assert_eq!(on_the_map, in_the_list);
 
     let sources = world.tiles.engage_tiles(world.wagon.rect, reach);
-    assert!(world.tiles.is_fully_connected(&sources, None));
+    assert!(world.tiles.is_fully_connected(&sources, &[]));
 }
 
 #[test]

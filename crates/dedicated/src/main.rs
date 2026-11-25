@@ -8,25 +8,29 @@
 //!   부하를 시험할 때 씁니다.
 //! - `--stress`: 마차, 감시탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
 //!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
-//!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다.
+//!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다. 플레이어는 검과 활을 함께 가지고 시작합니다.
+//! - `--seed 42`: 모든 방의 무작위를 이 씨앗 하나로 정합니다. 씨앗을 주지 않으면 방마다, 서버를 실행할 때마다 다른 씨앗을 씁니다.
+//!   방을 만들 때 출력하는 씨앗을 이 옵션에 주면 같은 상태에서 다시 시작합니다.
 //!
 //! 기본 출력은 일어난 일뿐입니다. 접속을 받는 주소, 플레이어의 입장과 퇴장, 방의 생성과 제거, 한도 때문에 닫은 접속과 그 이유, 시작 오류를 한 줄씩 출력합니다.
 
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
-use caravan_rules::{MonsterKind, NightPlan, Tuning, WavePlan};
-use caravan_server::GameServer;
+use caravan_rules::{Loadout, MonsterKind, NightPlan, Seed, Tuning, WavePlan, WeaponKind};
+use caravan_server::{GameServer, RoomSeeds};
 use caravan_ws_server::WsServer;
 use report::TickTimer;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:7777";
 /// Tick 사이에도 이 간격으로 접속 방식을 확인합니다. 입장 요청에 답하는 지연의 상한입니다.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
-const USAGE: &str = "usage: caravan-dedicated [--addr HOST:PORT] [--debug-net] [--stats] [--waves SIZE,SIZE,.../SIZE,...] [--stress]";
+const USAGE: &str = "usage: caravan-dedicated [--addr HOST:PORT] [--debug-net] [--stats] [--waves SIZE,SIZE,.../SIZE,...] [--stress] [--seed N]";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
@@ -37,6 +41,8 @@ struct Options {
     /// 밤마다, 무리마다 몬스터의 수입니다. 없으면 기본 수치를 씁니다.
     waves: Option<Vec<Vec<u32>>>,
     stress: bool,
+    /// 모든 방이 쓸 씨앗입니다. 없으면 방마다 다른 씨앗을 씁니다.
+    seed: Option<u64>,
 }
 
 fn parse_args(args: &[String]) -> Result<Options, String> {
@@ -46,6 +52,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         stats: false,
         waves: None,
         stress: false,
+        seed: None,
     };
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -57,6 +64,17 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
             "--debug-net" => options.debug_net = true,
             "--stats" => options.stats = true,
             "--stress" => options.stress = true,
+            "--seed" => match rest.next() {
+                Some(value) => {
+                    options.seed = Some(value.parse().map_err(|_| {
+                        format!(
+                            "--seed: \"{value}\" is not a whole number from 0 to {}",
+                            u64::MAX
+                        )
+                    })?)
+                }
+                None => return Err("--seed needs a whole number such as 42".to_string()),
+            },
             "--waves" => match rest.next() {
                 Some(value) => options.waves = Some(parse_waves(value)?),
                 None => return Err("--waves needs a list such as 8,12/20,30,40".to_string()),
@@ -116,6 +134,8 @@ fn tuning_from(options: &Options) -> Tuning {
         tuning.player.max_hp = u32::MAX;
         tuning.structures.watchtower.max_hp = u32::MAX;
         tuning.village.start_towers = tuning.spread_tower_sites(tuning.village.tower_limit);
+        // 부하 시험용 클라이언트(`--bow`)가 Q로 활을 들 수 있게 검과 활을 함께 가지고 시작합니다.
+        tuning.player.start_loadout = Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow));
         tuning.cycle.day_secs = tuning.dt();
         tuning.nights.spawn_interval_secs = tuning.dt();
     }
@@ -145,6 +165,12 @@ impl ServerTransport for DebugTransport {
         eprintln!("net -> {link:?} close");
         self.inner.close(link);
     }
+}
+
+/// 서버를 실행할 때마다 달라지는 씨앗의 뿌리입니다. 표준 라이브러리의 `RandomState`는 운영체제의 무작위로 키를 정하므로,
+/// 외부 크레이트 없이, 시계를 읽지 않고 이 값을 얻습니다.
+fn fresh_entropy() -> u64 {
+    RandomState::new().hash_one(())
 }
 
 /// 읽을 수 있는 한 줄로 바꿉니다. 스냅샷은 몬스터가 수백 마리, 탄환이 수십 개일 수 있으므로 두 목록을 수로 줄입니다.
@@ -205,7 +231,11 @@ fn main() -> ExitCode {
         eprintln!("wave sizes by night: {nights:?}");
     }
     let started = Instant::now();
-    let mut server = match GameServer::new(transport, tuning, limits, started) {
+    let seeds = match options.seed {
+        Some(seed) => RoomSeeds::Fixed(Seed(seed)),
+        None => RoomSeeds::Fresh(Seed(fresh_entropy())),
+    };
+    let mut server = match GameServer::new(transport, tuning, limits, seeds, started) {
         Ok(server) => server,
         Err(err) => {
             eprintln!("cannot start the server: {err}");
@@ -248,7 +278,8 @@ mod tests {
                 debug_net: false,
                 stats: false,
                 waves: None,
-                stress: false
+                stress: false,
+                seed: None
             })
         );
         assert_eq!(
@@ -258,7 +289,8 @@ mod tests {
                 debug_net: true,
                 stats: false,
                 waves: None,
-                stress: false
+                stress: false,
+                seed: None
             })
         );
     }
@@ -337,7 +369,7 @@ mod tests {
             tuning.village.start_towers.len(),
             tuning.village.tower_limit as usize
         );
-        let sim = caravan_rules::Sim::new(tuning.clone());
+        let sim = caravan_rules::Sim::new(tuning.clone(), Seed(1));
         assert_eq!(sim.towers().count(), tuning.village.tower_limit as usize);
         assert!(sim.towers().all(|tower| tower.is_standing()));
         assert!(
@@ -361,6 +393,40 @@ mod tests {
         assert!(message("1.5").contains("not a whole number"));
         assert!(message("99999999999").contains("not a whole number"));
         assert!(message("10/20,0").contains("night 2 wave 2 is 0"));
+    }
+
+    #[test]
+    fn seed_takes_a_whole_number_and_nothing_else_changes() {
+        assert_eq!(parse_args(&args(&["--seed", "42"])).unwrap().seed, Some(42));
+        assert_eq!(
+            parse_args(&[]).unwrap().seed,
+            None,
+            "no seed means a fresh seed for every room"
+        );
+        assert!(parse_args(&args(&["--seed", "-1"])).is_err());
+        assert!(parse_args(&args(&["--seed", "4.5"])).is_err());
+        assert!(parse_args(&args(&["--seed", "many"])).is_err());
+        assert!(parse_args(&args(&["--seed"])).is_err());
+        assert_eq!(
+            tuning_from(&parse_args(&args(&["--seed", "42"])).unwrap()),
+            Tuning::default(),
+            "the seed is not a tuning number"
+        );
+    }
+
+    #[test]
+    fn stress_players_start_with_the_sword_and_the_bow() {
+        let tuning = tuning_from(&parse_args(&args(&["--stress"])).unwrap());
+        assert_eq!(tuning.validate(), Ok(()));
+        assert_eq!(
+            tuning.player.start_loadout,
+            Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow))
+        );
+        assert_eq!(
+            tuning_from(&parse_args(&[]).unwrap()).player.start_loadout,
+            Loadout::new(WeaponKind::Sword, None),
+            "a normal server starts with the sword alone"
+        );
     }
 
     #[test]

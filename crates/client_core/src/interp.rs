@@ -11,8 +11,9 @@ use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 use caravan_protocol::{
-    Snapshot, WireAngle, WireAttack, WireLife, WireMonster, WireMonsterKind, WireNode, WirePhase,
-    WirePile, WirePlayer, WireProjectile, WireTower, WireWagon, WireWeaponKind,
+    Snapshot, WireAngle, WireAttack, WireChest, WireGroundWeapon, WireLife, WireLoadout,
+    WireMonster, WireMonsterKind, WireNode, WirePhase, WirePile, WirePlayer, WireProjectile,
+    WirePrompt, WireTower, WireWagon,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -40,6 +41,10 @@ pub struct Frame {
     pub nodes: Vec<WireNode>,
     /// 땅에 떨어진 자원입니다. 움직이지 않으므로 위치를 섞지 않습니다.
     pub piles: Vec<WirePile>,
+    /// 낮에 놓여 있는 무기 상자입니다. 움직이지 않으므로 위치를 섞지 않습니다.
+    pub chests: Vec<WireChest>,
+    /// 바닥에 놓인 무기입니다. 움직이지 않으므로 위치를 섞지 않습니다.
+    pub ground_weapons: Vec<WireGroundWeapon>,
     pub players: Vec<PlayerView>,
     pub monsters: Vec<MonsterView>,
     /// 날아가는 탄환과 한 Tick 전에 끝난 탄환입니다. 끝난 탄환은 끝난 자리에 그려집니다.
@@ -58,8 +63,10 @@ pub struct PlayerView {
     pub life: WireLife,
     /// 마지막으로 한 공격과 공격한 무기입니다.
     pub last_attack: Option<WireAttack>,
-    /// 들고 있는 무기입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
-    pub weapon: WireWeaponKind,
+    /// 가진 두 칸의 무기입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub loadout: WireLoadout,
+    /// F를 누르면 하게 되는 일 가운데 화면에 안내할 것입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub prompt: Option<WirePrompt>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -226,6 +233,8 @@ fn frame_of(older: &Snapshot, newer: Option<&Snapshot>, alpha: f32, tick: f64) -
         towers: older.towers.clone(),
         nodes: older.nodes.clone(),
         piles: older.piles.clone(),
+        chests: older.chests.clone(),
+        ground_weapons: older.ground_weapons.clone(),
         players,
         monsters,
         projectiles,
@@ -247,7 +256,8 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
         facing,
         life: a.life,
         last_attack: a.last_attack,
-        weapon: a.weapon,
+        loadout: a.loadout,
+        prompt: a.prompt,
     }
 }
 
@@ -304,7 +314,7 @@ pub fn effect_progress(playback_tick: f64, event_tick: u64, duration_ticks: f64)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::WirePos;
+    use caravan_protocol::{WirePos, WireWeaponKind};
 
     fn snapshot(tick: u64) -> Snapshot {
         Snapshot {
@@ -322,6 +332,8 @@ mod tests {
             towers: Vec::new(),
             nodes: Vec::new(),
             piles: Vec::new(),
+            chests: Vec::new(),
+            ground_weapons: Vec::new(),
             players: Vec::new(),
             monsters: Vec::new(),
             projectiles: Vec::new(),
@@ -354,7 +366,11 @@ mod tests {
             },
             last_input_seq: 0,
             last_attack: None,
-            weapon: WireWeaponKind::Sword,
+            loadout: WireLoadout {
+                held: WireWeaponKind::Sword,
+                spare: None,
+            },
+            prompt: None,
         }
     }
 
@@ -514,14 +530,18 @@ mod tests {
         older.players = vec![player(1, 8.0, 8.0, 100)];
         let mut newer = snapshot(11);
         newer.players = vec![player(1, 8.0, 8.0, 100)];
-        newer.players[0].weapon = WireWeaponKind::Bow;
+        newer.players[0].loadout = WireLoadout {
+            held: WireWeaponKind::Bow,
+            spare: Some(WireWeaponKind::Sword),
+        };
         let buffer = buffer_with(vec![older, newer]);
 
         let between = buffer.sample_at(10.9).unwrap();
-        assert_eq!(between.players[0].weapon, WireWeaponKind::Sword);
+        assert_eq!(between.players[0].loadout.held, WireWeaponKind::Sword);
 
         let after = buffer.sample_at(11.0).unwrap();
-        assert_eq!(after.players[0].weapon, WireWeaponKind::Bow);
+        assert_eq!(after.players[0].loadout.held, WireWeaponKind::Bow);
+        assert_eq!(after.players[0].loadout.spare, Some(WireWeaponKind::Sword));
     }
 
     #[test]

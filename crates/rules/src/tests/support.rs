@@ -6,13 +6,18 @@ use crate::ids::{MonsterId, NodeId, PlayerId, TowerId};
 use crate::input::{AimDir, MoveDir, PlayerInput, PlayerInputs};
 use crate::kind::MonsterKind;
 use crate::kind::{StructureKind, WeaponKind};
+use crate::loadout::Loadout;
+use crate::loot::Seed;
 use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
 use crate::player::{Life, Player};
 use crate::sim::Sim;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::{GuardTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
+use crate::tuning::{GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan};
 use crate::world::Tile;
+
+/// 시나리오가 쓰는 씨앗입니다.
+pub(crate) const SEED: Seed = Seed(1);
 
 pub(crate) struct Scenario {
     pub sim: Sim,
@@ -22,7 +27,8 @@ pub(crate) struct Scenario {
 impl Scenario {
     /// 장애물과 채집 지점이 없는 20 x 20 맵입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
     /// 낮이 끝나지 않으므로 무리가 저절로 나타나지 않고, 몬스터는 테스트가 `monster_at`으로 놓은 것뿐입니다.
-    /// 채집 지점을 더해도 낮의 몬스터는 없습니다(`with_cycle`). 낮의 몬스터를 시험하는 테스트가 `guards.per_node`를 직접 정합니다.
+    /// 채집 지점을 더해도 낮의 몬스터는 없고(`with_cycle`), 무기 상자도 없습니다. 낮의 몬스터를 시험하는 테스트가 `guards.per_node`를 직접 정하고,
+    /// 상자를 시험하는 테스트가 `chest_sites`와 `loot.chests_per_day`를 직접 정합니다.
     pub fn open_field() -> Scenario {
         Scenario::with_tuning(|_| {})
     }
@@ -49,6 +55,7 @@ impl Scenario {
                     wagon: Rect::new(17.0, 17.0, 19.0, 19.0),
                     obstacles: vec![],
                     nodes: vec![],
+                    chest_sites: vec![],
                     player_spawns: vec![Vec2::new(10.0, 10.0)],
                     spatial_cell: 2.0,
                 },
@@ -60,10 +67,20 @@ impl Scenario {
                     per_node: 0,
                     ..defaults.guards.clone()
                 },
+                loot: LootTuning {
+                    chests_per_day: 0,
+                    ..defaults.loot.clone()
+                },
                 ..defaults
             },
             adjust,
         )
+    }
+
+    /// `open_field`의 맵에 후보 자리 (2, 2) 하나가 있고, 그 자리에 `contents`가 든 상자가 놓여 있는 시나리오입니다.
+    /// 상자를 지키는 몬스터가 `guards`마리이고, 지키는 자리는 동쪽 (3, 2), 서쪽 (1, 2), 남쪽 (2, 3) 순서입니다.
+    pub fn with_chest(contents: WeaponKind, guards: u32) -> Scenario {
+        Scenario::with_tuning(|t| chest_tuning(t, contents, guards))
     }
 
     /// 기본 맵과 기본 수치로 흐르는 시나리오입니다. 수치만 `adjust`로 바꿉니다.
@@ -75,7 +92,7 @@ impl Scenario {
         adjust(&mut tuning);
         assert_eq!(tuning.validate(), Ok(()), "the scenario's tuning is valid");
         Scenario {
-            sim: Sim::new(tuning),
+            sim: Sim::new(tuning, SEED),
             held: PlayerInputs::new(),
         }
     }
@@ -140,6 +157,11 @@ impl Scenario {
         self.sim.world_mut().add_pile(Vec2::new(x, y), amount);
     }
 
+    /// `(x, y)`에 무기 `kind`가 놓여 있게 합니다.
+    pub fn weapon_at(&mut self, x: f32, y: f32, kind: WeaponKind) {
+        self.sim.world_mut().drop_weapon(Vec2::new(x, y), kind);
+    }
+
     /// 처음 놓은 감시탑의 HP를 바꿉니다. 쏘는 동안의 쿨다운과 마지막 사격은 그대로 둡니다.
     pub fn set_tower_hp(&mut self, hp: u32) {
         let tower = self
@@ -180,10 +202,25 @@ impl Scenario {
         self.player_mut(id).life = Life::Dead;
     }
 
-    /// 플레이어가 드는 무기를 `kind`로 바꿉니다. 무기는 생명 상태와 따로 있으므로 쓰러졌거나 사망한 플레이어도 바뀝니다.
+    /// 플레이어가 드는 무기를 `kind`로 바꾸고 다른 칸을 비웁니다. 무기는 생명 상태와 따로 있으므로 쓰러졌거나 사망한 플레이어도 바뀝니다.
     /// 테스트가 「활을 든 사수」라는 상황을 만들 때 씁니다.
     pub fn give_weapon(&mut self, id: PlayerId, kind: WeaponKind) {
-        self.player_mut(id).weapon = kind;
+        self.arm(id, kind, None);
+    }
+
+    /// 플레이어의 두 칸을 `held`와 `spare`로 정합니다. 무기는 생명 상태와 따로 있으므로 쓰러졌거나 사망한 플레이어도 바뀝니다.
+    pub fn arm(&mut self, id: PlayerId, held: WeaponKind, spare: Option<WeaponKind>) {
+        self.player_mut(id).loadout = Loadout::new(held, spare);
+    }
+
+    /// 지금 누르고 있는 입력은 그대로 두고, 상호작용 키(F)를 이 Tick에 누른 순간으로 만듭니다. 이 함수가 한 Tick을 진행합니다.
+    /// 누른 Tick에는 키를 누르고 있는 상태이기도 합니다. 이어서 누르고 있게 하려면 `hold_interact`를 따로 부릅니다.
+    pub fn press_interact_key(&mut self, id: PlayerId) {
+        let mut inputs = self.held.clone();
+        let input = inputs.entry(id).or_default();
+        input.interact = true;
+        input.interact_pressed = true;
+        self.sim.step(&inputs);
     }
 
     /// 지금 누르고 있는 입력은 그대로 두고, 무기 전환 키(Q)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.
@@ -201,6 +238,11 @@ impl Scenario {
             .projectiles()
             .filter(|projectile| projectile.is_flying())
             .count()
+    }
+
+    /// 플레이어를 `spot`으로 옮깁니다. 충돌은 보지 않습니다.
+    pub fn move_player(&mut self, id: PlayerId, spot: Vec2) {
+        self.player_mut(id).pos = spot;
     }
 
     fn player_mut(&mut self, id: PlayerId) -> &mut Player {
@@ -293,6 +335,23 @@ impl Scenario {
 
     pub fn player(&self, id: PlayerId) -> &Player {
         self.sim.player(id).expect("the player exists")
+    }
+}
+
+/// `open_field`의 맵에서 하루에 상자 하나가 후보 자리 (2, 2)에 놓이고, 상자에서 나올 수 있는 무기가 `contents` 하나뿐이도록 수치를 바꿉니다.
+/// 상자를 지키는 몬스터는 `guards`마리입니다. 후보 자리 (2, 2)는 마차의 중심에서 21타일 떨어져 있어서 마을의 범위(10타일) 밖입니다.
+pub(crate) fn chest_tuning(t: &mut Tuning, contents: WeaponKind, guards: u32) {
+    t.map.chest_sites = vec![Tile::new(2, 2)];
+    t.loot.chests_per_day = 1;
+    t.guards.per_chest = guards;
+    for kind in WeaponKind::ALL {
+        let weight = u32::from(kind == contents);
+        match kind {
+            WeaponKind::Sword => t.weapons.sword.chest_weight = weight,
+            WeaponKind::Bow => t.weapons.bow.chest_weight = weight,
+            WeaponKind::Greatsword => t.weapons.greatsword.chest_weight = weight,
+            WeaponKind::Spear => t.weapons.spear.chest_weight = weight,
+        }
     }
 }
 

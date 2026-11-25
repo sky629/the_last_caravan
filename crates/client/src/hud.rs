@@ -1,7 +1,7 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
-//! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 든 무기가 있고,
-//! 아래 가운데에 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
+//! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸이 있고,
+//! 아래 가운데에 F를 누르면 하게 되는 일의 안내와 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 방 코드가 있고, 화면 가운데에 원정의 결과나 접속 문제가 크게 나옵니다.
 
 use bevy::prelude::*;
@@ -59,6 +59,7 @@ pub struct HudNodes {
     stash: Entity,
     carry: Entity,
     weapon: Entity,
+    hint: Entity,
     banner_title: Entity,
     banner_detail: Entity,
     bleed: Entity,
@@ -171,7 +172,8 @@ pub fn setup(mut commands: Commands) {
         })
         .add_children(&[day, timer, expedition, stash, carry, weapon]);
 
-    // 아래 가운데: 출혈 시간, 건설과 수리의 거절 이유, 부활이나 수리나 건설의 진행 막대.
+    // 아래 가운데: F를 누르면 하게 되는 일, 출혈 시간, 건설과 수리의 거절 이유, 부활이나 수리나 건설의 진행 막대.
+    let hint = text_node(&mut commands, 24.0, TEXT);
     let bleed = text_node(&mut commands, 24.0, BLEED);
     let refusal = text_node(&mut commands, 24.0, BLEED);
     let action = meter_node(&mut commands, ACTION_WIDTH);
@@ -185,7 +187,7 @@ pub fn setup(mut commands: Commands) {
             row_gap: px(6),
             ..default()
         })
-        .add_children(&[bleed, refusal, action]);
+        .add_children(&[hint, bleed, refusal, action]);
 
     // 아래: 접속 상태와 방 코드.
     let connection = text_node(&mut commands, 14.0, TEXT_DIM);
@@ -232,6 +234,7 @@ pub fn setup(mut commands: Commands) {
         stash,
         carry,
         weapon,
+        hint,
         banner_title,
         banner_detail,
         bleed,
@@ -346,6 +349,7 @@ pub fn update(
         nodes.weapon,
         hud.weapon.as_deref().unwrap_or(""),
     );
+    set_text(&mut texts, nodes.hint, hud.hint.as_deref().unwrap_or(""));
     set_text(&mut texts, nodes.bleed, hud.bleed.as_deref().unwrap_or(""));
     set_text(
         &mut texts,

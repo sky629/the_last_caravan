@@ -163,6 +163,8 @@ mod tests {
             towers,
             nodes: Vec::new(),
             piles: Vec::new(),
+            chests: Vec::new(),
+            ground_weapons: Vec::new(),
             players: Vec::new(),
             monsters: Vec::new(),
             projectiles: Vec::new(),

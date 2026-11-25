@@ -33,6 +33,8 @@ fn snapshot_of(monsters: u32) -> Snapshot {
         nodes: vec![],
         piles: vec![],
         players: vec![],
+        chests: vec![],
+        ground_weapons: vec![],
         monsters: (1..=monsters)
             .map(|id| WireMonster {
                 id,
@@ -147,7 +149,7 @@ async fn a_client_that_stops_reading_is_disconnected() {
     let link = connected_link(&mut server).await;
 
     // 메시지 하나가 약 60 KB이므로 500개(약 30 MB)는 운영체제의 소켓 버퍼에 다 들어가지 않습니다.
-    let big = ServerMsg::Snapshot(snapshot_of(7_000));
+    let big = ServerMsg::Snapshot(Box::new(snapshot_of(7_000)));
     for _ in 0..500 {
         server.send(link, &big);
     }

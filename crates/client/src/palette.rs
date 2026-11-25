@@ -8,6 +8,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use caravan_client_core::{TILE_HEIGHT_PX, TILE_WIDTH_PX};
+use caravan_protocol::WireWeaponKind;
 
 use crate::config;
 
@@ -21,6 +22,7 @@ pub struct Palette {
     pub tower_block: Handle<Mesh>,
     pub site_block: Handle<Mesh>,
     pub node_block: Handle<Mesh>,
+    pub chest_block: Handle<Mesh>,
 
     /// 지면 메시의 꼭짓점 색이 그대로 보이게 하는 흰색 재질입니다.
     pub ground: Handle<ColorMaterial>,
@@ -30,7 +32,9 @@ pub struct Palette {
     pub site: Handle<ColorMaterial>,
     pub node: Handle<ColorMaterial>,
     pub node_empty: Handle<ColorMaterial>,
+    pub chest: Handle<ColorMaterial>,
     pub pile: Handle<ColorMaterial>,
+    pub weapons: WeaponPaints,
     pub shadow: Handle<ColorMaterial>,
     pub you: Handle<ColorMaterial>,
     pub ally: Handle<ColorMaterial>,
@@ -48,6 +52,26 @@ pub struct Palette {
     pub bar_node: Handle<ColorMaterial>,
 }
 
+/// 바닥에 놓인 무기의 재질입니다. 무기마다 색이 다릅니다.
+pub struct WeaponPaints {
+    sword: Handle<ColorMaterial>,
+    bow: Handle<ColorMaterial>,
+    greatsword: Handle<ColorMaterial>,
+    spear: Handle<ColorMaterial>,
+}
+
+impl WeaponPaints {
+    /// `match`가 모든 무기를 다루므로, 무기를 추가하면 여기서 컴파일 오류가 납니다.
+    pub fn of(&self, kind: WireWeaponKind) -> Handle<ColorMaterial> {
+        match kind {
+            WireWeaponKind::Sword => self.sword.clone(),
+            WireWeaponKind::Bow => self.bow.clone(),
+            WireWeaponKind::Greatsword => self.greatsword.clone(),
+            WireWeaponKind::Spear => self.spear.clone(),
+        }
+    }
+}
+
 /// 시작할 때 한 번 실행해서 `Palette`를 넣습니다.
 pub fn setup_palette(
     mut commands: Commands,
@@ -63,7 +87,14 @@ pub fn setup_palette(
         site: paint(config::SITE),
         node: paint(config::NODE),
         node_empty: paint(config::NODE_EMPTY),
+        chest: paint(config::CHEST),
         pile: paint(config::PILE),
+        weapons: WeaponPaints {
+            sword: paint(config::WEAPON_SWORD),
+            bow: paint(config::WEAPON_BOW),
+            greatsword: paint(config::WEAPON_GREATSWORD),
+            spear: paint(config::WEAPON_SPEAR),
+        },
         shadow: paint(config::SHADOW),
         you: paint(config::YOU),
         ally: paint(config::ALLY),
@@ -87,6 +118,7 @@ pub fn setup_palette(
         tower_block: meshes.add(block_mesh(config::TOWER_HEIGHT)),
         site_block: meshes.add(block_mesh(config::SITE_HEIGHT)),
         node_block: meshes.add(block_mesh(config::NODE_HEIGHT)),
+        chest_block: meshes.add(block_mesh(config::CHEST_HEIGHT)),
     };
     commands.insert_resource(palette);
 }
@@ -94,7 +126,7 @@ pub fn setup_palette(
 /// 타일 하나 위에 서 있는 높이 `height`의 상자입니다. 원점은 바닥 마름모의 중심입니다.
 ///
 /// 보이는 세 면(윗면, 왼쪽 앞면, 오른쪽 앞면)을 한 메시에 담고, 면마다 꼭짓점 색의 밝기를 달리해서 입체로 보이게 합니다.
-/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑, 공사터, 채집 지점의 색을 모두 냅니다.
+/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑, 공사터, 채집 지점, 무기 상자의 색을 모두 냅니다.
 fn block_mesh(height: f32) -> Mesh {
     let half_w = TILE_WIDTH_PX / 2.0;
     let half_h = TILE_HEIGHT_PX / 2.0;

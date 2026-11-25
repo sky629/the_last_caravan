@@ -1,7 +1,7 @@
 //! 타일 지도입니다. 맵의 모든 타일이 무엇으로 차 있는지를 적은 표이며, 「어디가 막혀 있는가」를 아는 곳은 이 표 하나입니다.
 //!
 //! 충돌, 몬스터의 이동 경로, 지도의 연결 검사가 모두 같은 표를 읽습니다.
-//! 장애물, 마차, 채집 지점, 감시탑은 타일에 맞춰 놓이므로(정수 좌표) 사각형 목록을 따로 들고 있지 않습니다.
+//! 장애물, 마차, 채집 지점, 감시탑, 무기 상자는 타일에 맞춰 놓이므로(정수 좌표) 사각형 목록을 따로 들고 있지 않습니다.
 //!
 //! 표를 바꾸는 `set`은 `world` 모듈 안에서만 부를 수 있습니다(`pub(super)`). 다른 모듈이 표를 직접 고치면 컴파일되지 않습니다.
 //! 감시탑을 놓는 일은 `World::add_tower`가 표와 감시탑 목록을 함께 고칩니다.
@@ -9,9 +9,10 @@
 //! 타일 하나는 한 변이 1인 정사각형입니다. 플레이어와 몬스터의 반지름이 0.5보다 작으므로(`Tuning::validate`가 검사합니다),
 //! 비어 있는 타일의 중심을 따라 걸으면 몸이 이웃한 막힌 타일에 걸리지 않고, 폭이 1인 통로도 지나갑니다.
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 
-use crate::ids::{NodeId, TowerId};
+use crate::ids::{ChestId, NodeId, TowerId};
 use crate::math::{Rect, Vec2};
 use crate::tuning::MapSpec;
 
@@ -66,6 +67,8 @@ pub(crate) enum TileUse {
     /// 채집 지점입니다. 원정 동안 그 자리에 그대로 있습니다.
     Node(NodeId),
     Tower(TowerId),
+    /// 무기 상자입니다. 낮이 시작될 때 놓이고, 밤이 시작되면 사라집니다.
+    Chest(ChestId),
 }
 
 /// 상하좌우 네 방향 뒤에 대각선 네 방향이 오는 이웃 타일의 차이입니다.
@@ -251,15 +254,19 @@ impl TileMap {
         result
     }
 
-    /// 비어 있는 타일이 모두 `sources`에서 걸어서 닿는지 검사합니다. `extra_block`이 있으면 그 타일도 막힌 것으로 봅니다.
+    /// 비어 있는 타일이 모두 `sources`에서 걸어서 닿는지 검사합니다. `extra_blocked`의 타일도 막힌 것으로 봅니다.
     ///
     /// 상하좌우로만 이어지는 연결을 셉니다. 대각선으로만 맞닿은 두 타일 사이는 몸이 지나가지 못하기 때문입니다.
-    /// 닿은 타일의 수를 비어 있는 타일의 수(`extra_block`이 비어 있는 타일이면 그 하나를 뺀 수)와 비교합니다.
+    /// 닿은 타일의 수를 비어 있는 타일의 수(`extra_blocked` 가운데 비어 있는 타일을 뺀 수, 같은 타일은 한 번만 뺍니다)와 비교합니다.
     /// 그래서 처음부터 모두 이어져 있는 지도에서만 의미가 있고, `Tuning::validate`가 이 조건을 검사합니다.
-    pub fn is_fully_connected(&self, sources: &[Tile], extra_block: Option<Tile>) -> bool {
-        let open = |tile: Tile| self.is_free(tile) && Some(tile) != extra_block;
-        let expected =
-            self.free_count - usize::from(extra_block.is_some_and(|tile| self.is_free(tile)));
+    pub fn is_fully_connected(&self, sources: &[Tile], extra_blocked: &[Tile]) -> bool {
+        let blocked: BTreeSet<Tile> = extra_blocked
+            .iter()
+            .copied()
+            .filter(|tile| self.is_free(*tile))
+            .collect();
+        let open = |tile: Tile| self.is_free(tile) && !blocked.contains(&tile);
+        let expected = self.free_count - blocked.len();
 
         let mut reached = vec![false; self.uses.len()];
         let mut queue = Vec::new();
@@ -347,8 +354,8 @@ mod tests {
         let split = map_with(5, 3, &[(2, 0), (2, 1), (2, 2)]);
         let open = map_with(5, 3, &[(2, 0), (2, 1)]);
 
-        assert!(!split.is_fully_connected(&[Tile::new(0, 0)], None));
-        assert!(open.is_fully_connected(&[Tile::new(0, 0)], None));
+        assert!(!split.is_fully_connected(&[Tile::new(0, 0)], &[]));
+        assert!(open.is_fully_connected(&[Tile::new(0, 0)], &[]));
     }
 
     #[test]
@@ -356,21 +363,29 @@ mod tests {
         // 가운데 대각선으로만 이어진 두 칸: (0,1)과 (1,0)은 모서리에서만 닿습니다.
         let diagonal = map_with(2, 2, &[(0, 0), (1, 1)]);
 
-        assert!(!diagonal.is_fully_connected(&[Tile::new(0, 1)], None));
+        assert!(!diagonal.is_fully_connected(&[Tile::new(0, 1)], &[]));
     }
 
     #[test]
     fn a_tile_that_would_close_the_last_gap_is_found_by_the_extra_block() {
         let corridor = map_with(5, 3, &[(2, 0), (2, 2)]);
 
-        assert!(corridor.is_fully_connected(&[Tile::new(0, 0)], None));
+        assert!(corridor.is_fully_connected(&[Tile::new(0, 0)], &[]));
         assert!(
-            !corridor.is_fully_connected(&[Tile::new(0, 0)], Some(Tile::new(2, 1))),
+            !corridor.is_fully_connected(&[Tile::new(0, 0)], &[Tile::new(2, 1)]),
             "blocking the only gap cuts the map in two"
         );
         assert!(
-            corridor.is_fully_connected(&[Tile::new(0, 0)], Some(Tile::new(4, 1))),
+            corridor.is_fully_connected(&[Tile::new(0, 0)], &[Tile::new(4, 1)]),
             "a dead end that is blocked leaves the rest connected"
+        );
+        assert!(
+            corridor.is_fully_connected(&[Tile::new(0, 0)], &[Tile::new(4, 1), Tile::new(4, 1)]),
+            "a tile named twice counts once"
+        );
+        assert!(
+            !corridor.is_fully_connected(&[Tile::new(0, 0)], &[Tile::new(4, 1), Tile::new(2, 1)]),
+            "one of the blocked tiles cuts the map even when another does not"
         );
     }
 }

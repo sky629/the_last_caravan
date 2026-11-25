@@ -1,18 +1,23 @@
 //! 원정의 시작과 끝(입장과 퇴장, 성공과 실패, 새 원정)과 결정성을 확인합니다. 낮과 밤의 흐름은 `days.rs`가 확인합니다.
 
-use super::support::Scenario;
+use super::support::{SEED, Scenario};
 use crate::expedition::{Outcome, Phase};
 use crate::ids::PlayerId;
+use crate::kind::WeaponKind;
+use crate::loot::Seed;
 use crate::math::Vec2;
 use crate::sim::{JoinError, Sim};
 use crate::tuning::Tuning;
 
 #[test]
 fn players_get_increasing_ids_until_the_room_is_full() {
-    let mut sim = Sim::new(Tuning {
-        max_players: 2,
-        ..Tuning::default()
-    });
+    let mut sim = Sim::new(
+        Tuning {
+            max_players: 2,
+            ..Tuning::default()
+        },
+        Seed(1),
+    );
 
     assert_eq!(sim.add_player(), Ok(PlayerId(1)));
     assert_eq!(sim.add_player(), Ok(PlayerId(2)));
@@ -21,10 +26,13 @@ fn players_get_increasing_ids_until_the_room_is_full() {
 
 #[test]
 fn a_removed_player_frees_a_seat_but_its_id_is_not_reused() {
-    let mut sim = Sim::new(Tuning {
-        max_players: 2,
-        ..Tuning::default()
-    });
+    let mut sim = Sim::new(
+        Tuning {
+            max_players: 2,
+            ..Tuning::default()
+        },
+        Seed(1),
+    );
     let first = sim.add_player().unwrap();
     sim.add_player().unwrap();
 
@@ -38,7 +46,7 @@ fn a_removed_player_frees_a_seat_but_its_id_is_not_reused() {
 
 #[test]
 fn a_default_room_takes_four_players_and_refuses_the_fifth() {
-    let mut sim = Sim::new(Tuning::default());
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
 
     for _ in 0..4 {
         assert!(sim.add_player().is_ok());
@@ -49,10 +57,13 @@ fn a_default_room_takes_four_players_and_refuses_the_fifth() {
 
 #[test]
 fn the_capacity_is_not_fixed_at_four() {
-    let mut sim = Sim::new(Tuning {
-        max_players: 6,
-        ..Tuning::default()
-    });
+    let mut sim = Sim::new(
+        Tuning {
+            max_players: 6,
+            ..Tuning::default()
+        },
+        Seed(1),
+    );
     for _ in 0..6 {
         assert!(sim.add_player().is_ok());
     }
@@ -307,6 +318,30 @@ fn a_new_expedition_restores_the_players_the_wagon_and_the_field() {
 }
 
 #[test]
+fn each_expedition_has_its_own_seed_and_a_room_seed_always_gives_the_same_ones() {
+    let mut s = Scenario::open_field();
+    let first = s.sim.expedition_seed();
+    s.player_at(2.0, 2.0);
+    s.set_wagon_hp(0);
+    s.run_ticks(1);
+    s.run_ticks(s.ticks(s.sim.tuning().cycle.restart_secs) + 1);
+    assert_eq!(s.sim.expedition_number(), 2);
+    let second = s.sim.expedition_seed();
+
+    assert_ne!(first, second, "a new expedition draws again");
+    assert_eq!(
+        Sim::new(Tuning::default(), SEED).expedition_seed(),
+        first,
+        "the same room seed gives the same first expedition"
+    );
+    assert_ne!(
+        Sim::new(Tuning::default(), Seed(2)).expedition_seed(),
+        first,
+        "another room seed gives another expedition"
+    );
+}
+
+#[test]
 fn monster_ids_are_not_reused_in_a_new_expedition() {
     let mut s = Scenario::with_cycle(|t| t.cycle.day_secs = 1.0);
     s.run_until(400, |sim| sim.monsters().count() > 0);
@@ -327,6 +362,8 @@ fn play_a_scripted_expedition() -> String {
     let mut s = Scenario::default_game(|t| t.cycle.day_secs = 3.0);
     let a = s.sim.add_player().unwrap();
     let b = s.sim.add_player().unwrap();
+    s.arm(a, WeaponKind::Sword, Some(WeaponKind::Bow));
+    s.arm(b, WeaponKind::Sword, Some(WeaponKind::Bow));
     let mut trace = String::new();
     for tick in 0..800 {
         let phase = tick / 100;
@@ -342,6 +379,7 @@ fn play_a_scripted_expedition() -> String {
                     aim: crate::input::AimDir::new((tick as f32 * 0.1 + offset).cos(), 0.5),
                     attack: tick % 3 != 0,
                     interact: phase % 2 == 1,
+                    interact_pressed: tick % 40 == 7,
                     build: phase % 4 == 3,
                     sprint: phase % 3 != 1,
                     switch_weapon: tick % 90 == 45,

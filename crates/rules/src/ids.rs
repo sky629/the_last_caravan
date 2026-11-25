@@ -25,6 +25,14 @@ pub struct ProjectileId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PileId(pub u32);
 
+/// 무기 상자의 번호입니다. 상자가 놓일 때마다 1씩 늘려서 나누어 주고 다시 사용하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChestId(pub u32);
+
+/// 바닥에 놓인 무기 하나의 번호입니다. 무기가 바닥에 놓일 때마다 1씩 늘려서 나누어 주고 다시 사용하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GroundWeaponId(pub u32);
+
 /// 개체가 편들어 싸우는 쪽입니다.
 ///
 /// 「누가 누구를 공격할 수 있는가」와 「누가 누구를 도울 수 있는가」는 모두 `is_hostile_to`와 `is_allied_with`로 판정합니다.

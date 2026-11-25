@@ -262,6 +262,7 @@ fn night_monsters_appear_at_the_spawn_distance_from_the_wagon() {
         t.cycle.day_secs = 0.05;
         t.nights.plans = nights(&[&[10]]);
         t.guards.per_node = 0;
+        t.loot.chests_per_day = 0;
     });
     let wagon = s.sim.wagon().rect;
     let distance = s.sim.tuning().nights.spawn_distance;
@@ -287,6 +288,7 @@ fn every_wave_comes_from_another_direction_and_all_eight_are_used() {
         t.nights.first_wave_delay_secs = 0.05;
         t.nights.between_waves_secs = 0.05;
         t.guards.per_node = 0;
+        t.loot.chests_per_day = 0;
     });
     let center = s.sim.wagon().rect.center();
     let mut compass = Vec::new();

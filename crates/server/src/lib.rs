@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use caravan_protocol::{
     LinkId, RejectReason, RoomCode, ServerLimits, ServerTransport, Welcome, check_welcome,
 };
-use caravan_rules::{PlayerId, Tuning};
+use caravan_rules::{PlayerId, Seed, Tuning};
 
 use clock::TickClock;
 use hub::{Hub, Out};
@@ -30,6 +30,8 @@ pub enum Notice {
     /// 방이 만들어졌습니다. 그 방의 첫 `Joined` 바로 앞에 옵니다.
     RoomCreated {
         room: RoomCode,
+        /// 방이 쓰는 씨앗입니다. 전용 서버를 `--seed`로 이 값을 주고 실행하면 방의 첫 원정이 같은 상태로 시작합니다.
+        seed: Seed,
     },
     /// 마지막 플레이어가 나가서 방이 없어졌습니다. 그 `Left` 바로 뒤에 옵니다.
     RoomRemoved {
@@ -77,9 +79,30 @@ impl fmt::Display for Notice {
                 player.0
             ),
             Notice::Rejected { reason } => write!(f, "join rejected: {reason:?}"),
-            Notice::RoomCreated { room } => write!(f, "room {room} created"),
+            Notice::RoomCreated { room, seed } => {
+                write!(f, "room {room} created (seed {})", seed.0)
+            }
             Notice::RoomRemoved { room } => write!(f, "room {room} removed"),
             Notice::LinkClosed { link, reason } => write!(f, "link {} closed: {reason}", link.0),
+        }
+    }
+}
+
+/// 방마다 씨앗을 정하는 방법입니다. 서버는 시계를 읽지 않으므로 호출하는 쪽이 씨앗을 넘깁니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoomSeeds {
+    /// 모든 방이 같은 씨앗으로 시작합니다. 같은 씨앗은 같은 결과를 만들므로 버그를 다시 만드는 데 씁니다. 전용 서버의 `--seed N`입니다.
+    Fixed(Seed),
+    /// 방을 만든 순서마다 `base`에서 이어 간 씨앗입니다. 방마다 다른 씨앗이 됩니다. `base`는 서버를 실행할 때마다 달라야 하므로 호출하는 쪽이 정합니다.
+    Fresh(Seed),
+}
+
+impl RoomSeeds {
+    /// `serial`번째로 만든 방(1부터 셉니다)이 쓸 씨앗입니다.
+    fn for_room(self, serial: u32) -> Seed {
+        match self {
+            RoomSeeds::Fixed(seed) => seed,
+            RoomSeeds::Fresh(base) => base.derive(u64::from(serial)),
         }
     }
 }
@@ -152,7 +175,8 @@ fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerErro
 
 /// 이 수치로 만든 빈 방에 첫 플레이어가 입장할 때 서버가 보내는 입장 안내입니다.
 fn first_welcome(tuning: &Tuning, limits: &ServerLimits) -> Welcome {
-    let mut room = Room::new(tuning.clone(), limits.input_stale_ticks);
+    // 입장 안내는 씨앗에서 정해지는 것을 담지 않으므로, 어떤 씨앗으로 만든 방이든 같은 안내를 냅니다.
+    let mut room = Room::new(tuning.clone(), Seed(0), limits.input_stale_ticks);
     // `Tuning::validate`가 정원이 1 이상임을 확인했으므로 빈 방의 첫 입장은 항상 성공합니다.
     let (_, welcome) = room
         .admit(LinkId(0))
@@ -168,13 +192,14 @@ impl GameServer {
         transport: Box<dyn ServerTransport>,
         tuning: Tuning,
         limits: ServerLimits,
+        seeds: RoomSeeds,
         now: Instant,
     ) -> Result<GameServer, ServerError> {
         check_config(&tuning, &limits)?;
         Ok(GameServer {
             transport,
             clock: TickClock::new(tuning.tick_hz, now),
-            hub: Hub::new(tuning, limits),
+            hub: Hub::new(tuning, limits, seeds),
             events_per_pump: limits.events_per_pump,
             ticks_run: 0,
         })

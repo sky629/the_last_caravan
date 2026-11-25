@@ -1,4 +1,4 @@
-//! 플레이어가 무기를 바꾸고 공격하는 일입니다. `Q`를 누르면 다음 무기로 바꾸고, 공격 버튼을 누르면 들고 있는 무기의 공격을 합니다.
+//! 플레이어가 무기를 바꾸고 공격하는 일입니다. `Q`를 누르면 두 칸의 무기를 서로 바꾸고, 공격 버튼을 누르면 들고 있는 무기의 공격을 합니다.
 //!
 //! 무기마다 다른 것은 수치표(`WeaponTable`)의 한 행이고, 공격이 맞히는 곳까지 전달되는 방식(`Delivery`)도 그 행에 적힌 값입니다.
 //! 이 파일은 한 Tick에 두 단계로 일합니다. `decide`가 플레이어마다 무기를 바꾸고 쿨다운을 정하면서 이번 Tick의 공격(`Attack`)을 모으고,
@@ -33,7 +33,7 @@ pub(crate) fn use_weapons(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
 
 /// 플레이어마다 무기를 바꾸고, 공격하는지 정합니다.
 ///
-/// `Q`를 누르면 다음 무기로 바꿉니다. 바꾸는 조건은 공격하는 조건과 같습니다. 살아 있고 부활, 수리, 채집, 건설 중이 아니어야 하고,
+/// `Q`를 누르면 두 칸의 무기를 서로 바꿉니다. 한 칸만 차 있으면 아무것도 바뀌지 않습니다. 바꾸는 조건은 공격하는 조건과 같습니다. 살아 있고 부활, 수리, 채집, 건설, 상자 열기 중이 아니어야 하고,
 /// 조건이 맞지 않을 때 누른 `Q`는 사라집니다. 바꾼 무기는 같은 Tick의 공격에 쓰이고, 쿨다운은 무기를 바꿔도 이어집니다.
 /// 그래서 검을 휘두른 직후 활로 바꿔도 쿨다운이 끝나기 전에는 쏠 수 없습니다.
 ///
@@ -46,10 +46,11 @@ fn decide(world: &mut World, ctx: &Ctx) -> Vec<Attack> {
         let free = player.is_free_to_act();
         let input = ctx.inputs.get(&player.id).copied().unwrap_or_default();
         if free && input.switch_weapon {
-            player.weapon = player.weapon.next();
+            player.loadout.swap();
         }
+        let weapon = player.weapon();
         let stats = player.stats(t);
-        let delivery = t.weapons.get(player.weapon).delivery;
+        let delivery = t.weapons.get(weapon).delivery;
         let Life::Alive { cooldown_ticks, .. } = &mut player.life else {
             continue;
         };
@@ -61,7 +62,7 @@ fn decide(world: &mut World, ctx: &Ctx) -> Vec<Attack> {
         *cooldown_ticks = stats.attack_cooldown_ticks;
         player.last_attack = Some(LastAttack {
             tick: ctx.tick,
-            weapon: player.weapon,
+            weapon,
         });
         attacks.push(Attack {
             team: player.team,

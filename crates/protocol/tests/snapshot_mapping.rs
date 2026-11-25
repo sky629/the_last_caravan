@@ -3,12 +3,12 @@
 
 use caravan_protocol::{
     Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal, WireCannotBuild,
-    WireDelivery, WireInteraction, WireLife, WireMonsterKind, WireOutcome, WirePhase, WirePos,
-    WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
+    WireDelivery, WireInteraction, WireLife, WireLoadout, WireMonsterKind, WireOutcome, WirePhase,
+    WirePos, WirePrompt, WireRepairTarget, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
-    AimDir, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Sim, Tile, Tuning, Vec2,
-    WavePlan,
+    AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Tile,
+    Tuning, Vec2, WavePlan, WeaponKind,
 };
 
 fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
@@ -43,12 +43,12 @@ fn sim_with(adjust: impl FnOnce(&mut Tuning)) -> Sim {
     let mut tuning = Tuning::default();
     adjust(&mut tuning);
     tuning.validate().expect("the adjusted numbers are valid");
-    Sim::new(tuning)
+    Sim::new(tuning, Seed(1))
 }
 
 #[test]
 fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
-    let mut sim = Sim::new(Tuning::default());
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
     sim.add_player().unwrap();
     let snapshot = Snapshot::from_sim(&sim);
 
@@ -65,13 +65,30 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
     assert_eq!((snapshot.wagon.hp, snapshot.wagon.max_hp), (500, 500));
     assert_eq!(
         snapshot.monsters.len(),
-        16,
-        "the day's guards are already there: two beside each of the eight nodes"
+        25,
+        "the day's guards are already there: two beside each of the eight nodes and three beside each of the three chests"
     );
     assert!(snapshot.monsters.iter().all(|m| m.hp == 60));
 
     assert_eq!(snapshot.stash, 10, "the starting stash");
     assert!(snapshot.towers.is_empty(), "the village starts empty");
+    assert_eq!(
+        snapshot
+            .chests
+            .iter()
+            .map(|chest| chest.id)
+            .collect::<Vec<_>>(),
+        [1, 2, 3],
+        "three chests, numbered from 1"
+    );
+    let sites = &sim.tuning().map.chest_sites;
+    assert!(
+        snapshot
+            .chests
+            .iter()
+            .all(|chest| sites.contains(&chest.tile.to_tile())),
+        "each chest stands on a candidate site"
+    );
 
     let [player] = snapshot.players[..] else {
         panic!("one player expected, got {:?}", snapshot.players);
@@ -95,9 +112,12 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
     );
     assert_eq!((player.last_input_seq, player.last_attack), (0, None));
     assert_eq!(
-        player.weapon,
-        WireWeaponKind::Sword,
-        "a player starts with the sword"
+        player.loadout,
+        WireLoadout {
+            held: WireWeaponKind::Sword,
+            spare: None
+        },
+        "a player starts with the sword and an empty second slot"
     );
     assert!(snapshot.piles.is_empty(), "nothing lies on the ground");
     let amounts: Vec<(u32, u32)> = snapshot
@@ -113,8 +133,68 @@ fn a_fresh_room_maps_to_the_numbers_in_the_tuning_table() {
 }
 
 #[test]
+fn a_chest_its_prompt_and_the_opening_progress_reach_the_snapshot_and_the_weapon_comes_out() {
+    let mut sim = sim_with(|t| {
+        t.map.chest_sites = vec![Tile::new(47, 32)];
+        t.loot.chests_per_day = 1;
+        t.guards.per_chest = 0;
+        // 상자의 남쪽 타일에 섭니다. 플레이어의 가장자리에서 상자의 가장자리까지 0.25타일입니다.
+        t.map.player_spawns = vec![Vec2::new(47.5, 33.6)];
+    });
+    let id = sim.add_player().unwrap();
+
+    let snapshot = Snapshot::from_sim(&sim);
+    assert_eq!(snapshot.chests.len(), 1);
+    assert_eq!(
+        snapshot.chests[0].tile,
+        WireTile { x: 47, y: 32 },
+        "the chest says where it stands and nothing about what is inside"
+    );
+    assert_eq!(snapshot.players[0].prompt, Some(WirePrompt::OpenChest));
+
+    let holding = PlayerInputs::from([(
+        id,
+        PlayerInput {
+            interact: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    let open_ticks = sim.tuning().ticks(sim.tuning().loot.open_secs);
+    step(&mut sim, &holding, open_ticks / 2);
+    let snapshot = Snapshot::from_sim(&sim);
+    let WireLife::Alive {
+        interaction: Some(WireInteraction::Opening { chest, progress }),
+        ..
+    } = snapshot.players[0].life
+    else {
+        panic!("the player is opening, got {:?}", snapshot.players[0].life);
+    };
+    assert_eq!(chest, snapshot.chests[0].id);
+    assert!((progress - 0.5).abs() < 0.05, "about half way: {progress}");
+    assert_eq!(snapshot.players[0].prompt, None, "the bar shows instead");
+
+    step(&mut sim, &holding, open_ticks - open_ticks / 2);
+    let snapshot = Snapshot::from_sim(&sim);
+    assert!(snapshot.chests.is_empty(), "the chest is open");
+    let [weapon] = snapshot.ground_weapons[..] else {
+        panic!("one weapon lies there, got {:?}", snapshot.ground_weapons);
+    };
+    assert_eq!(weapon.pos.to_tiles(), Vec2::new(47.5, 32.5));
+    assert_ne!(
+        weapon.kind,
+        WireWeaponKind::Sword,
+        "a chest never holds the sword"
+    );
+    assert_eq!(
+        snapshot.players[0].prompt,
+        Some(WirePrompt::TakeWeapon(weapon.kind)),
+        "F now takes the weapon"
+    );
+}
+
+#[test]
 fn welcome_describes_the_fixed_world_and_the_joining_player() {
-    let mut sim = Sim::new(Tuning::default());
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
     sim.add_player().unwrap();
     let second = sim.add_player().unwrap();
     let me = sim.player(second).unwrap();
@@ -332,6 +412,8 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
         t.monsters.grunt.attack_damage = 100;
         t.monsters.grunt.attack_cooldown_secs = 100.0;
         t.wagon.max_hp = u32::MAX;
+        // 낮의 몬스터가 밤에 마차로 와서 플레이어를 공격하지 않게 합니다. 상자를 지키는 몬스터가 가장 가깝습니다.
+        t.loot.chests_per_day = 0;
         // 부활한 직후의 HP를 확인하므로, 마차 곁의 회복이 HP를 더하지 않게 합니다.
         t.wagon.recovery.hp_per_pulse = 0;
     });
@@ -580,9 +662,17 @@ fn a_sprinting_player_runs_farther_and_the_stamina_on_the_wire_drains() {
     );
 }
 
+/// 검과 활을 두 칸에 가지고 시작하는 방입니다.
+fn sim_with_sword_and_bow(adjust: impl FnOnce(&mut Tuning)) -> Sim {
+    sim_with(|t| {
+        t.player.start_loadout = Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow));
+        adjust(t);
+    })
+}
+
 #[test]
-fn the_weapon_a_player_holds_is_on_the_wire() {
-    let mut sim = sim_with(|_| {});
+fn both_slots_and_the_held_one_are_on_the_wire() {
+    let mut sim = sim_with_sword_and_bow(|_| {});
     let alive = sim.add_player().unwrap();
     let other = sim.add_player().unwrap();
     let press_q = PlayerInputs::from([(
@@ -596,18 +686,27 @@ fn the_weapon_a_player_holds_is_on_the_wire() {
     step(&mut sim, &press_q, 1);
 
     let players = Snapshot::from_sim(&sim).players;
-    let weapon_of = |id: u32| players.iter().find(|p| p.id == id).map(|p| p.weapon);
-    assert_eq!(weapon_of(alive.0), Some(WireWeaponKind::Bow));
+    let loadout_of = |id: u32| players.iter().find(|p| p.id == id).map(|p| p.loadout);
     assert_eq!(
-        weapon_of(other.0),
-        Some(WireWeaponKind::Sword),
+        loadout_of(alive.0),
+        Some(WireLoadout {
+            held: WireWeaponKind::Bow,
+            spare: Some(WireWeaponKind::Sword)
+        })
+    );
+    assert_eq!(
+        loadout_of(other.0),
+        Some(WireLoadout {
+            held: WireWeaponKind::Sword,
+            spare: Some(WireWeaponKind::Bow)
+        }),
         "only the player who pressed Q switched"
     );
 }
 
 #[test]
 fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_held_now() {
-    let mut sim = sim_with(|_| {});
+    let mut sim = sim_with_sword_and_bow(|_| {});
     let fighter = sim.add_player().unwrap();
     let swing = PlayerInputs::from([(
         fighter,
@@ -631,7 +730,7 @@ fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_hel
 
     let snapshot = Snapshot::from_sim(&sim);
     let player = snapshot.players.iter().find(|p| p.id == fighter.0).unwrap();
-    assert_eq!(player.weapon, WireWeaponKind::Bow);
+    assert_eq!(player.loadout.held, WireWeaponKind::Bow);
     assert_eq!(
         player.last_attack,
         Some(WireAttack {
@@ -644,7 +743,7 @@ fn the_last_attack_on_the_wire_names_the_weapon_that_attacked_not_the_weapon_hel
 
 #[test]
 fn a_shot_arrow_is_on_the_wire_with_its_position_and_direction_and_is_gone_when_it_ends() {
-    let mut sim = sim_with(|_| {});
+    let mut sim = sim_with_sword_and_bow(|_| {});
     let archer = sim.add_player().unwrap();
     let press_q = PlayerInputs::from([(
         archer,
@@ -690,7 +789,7 @@ fn a_shot_arrow_is_on_the_wire_with_its_position_and_direction_and_is_gone_when_
 
 #[test]
 fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
-    let mut sim = Sim::new(Tuning::default());
+    let mut sim = Sim::new(Tuning::default(), Seed(1));
     let first = sim.add_player().unwrap();
 
     let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
@@ -708,6 +807,20 @@ fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
             WeaponInfo {
                 kind: WireWeaponKind::Bow,
                 delivery: WireDelivery::Projectile,
+            },
+            WeaponInfo {
+                kind: WireWeaponKind::Greatsword,
+                delivery: WireDelivery::Arc {
+                    reach: 1.3,
+                    half_angle_deg: 90.0
+                },
+            },
+            WeaponInfo {
+                kind: WireWeaponKind::Spear,
+                delivery: WireDelivery::Arc {
+                    reach: 2.2,
+                    half_angle_deg: 15.0
+                },
             },
         ]
     );

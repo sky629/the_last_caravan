@@ -8,8 +8,10 @@ mod common;
 use caravan_protocol::{
     ClientMsg, ClientTransport, InputMsg, ServerLimits, WireLife, WireVec2, WireWeaponKind,
 };
-use caravan_rules::Tuning;
-use common::{assert_near, input_with, last_snapshot, player, position, rig, rig_with_limits};
+use caravan_rules::{Loadout, Tuning, WeaponKind as RulesWeapon};
+use common::{
+    assert_near, input_with, last_snapshot, player, position, rig, rig_with, rig_with_limits,
+};
 
 /// 한 Tick에 움직이는 거리(타일)입니다.
 const STEP: f32 = 0.2;
@@ -240,6 +242,7 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
         aim: WireVec2::new(f32::NAN, f32::NAN),
         attack: false,
         interact: false,
+        interact_pressed: false,
         build: false,
         sprint: false,
         switch_weapon: false,
@@ -264,6 +267,13 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
     );
 }
 
+/// 검과 활을 두 칸에 가지고 시작하는 수치입니다. Q가 서버까지 한 번만 전달되는지 보려면 바꿀 무기가 있어야 합니다.
+fn armed() -> Tuning {
+    let mut tuning = Tuning::default();
+    tuning.player.start_loadout = Loadout::new(RulesWeapon::Sword, Some(RulesWeapon::Bow));
+    tuning
+}
+
 fn press_q(seq: u32) -> ClientMsg {
     ClientMsg::Input(InputMsg {
         seq,
@@ -275,27 +285,27 @@ fn press_q(seq: u32) -> ClientMsg {
 #[test]
 fn one_press_of_q_switches_the_weapon_once_and_the_ticks_without_a_message_do_not_switch_it_again()
 {
-    let mut rig = rig();
+    let mut rig = rig_with(armed());
     let (mut a, a_id) = rig.join_ok("test");
     let (mut b, _) = rig.join_ok("test");
     a.send(&input_with(1, (0.0, 0.0), false));
     rig.run_ticks(1);
     assert_eq!(
-        player(&last_snapshot(&mut b), a_id).weapon,
+        player(&last_snapshot(&mut b), a_id).loadout.held,
         WireWeaponKind::Sword
     );
 
     a.send(&press_q(2));
     rig.run_ticks(1);
     assert_eq!(
-        player(&last_snapshot(&mut b), a_id).weapon,
+        player(&last_snapshot(&mut b), a_id).loadout.held,
         WireWeaponKind::Bow
     );
 
     // 입력이 없는 Tick은 마지막 입력을 다시 쓰지만, 누른 순간은 다시 쓰지 않습니다.
     rig.run_ticks(5);
     assert_eq!(
-        player(&last_snapshot(&mut b), a_id).weapon,
+        player(&last_snapshot(&mut b), a_id).loadout.held,
         WireWeaponKind::Bow,
         "the held input did not press Q again"
     );
@@ -303,7 +313,7 @@ fn one_press_of_q_switches_the_weapon_once_and_the_ticks_without_a_message_do_no
 
 #[test]
 fn a_q_pressed_and_released_between_two_ticks_still_switches_the_weapon() {
-    let mut rig = rig();
+    let mut rig = rig_with(armed());
     let (mut a, a_id) = rig.join_ok("test");
 
     a.send(&press_q(1));
@@ -311,14 +321,14 @@ fn a_q_pressed_and_released_between_two_ticks_still_switches_the_weapon() {
     rig.run_ticks(1);
 
     assert_eq!(
-        player(&last_snapshot(&mut a), a_id).weapon,
+        player(&last_snapshot(&mut a), a_id).loadout.held,
         WireWeaponKind::Bow
     );
 }
 
 #[test]
 fn a_late_or_repeated_input_with_q_does_not_switch_the_weapon() {
-    let mut rig = rig();
+    let mut rig = rig_with(armed());
     let (mut a, a_id) = rig.join_ok("test");
     a.send(&input_with(5, (0.0, 0.0), false));
     rig.run_ticks(1);
@@ -328,7 +338,7 @@ fn a_late_or_repeated_input_with_q_does_not_switch_the_weapon() {
     rig.run_ticks(1);
 
     assert_eq!(
-        player(&last_snapshot(&mut a), a_id).weapon,
+        player(&last_snapshot(&mut a), a_id).loadout.held,
         WireWeaponKind::Sword
     );
 }

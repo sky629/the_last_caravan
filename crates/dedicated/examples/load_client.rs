@@ -5,6 +5,7 @@
 //!
 //! 이 클라이언트는 제자리에서 공격 버튼을 누른 채 조준 방향을 돌립니다. `--passive`를 붙이면 공격하지 않아서 몬스터가 가장 많이 쌓입니다.
 //! `--bow`를 붙이면 원정마다 첫 스냅샷을 받은 뒤에 무기 전환 키를 한 번 눌러서 활로 바꾸고, 탄환을 쏩니다.
+//! 활로 바꾸려면 활을 가지고 있어야 하므로, 서버는 `--stress`로 실행해야 합니다.
 //! 여러 개를 동시에 실행하면 한 방에 여러 접속을 만들 수 있습니다.
 //! 기록하는 크기는 WebSocket 프레임의 내용(스냅샷을 이진 형식으로 바꾼 바이트)이며, 프레임 머리(2~4바이트)와 TCP 머리는 포함하지 않습니다.
 
@@ -159,7 +160,7 @@ fn run(options: &Options) -> Result<(), String> {
                             projectiles: peak.projectiles,
                         };
                     }
-                    latest = Some(snapshot);
+                    latest = Some(*snapshot);
                 }
                 Err(err) => return Err(format!("bad message from the server: {err}")),
             },
@@ -190,6 +191,7 @@ fn run(options: &Options) -> Result<(), String> {
                     aim: WireVec2::new(angle.cos(), angle.sin()),
                     attack: !options.passive,
                     interact: false,
+                    interact_pressed: false,
                     build: false,
                     sprint: false,
                     switch_weapon,

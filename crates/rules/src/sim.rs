@@ -3,6 +3,7 @@
 use crate::expedition::{self, Advance, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
+use crate::loot::{self, Chest, GroundWeapon, Prompt, Seed};
 use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
@@ -20,6 +21,8 @@ use crate::world::{Ctx, World};
 /// `add_player`, `remove_player`, `step`으로만 상태를 바꿉니다.
 pub struct Sim {
     tuning: Tuning,
+    /// 이 방의 씨앗입니다. 원정마다 이 씨앗에서 이어 간 씨앗(`expedition_seed`)으로 무작위를 씁니다. 방이 만들어진 뒤 바뀌지 않습니다.
+    seed: Seed,
     /// 방이 만들어진 뒤 실행한 Tick의 수입니다. 줄어들지 않으므로 스냅샷의 Tick 번호는 계속 커집니다.
     tick: u64,
     /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
@@ -43,16 +46,23 @@ pub enum JoinError {
 }
 
 impl Sim {
-    /// 플레이어가 없는 방을 만들고 첫 원정의 첫날을 시작합니다.
+    /// 플레이어가 없는 방을 만들고 첫 원정의 첫날을 시작합니다. 무작위는 `seed`에서 정해지므로, 같은 수치와 씨앗과 입력은 같은 결과를 냅니다.
     /// 수치는 `Tuning::validate`를 통과한 것이어야 합니다. 전제가 어긋난 수치는 개체가 벽을 통과하는 것 같은 오동작을 만들고,
     /// 몬스터가 나타날 자리가 없는 수치에서는 이 함수가 멈춥니다.
-    pub fn new(tuning: Tuning) -> Sim {
+    pub fn new(tuning: Tuning, seed: Seed) -> Sim {
         let mut world = World::new(&tuning);
         let spawns = SpawnPlan::new(&world.tiles, &tuning)
             .expect("a validated tuning has a spot where night monsters appear");
-        expedition::begin_day(&mut world, &spawns, &tuning);
+        expedition::begin_day(
+            &mut world,
+            &spawns,
+            seed_of_expedition(seed, FIRST_EXPEDITION),
+            1,
+            &tuning,
+        );
         Sim {
-            expedition: 1,
+            seed,
+            expedition: FIRST_EXPEDITION,
             phase: expedition::opening_phase(&tuning),
             paths: Paths::new(&world, &tuning),
             monster_grid: MonsterGrid::new(world.tiles.bounds(), tuning.map.spatial_cell),
@@ -107,8 +117,9 @@ impl Sim {
 
     /// 플레이어를 즉시 제거합니다. 없는 번호는 무시하므로 같은 퇴장을 두 번 처리해도 안전합니다.
     /// 이 플레이어를 부활시키던 플레이어는 다음 Tick에 대상이 사라진 것을 보고 부활을 멈추고, 이 플레이어가 들고 있던 자원은 그 자리에 떨어집니다.
+    /// 가진 무기도 그 자리에 떨어지지만, 시작 무기와 같은 종류의 무기는 떨어지지 않습니다.
     pub fn remove_player(&mut self, id: PlayerId) {
-        self.world.remove_player(id);
+        self.world.remove_player(id, &self.tuning);
     }
 
     /// 게임을 Tick 하나만큼 진행합니다. `inputs`는 이번 Tick의 플레이어별 입력이고,
@@ -117,10 +128,12 @@ impl Sim {
     /// 모든 공격은 같은 상태를 보고 결정한 뒤 한꺼번에 적용합니다. 그래서 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다.
     pub fn step(&mut self, inputs: &PlayerInputs) {
         self.tick += 1;
+        let expedition_seed = self.expedition_seed();
         match expedition::advance_phase(
             &mut self.phase,
             &mut self.world,
             &self.spawns,
+            expedition_seed,
             &self.tuning,
         ) {
             Advance::Frozen => {
@@ -163,6 +176,7 @@ impl Sim {
         self.world.apply_hits(&hits, &self.tuning);
         player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);
+        loot::finish_openings(&mut self.world, &self.tuning);
         expedition::settle_outcome(&mut self.phase, &self.world, &self.tuning);
     }
 
@@ -184,7 +198,14 @@ impl Sim {
             assigned.push(slot);
             player.reset(slot, spawn_point(&self.tuning.map, slot), &self.tuning);
         }
-        expedition::begin_day(&mut self.world, &self.spawns, &self.tuning);
+        let expedition_seed = self.expedition_seed();
+        expedition::begin_day(
+            &mut self.world,
+            &self.spawns,
+            expedition_seed,
+            1,
+            &self.tuning,
+        );
     }
 
     /// 진영을 정하는 곳은 이 함수 하나입니다. 협동 모드는 모두를 같은 편으로 둡니다.
@@ -204,6 +225,16 @@ impl Sim {
     /// 이 방의 몇 번째 원정인지입니다. 첫 원정이 1입니다.
     pub fn expedition_number(&self) -> u32 {
         self.expedition
+    }
+
+    /// 방이 만들어질 때 받은 씨앗입니다.
+    pub fn seed(&self) -> Seed {
+        self.seed
+    }
+
+    /// 지금 원정의 씨앗입니다.
+    pub fn expedition_seed(&self) -> Seed {
+        seed_of_expedition(self.seed, self.expedition)
     }
 
     pub fn phase(&self) -> Phase {
@@ -248,6 +279,23 @@ impl Sim {
         self.world.nodes.iter()
     }
 
+    /// 지금 놓여 있는 무기 상자를 번호가 작은 상자부터 차례로 돌려줍니다. 낮에만 있습니다.
+    pub fn chests(&self) -> impl Iterator<Item = &Chest> {
+        self.world.chests.iter()
+    }
+
+    /// 바닥에 놓인 무기를 번호가 작은 무기부터 차례로 돌려줍니다.
+    pub fn ground_weapons(&self) -> impl Iterator<Item = &GroundWeapon> {
+        self.world.ground_weapons.iter()
+    }
+
+    /// `id`가 지금 F를 누르면 하게 되는 일이 화면에 안내할 만한 것이면 그 안내입니다. 부활, 수리, 채집은 안내하지 않습니다.
+    /// `F`의 우선순위를 고르는 함수(`player::choose_interaction`)가 정하므로 서버가 실제로 하는 일과 어긋나지 않고, 따로 저장하는 값이 없습니다.
+    pub fn prompt(&self, id: PlayerId) -> Option<Prompt> {
+        let player = self.player(id)?;
+        player::prompt(&self.world, player, &self.tuning)
+    }
+
     /// 땅에 떨어진 자원을 번호가 작은 더미부터 차례로 돌려줍니다.
     pub fn piles(&self) -> impl Iterator<Item = &Pile> {
         self.world.piles.iter()
@@ -268,6 +316,18 @@ impl Sim {
         };
         player::repair_spec(&self.world, *target, &self.tuning)
             .is_some_and(|spec| self.world.stash < spec.cost_per_pulse)
+    }
+
+    /// `opener`가 상자를 열고 있으면 열기의 진행도(0.0 이상 1.0 이하)를 돌려줍니다.
+    /// 진행도는 여는 플레이어의 `Interaction`에서 계산하며, 상자는 아무 값도 저장하지 않습니다.
+    pub fn open_progress(&self, opener: PlayerId) -> Option<f32> {
+        let required = self.tuning.ticks(self.tuning.loot.open_secs);
+        match self.world.players.get(&opener)?.interaction() {
+            Some(Interaction::Opening { elapsed_ticks, .. }) => {
+                Some((*elapsed_ticks as f32 / required as f32).min(1.0))
+            }
+            _ => None,
+        }
     }
 
     /// `downed`를 부활시키는 플레이어가 있으면 부활의 진행도(0.0 이상 1.0 이하)를 돌려줍니다.
@@ -331,4 +391,12 @@ impl Sim {
         self.world
             .spawn_monster(kind, crate::monster::Order::Raid, pos, &self.tuning)
     }
+}
+
+/// 방이 만들어질 때 시작하는 원정의 번호입니다.
+const FIRST_EXPEDITION: u32 = 1;
+
+/// 방의 `expedition`번째 원정의 씨앗입니다. 방의 씨앗에서 원정의 번호로 이어 간 씨앗이라서, 원정마다 다르고 같은 방의 같은 원정은 언제나 같습니다.
+fn seed_of_expedition(room: Seed, expedition: u32) -> Seed {
+    room.derive(u64::from(expedition))
 }

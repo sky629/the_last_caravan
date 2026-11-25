@@ -4,8 +4,8 @@
 //! 모든 값은 지금 그리는 `Frame`에서 오므로, 막대는 그 피해를 일으킨 공격이 화면에 나타난 뒤에 줄어듭니다.
 
 use caravan_protocol::{
-    WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireNightStep, WireOutcome,
-    WirePhase, WireRepairTarget, WireTowerState, WireWeaponKind,
+    WireBuildRefusal, WireCannotBuild, WireInteraction, WireLife, WireLoadout, WireNightStep,
+    WireOutcome, WirePhase, WirePrompt, WireRepairTarget, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::Team;
 
@@ -29,6 +29,8 @@ pub struct Hud {
     pub carry: Option<String>,
     /// 내가 들고 있는 무기와 바꾸는 키입니다. 내 캐릭터가 화면에 있으면 항상 있고, 쓰러졌어도 무기는 들고 있습니다.
     pub weapon: Option<String>,
+    /// F를 누르면 하게 되는 일의 안내입니다. 서버가 정해서 스냅샷에 실어 보내고, 내 캐릭터의 것만 표시합니다.
+    pub hint: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과, 입장 거절, 접속이 끊김이 여기에 나옵니다.
     pub banner: Option<Banner>,
     pub me: Option<Meter>,
@@ -90,6 +92,7 @@ impl Hud {
             stash: None,
             carry: None,
             weapon: None,
+            hint: None,
             banner: None,
             me: None,
             stamina: None,
@@ -132,7 +135,8 @@ impl Hud {
 
         if let Some(me) = frame.player(you) {
             hud.me = Some(my_meter(me));
-            hud.weapon = Some(weapon_text(me.weapon));
+            hud.weapon = Some(weapon_text(me.loadout));
+            hud.hint = me.prompt.map(prompt_text);
             hud.stamina = stamina_meter(me);
             hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
@@ -296,7 +300,7 @@ fn ally_meter(ally: &PlayerView) -> Meter {
     }
 }
 
-/// 내가 부활, 수리, 채집, 건설을 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
+/// 내가 부활, 수리, 채집, 건설, 상자 열기를 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
 /// 수리에는 진행도가 따로 없으므로, 수리하는 감시탑이나 마차의 HP가 차오르는 모습을 진행도로 보여 줍니다.
 /// 채집도 마찬가지로 채집하는 지점의 남은 자원(`node_amount`가 가득 찬 양)이 줄어드는 모습을 보여 줍니다.
 fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Meter> {
@@ -373,6 +377,14 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
                 tone: Tone::Progress,
             })
         }
+        WireLife::Alive {
+            interaction: Some(WireInteraction::Opening { progress, .. }),
+            ..
+        } => Some(Meter {
+            label: "OPENING CHEST".to_string(),
+            fraction: progress,
+            tone: Tone::Progress,
+        }),
         WireLife::Downed {
             revive_progress: Some(progress),
             ..
@@ -385,16 +397,32 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
     }
 }
 
-/// 든 자원과 상한입니다. 상한까지 들면 더 채집할 수 없으므로, 마차로 가져가라는 안내를 붙입니다.
-/// 들고 있는 무기의 이름과 바꾸는 키입니다. `match`가 모든 무기를 다루므로, 무기를 추가하면 여기서 컴파일 오류가 납니다.
-fn weapon_text(weapon: WireWeaponKind) -> String {
-    let name = match weapon {
-        WireWeaponKind::Sword => "SWORD",
-        WireWeaponKind::Bow => "BOW",
-    };
-    format!("WEAPON  {name}  [Q]")
+/// 가진 두 칸의 무기와 바꾸는 키입니다. 든 무기가 앞에 오고 대괄호로 묶으며, 빈 칸은 `-`입니다.
+fn weapon_text(loadout: WireLoadout) -> String {
+    let held = weapon_name(loadout.held);
+    let spare = loadout.spare.map_or("-", weapon_name);
+    format!("WEAPON  [{held}]  {spare}  [Q]")
 }
 
+/// F를 누르면 하게 되는 일의 안내 문구입니다. `match`가 모든 안내를 다루므로, 안내를 추가하면 여기서 컴파일 오류가 납니다.
+fn prompt_text(prompt: WirePrompt) -> String {
+    match prompt {
+        WirePrompt::OpenChest => "F  OPEN CHEST".to_string(),
+        WirePrompt::TakeWeapon(kind) => format!("F  TAKE {}", weapon_name(kind)),
+    }
+}
+
+/// 무기의 이름입니다. `match`가 모든 무기를 다루므로, 무기를 추가하면 여기서 컴파일 오류가 납니다.
+pub fn weapon_name(weapon: WireWeaponKind) -> &'static str {
+    match weapon {
+        WireWeaponKind::Sword => "SWORD",
+        WireWeaponKind::Bow => "BOW",
+        WireWeaponKind::Greatsword => "GREATSWORD",
+        WireWeaponKind::Spear => "SPEAR",
+    }
+}
+
+/// 든 자원과 상한입니다. 상한까지 들면 더 채집할 수 없으므로, 마차로 가져가라는 안내를 붙입니다.
 fn carry_text(carried: u32, capacity: u32) -> String {
     if carried >= capacity {
         format!("CARRY  {carried} / {capacity}  FULL - TAKE IT TO THE WAGON")
@@ -453,7 +481,7 @@ mod tests {
         ClientEvent, RejectReason, RoomCode, ServerMsg, Welcome, WireNode, WireShot, WireTile,
         WireTower, WireWagon,
     };
-    use caravan_rules::{Sim, Team, Tuning, Vec2};
+    use caravan_rules::{Seed, Sim, Team, Tuning, Vec2};
 
     use crate::interp::PlayerView;
     use crate::launch::DEFAULT_SERVER;
@@ -461,7 +489,7 @@ mod tests {
     const YOU: u32 = 1;
 
     fn session_in_room() -> Session {
-        let mut sim = Sim::new(Tuning::default());
+        let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         let mut welcome = Welcome::from_sim(&sim, sim.player(first).unwrap());
         welcome.you = YOU;
@@ -483,6 +511,10 @@ mod tests {
         }
     }
 
+    fn loadout(held: WireWeaponKind, spare: Option<WireWeaponKind>) -> WireLoadout {
+        WireLoadout { held, spare }
+    }
+
     fn player(id: u32, life: WireLife) -> PlayerView {
         PlayerView {
             id,
@@ -491,7 +523,8 @@ mod tests {
             facing: Vec2::new(1.0, 0.0),
             life,
             last_attack: None,
-            weapon: WireWeaponKind::Sword,
+            loadout: loadout(WireWeaponKind::Sword, None),
+            prompt: None,
         }
     }
 
@@ -511,6 +544,8 @@ mod tests {
             stash: 7,
             nodes: vec![WireNode { id: 1, amount: 9 }],
             piles: Vec::new(),
+            chests: Vec::new(),
+            ground_weapons: Vec::new(),
             towers: vec![WireTower {
                 id: 1,
                 tile: WireTile { x: 15, y: 11 },
@@ -671,15 +706,59 @@ mod tests {
     }
 
     #[test]
-    fn the_held_weapon_is_shown_with_the_key_that_switches_it() {
+    fn the_held_weapon_comes_first_in_brackets_and_an_empty_slot_is_a_dash() {
         let session = session_in_room();
         let sword = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
-        assert_eq!(sword.weapon.as_deref(), Some("WEAPON  SWORD  [Q]"));
+        assert_eq!(sword.weapon.as_deref(), Some("WEAPON  [SWORD]  -  [Q]"));
 
         let mut archer = player(YOU, alive(100));
-        archer.weapon = WireWeaponKind::Bow;
+        archer.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         let bow = Hud::of(&session, Some(&frame(vec![archer])));
-        assert_eq!(bow.weapon.as_deref(), Some("WEAPON  BOW  [Q]"));
+        assert_eq!(bow.weapon.as_deref(), Some("WEAPON  [BOW]  SWORD  [Q]"));
+    }
+
+    #[test]
+    fn the_hint_names_what_f_does_and_only_for_me() {
+        let session = session_in_room();
+        let mut me = player(YOU, alive(100));
+        me.prompt = Some(WirePrompt::TakeWeapon(WireWeaponKind::Spear));
+        let mut ally = player(2, alive(100));
+        ally.prompt = Some(WirePrompt::TakeWeapon(WireWeaponKind::Bow));
+
+        let hud = Hud::of(&session, Some(&frame(vec![me, ally])));
+        assert_eq!(hud.hint.as_deref(), Some("F  TAKE SPEAR"));
+
+        let mut at_a_chest = player(YOU, alive(100));
+        at_a_chest.prompt = Some(WirePrompt::OpenChest);
+        let hud = Hud::of(&session, Some(&frame(vec![at_a_chest])));
+        assert_eq!(hud.hint.as_deref(), Some("F  OPEN CHEST"));
+
+        let quiet = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100))])));
+        assert_eq!(quiet.hint, None, "nothing to do with F");
+        assert_eq!(Hud::of(&session, None).hint, None);
+
+        let mut ally_only = player(2, alive(100));
+        ally_only.prompt = Some(WirePrompt::TakeWeapon(WireWeaponKind::Bow));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), ally_only])),
+        );
+        assert_eq!(hud.hint, None, "an ally's hint is not mine");
+    }
+
+    #[test]
+    fn every_weapon_has_its_own_name_on_the_screen() {
+        let names: Vec<&str> = [
+            WireWeaponKind::Sword,
+            WireWeaponKind::Bow,
+            WireWeaponKind::Greatsword,
+            WireWeaponKind::Spear,
+        ]
+        .into_iter()
+        .map(weapon_name)
+        .collect();
+
+        assert_eq!(names, ["SWORD", "BOW", "GREATSWORD", "SPEAR"]);
     }
 
     #[test]
@@ -692,21 +771,21 @@ mod tests {
                 revive_progress: None,
             },
         );
-        downed.weapon = WireWeaponKind::Bow;
+        downed.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         assert_eq!(
             Hud::of(&session, Some(&frame(vec![downed])))
                 .weapon
                 .as_deref(),
-            Some("WEAPON  BOW  [Q]")
+            Some("WEAPON  [BOW]  SWORD  [Q]")
         );
         assert_eq!(Hud::of(&session, None).weapon, None);
 
         let mut ally = player(2, alive(100));
-        ally.weapon = WireWeaponKind::Bow;
+        ally.loadout = loadout(WireWeaponKind::Bow, None);
         let hud = Hud::of(&session, Some(&frame(vec![player(YOU, alive(100)), ally])));
         assert_eq!(
             hud.weapon.as_deref(),
-            Some("WEAPON  SWORD  [Q]"),
+            Some("WEAPON  [SWORD]  -  [Q]"),
             "only mine"
         );
     }
@@ -948,6 +1027,32 @@ mod tests {
             .unwrap();
         assert_eq!(action.label, "GATHERING  9 / 15");
         assert!((action.fraction - 9.0 / 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn opening_a_chest_shows_how_far_the_opening_has_come() {
+        let session = session_in_room();
+        let opener = player(
+            YOU,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 0,
+                stamina: 100,
+                interaction: Some(WireInteraction::Opening {
+                    chest: 3,
+                    progress: 0.4,
+                }),
+                build_refusal: None,
+            },
+        );
+
+        let action = Hud::of(&session, Some(&frame(vec![opener])))
+            .action
+            .unwrap();
+
+        assert_eq!(action.label, "OPENING CHEST");
+        assert_eq!(action.fraction, 0.4);
     }
 
     #[test]

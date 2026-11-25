@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use caravan_protocol::{InputMsg, LinkId, ServerMsg, Snapshot, Welcome};
-use caravan_rules::{JoinError, PlayerId, PlayerInputs, Sim, Tuning};
+use caravan_rules::{JoinError, PlayerId, PlayerInputs, Seed, Sim, Tuning};
 
 use crate::hub::Out;
 use crate::input::MemberInput;
@@ -23,9 +23,9 @@ pub(crate) struct Room {
 }
 
 impl Room {
-    pub fn new(tuning: Tuning, input_stale_ticks: u32) -> Room {
+    pub fn new(tuning: Tuning, seed: Seed, input_stale_ticks: u32) -> Room {
         Room {
-            sim: Sim::new(tuning),
+            sim: Sim::new(tuning, seed),
             members: BTreeMap::new(),
             input_stale_ticks,
         }
@@ -78,7 +78,7 @@ impl Room {
         let snapshot = Snapshot::from_sim(&self.sim);
         self.members
             .values()
-            .map(|member| Out::Send(member.link, ServerMsg::Snapshot(snapshot.clone())))
+            .map(|member| Out::Send(member.link, ServerMsg::Snapshot(Box::new(snapshot.clone()))))
             .collect()
     }
 }

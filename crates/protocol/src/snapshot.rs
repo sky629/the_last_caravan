@@ -9,9 +9,9 @@
 //! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    BuildRefusal, CannotBuild, GatherNode, Interaction, Life, Monster, MonsterKind, NightStep,
-    Outcome, Phase, Pile, Player, Projectile, RepairTarget, Sim, Tower, TowerState, Tuning,
-    WeaponKind,
+    BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life, Loadout,
+    Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, Projectile, Prompt,
+    RepairTarget, Sim, Tower, TowerState, Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,10 @@ pub struct Snapshot {
     pub players: Vec<WirePlayer>,
     /// 번호가 작은 몬스터부터입니다.
     pub monsters: Vec<WireMonster>,
+    /// 낮에 놓여 있는 무기 상자입니다. 번호가 작은 상자부터이고, 밤이 되면 모두 사라집니다. 상자 안의 무기는 싣지 않습니다.
+    pub chests: Vec<WireChest>,
+    /// 바닥에 놓인 무기입니다. 번호가 작은 무기부터이고, 주워 간 무기는 없습니다.
+    pub ground_weapons: Vec<WireGroundWeapon>,
     /// 날아가는 탄환과 이번 Tick에 끝난 탄환입니다. 번호가 작은 탄환부터입니다. 끝난 탄환이 한 번 실리므로 클라이언트가 탄환이 닿은 자리까지 그립니다.
     pub projectiles: Vec<WireProjectile>,
 }
@@ -98,6 +102,21 @@ pub struct WirePile {
     pub amount: u32,
 }
 
+/// 무기 상자 하나입니다. 어떤 무기가 들어 있는지는 열어서 바닥에 놓일 때까지 보내지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireChest {
+    pub id: u32,
+    pub tile: WireTile,
+}
+
+/// 바닥에 놓인 무기 하나입니다. 다른 플레이어가 줍고 맞바꾸면 `kind`가 바뀝니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireGroundWeapon {
+    pub id: u32,
+    pub pos: WirePos,
+    pub kind: WireWeaponKind,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WireTower {
     pub id: u32,
@@ -146,14 +165,53 @@ pub struct WirePlayer {
     pub last_input_seq: u32,
     /// 마지막으로 한 공격입니다. 클라이언트는 공격한 Tick을 스냅샷의 `tick`과 비교해서, 공격한 무기의 효과를 그립니다.
     pub last_attack: Option<WireAttack>,
-    /// 들고 있는 무기입니다. 쓰러졌거나 사망한 플레이어도 무기를 들고 있습니다.
-    pub weapon: WireWeaponKind,
+    /// 가진 무기입니다. 쓰러졌거나 사망한 플레이어도 무기를 가지고 있습니다.
+    pub loadout: WireLoadout,
+    /// F를 누르면 하게 되는 일 가운데 화면에 안내할 것입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
+    pub prompt: Option<WirePrompt>,
+}
+
+/// F를 누르면 하게 되는 일입니다. 부활, 수리, 채집은 안내하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WirePrompt {
+    /// F를 누르고 있으면 가까운 상자를 엽니다.
+    OpenChest,
+    /// F를 한 번 누르면 가까운 바닥의 무기를 줍습니다.
+    TakeWeapon(WireWeaponKind),
+}
+
+impl WirePrompt {
+    /// `match`가 모든 안내를 다루므로, 규칙에 안내를 추가하면 여기서 컴파일 오류가 납니다.
+    fn of(prompt: Prompt) -> WirePrompt {
+        match prompt {
+            Prompt::OpenChest => WirePrompt::OpenChest,
+            Prompt::TakeWeapon(kind) => WirePrompt::TakeWeapon(WireWeaponKind::of(kind)),
+        }
+    }
+}
+
+/// 두 칸의 무기입니다. 든 무기는 언제나 있고, 다른 칸은 비어 있을 수 있습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireLoadout {
+    pub held: WireWeaponKind,
+    pub spare: Option<WireWeaponKind>,
+}
+
+impl WireLoadout {
+    fn of(loadout: &Loadout) -> WireLoadout {
+        WireLoadout {
+            held: WireWeaponKind::of(loadout.held()),
+            spare: loadout.spare().map(WireWeaponKind::of),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WireWeaponKind {
     Sword,
     Bow,
+    Greatsword,
+    Spear,
 }
 
 impl WireWeaponKind {
@@ -162,6 +220,8 @@ impl WireWeaponKind {
         match kind {
             WeaponKind::Sword => WireWeaponKind::Sword,
             WeaponKind::Bow => WireWeaponKind::Bow,
+            WeaponKind::Greatsword => WireWeaponKind::Greatsword,
+            WeaponKind::Spear => WireWeaponKind::Spear,
         }
     }
 }
@@ -209,6 +269,12 @@ pub enum WireInteraction {
     Gathering {
         /// 채집하는 지점의 번호입니다. 남은 양은 스냅샷의 그 지점에 있습니다.
         node: u32,
+    },
+    Opening {
+        /// 여는 상자의 번호입니다.
+        chest: u32,
+        /// 열기의 진행도(0.0에서 1.0)입니다. 진행도는 상자가 아니라 여는 플레이어에게 있습니다.
+        progress: f32,
     },
 }
 
@@ -317,6 +383,8 @@ impl Snapshot {
                 .map(|player| wire_player(sim, player))
                 .collect(),
             monsters: sim.monsters().map(wire_monster).collect(),
+            chests: sim.chests().map(wire_chest).collect(),
+            ground_weapons: sim.ground_weapons().map(wire_ground_weapon).collect(),
             projectiles: sim.projectiles().map(wire_projectile).collect(),
         }
     }
@@ -403,6 +471,22 @@ fn wire_pile(pile: &Pile) -> WirePile {
     }
 }
 
+/// `Chest::contents`는 이 크레이트 밖에서 읽을 수 없으므로 상자의 내용은 전송 형식에 들어갈 수 없습니다.
+fn wire_chest(chest: &Chest) -> WireChest {
+    WireChest {
+        id: chest.id.0,
+        tile: WireTile::from_tile(chest.tile),
+    }
+}
+
+fn wire_ground_weapon(weapon: &GroundWeapon) -> WireGroundWeapon {
+    WireGroundWeapon {
+        id: weapon.id.0,
+        pos: WirePos::from_tiles(weapon.pos),
+        kind: WireWeaponKind::of(weapon.kind),
+    }
+}
+
 fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
     let tuning = sim.tuning();
     let life = match &player.life {
@@ -440,7 +524,8 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
             tick: attack.tick,
             weapon: WireWeaponKind::of(attack.weapon),
         }),
-        weapon: WireWeaponKind::of(player.weapon),
+        loadout: WireLoadout::of(&player.loadout),
+        prompt: sim.prompt(player.id).map(WirePrompt::of),
     }
 }
 
@@ -461,6 +546,11 @@ fn wire_interaction(sim: &Sim, player: &Player, interaction: &Interaction) -> Wi
         },
         Interaction::Gathering { node, .. } => WireInteraction::Gathering { node: node.0 },
         Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },
+        Interaction::Opening { chest, .. } => WireInteraction::Opening {
+            chest: chest.0,
+            // 진행도는 여는 플레이어에게 있으므로 `Sim`이 그 플레이어의 열기에서 계산합니다.
+            progress: sim.open_progress(player.id).map_or(0.0, clamp_progress),
+        },
     }
 }
 
