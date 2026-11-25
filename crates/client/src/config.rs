@@ -113,6 +113,8 @@ pub const YOU: Color = Color::srgb(1.00, 0.84, 0.25);
 pub const ALLY: Color = Color::srgb(0.35, 0.65, 1.00);
 /// 다른 편 플레이어의 몸통 색입니다. 같은 편(파랑)과 몬스터(빨강) 어느 쪽과도 구분됩니다.
 pub const HOSTILE_PLAYER: Color = Color::srgb(0.72, 0.38, 0.92);
+/// 자리를 비운 플레이어(접속이 끊겼거나 조작이 없음)의 몸통이 비치는 정도입니다. 색은 그대로이고 투명도만 낮춥니다.
+pub const AWAY_ALPHA: f32 = 0.4;
 pub const DOWNED: Color = Color::srgb(0.95, 0.45, 0.15);
 pub const DEAD: Color = Color::srgb(0.40, 0.40, 0.42);
 pub const MONSTER: Color = Color::srgb(0.85, 0.22, 0.28);

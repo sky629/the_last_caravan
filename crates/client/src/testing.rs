@@ -35,16 +35,25 @@ pub fn joined_flow() -> ClientFlow {
     ClientFlow(flow)
 }
 
-/// 서버가 보낸 명단이 도착한 것으로 합니다. 각 항목은 (플레이어 번호, 이름)입니다.
+/// 서버가 보낸 명단이 도착한 것으로 합니다. 각 항목은 (플레이어 번호, 이름)이고, 모두 자리에 있습니다.
 /// 부를 때마다 더 큰 번호를 붙이므로, 나중에 부른 명단이 앞의 명단을 대신합니다.
 pub fn deliver_roster(flow: &mut ClientFlow, members: &[(u32, &str)]) {
+    let members: Vec<_> = members
+        .iter()
+        .map(|(id, name)| (*id, *name, true))
+        .collect();
+    deliver_presence(flow, &members);
+}
+
+/// `deliver_roster`와 같되, 각 항목이 (플레이어 번호, 이름, 자리에 있는지)입니다.
+pub fn deliver_presence(flow: &mut ClientFlow, members: &[(u32, &str, bool)]) {
     static REVISION: AtomicU32 = AtomicU32::new(1);
     let members = members
         .iter()
-        .map(|(id, name)| WireMember {
+        .map(|(id, name, here)| WireMember {
             id: *id,
             name: name.to_string(),
-            here: true,
+            here: *here,
         })
         .collect();
     flow.0

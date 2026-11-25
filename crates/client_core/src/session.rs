@@ -15,8 +15,8 @@
 //! 끝난 상태(Rejected, Disconnected, Unreachable, Failed, TakenOver)가 되면 `Flow`가 접속을 버리고 시작 화면으로 돌아갑니다.
 
 use caravan_protocol::{
-    ClientEvent, ClientMsg, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, ServerMsg,
-    Snapshot, Welcome, WireMember, WireRoster, check_welcome,
+    ClientEvent, ClientMsg, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, SeatToken,
+    ServerMsg, Snapshot, Welcome, WireMember, WireRoster, check_welcome,
 };
 use caravan_rules::Vec2;
 
@@ -28,9 +28,11 @@ use crate::start::JoinRequest;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Session {
     /// 접속이 열리기를 기다립니다. 열리지 않고 끝나면 어느 서버에 접속하려 했는지 알려야 하므로 `server`를 가집니다.
+    /// `token`은 이 기기가 기억하는 그 방의 내 자리의 표식이고, 있으면 `Join`에 실어서 같은 자리로 돌아갑니다.
     Connecting {
         request: JoinRequest,
         server: String,
+        token: Option<SeatToken>,
     },
     /// `Join`을 보내고 `Welcome`이나 `JoinRejected`를 기다립니다.
     Joining {
@@ -109,19 +111,23 @@ impl Joined {
 }
 
 impl Session {
-    pub fn new(request: JoinRequest, server: String) -> Session {
-        Session::Connecting { request, server }
+    pub fn new(request: JoinRequest, server: String, token: Option<SeatToken>) -> Session {
+        Session::Connecting {
+            request,
+            server,
+            token,
+        }
     }
 
     /// 이벤트 하나를 처리합니다. 서버에 답으로 보낼 메시지가 있으면 돌려줍니다.
     pub fn on_event(&mut self, event: ClientEvent) -> Option<ClientMsg> {
         match (&mut *self, event) {
-            (Session::Connecting { request, .. }, ClientEvent::Connected) => {
+            (Session::Connecting { request, token, .. }, ClientEvent::Connected) => {
                 let join = ClientMsg::Join {
                     version: PROTOCOL_VERSION,
                     room: request.room.as_ref().map(|room| room.as_str().to_string()),
                     name: request.name.as_str().to_string(),
-                    token: None,
+                    token: *token,
                 };
                 *self = Session::Joining {
                     request: request.clone(),
@@ -336,7 +342,7 @@ pub struct Problem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::{InputMsg, SeatToken};
+    use caravan_protocol::InputMsg;
     use caravan_rules::{Seed, Sim, Tuning};
 
     fn room() -> RoomCode {
@@ -353,7 +359,7 @@ mod tests {
     }
 
     fn connecting() -> Session {
-        Session::new(request(), SERVER.to_string())
+        Session::new(request(), SERVER.to_string(), None)
     }
 
     fn snapshot(tick: u64) -> Snapshot {
@@ -412,6 +418,22 @@ mod tests {
                 request: request(),
                 early_roster: None
             }
+        );
+    }
+
+    #[test]
+    fn the_remembered_seat_token_goes_with_the_join() {
+        let token = SeatToken([5; 16]);
+        let mut session = Session::new(request(), SERVER.to_string(), Some(token));
+
+        assert_eq!(
+            session.on_event(ClientEvent::Connected),
+            Some(ClientMsg::Join {
+                version: PROTOCOL_VERSION,
+                room: Some("test".to_string()),
+                name: "KANG".to_string(),
+                token: Some(token),
+            })
         );
     }
 

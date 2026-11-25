@@ -1,8 +1,9 @@
 //! 모든 모양(메시)과 색(재질)을 시작할 때 한 번 만들어 두는 곳입니다.
 //! 몬스터가 수백 마리여도 같은 핸들을 복제해서 쓰므로, 개체를 만들 때마다 메시와 재질을 새로 만들지 않습니다.
 //!
-//! 색이 모두 불투명하므로 Bevy가 불투명 단계로 그립니다. 이 단계는 같은 메시와 재질의 개체를 한꺼번에 그리고,
+//! 색은 거의 모두 불투명하므로 Bevy가 불투명 단계로 그립니다. 이 단계는 같은 메시와 재질의 개체를 한꺼번에 그리고,
 //! 앞뒤는 깊이 버퍼(개체의 z)로 가립니다. 그래서 개체의 수가 늘어도 그리기 호출은 모양과 색의 가짓수만큼입니다.
+//! 투명한 것은 자리를 비운 플레이어의 몸통(`*_away`)뿐이고, 플레이어는 네 명 이하라서 비용이 문제가 되지 않습니다.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -40,6 +41,10 @@ pub struct Palette {
     pub you: Handle<ColorMaterial>,
     pub ally: Handle<ColorMaterial>,
     pub hostile_player: Handle<ColorMaterial>,
+    /// 자리를 비운 플레이어의 몸통입니다. 산 플레이어의 색을 투명하게 한 것입니다.
+    pub you_away: Handle<ColorMaterial>,
+    pub ally_away: Handle<ColorMaterial>,
+    pub hostile_player_away: Handle<ColorMaterial>,
     pub downed: Handle<ColorMaterial>,
     pub dead: Handle<ColorMaterial>,
     pub monster: Handle<ColorMaterial>,
@@ -107,6 +112,9 @@ pub fn setup_palette(
         you: paint(config::YOU),
         ally: paint(config::ALLY),
         hostile_player: paint(config::HOSTILE_PLAYER),
+        you_away: paint(config::YOU.with_alpha(config::AWAY_ALPHA)),
+        ally_away: paint(config::ALLY.with_alpha(config::AWAY_ALPHA)),
+        hostile_player_away: paint(config::HOSTILE_PLAYER.with_alpha(config::AWAY_ALPHA)),
         downed: paint(config::DOWNED),
         dead: paint(config::DEAD),
         monster: paint(config::MONSTER),

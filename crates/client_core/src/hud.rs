@@ -54,7 +54,8 @@ pub struct Hud {
 pub struct CampPanel {
     /// 방 코드와 C로 하게 되는 일입니다. 웹은 `ROOM k7m2q   C  COPY LINK`, PC는 `ROOM k7m2q   C  COPY CODE`이고, 복사한 직후에는 `ROOM k7m2q   LINK COPIED`처럼 바뀝니다.
     pub room_line: String,
-    /// 방에 있는 플레이어마다 한 줄이고 번호 순서입니다. 줄은 플레이어의 이름이고(명단에 아직 없으면 `PLAYER 번호`), 내 줄에는 `(YOU)`가 붙고, 준비한 플레이어는 `READY`, 아니면 `...`입니다.
+    /// 방에 있는 플레이어마다 한 줄이고 번호 순서입니다. 줄은 플레이어의 이름이고(명단에 아직 없으면 `PLAYER 번호`), 내 줄에는 `(YOU)`가 붙고,
+    /// 자리를 비운 플레이어(접속이 끊겼거나 조작이 없음)는 `AWAY`, 준비한 플레이어는 `READY`, 아니면 `...`입니다.
     pub rows: Vec<String>,
     /// 내가 R을 누르면 하게 되는 일입니다. 준비하지 않았으면 `R  READY`, 준비했으면 `R  CANCEL READY`입니다.
     pub hint: String,
@@ -196,7 +197,7 @@ impl Hud {
                         *secs_left,
                         confirmed,
                         you,
-                        frame.players.len(),
+                        agreement(&joined.roster, &frame.players, confirmed),
                     ));
                 }
             }
@@ -280,13 +281,13 @@ fn result_banner(
     secs_left: f32,
     confirmed: &[u32],
     you: u32,
-    players: usize,
+    (done, required): (usize, usize),
 ) -> Banner {
     let (title, tone) = match outcome {
         WireOutcome::Victory => ("EXPEDITION SUCCESS", BannerTone::Good),
         WireOutcome::Defeat => ("EXPEDITION FAILED", BannerTone::Bad),
     };
-    let count = format!("({} / {players})", confirmed.len());
+    let count = format!("({done} / {required})");
     let action = if confirmed.contains(&you) {
         format!("WAITING FOR THE OTHERS  {count}")
     } else {
@@ -302,6 +303,15 @@ fn result_banner(
     }
 }
 
+/// 결과 화면에서 확인한 사람의 수와 확인해야 하는 사람의 수입니다. 자리를 비운 사람은 서버가 기다리지 않으므로 어느 쪽에도 세지 않습니다.
+/// 명단에 없는 사람은(명단이 아직 오지 않았을 때) 자리에 있는 것으로 셉니다.
+fn agreement(roster: &[WireMember], players: &[PlayerView], confirmed: &[u32]) -> (usize, usize) {
+    let away = |id: u32| roster.iter().any(|member| member.id == id && !member.here);
+    let required = players.iter().filter(|player| !away(player.id)).count();
+    let done = confirmed.iter().filter(|&&id| !away(id)).count();
+    (done, required)
+}
+
 /// 야영지의 준비 목록입니다. 목록은 방에 있는 모든 플레이어이고, 카운트다운은 모두가 준비한 동안만 있습니다.
 fn camp_panel(
     players: &[PlayerView],
@@ -314,7 +324,8 @@ fn camp_panel(
     let rows = players
         .iter()
         .map(|player| {
-            let called = match roster.iter().find(|member| member.id == player.id) {
+            let member = roster.iter().find(|member| member.id == player.id);
+            let called = match member {
                 Some(member) => member.name.clone(),
                 None => format!("PLAYER {}", player.id),
             };
@@ -323,7 +334,10 @@ fn camp_panel(
             } else {
                 called
             };
-            let state = if ready.contains(&player.id) {
+            // 자리를 비운 사람은 「모두 준비」에서 빠지므로, 준비했는지보다 자리에 없다는 것을 보여 줍니다.
+            let state = if member.is_some_and(|member| !member.here) {
+                "AWAY"
+            } else if ready.contains(&player.id) {
                 "READY"
             } else {
                 "..."
@@ -663,7 +677,7 @@ mod tests {
         let mut welcome =
             Welcome::from_sim(&sim, sim.player(first).unwrap(), &room, SeatToken([7; 16]));
         welcome.you = YOU;
-        let mut session = Session::new(request("test"), DEFAULT_SERVER.to_string());
+        let mut session = Session::new(request("test"), DEFAULT_SERVER.to_string(), None);
         session.on_event(ClientEvent::Connected);
         session.on_event(ClientEvent::Message(ServerMsg::Welcome(Box::new(welcome))));
         session
@@ -1454,13 +1468,24 @@ mod tests {
         );
     }
 
-    fn with_roster(mut session: Session, members: &[(u32, &str)]) -> Session {
+    fn with_roster(session: Session, members: &[(u32, &str)]) -> Session {
+        with_presence(
+            session,
+            &members
+                .iter()
+                .map(|&(id, name)| (id, name, true))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// 명단의 각 항목은 (플레이어 번호, 이름, 자리에 있는지)입니다.
+    fn with_presence(mut session: Session, members: &[(u32, &str, bool)]) -> Session {
         let members = members
             .iter()
-            .map(|(id, name)| WireMember {
-                id: *id,
+            .map(|&(id, name, here)| WireMember {
+                id,
                 name: name.to_string(),
-                here: true,
+                here,
             })
             .collect();
         session.on_event(ClientEvent::Message(ServerMsg::Roster(WireRoster {
@@ -1483,6 +1508,36 @@ mod tests {
             ["KANG  (YOU)  ...", "MIRO  READY", "PLAYER 3  ..."],
             "player 3 has no name in the roster yet"
         );
+    }
+
+    #[test]
+    fn a_player_who_is_away_shows_as_away_whether_or_not_he_was_ready() {
+        let session = with_presence(
+            session_in_room(),
+            &[(1, "KANG", true), (2, "MIRO", false), (3, "JUNE", false)],
+        );
+
+        let panel = Hud::of(&session, Some(&camp_frame(vec![1, 3], None)), INVITE)
+            .camp
+            .unwrap();
+
+        assert_eq!(
+            panel.rows,
+            ["KANG  (YOU)  READY", "MIRO  AWAY", "JUNE  AWAY"],
+            "someone who is away does not hold up the others, so his ready does not matter"
+        );
+    }
+
+    #[test]
+    fn i_am_shown_as_away_when_the_server_counts_me_as_away() {
+        let session = with_presence(session_in_room(), &[(1, "KANG", false), (2, "MIRO", true)]);
+
+        let panel = Hud::of(&session, Some(&camp_frame(vec![], None)), INVITE)
+            .camp
+            .unwrap();
+
+        assert_eq!(panel.rows[0], "KANG  (YOU)  AWAY");
+        assert_eq!(panel.rows[1], "MIRO  ...");
     }
 
     #[test]
@@ -1604,6 +1659,35 @@ mod tests {
     }
 
     #[test]
+    fn the_result_does_not_wait_for_a_player_who_is_away() {
+        let session = with_presence(session_in_room(), &[(1, "KANG", true), (2, "MIRO", false)]);
+        let mut frame = frame(vec![player(YOU, alive(100)), player(2, alive(100))]);
+        frame.phase = WirePhase::Debrief {
+            outcome: WireOutcome::Defeat,
+            secs_left: 40.0,
+            confirmed: vec![],
+        };
+        let waiting = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
+        assert_eq!(
+            waiting.detail.as_deref(),
+            Some("ENTER  BACK TO CAMP  (0 / 1)\nBACK TO CAMP IN 40s"),
+            "only the one who is here has to confirm"
+        );
+
+        frame.phase = WirePhase::Debrief {
+            outcome: WireOutcome::Defeat,
+            secs_left: 40.0,
+            confirmed: vec![2],
+        };
+        let away_confirmed = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
+        assert_eq!(
+            away_confirmed.detail.as_deref(),
+            Some("ENTER  BACK TO CAMP  (0 / 1)\nBACK TO CAMP IN 40s"),
+            "a confirmation of someone who went away is not counted"
+        );
+    }
+
+    #[test]
     fn the_result_hides_what_the_expedition_left_frozen() {
         let session = session_in_room();
         let debrief = WirePhase::Debrief {
@@ -1661,7 +1745,7 @@ mod tests {
 
     #[test]
     fn before_the_room_and_before_the_first_snapshot_a_waiting_notice_is_shown() {
-        let connecting = Session::new(request("test"), DEFAULT_SERVER.to_string());
+        let connecting = Session::new(request("test"), DEFAULT_SERVER.to_string(), None);
         let banner = Hud::of(&connecting, None, INVITE).banner.unwrap();
         assert_eq!(banner.title, "Connecting... (room test)");
         assert_eq!(banner.tone, BannerTone::Info);
