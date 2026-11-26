@@ -1001,6 +1001,8 @@ mod tests {
             config::YOU,
             config::ALLY,
             config::HOSTILE_PLAYER,
+            config::DOWNED,
+            config::DEAD,
         ];
         for (index, effect) in effects.into_iter().enumerate() {
             for other in bodies

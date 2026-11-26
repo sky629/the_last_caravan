@@ -632,14 +632,16 @@ fn a_blow_that_kills_one_monster_still_puts_its_effect_on_the_survivor_beside_it
 }
 
 #[test]
-fn a_blow_that_kills_in_the_tick_of_a_bleed_damage_counts_one_kill() {
+fn a_blow_and_a_bleed_that_could_each_kill_in_one_tick_give_the_kill_to_the_blow() {
     let mut s = standing_still();
     let swordsman = armed(&mut s, 5.0, 10.0, WeaponKind::Sword);
     let bleeder = s.player_at(2.0, 2.0);
     let monster = s.monster_at(5.8, 10.0);
-    s.sim.world_mut().monsters[0].hp = s.sim.tuning().weapons.sword.damage;
+    // 출혈의 피해 5만으로도, 검의 한 번만으로도 죽는 HP입니다. 직접 맞은 피해가 출혈의 피해보다 먼저 적용됩니다.
+    s.sim.world_mut().monsters[0].hp = 5;
     s.afflict(monster, bleed(5), bleeder);
     s.run_ticks(s.ticks(1.0) - 1);
+    assert!(s.monster(monster).is_some(), "the bleed has not hurt yet");
 
     strike_once(&mut s, swordsman);
 
