@@ -16,7 +16,7 @@
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, PROTOCOL_VERSION, PlayerName, RejectReason, RoomCode, SeatToken,
-    ServerMsg, Snapshot, Welcome, WireMember, WireRoster, check_welcome,
+    ServerMsg, Snapshot, Welcome, WireMember, WireReport, WireRoster, check_welcome,
 };
 use caravan_rules::Vec2;
 
@@ -39,6 +39,8 @@ pub enum Session {
         request: JoinRequest,
         /// 입장 안내보다 먼저 도착한 명단입니다. 브라우저는 메시지를 보낸 순서와 다르게 넘겨줄 수 있으므로, 버리지 않고 입장한 뒤에 씁니다.
         early_roster: Option<WireRoster>,
+        /// 입장 안내보다 먼저 도착한 결과입니다. 결과 화면 중에 입장하면 결과가 입장 안내 다음에 오는데, 명단과 같은 까닭으로 입장한 뒤에 씁니다.
+        early_report: Option<WireReport>,
     },
     /// 방에 들어간 뒤의 값은 다른 상태보다 훨씬 크므로 `Box`에 둡니다. 상태 하나를 옮길 때마다 가장 큰 상태의 크기를 복사하지 않게 합니다.
     InRoom(Box<Joined>),
@@ -74,6 +76,9 @@ pub struct Joined {
     pub welcome: Welcome,
     /// 방에 있는 사람입니다. 서버가 `Roster`를 보낼 때마다 바뀝니다.
     pub roster: Vec<WireMember>,
+    /// 서버가 가장 최근에 보낸 결과입니다. 결과 화면이 열릴 때 오고, 결과에는 몇 번째 원정의 것인지가 있어서
+    /// 지금 그리는 원정(`Frame::expedition`)의 것인지 화면이 알아봅니다. 결과 화면이 아닐 때에도 마지막 결과가 남아 있지만 그리지 않습니다.
+    pub report: Option<WireReport>,
     /// 받아들인 명단의 번호입니다. 아직 받아들인 명단이 없으면 0입니다.
     roster_revision: u32,
     snapshots: SnapshotBuffer,
@@ -86,6 +91,7 @@ impl Joined {
             room,
             name,
             roster: Vec::new(),
+            report: None,
             roster_revision: 0,
             snapshots: SnapshotBuffer::new(welcome.tick_hz),
             inputs: InputSender::new(welcome.tick_hz),
@@ -106,6 +112,18 @@ impl Joined {
         if usable && roster.revision > self.roster_revision {
             self.roster_revision = roster.revision;
             self.roster = roster.members;
+        }
+    }
+
+    /// 서버가 보낸 결과를 받아들입니다. 이름이 규칙에 맞지 않거나 방의 정원보다 긴 결과는 버립니다. 이름은 화면에 그대로 그리기 때문입니다.
+    fn take_report(&mut self, report: WireReport) {
+        let usable = report.rows.len() <= self.welcome.capacity as usize
+            && report
+                .rows
+                .iter()
+                .all(|row| PlayerName::parse(&row.name).is_ok());
+        if usable {
+            self.report = Some(report);
         }
     }
 }
@@ -132,6 +150,7 @@ impl Session {
                 *self = Session::Joining {
                     request: request.clone(),
                     early_roster: None,
+                    early_report: None,
                 };
                 Some(join)
             }
@@ -139,6 +158,7 @@ impl Session {
                 Session::Joining {
                     request,
                     early_roster,
+                    early_report,
                 },
                 ClientEvent::Message(ServerMsg::Welcome(welcome)),
             ) => {
@@ -148,6 +168,9 @@ impl Session {
                         let mut joined = Joined::new(room, request.name.clone(), *welcome);
                         if let Some(roster) = early_roster.take() {
                             joined.take_roster(roster);
+                        }
+                        if let Some(report) = early_report.take() {
+                            joined.take_report(report);
                         }
                         Session::InRoom(Box::new(joined))
                     }
@@ -169,6 +192,10 @@ impl Session {
                 joined.take_roster(roster);
                 None
             }
+            (Session::InRoom(joined), ClientEvent::Message(ServerMsg::Debrief(report))) => {
+                joined.take_report(report);
+                None
+            }
             (Session::InRoom(_), ClientEvent::Message(ServerMsg::SeatTakenOver)) => {
                 *self = Session::TakenOver;
                 None
@@ -183,6 +210,13 @@ impl Session {
                 if newer {
                     *early_roster = Some(roster);
                 }
+                None
+            }
+            (
+                Session::Joining { early_report, .. },
+                ClientEvent::Message(ServerMsg::Debrief(report)),
+            ) => {
+                *early_report = Some(report);
                 None
             }
             (Session::Connecting { server, .. }, ClientEvent::Disconnected { reason }) => {
@@ -342,7 +376,7 @@ pub struct Problem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::InputMsg;
+    use caravan_protocol::{InputMsg, WireRecordRow};
     use caravan_rules::{Seed, Sim, Tuning};
 
     fn room() -> RoomCode {
@@ -416,7 +450,8 @@ mod tests {
             session,
             Session::Joining {
                 request: request(),
-                early_roster: None
+                early_roster: None,
+                early_report: None
             }
         );
     }
@@ -598,6 +633,76 @@ mod tests {
         joined.roster.iter().map(|m| m.name.as_str()).collect()
     }
 
+    fn report(expedition: u32, names: &[&str]) -> WireReport {
+        WireReport {
+            expedition,
+            day: 3,
+            elapsed_secs: 872,
+            tower_kills: 41,
+            rows: names
+                .iter()
+                .map(|name| WireRecordRow {
+                    name: name.to_string(),
+                    kills: 88,
+                    revives: 2,
+                    downs: 1,
+                    deposited: 34,
+                })
+                .collect(),
+        }
+    }
+
+    fn report_of(session: &Session) -> Option<&WireReport> {
+        let Session::InRoom(joined) = session else {
+            panic!("not in a room: {session:?}");
+        };
+        joined.report.as_ref()
+    }
+
+    #[test]
+    fn the_result_the_server_sends_is_kept_until_the_next_one_replaces_it() {
+        let mut session = in_room();
+        assert_eq!(
+            report_of(&session),
+            None,
+            "no result before an expedition ends"
+        );
+
+        session.on_event(message(ServerMsg::Debrief(report(1, &["KANG", "MIRO"]))));
+        assert_eq!(report_of(&session), Some(&report(1, &["KANG", "MIRO"])));
+
+        session.on_event(message(ServerMsg::Debrief(report(2, &["KANG"]))));
+        assert_eq!(report_of(&session), Some(&report(2, &["KANG"])));
+    }
+
+    #[test]
+    fn a_result_that_arrives_before_the_welcome_is_kept_for_the_room() {
+        let mut session = connecting();
+        session.on_event(ClientEvent::Connected);
+        session.on_event(message(ServerMsg::Debrief(report(3, &["KANG", "MIRO"]))));
+
+        session.on_event(message(welcome(1)));
+
+        assert_eq!(report_of(&session), Some(&report(3, &["KANG", "MIRO"])));
+    }
+
+    #[test]
+    fn a_result_with_a_name_against_the_rules_or_more_rows_than_the_room_holds_is_dropped() {
+        let mut session = in_room();
+        session.on_event(message(ServerMsg::Debrief(report(1, &["KANG"]))));
+
+        session.on_event(message(ServerMsg::Debrief(report(
+            2,
+            &["KANG", "not a name!"],
+        ))));
+        session.on_event(message(ServerMsg::Debrief(report(
+            3,
+            &["A", "B", "C", "D", "E"],
+        ))));
+
+        assert_eq!(report_of(&session), Some(&report(1, &["KANG"])));
+    }
+
     #[test]
     fn a_roster_that_arrives_before_the_welcome_is_kept_for_the_room() {
         let mut session = connecting();
@@ -646,7 +751,8 @@ mod tests {
             session,
             Session::Joining {
                 request: request(),
-                early_roster: None
+                early_roster: None,
+                early_report: None
             }
         );
         assert!(session.newest_snapshot().is_none());

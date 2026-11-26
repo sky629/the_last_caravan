@@ -5,8 +5,8 @@
 use caravan_protocol::{
     ServerMsg, Snapshot, WireAngle, WireAttack, WireGroundWeapon, WireInteraction, WireLife,
     WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode, WirePhase, WirePile,
-    WirePlayer, WirePos, WireProjectile, WirePrompt, WireShot, WireStruck, WireTile, WireTower,
-    WireTowerState, WireWagon, WireWeaponKind, encode_server,
+    WirePlayer, WirePos, WireProjectile, WirePrompt, WireRecordRow, WireReport, WireShot,
+    WireStruck, WireTile, WireTower, WireTowerState, WireWagon, WireWeaponKind, encode_server,
 };
 
 /// 몬스터와 탄환의 번호가 `first_id`부터 이어지는 스냅샷입니다. 모든 좌표 값은 2바이트로 기록되는 크기(128 이상)입니다.
@@ -310,4 +310,28 @@ fn a_result_snapshot_with_four_confirmed_players_stays_under_the_bound() {
     let size = encoded_len(snapshot);
     println!("result: 300 monsters, 40 towers, 4 confirmed players: {size} bytes per snapshot");
     assert!(size < BOUND_BYTES, "{size} bytes");
+}
+
+#[test]
+fn the_result_of_four_players_with_the_longest_names_is_sent_once_and_is_small() {
+    let result = ServerMsg::Debrief(WireReport {
+        expedition: 7,
+        day: 3,
+        elapsed_secs: 3_600,
+        tower_kills: 1_000,
+        rows: (0..4)
+            .map(|index| WireRecordRow {
+                name: format!("NAME_{index}_LONG"),
+                kills: 5_000,
+                revives: 20,
+                downs: 20,
+                deposited: 2_000,
+            })
+            .collect(),
+    });
+    let size = encode_server(&result).len();
+    println!(
+        "result: 4 players with 12-letter names, sent once when the result opens: {size} bytes"
+    );
+    assert!(size < 200, "{size} bytes");
 }

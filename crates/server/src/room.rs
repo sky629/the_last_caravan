@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use caravan_protocol::{
     InputMsg, LinkId, PeerKey, PlayerName, RoomCode, SeatToken, ServerMsg, Snapshot, Welcome,
-    WireMember, WireRoster,
+    WireMember, WireReport, WireRoster,
 };
 use caravan_rules::{JoinError, PlayerId, PlayerInputs, Presence, Seed, Sim, Stage, Tuning};
 
@@ -41,6 +41,8 @@ pub(crate) struct Entered {
     pub roster: WireRoster,
     /// 다른 접속에 보낼 새 명단입니다. 명단이 바뀌지 않았으면 비어 있습니다.
     pub others: Vec<Out>,
+    /// 결과 화면 중에 들어오거나 돌아왔으면, 명단 다음에 입장한 접속에 보낼 결과입니다.
+    pub report: Option<WireReport>,
 }
 
 /// 시간이 다 되어 끝난 자리입니다.
@@ -65,6 +67,9 @@ pub(crate) struct Room {
     sent_roster: Vec<WireMember>,
     /// 지금까지 보낸 명단의 수입니다. 명단마다 이 번호를 붙여서 받는 쪽이 더 새로운 명단을 알아봅니다.
     roster_revision: u32,
+    /// 결과 화면이 열려 있는 동안의 결과입니다. 결과 화면이 열린 Tick에 이름을 붙여서 한 번 만들고, 결과 화면이 끝나면 비웁니다.
+    /// 결과 화면 중에 나간 사람의 이름도 이 결과에 남아 있고, 결과 화면 중에 들어오거나 돌아온 접속에 이 값을 보냅니다.
+    report: Option<WireReport>,
 }
 
 impl Room {
@@ -76,6 +81,7 @@ impl Room {
             times,
             sent_roster: Vec::new(),
             roster_revision: 0,
+            report: None,
         }
     }
 
@@ -120,6 +126,7 @@ impl Room {
             welcome: Welcome::from_sim(&self.sim, me, &self.code, seat.token),
             roster: self.current_roster(),
             others,
+            report: self.report.clone(),
         })
     }
 
@@ -184,7 +191,8 @@ impl Room {
     /// 3. 야영지에서 조작 없이 한도를 넘긴 사람을 자리를 비운 것으로 하고, 자리에 있는지를 규칙에 알리고, 바뀐 명단을 보냅니다.
     ///    조작이 없어 자리를 비운 사람은 준비도 풀립니다. 돌아올 때 준비하지 않은 상태여야 하기 때문입니다.
     /// 4. 자리에 있는 사람이 없으면 여기서 끝냅니다. 게임을 진행하지 않으므로 Tick 번호와 세계가 그대로이고 스냅샷도 보내지 않습니다.
-    /// 5. 플레이어마다 입력을 하나씩 정해서 게임을 Tick 하나만큼 진행하고, 같은 스냅샷을 접속이 있는 모든 자리에 보냅니다.
+    /// 5. 플레이어마다 입력을 하나씩 정해서 게임을 Tick 하나만큼 진행합니다. 결과 화면이 이 Tick에 열렸으면 결과를 만들어 접속이 있는 모든 자리에 먼저 보내고,
+    ///    같은 스냅샷을 접속이 있는 모든 자리에 보냅니다.
     pub fn tick(&mut self) -> RoomTick {
         for seat in self.seats.values_mut() {
             seat.pass_tick();
@@ -221,12 +229,46 @@ impl Room {
             .map(|(&player, seat)| (player, seat.input.for_tick(stale_ticks)))
             .collect();
         self.sim.step(&inputs);
+        outs.extend(self.publish_report());
         let snapshot = Snapshot::from_sim(&self.sim);
         outs.extend(self.seats.values().filter_map(|seat| {
             seat.link
                 .map(|link| Out::Send(link, ServerMsg::Snapshot(Box::new(snapshot.clone()))))
         }));
         RoomTick { outs, ended }
+    }
+
+    /// 결과 화면이 이번 Tick에 열렸으면 이름을 붙인 결과를 만들어 보관하고, 접속이 있는 모든 자리에 보낼 일을 돌려줍니다.
+    /// 결과 화면이 끝났으면 보관한 결과를 비웁니다.
+    fn publish_report(&mut self) -> Vec<Out> {
+        let Some(debrief) = self.sim.debrief() else {
+            self.report = None;
+            return Vec::new();
+        };
+        if self.report.is_some() {
+            return Vec::new();
+        }
+        let seats = &self.seats;
+        let report = WireReport::from_report(
+            debrief.report(),
+            self.sim.expedition_number(),
+            self.sim.tuning().tick_hz,
+            |player| {
+                seats
+                    .get(&player)
+                    .expect("every player in the room has a seat")
+                    .name
+                    .as_str()
+                    .to_string()
+            },
+        );
+        let outs = seats
+            .values()
+            .filter_map(|seat| seat.link)
+            .map(|link| Out::Send(link, ServerMsg::Debrief(report.clone())))
+            .collect();
+        self.report = Some(report);
+        outs
     }
 
     /// 야영지가 아니면 조작이 없던 시간을 0으로 돌립니다. 야영지이면 조작 없이 `camp_idle_ticks`가 지난 자리를 자리를 비운 것으로 하고, 그 Tick에 처음 그렇게 된 플레이어를 돌려줍니다.

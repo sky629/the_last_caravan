@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, InputMsg, LoopbackClient, LoopbackConnector,
     PROTOCOL_VERSION, SeatToken, ServerLimits, ServerMsg, Snapshot, Welcome, WireMember,
-    WirePlayer, WireRoster, WireVec2, loopback,
+    WirePlayer, WireReport, WireRoster, WireVec2, loopback,
 };
 use caravan_rules::{Seed, Start, Tuning, Vec2};
 use caravan_server::{GameServer, Notice, PredictableRandom, RandomSource, RoomSeeds};
@@ -217,6 +217,8 @@ impl Rig {
 pub struct Heard {
     pub snapshots: Vec<Snapshot>,
     pub rosters: Vec<WireRoster>,
+    /// 받은 결과입니다.
+    pub reports: Vec<WireReport>,
     /// `SeatTakenOver`를 받았습니다.
     pub taken_over: bool,
     /// 서버가 접속을 닫았습니다.
@@ -246,6 +248,7 @@ pub fn hear(client: &mut LoopbackClient) -> Heard {
         match event {
             ClientEvent::Message(ServerMsg::Snapshot(snapshot)) => heard.snapshots.push(*snapshot),
             ClientEvent::Message(ServerMsg::Roster(roster)) => heard.rosters.push(roster),
+            ClientEvent::Message(ServerMsg::Debrief(report)) => heard.reports.push(report),
             ClientEvent::Message(ServerMsg::SeatTakenOver) => heard.taken_over = true,
             ClientEvent::Disconnected { .. } => heard.closed = true,
             ClientEvent::Connected | ClientEvent::Message(_) => {}
@@ -298,6 +301,15 @@ pub fn press_ready(seq: u32) -> ClientMsg {
     ClientMsg::Input(InputMsg {
         seq,
         toggle_ready: true,
+        ..InputMsg::default()
+    })
+}
+
+/// 확인 키(Enter)를 한 번 누른 입력입니다.
+pub fn press_confirm(seq: u32) -> ClientMsg {
+    ClientMsg::Input(InputMsg {
+        seq,
+        confirm: true,
         ..InputMsg::default()
     })
 }

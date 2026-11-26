@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use caravan_protocol::{
     ClientMsg, LinkId, PROTOCOL_VERSION, PeerKey, PlayerName, RejectReason, RoomCode, SeatToken,
-    ServerEvent, ServerLimits, ServerMsg, Welcome, WireRoster,
+    ServerEvent, ServerLimits, ServerMsg, Welcome, WireReport, WireRoster,
 };
 use caravan_rules::{JoinError, PlayerId, Seed, Tuning};
 
@@ -63,6 +63,8 @@ struct Admitted {
     roster: WireRoster,
     /// 다른 접속에 보낼 새 명단입니다.
     others: Vec<Out>,
+    /// 결과 화면 중의 입장이면, 명단 다음에 입장한 접속에 보낼 결과입니다.
+    report: Option<WireReport>,
     /// 이 입장이 방을 만들었으면 그 방의 씨앗입니다.
     created_with: Option<Seed>,
 }
@@ -289,6 +291,11 @@ impl Hub {
                     Out::Send(link, ServerMsg::Welcome(Box::new(admitted.welcome))),
                     Out::Send(link, ServerMsg::Roster(admitted.roster)),
                 ];
+                outs.extend(
+                    admitted
+                        .report
+                        .map(|report| Out::Send(link, ServerMsg::Debrief(report))),
+                );
                 outs.extend(admitted.others);
                 if let Some(old) = admitted.replaced {
                     // 이전 접속은 닫지 않습니다. 이유를 읽은 클라이언트가 닫기를 기다립니다(`LinkState::Told`).
@@ -394,6 +401,7 @@ impl Hub {
             welcome: entered.welcome,
             roster: entered.roster,
             others: entered.others,
+            report: entered.report,
             created_with,
         })
     }
