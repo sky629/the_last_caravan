@@ -23,10 +23,16 @@ pub enum StructureKind {
     Watchtower,
     /// 범위 안의 모든 몬스터에게 감속을 겁니다. 피해는 없습니다.
     SlowTower,
+    /// 범위 안에서 스턴에 걸릴 수 있는 가장 가까운 몬스터 한 마리에게 스턴을 겁니다. 피해는 없습니다.
+    StunTower,
 }
 
 impl StructureKind {
-    pub const ALL: [StructureKind; 2] = [StructureKind::Watchtower, StructureKind::SlowTower];
+    pub const ALL: [StructureKind; 3] = [
+        StructureKind::Watchtower,
+        StructureKind::SlowTower,
+        StructureKind::StunTower,
+    ];
 }
 
 /// 플레이어가 드는 무기의 종류입니다. 종류마다 수치와 공격이 전달되는 방식은 `WeaponTable`에 있습니다.

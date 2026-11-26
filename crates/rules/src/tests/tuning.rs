@@ -4,8 +4,8 @@ use super::support::{Scenario, nights, watchtower_shot};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
 use crate::tuning::{
-    ArcTuning, Debuff, Delivery, HitscanTuning, ProjectileTuning, PulseTuning, TowerAction, Tuning,
-    WaveScaling,
+    AfflictTuning, ArcTuning, Debuff, Delivery, HitscanTuning, ProjectileTuning, PulseTuning,
+    TowerAction, Tuning, WaveScaling,
 };
 use crate::world::Tile;
 
@@ -1115,4 +1115,43 @@ fn a_tower_on_every_monster_cannot_bleed_or_stun() {
         let why = t.validate().expect_err(&format!("{debuff:?}"));
         assert!(why.contains("SlowTower") && why.contains(said), "{why}");
     }
+}
+
+#[test]
+fn a_tower_on_one_monster_needs_a_cooldown_and_cannot_bleed() {
+    let afflict = |cooldown_secs, debuff| {
+        TowerAction::Afflict(AfflictTuning {
+            cooldown_secs,
+            debuff,
+        })
+    };
+    let stun = Debuff::Stun { secs: 0.8 };
+    let mut t = Tuning::default();
+    for bad in [0.0, -2.0, f32::NAN, f32::INFINITY] {
+        t.structures.stun_tower.action = afflict(bad, stun);
+        let why = t.validate().expect_err(&format!("a cooldown of {bad}"));
+        assert!(why.contains("StunTower cooldown_secs"), "{bad}: {why}");
+    }
+
+    t.structures.stun_tower.action = afflict(
+        2.0,
+        Debuff::Bleed {
+            damage: 5,
+            secs: 3.0,
+        },
+    );
+    let why = t.validate().expect_err("a tower that bleeds");
+    assert!(
+        why.contains("StunTower") && why.contains("cannot apply a bleed"),
+        "{why}"
+    );
+
+    t.structures.stun_tower.action = afflict(
+        2.0,
+        Debuff::Slow {
+            factor: 0.5,
+            secs: 2.0,
+        },
+    );
+    assert_eq!(t.validate(), Ok(()), "one monster at a time may be slowed");
 }

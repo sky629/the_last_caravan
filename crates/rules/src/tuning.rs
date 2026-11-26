@@ -374,6 +374,8 @@ pub struct StructureTuning {
 pub enum TowerAction {
     /// 쿨다운마다 범위 안의 가장 가까운 적대적 몬스터 한 마리에게 피해를 줍니다.
     Shoot(ShootTuning),
+    /// 쿨다운마다 범위 안에서 `debuff`가 걸릴 가장 가까운 적대적 몬스터 한 마리에게 그 효과를 겁니다. 피해는 없습니다.
+    Afflict(AfflictTuning),
     /// 간격마다 범위 안의 모든 적대적 몬스터에게 `debuff`를 겁니다. 피해는 없습니다.
     Pulse(PulseTuning),
 }
@@ -386,6 +388,15 @@ pub struct ShootTuning {
     pub cooldown_secs: f32,
     /// 맞힌 몬스터에게 피해와 함께 거는 효과입니다. 그 피해로 죽은 몬스터에게는 걸리지 않습니다. 감시탑은 걸지 않습니다.
     pub on_hit: Option<Debuff>,
+}
+
+/// 몬스터 한 마리에게 효과만 거는 동작의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AfflictTuning {
+    /// 건 뒤 다음에 걸기까지의 시간입니다. 0보다 길어야 합니다. 걸 대상이 없으면 쿨다운을 쓰지 않습니다.
+    pub cooldown_secs: f32,
+    /// 출혈은 피해를 주므로 쓸 수 없습니다(`Tuning::validate`).
+    pub debuff: Debuff,
 }
 
 /// 범위 안의 모든 몬스터에게 효과를 거는 동작의 수치입니다.
@@ -403,6 +414,7 @@ pub struct PulseTuning {
 pub struct StructureTable {
     pub watchtower: StructureTuning,
     pub slow_tower: StructureTuning,
+    pub stun_tower: StructureTuning,
 }
 
 impl StructureTable {
@@ -410,6 +422,7 @@ impl StructureTable {
         match kind {
             StructureKind::Watchtower => &self.watchtower,
             StructureKind::SlowTower => &self.slow_tower,
+            StructureKind::StunTower => &self.stun_tower,
         }
     }
 }
@@ -1041,6 +1054,7 @@ impl Tuning {
             .chain(StructureKind::ALL.map(|kind| {
                 let on_hit = match self.structures.get(kind).action {
                     TowerAction::Shoot(shoot) => shoot.on_hit,
+                    TowerAction::Afflict(afflict) => Some(afflict.debuff),
                     TowerAction::Pulse(pulse) => Some(pulse.debuff),
                 };
                 (format!("{kind:?}"), on_hit)
@@ -1081,9 +1095,10 @@ impl Tuning {
     /// - 범위는 유한하고 0보다 깁니다. 0 이하이면 포탑이 아무것에도 작용하지 못하고, NaN이면 범위의 비교가 모두 거짓이 됩니다.
     /// - 건설 비용은 1 이상입니다. 0이면 자원 없이 포탑을 상한까지 지을 수 있습니다.
     /// - 사격의 쿨다운은 유한하고 0 이상입니다. 음수나 NaN이면 Tick 수로 바꾸는 계산이 깨집니다.
+    /// - 몬스터 한 마리에게 효과를 거는 동작(`Afflict`)의 쿨다운은 유한하고 0보다 깁니다. 0이면 포탑 하나가 Tick마다 한 마리씩 효과를 겁니다.
     /// - 범위의 모든 몬스터에게 거는 동작(`Pulse`)의 간격은 유한하고 0보다 길며, Tick으로 바꾼 값이 효과의 시간 이하입니다.
     ///   간격이 효과보다 길면 범위 안에서도 효과가 끊깁니다.
-    /// - 피해를 주지 않는 동작(`Pulse`)은 출혈을 걸 수 없습니다. 범위의 모든 몬스터에게 거는 동작은 스턴도 걸 수 없습니다. 무리가 통째로 멈추기 때문입니다.
+    /// - 피해를 주지 않는 동작(`Afflict`, `Pulse`)은 출혈을 걸 수 없습니다. 범위의 모든 몬스터에게 거는 동작은 스턴도 걸 수 없습니다. 무리가 통째로 멈추기 때문입니다.
     ///
     /// `match`에 `_` 갈래가 없으므로 동작을 추가하면 컴파일러가 이 검사를 더하라고 알려 줍니다.
     fn validate_structures(&self) -> Result<(), String> {
@@ -1096,6 +1111,14 @@ impl Tuning {
             match tower.action {
                 TowerAction::Shoot(shoot) => {
                     check_not_negative(&format!("{kind:?} cooldown_secs"), shoot.cooldown_secs)?;
+                }
+                TowerAction::Afflict(afflict) => {
+                    check_positive(&format!("{kind:?} cooldown_secs"), afflict.cooldown_secs)?;
+                    if matches!(afflict.debuff, Debuff::Bleed { .. }) {
+                        return Err(format!(
+                            "{kind:?} deals no damage, so it cannot apply a bleed"
+                        ));
+                    }
                 }
                 TowerAction::Pulse(pulse) => {
                     check_positive(&format!("{kind:?} pulse_secs"), pulse.pulse_secs)?;
@@ -1441,6 +1464,15 @@ impl Default for Tuning {
                             factor: 0.7,
                             secs: 1.0,
                         },
+                    }),
+                ),
+                // 포탑 하나가 멈추는 시간의 비율은 0.8 / 2.0 = 40%이고, 스턴 뒤의 면역 때문에 한 마리를 계속 멈추지 못합니다.
+                stun_tower: tower(
+                    5.0,
+                    20,
+                    TowerAction::Afflict(AfflictTuning {
+                        cooldown_secs: 2.0,
+                        debuff: Debuff::Stun { secs: 0.8 },
                     }),
                 ),
             },

@@ -140,6 +140,8 @@ impl Tower {
 /// 포탑은 쿨다운(감속 포탑은 펄스의 간격)을 Tick마다 줄이고, 0이 되면 대상을 찾아서 찾았을 때만 동작하고 쿨다운을 다시 채웁니다.
 /// 대상이 없으면 쿨다운은 0에 머물므로 대상이 나타난 Tick에 곧바로 동작합니다.
 /// - 사격: 범위 안의 가장 가까운 적대적 몬스터 한 마리입니다. 거리가 같으면 번호가 작은 몬스터입니다.
+/// - 한 마리에 효과: 같은 순서로, 그 효과가 걸릴(`MonsterEffects::would_take`) 몬스터 가운데 이번 Tick에 다른 포탑이 고르지 않은 몬스터입니다.
+///   효과는 Tick의 끝에 걸리므로, 고른 몬스터를 기억하지 않으면 두 포탑이 한 번만 걸릴 스턴을 같은 몬스터에게 두 번 씁니다.
 /// - 범위에 효과: 범위 안의 모든 적대적 몬스터입니다. 이미 더 센 효과가 걸린 몬스터에게는 `MonsterEffects::apply`가 걸지 않습니다.
 pub(crate) fn towers_act(
     world: &mut World,
@@ -149,6 +151,8 @@ pub(crate) fn towers_act(
 ) {
     let t = ctx.t;
     let mut candidates = Vec::new();
+    // 이번 Tick에 효과를 걸기로 고른 몬스터입니다.
+    let mut taken: Vec<MonsterId> = Vec::new();
     for tower in world.towers.values_mut() {
         let TowerState::Standing {
             cooldown_ticks,
@@ -161,6 +165,7 @@ pub(crate) fn towers_act(
         let spec = t.structures.get(tower.kind);
         let period_secs = match spec.action {
             TowerAction::Shoot(shoot) => shoot.cooldown_secs,
+            TowerAction::Afflict(afflict) => afflict.cooldown_secs,
             TowerAction::Pulse(pulse) => pulse.pulse_secs,
         };
         *cooldown_ticks = cooldown_ticks.saturating_sub(1);
@@ -172,13 +177,38 @@ pub(crate) fn towers_act(
         ctx.grid.query(center, spec.range, &mut candidates);
         let acted = match spec.action {
             TowerAction::Shoot(shoot) => {
-                let target = nearest(&world.monsters, &candidates, tower.team, center);
+                let target = nearest(&world.monsters, &candidates, tower.team, center, |_| true);
                 if let Some(target) = target {
                     hits.push(Hit {
                         target: Target::Monster(target),
                         amount: shoot.damage,
                         by: Source::Tower,
                         debuff: shoot.on_hit,
+                    });
+                    *last_shot = Some(Shot {
+                        target,
+                        tick: ctx.tick,
+                    });
+                }
+                target.is_some()
+            }
+            TowerAction::Afflict(afflict) => {
+                let target = nearest(
+                    &world.monsters,
+                    &candidates,
+                    tower.team,
+                    center,
+                    |monster| {
+                        !taken.contains(&monster.id)
+                            && monster.effects.would_take(afflict.debuff, t)
+                    },
+                );
+                if let Some(target) = target {
+                    taken.push(target);
+                    afflictions.push(Affliction {
+                        target,
+                        debuff: afflict.debuff,
+                        by: Source::Tower,
                     });
                     *last_shot = Some(Shot {
                         target,
@@ -208,18 +238,19 @@ pub(crate) fn towers_act(
     }
 }
 
-/// `candidates`(`World::monsters`의 위치) 가운데 `team`에 적대적인 몬스터 중 `center`에서 가장 가까운 몬스터의 번호입니다.
+/// `candidates`(`World::monsters`의 위치) 가운데 `team`에 적대적이고 `accept`가 참인 몬스터 중 `center`에서 가장 가까운 몬스터의 번호입니다.
 /// 거리가 같으면 번호가 작은 몬스터입니다.
 fn nearest(
     monsters: &[Monster],
     candidates: &[usize],
     team: Team,
     center: Vec2,
+    accept: impl Fn(&Monster) -> bool,
 ) -> Option<MonsterId> {
     let mut best: Option<(f32, usize)> = None;
     for &index in candidates {
         let monster = &monsters[index];
-        if !team.is_hostile_to(monster.team) {
+        if !team.is_hostile_to(monster.team) || !accept(monster) {
             continue;
         }
         let distance = center.distance(monster.pos);
