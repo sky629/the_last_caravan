@@ -601,7 +601,7 @@ impl Tuning {
     /// 속도는 모두 유한하고 0 이상이어야 합니다.
     /// 가장 중요한 전제는 「한 번에 움직이는 거리가 몸의 반지름보다 짧다」입니다.
     /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 얇은 벽을 건너뛰는 거리를 한 번에 움직일 수 있으면 개체가 벽을 통과합니다.
-    /// 플레이어는 한 Tick의 이동이 반지름 이상이면 반지름보다 짧은 걸음으로 나누어 옮기므로(`player::move_players`) 반지름보다 길게 움직여도 됩니다. 다만 걸음의 수가 한 Tick의 거리를 반지름으로 나눈 값이므로, 반지름은 0보다 커야 하고 가장 빠른 한 Tick의 거리(달리면서 이동 속도 버프를 받은 경우)는 맵의 짧은 변보다 짧아야 합니다.
+    /// 플레이어는 한 Tick의 이동이 반지름 이상이면 반지름보다 짧은 걸음으로 나누어 옮기므로(`player::move_players`) 반지름보다 길게 움직여도 됩니다. 다만 걸음의 수가 한 Tick의 거리를 반지름으로 나눈 값이므로, 반지름은 0보다 커야 하고 가장 빠른 한 Tick의 거리(달리면서 이동 속도 버프를 받은 경우)는 반지름의 `MAX_PLAYER_STEPS_PER_TICK`배보다 짧아야 합니다.
     /// 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값이 이 전제를 지키는지 검사합니다.
     ///
     /// 맵은 타일에 꼭 맞아야 합니다. 크기, 장애물, 마차가 정수 좌표이고, 몸의 반지름이 타일의 절반보다 짧고,
@@ -683,6 +683,17 @@ impl Tuning {
             return Err(format!(
                 "sprint speed_multiplier must be a finite number of at least 1, but it is {}",
                 sprint.speed_multiplier
+            ));
+        }
+        // 플레이어의 걸음의 수는 한 Tick의 거리를 반지름으로 나눈 값이므로, 이 비율에 상한이 없으면 Tick 하나가 끝나지 않습니다.
+        let fastest_tick =
+            (self.player.speed * sprint.speed_multiplier * self.effects.swift_speed_factor)
+                .max(self.player.crawl_speed)
+                * self.dt();
+        let radii = fastest_tick / self.player.radius;
+        if radii >= MAX_PLAYER_STEPS_PER_TICK {
+            return Err(format!(
+                "player speed must move a player fewer than {MAX_PLAYER_STEPS_PER_TICK} body radii in one tick, but the fastest player moves {radii}"
             ));
         }
         for (name, secs) in [
@@ -785,17 +796,6 @@ impl Tuning {
             |value: f32| value >= 1.0 && value <= f32::from(u16::MAX) && value.fract() == 0.0;
         if !tiled(map.width) || !tiled(map.height) {
             return Err("the map size must be a whole number of tiles".to_string());
-        }
-        // 플레이어의 걸음의 수는 한 Tick의 거리에 비례하므로, 거리에 상한이 없으면 Tick 하나가 끝나지 않습니다.
-        let fastest_tick =
-            (self.player.speed * sprint.speed_multiplier * self.effects.swift_speed_factor)
-                .max(self.player.crawl_speed)
-                * self.dt();
-        let shorter_side = map.width.min(map.height);
-        if fastest_tick >= shorter_side {
-            return Err(format!(
-                "player speed must move a player less than the shorter side of the map ({shorter_side}) in one tick, but the fastest player moves {fastest_tick}"
-            ));
         }
         let bounds = Rect::new(0.0, 0.0, map.width, map.height);
         for solid in map.obstacles.iter().chain([&map.wagon]) {
@@ -1102,6 +1102,9 @@ impl Tuning {
         Ok(())
     }
 }
+
+/// 플레이어가 한 Tick에 움직일 수 있는 거리를 몸의 반지름의 배수로 잰 상한입니다. 한 Tick의 걸음의 수가 이 값을 넘지 않습니다.
+const MAX_PLAYER_STEPS_PER_TICK: f32 = 64.0;
 
 /// 속도는 유한하고 0 이상이어야 합니다.
 fn check_not_negative(name: &str, value: f32) -> Result<(), String> {

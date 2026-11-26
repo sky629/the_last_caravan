@@ -527,14 +527,13 @@ fn a_sprint_that_moves_a_player_a_body_radius_or_more_in_one_tick_is_valid() {
 }
 
 #[test]
-fn a_player_fast_enough_to_cross_the_map_in_one_tick_is_rejected_and_the_reason_names_it() {
-    // 걸음의 수는 한 Tick의 거리를 반지름으로 나눈 값이므로, 거리에 상한이 없으면 Tick 하나가 끝나지 않거나 걸음의 수가 넘칩니다.
-    let side = Tuning::default().map.width;
-    let dt = Tuning::default().dt();
-    let boosts =
-        Tuning::default().sprint.speed_multiplier * Tuning::default().effects.swift_speed_factor;
+fn a_player_who_moves_64_body_radii_in_one_tick_is_rejected_and_the_reason_names_it() {
+    // 걸음의 수는 한 Tick의 거리를 반지름으로 나눈 값이므로, 이 비율에 상한이 없으면 Tick 하나가 끝나지 않거나 걸음의 수가 넘칩니다.
+    let base = Tuning::default();
+    let boosts = base.sprint.speed_multiplier * base.effects.swift_speed_factor;
+    let limit = 64.0 * base.player.radius / base.dt();
     let mut just_below = Tuning::default();
-    just_below.player.speed = side / dt / boosts * 0.99;
+    just_below.player.speed = limit / boosts * 0.99;
     assert_eq!(just_below.validate(), Ok(()));
 
     let fields: [(&str, SpeedField); 2] = [
@@ -542,7 +541,7 @@ fn a_player_fast_enough_to_cross_the_map_in_one_tick_is_rejected_and_the_reason_
         ("crawl_speed", |t| &mut t.player.crawl_speed),
     ];
     for (name, field) in fields {
-        for bad in [side / dt, 7e6, 1e30, f32::MAX] {
+        for bad in [limit * 1.01, 7e6, 1e30, f32::MAX] {
             let mut t = Tuning::default();
             *field(&mut t) = bad;
             let why = t.validate().expect_err(&format!("{name} of {bad}"));
@@ -550,8 +549,21 @@ fn a_player_fast_enough_to_cross_the_map_in_one_tick_is_rejected_and_the_reason_
         }
     }
     let mut boosted = Tuning::default();
-    boosted.player.speed = side / dt / boosts * 1.01;
+    boosted.player.speed = limit / boosts * 1.01;
     assert!(boosted.validate().is_err(), "the sprint and the buff count");
+
+    // 탄환의 반지름이 0이면 플레이어의 반지름에 다른 하한이 없으므로, 아주 작은 반지름은 이 검사가 거절합니다.
+    for radius in [1e-5, 1e-30] {
+        let mut tiny = Tuning::default();
+        tiny.player.radius = radius;
+        for weapon in [&mut tiny.weapons.bow, &mut tiny.weapons.crossbow] {
+            if let Delivery::Projectile(shot) = &mut weapon.delivery {
+                shot.radius = 0.0;
+            }
+        }
+        let why = tiny.validate().expect_err(&format!("a radius of {radius}"));
+        assert!(why.contains("player speed"), "a radius of {radius}: {why}");
+    }
 }
 
 #[test]
