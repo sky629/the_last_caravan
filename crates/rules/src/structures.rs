@@ -11,7 +11,7 @@ use crate::kind::StructureKind;
 use crate::math::Rect;
 use crate::player::{Interaction, Life};
 use crate::tuning::Tuning;
-use crate::world::{Ctx, Hit, Target, Tile, World};
+use crate::world::{Ctx, Hit, Source, Target, Tile, World};
 
 /// 마차입니다. HP가 0이 되면 원정이 실패합니다.
 /// 같은 Tick에 원정이 끝나므로 「파괴된 상태」는 따로 없습니다.
@@ -178,6 +178,7 @@ pub(crate) fn towers_fire(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
             hits.push(Hit {
                 target: Target::Monster(target),
                 amount: spec.damage,
+                by: Source::Tower,
             });
             *cooldown_ticks = t.ticks(spec.cooldown_secs);
             *last_shot = Some(Shot {

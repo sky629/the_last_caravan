@@ -30,6 +30,8 @@ pub struct Sim {
     tick: u64,
     /// 이 방에서 시작한 원정의 수입니다. 첫 원정을 시작하기 전의 야영지에서는 0이고, 원정을 시작할 때마다 1씩 늘어납니다.
     expedition: u32,
+    /// 마지막으로 시작한 원정이 시작된 Tick입니다. 결과의 「걸린 시간」은 원정이 끝난 Tick에서 이 값을 뺀 것입니다.
+    expedition_began_at: u64,
     stage: Stage,
     world: World,
     /// 마차와 감시탑으로 가는 공유 이동 경로입니다. 세계의 배치가 바뀌면 다음 `sync`가 다시 만듭니다.
@@ -61,6 +63,7 @@ impl Sim {
         let mut sim = Sim {
             seed,
             expedition: 0,
+            expedition_began_at: 0,
             stage: Stage::Camp(Camp::new()),
             paths: Paths::new(&world, &tuning),
             monster_grid: MonsterGrid::new(world.tiles.bounds(), tuning.map.spatial_cell),
@@ -275,6 +278,7 @@ impl Sim {
     /// 원정의 씨앗은 방의 씨앗과 원정의 번호로만 정해지므로, 야영지에 머문 시간은 원정이 뽑는 것을 바꾸지 않습니다.
     pub(crate) fn begin_expedition(&mut self) {
         self.expedition += 1;
+        self.expedition_began_at = self.tick;
         self.world.restart(&self.tuning, Layout::Expedition);
         self.return_players_to_spawns();
         let expedition_seed = self.expedition_seed();
@@ -288,9 +292,20 @@ impl Sim {
         self.stage = Stage::Expedition(expedition::opening_phase(&self.tuning));
     }
 
-    /// 원정을 끝내고 결과 화면을 엽니다. 세계는 끝난 모습 그대로 멈춥니다.
+    /// 원정을 끝내고 결과 화면을 엽니다. 세계는 끝난 모습 그대로 멈춥니다. 이때 방에 있는 플레이어의 기록이 결과로 복사됩니다.
     fn conclude(&mut self, outcome: Outcome, day: u32) {
-        let report = Report { outcome, day };
+        let report = Report {
+            outcome,
+            day,
+            elapsed_ticks: self.tick - self.expedition_began_at,
+            tower_kills: self.world.tower_kills,
+            rows: self
+                .world
+                .players
+                .values()
+                .map(|player| (player.id, player.record))
+                .collect(),
+        };
         self.stage = Stage::Debrief(Debrief::new(report, &self.tuning));
     }
 

@@ -135,6 +135,7 @@ pub(crate) fn deposit_and_pickup(world: &mut World, ctx: &Ctx) {
         if *carried > 0 && wagon.gap_from(player.pos, t.player.radius) <= t.resources.deposit_reach
         {
             *stash += *carried;
+            player.record.deposited += *carried;
             *carried = 0;
         }
         for pile in piles.iter_mut() {

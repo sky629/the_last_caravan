@@ -13,7 +13,7 @@ use crate::math::Vec2;
 use crate::nav::{FlowField, Paths};
 use crate::stats::UnitStats;
 use crate::tuning::Tuning;
-use crate::world::{Ctx, Hit, Target, Tile, World};
+use crate::world::{Ctx, Hit, Source, Target, Tile, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Monster {
@@ -204,6 +204,7 @@ pub(crate) fn monsters_act(
             hits.push(Hit {
                 target,
                 amount: stats.attack_damage,
+                by: Source::Monster,
             });
             monster.cooldown_ticks = stats.attack_cooldown_ticks;
             monster.last_attack_tick = Some(ctx.tick);

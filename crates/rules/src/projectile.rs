@@ -9,16 +9,18 @@
 //! 끝난 탄환(`Flight::Landed`)은 끝난 자리에 한 Tick 더 남아서 스냅샷에 한 번 실립니다. 그래서 클라이언트가 탄환을 날아간 끝 자리까지 그립니다.
 //! 남은 탄환은 다음 Tick의 처음에 지웁니다. 세계가 멈춘 결과 화면의 Tick에도 지웁니다.
 
-use crate::ids::{MonsterId, ProjectileId, Team};
+use crate::ids::{MonsterId, PlayerId, ProjectileId, Team};
 use crate::math::Vec2;
 use crate::sweep;
 use crate::tuning::ProjectileTuning;
-use crate::world::{Ctx, Hit, Target, World};
+use crate::world::{Ctx, Hit, Source, Target, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Projectile {
     pub id: ProjectileId,
-    /// 쏜 플레이어의 진영입니다. 이 진영과 적대적인 몬스터만 맞힙니다. 쏜 플레이어의 번호는 저장하지 않으므로, 플레이어가 나가도 탄환은 끝까지 날아갑니다.
+    /// 쏜 플레이어입니다. 탄환이 몬스터를 쓰러뜨리면 그 처치를 이 플레이어의 것으로 셉니다. 플레이어가 나가도 탄환은 끝까지 날아가고, 이때의 처치는 셀 사람이 없습니다.
+    pub(crate) shooter: PlayerId,
+    /// 쏜 플레이어의 진영입니다. 이 진영과 적대적인 몬스터만 맞힙니다.
     pub team: Team,
     /// 날아가는 중이면 이번 Tick에 움직인 뒤의 위치이고, 끝났으면 끝난 자리(맞힌 자리, 막힌 자리, 사거리의 끝)입니다.
     pub pos: Vec2,
@@ -50,6 +52,7 @@ pub enum Flight {
 /// 이번 Tick에 결정된 발사입니다. `World::launch`가 번호를 붙여서 탄환으로 만듭니다.
 /// `Hit`이 「피해를 입힌다는 결정」이듯이, 이 구조체는 「탄환을 만든다는 결정」입니다.
 pub(crate) struct Launch {
+    pub shooter: PlayerId,
     pub team: Team,
     /// 쏘는 플레이어의 중심입니다.
     pub from: Vec2,
@@ -64,6 +67,7 @@ impl Projectile {
     pub(crate) fn new(id: ProjectileId, launch: Launch) -> Projectile {
         Projectile {
             id,
+            shooter: launch.shooter,
             team: launch.team,
             pos: launch.from,
             dir: launch.dir,
@@ -139,6 +143,7 @@ pub(crate) fn advance_projectiles(world: &mut World, ctx: &Ctx, hits: &mut Vec<H
             hits.push(Hit {
                 target: Target::Monster(id),
                 amount: projectile.damage,
+                by: Source::Player(projectile.shooter),
             });
             projectile.struck.push(id);
             if projectile.struck.len() >= projectile.spec.pierce as usize {

@@ -29,6 +29,20 @@ pub enum Presence {
     Away,
 }
 
+/// 플레이어가 한 원정 동안 쌓은 기록입니다. 원정이 끝나면 결과(`Report`)로 한 번 복사되고, 새 원정이 시작되면 0으로 돌아갑니다.
+/// 원정 도중에 들어온 플레이어는 0에서 시작합니다.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Record {
+    /// 마지막 피해를 주어 처치한 몬스터의 수입니다. 감시탑이 처치한 몬스터는 세지 않습니다(`World::tower_kills`).
+    pub kills: u32,
+    /// 부활을 끝까지 마친 횟수입니다.
+    pub revives: u32,
+    /// 쓰러진 횟수입니다. 쓰러진 뒤에 사망한 것은 세지 않습니다.
+    pub downs: u32,
+    /// 마차의 보관함에 넣은 자원의 양입니다.
+    pub deposited: u32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Player {
     pub id: PlayerId,
@@ -48,6 +62,8 @@ pub struct Player {
     pub last_attack: Option<LastAttack>,
     /// 자리에 있는지입니다. 새 원정이나 야영지가 시작되어도 이어집니다.
     pub presence: Presence,
+    /// 이번 원정의 기록입니다. 스냅샷에 싣지 않고 결과(`Report`)로만 읽습니다.
+    pub(crate) record: Record,
 }
 
 /// 플레이어가 마지막으로 한 공격입니다. 공격한 무기를 함께 기억하므로, 공격한 직후에 무기를 바꿔도 화면은 공격한 무기의 효과를 그립니다.
@@ -176,10 +192,11 @@ impl Player {
             last_input_seq: 0,
             last_attack: None,
             presence: Presence::Here,
+            record: Record::default(),
         }
     }
 
-    /// 새 원정이 시작될 때 최대 HP의 살아 있는 상태로 등장 순서가 `spawn_slot`인 `pos`에 돌려놓습니다.
+    /// 새 원정이 시작될 때 최대 HP의 살아 있는 상태로 등장 순서가 `spawn_slot`인 `pos`에 돌려놓습니다. 기록은 0으로 돌아갑니다.
     /// 입력의 순서 번호와 자리에 있는지는 원정이 바뀌어도 이어집니다. 자리를 비운 사람은 원정이 시작되어도 자리를 비운 채로 보호받습니다.
     pub(crate) fn reset(&mut self, spawn_slot: usize, pos: Vec2, t: &Tuning) {
         let (seq, presence) = (self.last_input_seq, self.presence);
@@ -299,7 +316,7 @@ impl Player {
         )
     }
 
-    /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고, 이때 하고 있던 상호작용이 함께 사라집니다.
+    /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고(기록의 쓰러진 횟수가 늘어납니다), 이때 하고 있던 상호작용이 함께 사라집니다.
     /// 상자를 열고 있었다면 HP가 남아도 열기가 취소됩니다. 부활, 수리, 채집, 건설은 HP가 남으면 이어집니다.
     /// 쓰러졌거나 사망한 플레이어와 자리를 비운 플레이어는 피해를 받지 않습니다.
     ///
@@ -328,6 +345,7 @@ impl Player {
         self.life = Life::Downed {
             bleed_left_ticks: t.ticks(t.revive.bleed_secs),
         };
+        self.record.downs += 1;
         dropped
     }
 }
@@ -692,9 +710,13 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
         {
             *interaction = None;
         }
-        if let Some(revived) = world.players.get_mut(&target) {
-            let hp = (t.player.max_hp * t.revive.revived_hp_percent / 100).max(1);
-            revived.life = Life::alive(hp, t);
+        let Some(revived) = world.players.get_mut(&target) else {
+            continue;
+        };
+        let hp = (t.player.max_hp * t.revive.revived_hp_percent / 100).max(1);
+        revived.life = Life::alive(hp, t);
+        if let Some(reviver) = world.players.get_mut(&reviver) {
+            reviver.record.revives += 1;
         }
     }
 
