@@ -46,7 +46,7 @@ mod tests;
 pub use build::{BuildRefusal, CannotBuild, front_tile};
 pub use camp::Camp;
 pub use debrief::{Debrief, Report};
-pub use effect::MonsterEffects;
+pub use effect::{MonsterEffects, PlayerBuffs};
 pub use expedition::{NightStep, Outcome, Phase};
 pub use ids::{
     ChestId, GroundWeaponId, MonsterId, NodeId, PileId, PlayerId, ProjectileId, Team, TowerId,
@@ -65,10 +65,10 @@ pub use stage::Stage;
 pub use stamina::Stamina;
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
-    ArcTuning, CampLayout, CampTuning, CycleTuning, Debuff, Delivery, EffectTuning, GuardTuning,
-    HealTuning, HitscanTuning, LootTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan,
-    NightTuning, PlayerTuning, ProjectileTuning, RepairTuning, ResourceTuning, ReviveTuning,
-    SprintTuning, Start, StructureTable, StructureTuning, Tuning, VillageTuning, WagonTuning,
-    WavePlan, WaveScaling, WeaponTable, WeaponTuning,
+    ArcTuning, Buff, CampLayout, CampTuning, CycleTuning, Debuff, Delivery, EffectTuning,
+    GuardTuning, HealTuning, HitscanTuning, LootTuning, MapSpec, MonsterTable, MonsterTuning,
+    NightPlan, NightTuning, PlayerTuning, ProjectileTuning, RepairTuning, ResourceTuning,
+    ReviveTuning, SprintTuning, Start, StructureTable, StructureTuning, Tuning, VillageTuning,
+    WagonTuning, WavePlan, WaveScaling, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;

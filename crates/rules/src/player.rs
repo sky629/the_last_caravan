@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
+use crate::effect::PlayerBuffs;
 use crate::ids::{ChestId, NodeId, PlayerId, Team, TowerId};
 use crate::kind::WeaponKind;
 use crate::loadout::Loadout;
@@ -14,7 +15,7 @@ use crate::resources;
 use crate::stamina::Stamina;
 use crate::stats::UnitStats;
 use crate::structures::TowerState;
-use crate::tuning::{RepairTuning, Tuning};
+use crate::tuning::{Buff, RepairTuning, Tuning};
 use crate::world::{Ctx, World};
 
 /// 플레이어가 자리에 있는지입니다. 규칙은 접속을 알지 못하고, 서버가 접속과 입력을 보고 `Sim::set_presence`로 알려 줍니다.
@@ -80,6 +81,7 @@ pub struct LastAttack {
 /// 그래서 다음 상태는 코드로 표현할 수 없습니다.
 /// - 쓰러졌거나 사망한 플레이어가 HP, 쿨다운, 상호작용, 든 자원, 달리기 게이지를 가지는 상태 (공격, 부활, 수리, 채집, 달리기를 할 수 없고 자원을 들 수 없습니다).
 /// - 사망한 플레이어가 출혈 시간을 가지는 상태.
+/// - 쓰러졌거나 사망한 플레이어가 버프를 가지는 상태.
 ///
 /// ```text
 ///   Alive --(HP가 0이 됨)--> Downed --(출혈 시간이 0이 됨)--> Dead
@@ -105,6 +107,8 @@ pub enum Life {
         stamina: Stamina,
         /// 이번 Tick에 달리고 있는지입니다. `update_sprint`가 Tick마다 정하고, 이동 속도를 읽는 `Player::stats`가 읽습니다.
         sprinting: bool,
+        /// 받은 버프입니다. 쓰러지면 사라지고, 부활하거나 새 원정이 시작되면 버프 없이 다시 생깁니다.
+        buffs: PlayerBuffs,
     },
     Downed {
         /// 남은 출혈 시간입니다. 아무도 부활시키지 않는 동안에만 줄어듭니다.
@@ -158,7 +162,7 @@ pub enum RepairTarget {
 }
 
 impl Life {
-    /// 하고 있는 일이 없고, 쿨다운이 없고, 든 자원이 없고, 달리기 게이지가 가득 찬 `Alive`입니다.
+    /// 하고 있는 일이 없고, 쿨다운이 없고, 든 자원이 없고, 달리기 게이지가 가득 차 있고, 버프가 없는 `Alive`입니다.
     pub(crate) fn alive(hp: u32, t: &Tuning) -> Life {
         Life::Alive {
             hp,
@@ -168,6 +172,7 @@ impl Life {
             carried: 0,
             stamina: Stamina::full(t),
             sprinting: false,
+            buffs: PlayerBuffs::default(),
         }
     }
 }
@@ -278,17 +283,21 @@ impl Player {
     }
 
     /// 이동 속도, 공격 피해량, 쿨다운을 읽는 유일한 곳입니다. 상태 효과를 추가하면 여기에서 배율을 곱합니다.
-    /// 달리는 중(`sprinting`)이면 걷는 속도에 달리기 배율을 곱합니다. 공격 피해량과 쿨다운은 들고 있는 무기의 행에서 읽습니다.
+    /// 달리는 중(`sprinting`)이면 걷는 속도에 달리기 배율을 곱합니다. 이동 속도 버프의 배율은 걷거나 달리는 속도에 곱하고,
+    /// 공격 속도 버프의 배율은 쿨다운에 곱합니다. 공격 피해량과 쿨다운은 들고 있는 무기의 행에서 읽습니다.
     pub(crate) fn stats(&self, t: &Tuning) -> UnitStats {
         let move_speed = match &self.life {
             Life::Alive {
                 interaction: None,
                 sprinting: true,
+                buffs,
                 ..
-            } => t.player.speed * t.sprint.speed_multiplier,
+            } => t.player.speed * t.sprint.speed_multiplier * buffs.speed_factor(),
             Life::Alive {
-                interaction: None, ..
-            } => t.player.speed,
+                interaction: None,
+                buffs,
+                ..
+            } => t.player.speed * buffs.speed_factor(),
             Life::Downed { .. } => t.player.crawl_speed,
             // 부활이나 수리를 하는 동안과 사망한 뒤에는 움직이지 못합니다.
             Life::Alive {
@@ -297,11 +306,27 @@ impl Player {
             }
             | Life::Dead => 0.0,
         };
+        let cooldown_factor = match &self.life {
+            Life::Alive { buffs, .. } => buffs.cooldown_factor(),
+            Life::Downed { .. } | Life::Dead => 1.0,
+        };
         let weapon = t.weapons.get(self.weapon());
         UnitStats {
             move_speed,
             attack_damage: weapon.damage,
-            attack_cooldown_ticks: t.ticks(weapon.cooldown_secs),
+            attack_cooldown_ticks: t.ticks(weapon.cooldown_secs * cooldown_factor),
+        }
+    }
+
+    /// 버프를 받습니다. 플레이어에게 버프를 거는 길은 이 함수 하나이고, 버프를 거는 쪽이 부릅니다.
+    /// 쓰러졌거나 사망한 플레이어는 버프를 가질 수 없으므로 아무 일도 하지 않습니다.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no game code calls this function")
+    )]
+    pub(crate) fn grant(&mut self, buff: Buff, t: &Tuning) {
+        if let Life::Alive { buffs, .. } = &mut self.life {
+            buffs.grant(buff, t);
         }
     }
 

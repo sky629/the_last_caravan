@@ -959,6 +959,37 @@ fn the_numbers_all_effects_share_must_be_longer_than_no_time() {
 }
 
 #[test]
+fn a_haste_that_does_not_shorten_the_cooldown_is_rejected_and_the_reason_names_it() {
+    for bad in [0.0, 1.5, -0.7, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.effects.haste_cooldown_factor = bad;
+        let why = t.validate().expect_err(&format!("a haste of {bad}"));
+        assert!(
+            why.contains("effects haste_cooldown_factor"),
+            "{bad}: {why}"
+        );
+    }
+    for valid in [0.01, 1.0] {
+        let mut t = Tuning::default();
+        t.effects.haste_cooldown_factor = valid;
+        assert_eq!(t.validate(), Ok(()), "a haste of {valid}");
+    }
+}
+
+#[test]
+fn a_swift_that_does_not_speed_up_the_player_is_rejected_and_the_reason_names_it() {
+    for bad in [0.99, 0.0, -1.3, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.effects.swift_speed_factor = bad;
+        let why = t.validate().expect_err(&format!("a swift of {bad}"));
+        assert!(why.contains("effects swift_speed_factor"), "{bad}: {why}");
+    }
+    let mut t = Tuning::default();
+    t.effects.swift_speed_factor = 1.0;
+    assert_eq!(t.validate(), Ok(()), "a swift of 100% changes nothing");
+}
+
+#[test]
 fn the_row_of_a_structure_is_checked_like_the_row_of_a_weapon() {
     let mut t = Tuning::default();
     t.structures.watchtower.on_hit = Some(Debuff::Stun { secs: 0.0 });

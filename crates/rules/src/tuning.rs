@@ -80,6 +80,16 @@ pub enum Debuff {
     Stun { secs: f32 },
 }
 
+/// 플레이어가 받는 버프입니다. 버프의 세기는 `EffectTuning`에 있고, 길이는 버프를 거는 쪽이 정합니다.
+/// 버프를 추가하려면 변형을 하나 더하고, `effect::PlayerBuffs::grant`의 `match`에 갈래를 하나 더합니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Buff {
+    /// `secs`초 동안 공격의 쿨다운이 `EffectTuning::haste_cooldown_factor`배가 됩니다.
+    Haste { secs: f32 },
+    /// `secs`초 동안 이동 속도가 `EffectTuning::swift_speed_factor`배가 됩니다. 달리기의 배율과 곱해집니다.
+    Swift { secs: f32 },
+}
+
 /// 효과의 규칙에 공통으로 쓰이는 수치입니다. 효과마다 다른 수치는 효과를 거는 쪽의 행(`Debuff`)에 있습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EffectTuning {
@@ -87,6 +97,10 @@ pub struct EffectTuning {
     pub bleed_interval_secs: f32,
     /// 스턴이 끝난 몬스터가 스턴에 다시 걸리지 않는 시간입니다. 스턴을 건 무기가 달라도 같습니다.
     pub stun_immunity_secs: f32,
+    /// 공격 속도 버프(`Buff::Haste`)가 쿨다운에 곱하는 값입니다. 0보다 크고 1 이하입니다.
+    pub haste_cooldown_factor: f32,
+    /// 이동 속도 버프(`Buff::Swift`)가 이동 속도에 곱하는 값입니다. 1 이상입니다.
+    pub swift_speed_factor: f32,
 }
 
 /// 공격이 맞히는 곳까지 전달되는 방식입니다. 방식마다 그 방식에서만 의미가 있는 수치를 한 구조체로 가집니다.
@@ -961,10 +975,24 @@ impl Tuning {
     /// - 시간은 유한하고 0보다 길어야 합니다. 0초 효과는 아무것도 하지 않고, 스턴이 끝난 뒤의 면역이 0초이면 스턴을 끝없이 이을 수 있습니다.
     /// - 감속의 비율은 0보다 크고 1 이하입니다. 0이면 스턴이고, 1보다 크면 빨라집니다.
     /// - 출혈의 피해는 1 이상이고, 출혈이 계속되는 시간은 간격 이상입니다. 그보다 짧으면 한 번도 피해가 나지 않습니다.
+    /// - 공격 속도 버프의 비율은 0보다 크고 1 이하입니다. 0이면 쿨다운이 없어지고, 1보다 크면 버프가 공격을 느리게 합니다.
+    /// - 이동 속도 버프의 비율은 1 이상입니다. 1보다 작으면 버프가 이동을 느리게 하고, 음수이면 뒤로 걷게 합니다.
     fn validate_effects(&self) -> Result<(), String> {
         let effects = &self.effects;
         check_positive("effects bleed_interval_secs", effects.bleed_interval_secs)?;
         check_positive("effects stun_immunity_secs", effects.stun_immunity_secs)?;
+        let haste = effects.haste_cooldown_factor;
+        if !(haste.is_finite() && haste > 0.0 && haste <= 1.0) {
+            return Err(format!(
+                "effects haste_cooldown_factor must be above 0 and at most 1, but it is {haste}"
+            ));
+        }
+        let swift = effects.swift_speed_factor;
+        if !(swift.is_finite() && swift >= 1.0) {
+            return Err(format!(
+                "effects swift_speed_factor must be a finite number of at least 1, but it is {swift}"
+            ));
+        }
         let rows = WeaponKind::ALL
             .map(|kind| (format!("{kind:?}"), self.weapons.get(kind).on_hit))
             .into_iter()
@@ -1238,6 +1266,8 @@ impl Default for Tuning {
             effects: EffectTuning {
                 bleed_interval_secs: 1.0,
                 stun_immunity_secs: 2.0,
+                haste_cooldown_factor: 0.7,
+                swift_speed_factor: 1.3,
             },
             monsters: MonsterTable {
                 grunt: MonsterTuning {
