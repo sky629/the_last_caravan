@@ -2,6 +2,7 @@
 
 use crate::camp::Camp;
 use crate::debrief::{Debrief, Report};
+use crate::effect;
 use crate::expedition::{self, Outcome, Phase};
 use crate::ids::{PlayerId, Team};
 use crate::input::PlayerInputs;
@@ -200,6 +201,9 @@ impl Sim {
         player::move_players(&mut self.world, &ctx);
         weapon::use_weapons(&mut self.world, &ctx, &mut hits);
         projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
+        // 허수아비는 피해를 받지 않으므로 출혈이 낸 피해는 버립니다. 효과가 걸리고 시간이 흐르는 것은 원정과 같습니다.
+        effect::advance_effects(&mut self.world, &ctx, &mut Vec::new());
+        effect::apply_debuffs(&mut self.world, &hits, &self.tuning);
         if let Stage::Camp(camp) = &mut self.stage {
             camp.note_strikes(&hits, self.tick);
         }
@@ -260,6 +264,7 @@ impl Sim {
             &mut self.tile_fields,
             &mut hits,
         );
+        effect::advance_effects(&mut self.world, &ctx, &mut hits);
         self.world.apply_hits(&hits, &self.tuning);
         player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);

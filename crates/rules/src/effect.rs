@@ -1,0 +1,219 @@
+//! 몬스터에게 붙었다가 시간이 지나면 끝나는 효과(감속, 출혈, 스턴)입니다.
+//!
+//! 효과는 몬스터가 가진 상태(`Monster::effects`)이므로 몬스터가 사라지면 함께 사라집니다.
+//! 효과마다 필드가 하나이고, 효과 하나의 값을 바꾸는 길은 `apply`와 `advance` 둘뿐입니다. 필드가 이 파일 밖에서는 보이지 않으므로,
+//! 다른 파일은 스턴이 걸려 있거나 면역인 몬스터에게 스턴을 걸 수 없고, 남은 시간이나 세기를 직접 고칠 수 없습니다.
+//! 다른 파일이 할 수 있는 것은 효과 전체를 빈 값(`MonsterEffects::default()`)으로 두는 것뿐이고, 새 몬스터를 만들 때 그렇게 합니다.
+//!
+//! 한 Tick의 순서는 다음과 같습니다(`Sim::simulate`).
+//!
+//! ```text
+//!   monsters_act       몬스터는 이전 Tick까지 걸린 효과로 행동합니다. (감속은 `Monster::stats`, 스턴은 `monster::plan`이 읽습니다)
+//!   advance_effects    몬스터의 효과의 시간을 한 Tick 줄이고, 이번 Tick에 나는 출혈의 피해를 `hits`의 끝에 더합니다.
+//!   apply_hits         모든 피해를 적용합니다. 출혈의 피해도 여기를 지나므로 처치의 주인이 정해집니다.
+//!   apply_debuffs      이번 Tick에 맞은 몬스터 가운데 살아남은 몬스터에게 새 효과를 겁니다. 이 효과는 다음 Tick의 행동부터 바꿉니다.
+//! ```
+//!
+//! 행동한 뒤에 줄이고 새 효과를 그 뒤에 걸기 때문에, `secs`초짜리 효과는 정확히 `secs`초 분량의 Tick 동안 몬스터의 행동을 바꿉니다.
+
+use crate::tuning::{Debuff, Tuning};
+use crate::world::{Ctx, Hit, Source, Target, World};
+
+/// 시간이 지나면 끝나는 배율 하나입니다. 몬스터의 감속이 씁니다.
+/// 다시 받으면 칸을 새 값으로 바꾸므로 시간이 처음으로 돌아가고 세기는 겹치지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Scaling {
+    factor: f32,
+    /// 앞으로 배율이 적용될 Tick입니다. 존재하는 동안에는 항상 1 이상이고, 0이 되면 칸이 비워집니다.
+    ticks_left: u32,
+}
+
+impl Scaling {
+    fn new(factor: f32, secs: f32, t: &Tuning) -> Scaling {
+        Scaling {
+            factor,
+            ticks_left: t.ticks(secs),
+        }
+    }
+
+    /// 배율을 한 Tick 진행합니다. 시간이 다 되면 칸을 비웁니다.
+    fn advance(slot: &mut Option<Scaling>) {
+        if let Some(scaling) = slot {
+            scaling.ticks_left = scaling.ticks_left.saturating_sub(1);
+            if scaling.ticks_left == 0 {
+                *slot = None;
+            }
+        }
+    }
+
+    fn factor_of(slot: &Option<Scaling>) -> f32 {
+        slot.map_or(1.0, |scaling| scaling.factor)
+    }
+}
+
+/// 몬스터의 출혈입니다. 걸려 있는 동안 정해진 간격마다 피해를 줍니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Bleed {
+    /// 출혈을 마지막으로 건 쪽입니다. 출혈의 피해로 몬스터가 죽으면 이 쪽이 처치를 가져갑니다.
+    by: Source,
+    damage: u32,
+    ticks_left: u32,
+    /// 다음 피해까지 남은 Tick입니다. 출혈을 다시 받아도 되돌리지 않으므로 피해는 계속 같은 간격으로 납니다.
+    ticks_to_pulse: u32,
+}
+
+/// 스턴은 한 방향으로만 바뀝니다. 스턴이 걸린 몬스터에게 스턴을 또 거는 일도, 면역인 몬스터에게 거는 일도 `apply`가 무시합니다.
+///
+/// ```text
+///   Ready --(스턴을 받음)--> Stunned --(시간이 다 됨)--> Immune --(시간이 다 됨)--> Ready
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum Stun {
+    /// 스턴에 걸리지 않았고, 걸릴 수 있습니다.
+    #[default]
+    Ready,
+    Stunned {
+        ticks_left: u32,
+    },
+    /// 스턴이 끝났습니다. 시간이 다 될 때까지 스턴에 걸리지 않습니다. 화면에 보이지 않습니다.
+    Immune {
+        ticks_left: u32,
+    },
+}
+
+impl Stun {
+    fn advance(&mut self, immunity_ticks: u32) {
+        *self = match *self {
+            Stun::Ready => Stun::Ready,
+            Stun::Stunned { ticks_left } if ticks_left > 1 => Stun::Stunned {
+                ticks_left: ticks_left - 1,
+            },
+            Stun::Stunned { .. } => Stun::Immune {
+                ticks_left: immunity_ticks,
+            },
+            Stun::Immune { ticks_left } if ticks_left > 1 => Stun::Immune {
+                ticks_left: ticks_left - 1,
+            },
+            Stun::Immune { .. } => Stun::Ready,
+        };
+    }
+}
+
+/// 한 몬스터에게 걸린 효과 전부입니다. 서로 다른 효과는 함께 걸리고, 같은 효과를 다시 받으면 남은 시간이 처음으로 돌아갑니다. 세기는 겹치지 않습니다.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MonsterEffects {
+    slow: Option<Scaling>,
+    bleed: Option<Bleed>,
+    stun: Stun,
+}
+
+/// 출혈이 이번 Tick에 낸 피해입니다.
+pub(crate) struct BleedPulse {
+    pub by: Source,
+    pub damage: u32,
+}
+
+impl MonsterEffects {
+    pub fn is_slowed(&self) -> bool {
+        self.slow.is_some()
+    }
+
+    pub fn is_bleeding(&self) -> bool {
+        self.bleed.is_some()
+    }
+
+    /// 스턴이 걸려 있는 동안만 참입니다. 스턴이 끝난 뒤의 면역은 참이 아닙니다.
+    pub fn is_stunned(&self) -> bool {
+        matches!(self.stun, Stun::Stunned { .. })
+    }
+
+    /// 몬스터가 스스로 걷는 속도에 곱하는 값입니다. 감속이 없으면 1입니다.
+    pub(crate) fn walk_factor(&self) -> f32 {
+        Scaling::factor_of(&self.slow)
+    }
+
+    /// 효과를 겁니다. 효과를 거는 길은 이 함수 하나입니다.
+    ///
+    /// - 감속: 비율과 시간이 새 값으로 바뀝니다.
+    /// - 출혈: 주인, 피해량, 남은 시간이 새 값으로 바뀝니다. 피해가 나는 시점은 이어집니다. 처음 걸리면 `bleed_interval_secs` 뒤에 첫 피해가 납니다.
+    /// - 스턴: 걸려 있지 않고 면역도 아닐 때만 걸립니다.
+    pub(crate) fn apply(&mut self, debuff: Debuff, by: Source, t: &Tuning) {
+        match debuff {
+            Debuff::Slow { factor, secs } => self.slow = Some(Scaling::new(factor, secs, t)),
+            Debuff::Bleed { damage, secs } => {
+                let ticks_to_pulse = self.bleed.map_or_else(
+                    || t.ticks(t.effects.bleed_interval_secs),
+                    |bleed| bleed.ticks_to_pulse,
+                );
+                self.bleed = Some(Bleed {
+                    by,
+                    damage,
+                    ticks_left: t.ticks(secs),
+                    ticks_to_pulse,
+                });
+            }
+            Debuff::Stun { secs } => {
+                if self.stun == Stun::Ready {
+                    self.stun = Stun::Stunned {
+                        ticks_left: t.ticks(secs),
+                    };
+                }
+            }
+        }
+    }
+
+    /// 모든 효과를 한 Tick 진행합니다. 이번 Tick에 출혈이 피해를 내면 그 피해를 돌려줍니다.
+    /// 피해가 나는 Tick에 출혈이 끝나도 그 피해는 납니다.
+    pub(crate) fn advance(&mut self, t: &Tuning) -> Option<BleedPulse> {
+        Scaling::advance(&mut self.slow);
+        self.stun.advance(t.ticks(t.effects.stun_immunity_secs));
+        // 출혈이 없으면 여기서 `None`을 돌려줍니다.
+        let bleed = self.bleed.as_mut()?;
+        let mut pulse = None;
+        bleed.ticks_to_pulse = bleed.ticks_to_pulse.saturating_sub(1);
+        if bleed.ticks_to_pulse == 0 {
+            pulse = Some(BleedPulse {
+                by: bleed.by,
+                damage: bleed.damage,
+            });
+            bleed.ticks_to_pulse = t.ticks(t.effects.bleed_interval_secs);
+        }
+        bleed.ticks_left = bleed.ticks_left.saturating_sub(1);
+        if bleed.ticks_left == 0 {
+            self.bleed = None;
+        }
+        pulse
+    }
+}
+
+/// 모든 몬스터의 효과를 한 Tick 진행하고, 이번 Tick에 나는 출혈의 피해를 `hits`의 끝에 더합니다.
+/// 출혈의 피해도 `Hit`이므로 `World::apply_hits`를 지나고, 그 피해로 몬스터가 죽으면 처치는 출혈을 건 쪽의 것입니다.
+/// 몬스터가 행동한 뒤에 부르므로, 몬스터는 이번 Tick에 끝나는 효과의 영향을 마지막으로 받은 뒤에 풀립니다.
+pub(crate) fn advance_effects(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
+    for monster in &mut world.monsters {
+        if let Some(pulse) = monster.effects.advance(ctx.t) {
+            hits.push(Hit {
+                target: Target::Monster(monster.id),
+                amount: pulse.damage,
+                by: pulse.by,
+                debuff: None,
+            });
+        }
+    }
+}
+
+/// 이번 Tick의 `hits`가 싣고 온 효과를 맞은 몬스터에게 겁니다. 야영지의 Tick도 부르므로 피해는 적용하지 않습니다.
+/// 같은 Tick에 죽어서 이미 제거된 몬스터는 목록에 없으므로 효과가 걸리지 않습니다. 그래서 `World::apply_hits`가 몬스터를 제거한 뒤에 불러야 합니다.
+pub(crate) fn apply_debuffs(world: &mut World, hits: &[Hit], t: &Tuning) {
+    for hit in hits {
+        let (Target::Monster(id), Some(debuff)) = (hit.target, hit.debuff) else {
+            continue;
+        };
+        if let Ok(index) = world
+            .monsters
+            .binary_search_by_key(&id, |monster| monster.id)
+        {
+            world.monsters[index].effects.apply(debuff, hit.by, t);
+        }
+    }
+}

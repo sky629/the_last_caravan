@@ -6,7 +6,7 @@
 //! 번호는 규칙의 번호 타입이 아니라 `u32`입니다. 규칙의 타입은 전송 형식에 나타나지 않습니다.
 //!
 //! 몬스터는 수백 마리일 수 있으므로 `WireMonster` 하나가 postcard로 9바이트 안팎이 되게 정했습니다
-//! (번호 2, 종류 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
+//! (번호 2, 종류와 효과 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
     BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life, Loadout,
@@ -15,6 +15,7 @@ use caravan_rules::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::monster_status::{WireMonsterEffects, WireMonsterStatus};
 use crate::units::{WireAngle, WirePos, WireTile};
 
 /// Tick 하나가 끝난 뒤의 방 전체 상태입니다.
@@ -355,11 +356,11 @@ impl WireBuildRefusal {
     }
 }
 
-/// 몬스터 하나입니다. 몬스터는 수백 마리일 수 있으므로 필드를 이 여섯 개로 한정합니다.
+/// 몬스터 하나입니다. 몬스터는 수백 마리일 수 있으므로 필드를 이 다섯 개로 한정하고, 종류와 효과는 1바이트 하나에 함께 담습니다(`WireMonsterStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireMonster {
     pub id: u32,
-    pub kind: WireMonsterKind,
+    pub status: WireMonsterStatus,
     pub pos: WirePos,
     pub facing: WireAngle,
     /// 현재 HP입니다. 최대 HP는 `Welcome`의 몬스터 종류표에 있습니다.
@@ -379,6 +380,23 @@ impl WireMonsterKind {
             MonsterKind::Grunt => WireMonsterKind::Grunt,
             MonsterKind::Scarecrow => WireMonsterKind::Scarecrow,
         }
+    }
+
+    /// 전송할 때 쓰는 종류의 순서입니다. `WireMonsterStatus`의 아래 4비트가 되므로 `MONSTER_KIND_CAPACITY`보다 작아야 합니다.
+    /// `match`가 모든 종류를 다루므로 종류를 추가하면 컴파일러가 순서를 정하라고 알려 줍니다.
+    pub(crate) fn index(self) -> u8 {
+        match self {
+            WireMonsterKind::Grunt => 0,
+            WireMonsterKind::Scarecrow => 1,
+        }
+    }
+
+    /// 순서가 `index`인 종류입니다. 규칙의 모든 종류(`MonsterKind::ALL`)에서 찾으므로 종류의 목록을 따로 두지 않습니다.
+    pub(crate) fn from_index(index: u8) -> Option<WireMonsterKind> {
+        MonsterKind::ALL
+            .into_iter()
+            .map(WireMonsterKind::of)
+            .find(|kind| kind.index() == index)
     }
 }
 
@@ -622,7 +640,10 @@ fn wire_projectile(projectile: &Projectile) -> WireProjectile {
 fn wire_monster(monster: &Monster) -> WireMonster {
     WireMonster {
         id: monster.id.0,
-        kind: WireMonsterKind::of(monster.kind),
+        status: WireMonsterStatus::new(
+            WireMonsterKind::of(monster.kind),
+            WireMonsterEffects::of(&monster.effects),
+        ),
         pos: WirePos::from_tiles(monster.pos),
         facing: WireAngle::from_direction(monster.facing),
         hp: monster.hp,

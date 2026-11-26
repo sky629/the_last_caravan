@@ -5,15 +5,17 @@
 //! 그래서 같은 씨앗과 같은 입력은 항상 같은 결과를 내고, 같은 코드가 서버에서 실행되며, 클라이언트 예측을 추가하면 클라이언트에서도 실행됩니다.
 //!
 //! 바깥에서 쓰는 것은 `Sim`(생성, 입장, 퇴장, `step`, 읽기 함수), `Tuning`(모든 수치), `PlayerInput`, 그리고 스냅샷이 읽는 상태 타입입니다.
+//! 몬스터에게 걸린 효과(`MonsterEffects`)도 스냅샷이 읽는 상태 타입이고, 값을 바꾸는 길은 `effect` 모듈 안에만 있습니다.
 //! 타일 지도, 충돌, 경로 탐색 같은 내부 모듈은 공개하지 않습니다.
 //!
-//! 읽는 순서: `tuning`(모든 수치), `sim`(Tick 하나의 처리 순서), `stage`(야영지, 원정, 결과 화면을 도는 방의 단계), `camp`, `debrief`, `player`, `loadout`, `weapon`, `projectile`, `stamina`, `resources`, `monster`, `structures`, `build`, `expedition`, `loot`, `spawn`.
+//! 읽는 순서: `tuning`(모든 수치), `sim`(Tick 하나의 처리 순서), `stage`(야영지, 원정, 결과 화면을 도는 방의 단계), `camp`, `debrief`, `player`, `loadout`, `weapon`, `projectile`, `stamina`, `resources`, `effect`, `monster`, `structures`, `build`, `expedition`, `loot`, `spawn`.
 //! `world`(타일 지도 포함), `collision`, `sweep`, `nav`, `spatial`은 이 모듈들이 쓰는 도구입니다.
 
 mod build;
 mod camp;
 mod collision;
 mod debrief;
+mod effect;
 mod expedition;
 mod ids;
 mod input;
@@ -44,6 +46,7 @@ mod tests;
 pub use build::{BuildRefusal, CannotBuild, front_tile};
 pub use camp::Camp;
 pub use debrief::{Debrief, Report};
+pub use effect::MonsterEffects;
 pub use expedition::{NightStep, Outcome, Phase};
 pub use ids::{
     ChestId, GroundWeaponId, MonsterId, NodeId, PileId, PlayerId, ProjectileId, Team, TowerId,
@@ -62,10 +65,10 @@ pub use stage::Stage;
 pub use stamina::Stamina;
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
-    ArcTuning, CampLayout, CampTuning, CycleTuning, Delivery, GuardTuning, HealTuning,
-    HitscanTuning, LootTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan, NightTuning,
-    PlayerTuning, ProjectileTuning, RepairTuning, ResourceTuning, ReviveTuning, SprintTuning,
-    Start, StructureTable, StructureTuning, Tuning, VillageTuning, WagonTuning, WavePlan,
-    WaveScaling, WeaponTable, WeaponTuning,
+    ArcTuning, CampLayout, CampTuning, CycleTuning, Debuff, Delivery, EffectTuning, GuardTuning,
+    HealTuning, HitscanTuning, LootTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan,
+    NightTuning, PlayerTuning, ProjectileTuning, RepairTuning, ResourceTuning, ReviveTuning,
+    SprintTuning, Start, StructureTable, StructureTuning, Tuning, VillageTuning, WagonTuning,
+    WavePlan, WaveScaling, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;

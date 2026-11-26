@@ -13,12 +13,12 @@
 use std::time::{Duration, Instant};
 
 use super::support::{Scenario, nights};
-use crate::ids::TowerId;
+use crate::ids::{MonsterId, TowerId};
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::WeaponKind;
 use crate::math::Vec2;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::Tuning;
+use crate::tuning::{Debuff, Tuning};
 use crate::world::Tile;
 
 /// 몬스터 300마리가 1 Tick마다 한 마리씩 나타나서 마차로 몰려드는 기본 맵입니다. 마차와 플레이어는 죽지 않습니다.
@@ -123,6 +123,76 @@ fn perf_the_average_tick_with_the_tower_cap_and_300_monsters_is_a_tenth_of_the_i
     let interval = Duration::from_secs_f32(defaults.dt());
     println!("slowest of 1000 ticks: {slowest:?}");
     check_limit("average of 1000 ticks", total / 1000, interval / 10);
+}
+
+#[test]
+fn perf_the_average_tick_with_300_monsters_under_every_effect_is_a_tenth_of_the_interval_at_most() {
+    let defaults = Tuning::default();
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    // 몬스터가 출혈의 피해로 죽으면 측정 상황이 달라지므로 HP를 가장 크게 합니다.
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| t.monsters.grunt.max_hp = u32::MAX);
+    let owner = s.player_at(
+        defaults.map.player_spawns[0].x,
+        defaults.map.player_spawns[0].y,
+    );
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+    let ids: Vec<MonsterId> = s.sim.monsters().map(|monster| monster.id).collect();
+
+    let mut total = Duration::ZERO;
+    let mut slowest = Duration::ZERO;
+    let mut most_stunned = 0;
+    for tick in 0..1000 {
+        // 효과가 풀리지 않도록 10 Tick마다 모든 몬스터에게 다시 겁니다. 거는 시간은 재지 않습니다.
+        // 스턴은 면역이 끝난 몬스터에게만 걸리므로 몬스터마다 스턴과 면역을 번갈아 지납니다.
+        if tick % 10 == 0 {
+            for id in &ids {
+                s.afflict(
+                    *id,
+                    Debuff::Slow {
+                        factor: 0.5,
+                        secs: 2.0,
+                    },
+                    owner,
+                );
+                s.afflict(
+                    *id,
+                    Debuff::Bleed {
+                        damage: 1,
+                        secs: 3.0,
+                    },
+                    owner,
+                );
+                s.afflict(*id, Debuff::Stun { secs: 0.8 }, owner);
+            }
+        }
+        let took = timed_tick(&mut s);
+        total += took;
+        slowest = slowest.max(took);
+        let stunned = s.sim.monsters().filter(|m| m.effects.is_stunned()).count();
+        most_stunned = most_stunned.max(stunned);
+    }
+    assert_eq!(
+        s.sim.monsters().count(),
+        300,
+        "300 monsters in every sampled tick"
+    );
+    assert!(
+        s.sim
+            .monsters()
+            .all(|m| m.effects.is_slowed() && m.effects.is_bleeding()),
+        "every monster was slowed and bleeding"
+    );
+    assert_eq!(most_stunned, 300, "all 300 were stunned at the same time");
+
+    let interval = Duration::from_secs_f32(defaults.dt());
+    println!("slowest of 1000 ticks: {slowest:?}");
+    check_limit(
+        "average of 1000 ticks under every effect",
+        total / 1000,
+        interval / 10,
+    );
 }
 
 /// 한 Tick에 감시탑 모음에서 일어난 변화입니다.

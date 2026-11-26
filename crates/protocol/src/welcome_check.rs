@@ -9,6 +9,7 @@
 
 use caravan_rules::Rect;
 
+use crate::monster_status::MONSTER_KIND_CAPACITY;
 use crate::units::WirePos;
 use crate::welcome::{Welcome, WireDelivery};
 
@@ -25,7 +26,6 @@ const _: () = assert!(MAX_MAP_SIDE_TILES <= 256.0);
 const MAX_OBSTACLES: usize = 256;
 /// 감시탑의 수의 상한입니다. 스냅샷이 감시탑 하나당 10바이트 안팎이므로 이 값이 스냅샷 크기의 상한이기도 합니다.
 const MAX_TOWER_LIMIT: u32 = 256;
-const MAX_MONSTER_KINDS: usize = 16;
 /// 무기 종류의 수의 상한입니다. 클라이언트가 무기마다 표의 항목 하나를 가집니다.
 const MAX_WEAPON_KINDS: usize = 16;
 /// 채집 지점의 수의 상한입니다. 스냅샷이 지점 하나당 몇 바이트이고, 클라이언트가 지점마다 상자와 막대를 하나씩 만듭니다.
@@ -47,7 +47,7 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
     check_count(
         "monster kinds",
         world.monster_kinds.len(),
-        MAX_MONSTER_KINDS,
+        MONSTER_KIND_CAPACITY,
     )?;
     check_count("weapon kinds", world.weapons.len(), MAX_WEAPON_KINDS)?;
     check_count("weapon racks", world.racks.len(), MAX_WEAPON_KINDS)?;
@@ -279,7 +279,7 @@ mod tests {
 
         let mut welcome = normal();
         let kind = welcome.world.monster_kinds[0];
-        welcome.world.monster_kinds = vec![kind; MAX_MONSTER_KINDS + 1];
+        welcome.world.monster_kinds = vec![kind; MONSTER_KIND_CAPACITY + 1];
         assert!(refused(&welcome).contains("monster kinds"));
     }
 

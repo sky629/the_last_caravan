@@ -72,6 +72,7 @@ fn a_hit_that_reaches_an_away_player_does_nothing() {
             target: Target::Player(a),
             amount: t.player.max_hp,
             by: Source::Monster,
+            debuff: None,
         }],
         &t,
     );

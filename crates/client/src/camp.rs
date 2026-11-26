@@ -91,7 +91,7 @@ mod tests {
     use crate::testing::joined_flow;
     use crate::view::{self, Scene};
     use caravan_client_core::{Frame, MonsterView};
-    use caravan_protocol::{WireMonsterKind, WireStruck, WireWagon};
+    use caravan_protocol::{WireMonsterEffects, WireMonsterKind, WireStruck, WireWagon};
     use caravan_rules::Vec2 as Ground;
 
     fn app() -> App {
@@ -138,6 +138,7 @@ mod tests {
             monsters: vec![MonsterView {
                 id: 1,
                 kind: WireMonsterKind::Scarecrow,
+                effects: WireMonsterEffects::NONE,
                 pos: Ground::new(40.5, 32.0),
                 facing: Ground::new(1.0, 0.0),
                 hp: 60,

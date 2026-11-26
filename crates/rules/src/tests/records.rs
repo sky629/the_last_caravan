@@ -36,9 +36,14 @@ fn swing_east() -> PlayerInput {
     }
 }
 
+/// 몬스터의 HP가 `weapon`의 피해량과 같아서, 그 무기로 한 번 맞히면 죽는 시나리오입니다.
+fn one_blow_kills(weapon: WeaponKind) -> Scenario {
+    Scenario::with_tuning(|t| t.monsters.grunt.max_hp = t.weapons.get(weapon).damage)
+}
+
 #[test]
 fn the_player_who_deals_the_last_blow_gets_the_kill() {
-    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.max_hp = 150);
+    let mut s = Scenario::with_tuning(|t| t.monsters.grunt.max_hp = 2 * t.weapons.sword.damage);
     let first = s.player_at(5.0, 5.0);
     let last = s.player_at(5.0, 4.0);
     let monster = s.monster_at(5.8, 4.5);
@@ -57,7 +62,7 @@ fn the_player_who_deals_the_last_blow_gets_the_kill() {
 
 #[test]
 fn two_blows_in_the_same_tick_count_one_kill_for_the_first_blow_in_the_order_of_the_hits() {
-    let mut s = Scenario::open_field();
+    let mut s = one_blow_kills(WeaponKind::Sword);
     let first = s.player_at(5.0, 5.0);
     let second = s.player_at(5.0, 4.0);
     let monster = s.monster_at(5.8, 4.5);
@@ -107,7 +112,7 @@ fn a_rifle_shot_that_kills_belongs_to_the_shooter() {
 
 #[test]
 fn an_arrow_that_kills_after_its_archer_left_is_counted_for_nobody() {
-    let mut s = Scenario::open_field();
+    let mut s = one_blow_kills(WeaponKind::Bow);
     let archer = s.player_at(3.0, 10.0);
     let bystander = s.player_at(3.0, 2.0);
     s.give_weapon(archer, WeaponKind::Bow);
@@ -226,7 +231,7 @@ fn what_a_player_puts_in_the_wagon_is_counted_for_that_player() {
 
 #[test]
 fn records_start_at_zero_in_a_new_expedition_and_for_a_player_who_joins_late() {
-    let mut s = Scenario::open_field();
+    let mut s = one_blow_kills(WeaponKind::Sword);
     let early = s.player_at(5.0, 5.0);
     s.monster_at(5.8, 5.0);
     s.hold(early, swing_east());

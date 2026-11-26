@@ -12,7 +12,7 @@
 use crate::ids::{MonsterId, PlayerId, ProjectileId, Team};
 use crate::math::Vec2;
 use crate::sweep;
-use crate::tuning::ProjectileTuning;
+use crate::tuning::{Debuff, ProjectileTuning};
 use crate::world::{Ctx, Hit, Source, Target, World};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +31,8 @@ pub struct Projectile {
     pub(crate) spec: ProjectileTuning,
     /// 쏠 때 플레이어의 `stats`가 정한 피해량입니다.
     pub(crate) damage: u32,
+    /// 쏠 때 무기의 행에서 가져온, 맞힌 몬스터마다 거는 효과입니다. 피해량처럼 날아가는 동안 바뀌지 않습니다.
+    pub(crate) debuff: Option<Debuff>,
     /// 지금까지 맞힌 몬스터입니다. 같은 몬스터를 두 번 맞히지 않게 하고, 맞힌 수가 `spec.pierce`에 이르면 탄환이 끝납니다.
     pub(crate) struck: Vec<MonsterId>,
 }
@@ -59,6 +61,7 @@ pub(crate) struct Launch {
     /// 길이가 1인 조준 방향입니다.
     pub dir: Vec2,
     pub damage: u32,
+    pub debuff: Option<Debuff>,
     pub spec: ProjectileTuning,
 }
 
@@ -76,6 +79,7 @@ impl Projectile {
             },
             spec: launch.spec,
             damage: launch.damage,
+            debuff: launch.debuff,
             struck: Vec::new(),
         }
     }
@@ -144,6 +148,7 @@ pub(crate) fn advance_projectiles(world: &mut World, ctx: &Ctx, hits: &mut Vec<H
                 target: Target::Monster(id),
                 amount: projectile.damage,
                 by: Source::Player(projectile.shooter),
+                debuff: projectile.debuff,
             });
             projectile.struck.push(id);
             if projectile.struck.len() >= projectile.spec.pierce as usize {

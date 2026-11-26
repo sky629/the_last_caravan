@@ -179,6 +179,7 @@ pub(crate) fn towers_fire(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
                 target: Target::Monster(target),
                 amount: spec.damage,
                 by: Source::Tower,
+                debuff: spec.on_hit,
             });
             *cooldown_ticks = t.ticks(spec.cooldown_secs);
             *last_shot = Some(Shot {

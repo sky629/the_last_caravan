@@ -26,6 +26,8 @@ pub struct Tuning {
     pub weapons: WeaponTable,
     pub sprint: SprintTuning,
     pub revive: ReviveTuning,
+    /// 효과(감속, 출혈, 스턴)의 규칙에 공통으로 쓰이는 수치입니다. 효과마다 다른 수치는 무기와 시설의 행(`on_hit`)에 있습니다.
+    pub effects: EffectTuning,
     pub monsters: MonsterTable,
     pub wagon: WagonTuning,
     pub structures: StructureTable,
@@ -60,8 +62,31 @@ pub struct WeaponTuning {
     /// 공격한 뒤 다음 공격까지의 시간입니다. 쿨다운은 플레이어가 하나만 가지므로, 무기를 바꿔도 남은 시간이 이어집니다.
     pub cooldown_secs: f32,
     pub delivery: Delivery,
+    /// 맞힌 몬스터마다 거는 효과입니다. 피해와 함께 걸리고, 그 피해로 죽은 몬스터에게는 걸리지 않습니다.
+    pub on_hit: Option<Debuff>,
     /// 상자에서 나올 무게입니다. 상자마다 무게에 비례하는 확률로 무기 하나가 나오고, 0이면 상자에서 나오지 않습니다.
     pub chest_weight: u32,
+}
+
+/// 맞은 몬스터에게 거는 효과입니다. 무기의 행과 시설의 행이 `on_hit`으로 가지고, 같은 값이 `Hit`에 실려서 몬스터에게 닿습니다.
+/// 효과를 추가하려면 변형을 하나 더하고, `effect::MonsterEffects::apply`의 `match`에 갈래를 하나 더합니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Debuff {
+    /// `secs`초 동안 몬스터가 스스로 걷는 속도에 `factor`를 곱합니다. `factor`는 0보다 크고 1 이하입니다.
+    Slow { factor: f32, secs: f32 },
+    /// `secs`초 동안 `EffectTuning::bleed_interval_secs`마다 `damage`의 피해를 줍니다.
+    Bleed { damage: u32, secs: f32 },
+    /// `secs`초 동안 몬스터가 스스로 이동하지도 공격하지도 않습니다. 끝난 뒤에는 `EffectTuning::stun_immunity_secs` 동안 다시 걸리지 않습니다.
+    Stun { secs: f32 },
+}
+
+/// 효과의 규칙에 공통으로 쓰이는 수치입니다. 효과마다 다른 수치는 효과를 거는 쪽의 행(`Debuff`)에 있습니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectTuning {
+    /// 출혈이 피해를 주는 간격입니다. 출혈이 걸린 지 이 시간이 지나야 첫 피해가 나고, 그 뒤로 이 간격마다 피해가 납니다.
+    pub bleed_interval_secs: f32,
+    /// 스턴이 끝난 몬스터가 스턴에 다시 걸리지 않는 시간입니다. 스턴을 건 무기가 달라도 같습니다.
+    pub stun_immunity_secs: f32,
 }
 
 /// 공격이 맞히는 곳까지 전달되는 방식입니다. 방식마다 그 방식에서만 의미가 있는 수치를 한 구조체로 가집니다.
@@ -147,19 +172,6 @@ impl WeaponTable {
             .sum()
     }
 }
-
-/// 정상 피해량입니다. 서비스할 때의 값입니다.
-const SWORD_DAMAGE: u32 = 25;
-const BOW_DAMAGE: u32 = 15;
-const GREATSWORD_DAMAGE: u32 = 45;
-const SPEAR_DAMAGE: u32 = 30;
-const CROSSBOW_DAMAGE: u32 = 20;
-const RIFLE_DAMAGE: u32 = 60;
-
-/// 테스트하는 동안 모든 무기의 피해량에 곱하는 배수입니다. 서비스하기 전에 1로 내립니다.
-/// 무기마다 따로 올리지 않고 이 값 하나로 올리므로, 무기 사이의 피해량 비율은 정상 값과 같습니다.
-/// 서비스하기 전에는 `cargo test -p caravan_rules -- --ignored`가 이 값이 1인지 확인합니다.
-pub(crate) const PLAYTEST_DAMAGE_MULTIPLIER: u32 = 4;
 
 /// 달리기의 수치입니다. 달리기 키를 누르고 움직이는 살아 있는 플레이어는 걷는 속도에 배율을 곱한 속도로 달리고,
 /// 달리는 동안 게이지가 줄고 키를 떼고 있으면 게이지가 찹니다.
@@ -334,6 +346,8 @@ pub struct StructureTuning {
     pub range: f32,
     pub damage: u32,
     pub cooldown_secs: f32,
+    /// 맞힌 몬스터마다 거는 효과입니다. 감시탑은 걸지 않습니다.
+    pub on_hit: Option<Debuff>,
     /// 플레이어가 F를 눌러서 시설의 HP를 수리하는 속도와 비용입니다. 거리는 플레이어의 가장자리에서 시설의 가장자리까지 잽니다.
     pub repair: RepairTuning,
     /// 건설을 시작할 때 보관함에서 내는 자원의 양입니다.
@@ -646,6 +660,7 @@ impl Tuning {
             )?;
         }
         self.validate_weapons()?;
+        self.validate_effects()?;
 
         let sprint = &self.sprint;
         if !(sprint.speed_multiplier.is_finite() && sprint.speed_multiplier >= 1.0) {
@@ -948,6 +963,53 @@ impl Tuning {
         Ok(())
     }
 
+    /// 효과의 수치를 검사합니다. 공통 수치(`EffectTuning`)와, 무기와 시설의 행이 가진 효과(`on_hit`)를 모두 봅니다.
+    ///
+    /// - 시간은 유한하고 0보다 길어야 합니다. 0초 효과는 아무것도 하지 않고, 스턴이 끝난 뒤의 면역이 0초이면 스턴을 끝없이 이을 수 있습니다.
+    /// - 감속의 비율은 0보다 크고 1 이하입니다. 0이면 스턴이고, 1보다 크면 빨라집니다.
+    /// - 출혈의 피해는 1 이상이고, 출혈이 계속되는 시간은 간격 이상입니다. 그보다 짧으면 한 번도 피해가 나지 않습니다.
+    fn validate_effects(&self) -> Result<(), String> {
+        let effects = &self.effects;
+        check_positive("effects bleed_interval_secs", effects.bleed_interval_secs)?;
+        check_positive("effects stun_immunity_secs", effects.stun_immunity_secs)?;
+        let rows = WeaponKind::ALL
+            .map(|kind| (format!("{kind:?}"), self.weapons.get(kind).on_hit))
+            .into_iter()
+            .chain(
+                StructureKind::ALL
+                    .map(|kind| (format!("{kind:?}"), self.structures.get(kind).on_hit)),
+            );
+        for (name, on_hit) in rows {
+            match on_hit {
+                None => {}
+                Some(Debuff::Slow { factor, secs }) => {
+                    check_positive(&format!("{name} slow secs"), secs)?;
+                    if !(factor.is_finite() && factor > 0.0 && factor <= 1.0) {
+                        return Err(format!(
+                            "{name} slow factor must be above 0 and at most 1, but it is {factor}"
+                        ));
+                    }
+                }
+                Some(Debuff::Bleed { damage, secs }) => {
+                    check_positive(&format!("{name} bleed secs"), secs)?;
+                    if damage == 0 {
+                        return Err(format!("{name} bleed damage must be at least 1"));
+                    }
+                    if secs < effects.bleed_interval_secs {
+                        return Err(format!(
+                            "{name} bleed secs {secs} must be at least the bleed interval {}",
+                            effects.bleed_interval_secs
+                        ));
+                    }
+                }
+                Some(Debuff::Stun { secs }) => {
+                    check_positive(&format!("{name} stun secs"), secs)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 모든 무기의 수치를 검사합니다. `validate`가 속도를 검사한 직후에 부릅니다.
     ///
     /// - 상자에서 나올 무게는 상한(`MAX_CHEST_WEIGHT`) 이하입니다.
@@ -1096,16 +1158,20 @@ impl Default for Tuning {
             },
             weapons: WeaponTable {
                 sword: WeaponTuning {
-                    damage: SWORD_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 25,
                     cooldown_secs: 0.5,
                     delivery: Delivery::Arc(ArcTuning {
                         reach: 1.0,
                         half_angle_deg: 60.0,
                     }),
+                    on_hit: Some(Debuff::Bleed {
+                        damage: 5,
+                        secs: 3.0,
+                    }),
                     chest_weight: 0,
                 },
                 bow: WeaponTuning {
-                    damage: BOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 15,
                     cooldown_secs: 0.4,
                     delivery: Delivery::Projectile(ProjectileTuning {
                         speed: 14.0,
@@ -1113,28 +1179,37 @@ impl Default for Tuning {
                         radius: 0.15,
                         pierce: 1,
                     }),
+                    on_hit: Some(Debuff::Slow {
+                        factor: 0.5,
+                        secs: 2.0,
+                    }),
                     chest_weight: 1,
                 },
                 greatsword: WeaponTuning {
-                    damage: GREATSWORD_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 45,
                     cooldown_secs: 1.0,
                     delivery: Delivery::Arc(ArcTuning {
                         reach: 1.3,
                         half_angle_deg: 90.0,
                     }),
+                    on_hit: Some(Debuff::Stun { secs: 0.8 }),
                     chest_weight: 1,
                 },
                 spear: WeaponTuning {
-                    damage: SPEAR_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 30,
                     cooldown_secs: 0.6,
                     delivery: Delivery::Arc(ArcTuning {
                         reach: 2.2,
                         half_angle_deg: 15.0,
                     }),
+                    on_hit: Some(Debuff::Bleed {
+                        damage: 6,
+                        secs: 3.0,
+                    }),
                     chest_weight: 1,
                 },
                 crossbow: WeaponTuning {
-                    damage: CROSSBOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 20,
                     cooldown_secs: 0.9,
                     delivery: Delivery::Projectile(ProjectileTuning {
                         speed: 18.0,
@@ -1142,12 +1217,17 @@ impl Default for Tuning {
                         radius: 0.15,
                         pierce: 4,
                     }),
+                    on_hit: Some(Debuff::Slow {
+                        factor: 0.5,
+                        secs: 2.0,
+                    }),
                     chest_weight: 1,
                 },
                 rifle: WeaponTuning {
-                    damage: RIFLE_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 60,
                     cooldown_secs: 1.5,
                     delivery: Delivery::Hitscan(HitscanTuning { range: 12.0 }),
+                    on_hit: Some(Debuff::Stun { secs: 0.8 }),
                     chest_weight: 1,
                 },
             },
@@ -1161,6 +1241,10 @@ impl Default for Tuning {
                 revive_secs: 5.0,
                 revived_hp_percent: 30,
                 range: 1.5,
+            },
+            effects: EffectTuning {
+                bleed_interval_secs: 1.0,
+                stun_immunity_secs: 2.0,
             },
             monsters: MonsterTable {
                 grunt: MonsterTuning {
@@ -1208,6 +1292,7 @@ impl Default for Tuning {
                     range: 6.0,
                     damage: 15,
                     cooldown_secs: 0.8,
+                    on_hit: None,
                     // 1초에 20 HP이고, 감시탑을 최대 HP까지 모두 수리하면 건설 비용(10)과 같은 자원이 듭니다.
                     repair: RepairTuning {
                         heal: HealTuning {

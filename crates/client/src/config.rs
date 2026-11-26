@@ -120,6 +120,11 @@ pub const DEAD: Color = Color::srgb(0.40, 0.40, 0.42);
 pub const MONSTER: Color = Color::srgb(0.85, 0.22, 0.28);
 /// 허수아비는 몬스터(빨강)와 달리 밀짚색이어서, 때려도 되는 과녁임을 알 수 있습니다.
 pub const SCARECROW: Color = Color::srgb(0.82, 0.70, 0.40);
+/// 몬스터와 허수아비의 몸통이 효과에 걸렸을 때의 색입니다. 여러 효과가 함께 걸리면 스턴, 감속, 출혈의 순서로 앞선 하나만 보입니다.
+/// 몬스터(빨강), 허수아비(밀짚), 내 캐릭터(노랑), 동료(파랑), 다른 편 플레이어(연보라)와 어느 쪽과도 구분됩니다.
+pub const EFFECT_STUN: Color = Color::srgb(0.97, 0.97, 1.00);
+pub const EFFECT_SLOW: Color = Color::srgb(0.45, 0.88, 0.98);
+pub const EFFECT_BLEED: Color = Color::srgb(0.42, 0.10, 0.42);
 pub const NOSE_PLAYER: Color = Color::srgb(1.00, 1.00, 1.00);
 pub const NOSE_MONSTER: Color = Color::srgb(1.00, 0.80, 0.30);
 pub const BAR_BACK: Color = Color::srgb(0.06, 0.06, 0.06);

@@ -7,18 +7,20 @@
 //! - `report`: 끝난 원정의 요약과 개인별 기록입니다. 스냅샷에는 싣지 않고 결과 화면이 열릴 때 한 번 보냅니다.
 //! - `seat_token`: 자리의 표식입니다. 다시 입장하는 사람을 알아보는 비밀 값이고, 로그에 값이 남지 않습니다.
 //! - `units`: 위치와 방향을 정수로 줄이는 변환과 그 오차. 정수와 실수 사이의 변환은 이 파일에만 있습니다.
+//! - `monster_status`: 몬스터의 종류와 걸려 있는 효과를 1바이트에 담는 형식. 몬스터가 수백 마리여도 스냅샷이 상한을 넘지 않게 효과를 같은 바이트에 싣습니다.
 //! - `codec`: 메시지를 바이트로 바꾸는 함수와 되돌리는 함수. 전송 형식을 아는 파일은 이것 하나입니다.
 //! - `transport`: 접속 방식 인터페이스 두 개. 서버와 클라이언트는 이 트레이트만 압니다.
 //! - `loopback`: 같은 프로세스 안에서 메시지를 전달하는 접속 방식. 서버 테스트가 사용합니다.
 //! - `limits`: 서버가 접속 하나와 메시지 하나에 허용하는 한계. 게임 서버와 서버 쪽 접속 방식이 함께 읽습니다.
 //! - `welcome_check`: `Welcome`이 믿고 쓸 만한 값인지 확인하는 상한. 클라이언트는 받은 `Welcome`에, 서버는 시작할 때 보낼 `Welcome`에 같은 확인을 합니다.
 //!
-//! 읽는 순서: `messages`, `snapshot`, `welcome`, `units`, `transport`, `codec`, `loopback`.
+//! 읽는 순서: `messages`, `snapshot`, `monster_status`, `welcome`, `units`, `transport`, `codec`, `loopback`.
 
 mod codec;
 mod limits;
 mod loopback;
 mod messages;
+mod monster_status;
 mod player_name;
 mod report;
 mod room_code;
@@ -34,6 +36,7 @@ pub use codec::{DecodeError, decode_client, decode_server, encode_client, encode
 pub use limits::ServerLimits;
 pub use loopback::{LoopbackClient, LoopbackConnector, LoopbackServer, loopback};
 pub use messages::{ClientMsg, InputMsg, PROTOCOL_VERSION, RejectReason, ServerMsg, WireVec2};
+pub use monster_status::{WireMonsterEffects, WireMonsterStatus};
 pub use player_name::{NameError, PlayerName};
 pub use report::{WireRecordRow, WireReport};
 pub use room_code::{RoomCode, RoomCodeError};

@@ -16,10 +16,10 @@ use crate::sim::Sim;
 use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
-    CampLayout, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan,
+    CampLayout, Debuff, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan,
     WaveScaling,
 };
-use crate::world::Tile;
+use crate::world::{Source, Tile};
 
 /// 시나리오가 쓰는 씨앗입니다.
 pub(crate) const SEED: Seed = Seed(1);
@@ -137,6 +137,19 @@ impl Scenario {
             Vec2::new(x, y),
             &t,
         )
+    }
+
+    /// 몬스터에게 효과를 직접 겁니다. `owner`가 건 것으로 칩니다. 무기를 거치지 않고 효과의 규칙만 시험할 때 씁니다.
+    pub fn afflict(&mut self, id: MonsterId, debuff: Debuff, owner: PlayerId) {
+        let t = self.sim.tuning().clone();
+        let monster = self
+            .sim
+            .world_mut()
+            .monsters
+            .iter_mut()
+            .find(|monster| monster.id == id)
+            .expect("the monster exists");
+        monster.effects.apply(debuff, Source::Player(owner), &t);
     }
 
     pub fn monster(&self, id: MonsterId) -> Option<&Monster> {

@@ -4,10 +4,23 @@
 
 use caravan_protocol::{
     ServerMsg, Snapshot, WireAngle, WireAttack, WireGroundWeapon, WireInteraction, WireLife,
-    WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode, WirePhase, WirePile,
-    WirePlayer, WirePos, WireProjectile, WirePrompt, WireRecordRow, WireReport, WireShot,
-    WireStruck, WireTile, WireTower, WireTowerState, WireWagon, WireWeaponKind, encode_server,
+    WireLoadout, WireMonster, WireMonsterEffects, WireMonsterKind, WireMonsterStatus,
+    WireNightStep, WireNode, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt,
+    WireRecordRow, WireReport, WireShot, WireStruck, WireTile, WireTower, WireTowerState,
+    WireWagon, WireWeaponKind, encode_server,
 };
+
+/// 세 효과가 모두 걸린 몬스터의 종류와 효과입니다. 효과가 크기를 늘리지 않는다는 것을 가장 큰 경우로 확인하려고 모든 몬스터가 이 상태입니다.
+fn afflicted_grunt() -> WireMonsterStatus {
+    WireMonsterStatus::new(
+        WireMonsterKind::Grunt,
+        WireMonsterEffects {
+            stunned: true,
+            slowed: true,
+            bleeding: true,
+        },
+    )
+}
 
 /// 몬스터와 탄환의 번호가 `first_id`부터 이어지는 스냅샷입니다. 모든 좌표 값은 2바이트로 기록되는 크기(128 이상)입니다.
 fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot {
@@ -115,7 +128,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
         monsters: (0..monsters)
             .map(|i| WireMonster {
                 id: first_id + i,
-                kind: WireMonsterKind::Grunt,
+                status: afflicted_grunt(),
                 pos: WirePos {
                     x: 200 + (i as u16 * 9) % 2800,
                     y: 200 + (i as u16 * 13) % 2800,
@@ -188,6 +201,16 @@ fn one_monster_costs_nine_bytes_and_grows_the_snapshot_linearly() {
     let base = encoded_len(crowded_snapshot(10_000, 130, 0));
     let more = encoded_len(crowded_snapshot(10_000, 230, 0));
     assert_eq!(more - base, 100 * 9);
+}
+
+#[test]
+fn monsters_with_every_effect_cost_the_same_nine_bytes_as_monsters_with_none() {
+    let afflicted = encoded_len(crowded_snapshot(10_000, 300, 0));
+    let mut plain = crowded_snapshot(10_000, 300, 0);
+    for monster in &mut plain.monsters {
+        monster.status = WireMonsterStatus::plain(WireMonsterKind::Grunt);
+    }
+    assert_eq!(afflicted, encoded_len(plain));
 }
 
 #[test]
@@ -284,7 +307,7 @@ fn camp_snapshot() -> Snapshot {
     snapshot.nodes = vec![];
     snapshot.piles = vec![];
     for monster in &mut snapshot.monsters {
-        monster.kind = WireMonsterKind::Scarecrow;
+        monster.status = WireMonsterStatus::plain(WireMonsterKind::Scarecrow);
     }
     snapshot
 }
