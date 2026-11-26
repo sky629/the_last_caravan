@@ -67,7 +67,7 @@ fn a_fresh_room_is_the_camp_with_the_scarecrows_and_nobody_ready() {
             struck: vec![]
         }
     );
-    let kinds: Vec<WireMonsterKind> = snapshot.monsters.iter().map(|m| m.kind).collect();
+    let kinds: Vec<WireMonsterKind> = snapshot.monsters.iter().map(|m| m.status.kind()).collect();
     assert_eq!(
         kinds,
         vec![WireMonsterKind::Scarecrow; 3],
@@ -268,6 +268,52 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
     assert_eq!((scarecrow.radius, scarecrow.max_hp), (0.4, 60));
 }
 
+/// 야영지에서 시작 무기가 `weapon`인 플레이어가 바로 앞(한 걸음 떨어진 곳)의 허수아비를 동쪽으로 한 번 쏘거나 벤 뒤의 허수아비입니다.
+fn scarecrow_after_one_blow_with(weapon: WeaponKind) -> caravan_protocol::WireMonster {
+    let mut tuning = Tuning::default();
+    tuning.player.start_loadout = Loadout::new(weapon, None);
+    // 플레이어는 등장 지점 (32, 29.5)에 서므로 허수아비를 그 동쪽 한 타일 곁에 둡니다.
+    tuning.map.camp.scarecrows = vec![Vec2::new(33.0, 29.5)];
+    tuning.validate().expect("the adjusted numbers are valid");
+    let mut sim = Sim::new(tuning, Seed(1));
+    let player = sim.add_player().expect("the room has space");
+    let blow = PlayerInputs::from([(
+        player,
+        PlayerInput {
+            attack: true,
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &blow, 1);
+    *Snapshot::from_sim(&sim)
+        .monsters
+        .first()
+        .expect("the scarecrow")
+}
+
+#[test]
+fn a_scarecrow_hit_by_a_weapon_shows_the_effect_of_that_weapon_in_the_snapshot() {
+    for (weapon, expected) in [
+        (WeaponKind::Sword, (false, false, true)),
+        (WeaponKind::Spear, (false, false, true)),
+        (WeaponKind::Greatsword, (true, false, false)),
+        (WeaponKind::Rifle, (true, false, false)),
+        (WeaponKind::Bow, (false, true, false)),
+        (WeaponKind::Crossbow, (false, true, false)),
+    ] {
+        let scarecrow = scarecrow_after_one_blow_with(weapon);
+        let effects = scarecrow.status.effects();
+        assert_eq!(
+            (effects.stunned, effects.slowed, effects.bleeding),
+            expected,
+            "{weapon:?}: (stunned, slowed, bleeding)"
+        );
+        assert_eq!(scarecrow.status.kind(), WireMonsterKind::Scarecrow);
+        assert_eq!(scarecrow.hp, 60, "nothing is hurt in the camp");
+    }
+}
+
 #[test]
 fn monsters_and_the_tower_shots_at_them_appear_once_the_first_wave_comes() {
     // 낮이 곧 끝나므로, 건설을 하는 동안 밤이 시작되어 첫 무리가 마을에 다가옵니다.
@@ -314,7 +360,7 @@ fn monsters_and_the_tower_shots_at_them_appear_once_the_first_wave_comes() {
         assert_eq!(snapshot.monsters.len(), rules.len());
         for (wire, rule) in snapshot.monsters.iter().zip(&rules) {
             assert_eq!((wire.id, wire.hp), (rule.id.0, rule.hp));
-            assert_eq!(wire.kind, WireMonsterKind::Grunt);
+            assert_eq!(wire.status.kind(), WireMonsterKind::Grunt);
             let back = wire.pos.to_tiles();
             assert!((back.x - rule.pos.x).abs() <= WirePos::MAX_ERROR_TILES);
             assert!((back.y - rule.pos.y).abs() <= WirePos::MAX_ERROR_TILES);

@@ -32,7 +32,9 @@ pub use hud::{
     bar_fraction, reject_text, weapon_name,
 };
 pub use input::Controls;
-pub use interp::{Frame, MonsterView, PlayerView, ProjectileView, Setting, effect_progress};
+pub use interp::{
+    Frame, MonsterView, PlayerView, ProjectileView, Setting, ShownEffect, effect_progress,
+};
 pub use iso::{
     TILE_HEIGHT_PX, TILE_WIDTH_PX, circle_to_screen_radii, depth, ground_to_screen,
     screen_dir_to_ground, screen_to_ground, tile_centers,

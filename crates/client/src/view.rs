@@ -226,9 +226,9 @@ mod tests {
     use bevy::mesh::VertexAttributeValues;
     use caravan_client_core::{Frame, MonsterView, PlayerView};
     use caravan_protocol::{
-        WireChest, WireGroundWeapon, WireLife, WireLoadout, WireMonsterKind, WireNode, WirePhase,
-        WirePile, WirePos, WireStruck, WireTile, WireTower, WireTowerState, WireWagon,
-        WireWeaponKind,
+        WireChest, WireGroundWeapon, WireLife, WireLoadout, WireMonsterEffects, WireMonsterKind,
+        WireNode, WirePhase, WirePile, WirePos, WireStruck, WireTile, WireTower, WireTowerState,
+        WireWagon, WireWeaponKind,
     };
 
     /// 모든 종류의 개체가 한 장면에 있는 야영지의 모습입니다.
@@ -299,6 +299,7 @@ mod tests {
             monsters: vec![MonsterView {
                 id: 7,
                 kind: WireMonsterKind::Scarecrow,
+                effects: WireMonsterEffects::NONE,
                 pos: Ground::new(12.0, 12.0),
                 facing: Ground::new(1.0, 0.0),
                 hp: 60,

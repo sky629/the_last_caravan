@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use caravan_protocol::{
     ClientEvent, ClientTransport, RejectReason, ServerMsg, Snapshot, WireAngle, WireMonster,
-    WireMonsterKind, WirePhase, WirePos, WireWagon, encode_server,
+    WireMonsterKind, WireMonsterStatus, WirePhase, WirePos, WireWagon, encode_server,
 };
 use caravan_ws_client::{MAX_SERVER_MESSAGE_BYTES, WsClient};
 use tungstenite::Message;
@@ -49,7 +49,7 @@ fn snapshot_of(monsters: u32) -> Snapshot {
         monsters: (1..=monsters)
             .map(|id| WireMonster {
                 id,
-                kind: WireMonsterKind::Grunt,
+                status: WireMonsterStatus::plain(WireMonsterKind::Grunt),
                 pos: WirePos { x: 1000, y: 1000 },
                 facing: WireAngle(0),
                 hp: 60,

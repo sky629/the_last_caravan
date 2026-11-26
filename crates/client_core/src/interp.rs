@@ -4,16 +4,16 @@
 //! 그 시각의 앞뒤에 있는 스냅샷 두 개가 항상 있으므로, 위치와 방향을 두 스냅샷 사이의 선형 값으로 그릴 수 있습니다.
 //! 시간은 초가 아니라 서버 Tick으로 셉니다. Tick 속도는 입장할 때 받으므로 이 파일에는 20이라는 값이 없습니다.
 //!
-//! 섞는 것은 위치와 방향뿐입니다. HP, 생존 상태, 단계 같은 이산 값은 두 스냅샷 중 이전 것에서 가져옵니다.
-//! 그래야 HP 막대가 그 피해를 일으킨 공격보다 먼저 줄어들지 않습니다.
+//! 섞는 것은 위치와 방향뿐입니다. HP, 걸려 있는 효과, 생존 상태, 단계 같은 이산 값은 두 스냅샷 중 이전 것에서 가져옵니다.
+//! 그래야 HP 막대가 그 피해를 일으킨 공격보다 먼저 줄어들지 않고, 효과의 색도 그 효과를 건 공격보다 먼저 바뀌지 않습니다.
 
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 use caravan_protocol::{
     Snapshot, WireAngle, WireAttack, WireChest, WireGroundWeapon, WireLife, WireLoadout,
-    WireMonster, WireMonsterKind, WireNode, WirePhase, WirePile, WirePlayer, WireProjectile,
-    WirePrompt, WireTower, WireWagon,
+    WireMonster, WireMonsterEffects, WireMonsterKind, WireNode, WirePhase, WirePile, WirePlayer,
+    WireProjectile, WirePrompt, WireTower, WireWagon,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -97,9 +97,35 @@ pub struct PlayerView {
 pub struct MonsterView {
     pub id: u32,
     pub kind: WireMonsterKind,
+    /// 걸려 있는 효과입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub effects: WireMonsterEffects,
     pub pos: Vec2,
     pub facing: Vec2,
     pub hp: u32,
+}
+
+/// 몬스터의 몸통 색으로 보이는 효과입니다. 여러 효과가 함께 걸려 있어도 하나만 보입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShownEffect {
+    Stun,
+    Slow,
+    Bleed,
+}
+
+impl MonsterView {
+    /// 몸통 색으로 보일 효과입니다. 행동을 가장 크게 바꾸는 효과가 먼저여서 스턴, 감속, 출혈의 순서로 앞선 하나입니다.
+    pub fn shown_effect(&self) -> Option<ShownEffect> {
+        let effects = self.effects;
+        if effects.stunned {
+            Some(ShownEffect::Stun)
+        } else if effects.slowed {
+            Some(ShownEffect::Slow)
+        } else if effects.bleeding {
+            Some(ShownEffect::Bleed)
+        } else {
+            None
+        }
+    }
 }
 
 /// 탄환 하나입니다. 날아가는 방향의 짧은 선을 그리는 데 필요한 위치와 방향입니다.
@@ -309,7 +335,8 @@ fn monster_view(a: &WireMonster, b: Option<&WireMonster>, alpha: f32) -> Monster
     };
     MonsterView {
         id: a.id,
-        kind: a.kind,
+        kind: a.status.kind(),
+        effects: a.status.effects(),
         pos,
         facing,
         hp: a.hp,
@@ -340,7 +367,7 @@ pub fn effect_progress(playback_tick: f64, event_tick: u64, duration_ticks: f64)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::{WirePos, WireWeaponKind};
+    use caravan_protocol::{WireMonsterStatus, WirePos, WireWeaponKind};
 
     fn snapshot(tick: u64) -> Snapshot {
         Snapshot {
@@ -369,7 +396,7 @@ mod tests {
     fn monster(id: u32, x: f32, y: f32, hp: u32) -> WireMonster {
         WireMonster {
             id,
-            kind: WireMonsterKind::Grunt,
+            status: WireMonsterStatus::plain(WireMonsterKind::Grunt),
             pos: WirePos::from_tiles(Vec2::new(x, y)),
             facing: WireAngle(0),
             hp,
@@ -424,6 +451,64 @@ mod tests {
 
         assert!(close(frame.monsters[0].pos, Vec2::new(4.5, 5.0)));
         assert!((frame.tick - 10.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_effects_of_a_monster_come_from_the_older_snapshot_and_its_position_is_blended() {
+        let slowed = WireMonsterStatus::new(
+            WireMonsterKind::Grunt,
+            WireMonsterEffects {
+                slowed: true,
+                ..WireMonsterEffects::NONE
+            },
+        );
+        let mut older = snapshot(10);
+        older.monsters = vec![monster(1, 4.0, 4.0, 60)];
+        let mut newer = snapshot(11);
+        newer.monsters = vec![monster(1, 5.0, 4.0, 60)];
+        newer.monsters[0].status = slowed;
+        let mut later = snapshot(12);
+        later.monsters = vec![monster(1, 6.0, 4.0, 60)];
+        later.monsters[0].status = slowed;
+        let buffer = buffer_with(vec![older, newer, later]);
+
+        let before = buffer.sample_at(10.9).unwrap();
+        let after = buffer.sample_at(11.1).unwrap();
+
+        assert_eq!(before.monsters[0].effects, WireMonsterEffects::NONE);
+        assert!(close(before.monsters[0].pos, Vec2::new(4.9, 4.0)));
+        assert!(after.monsters[0].effects.slowed);
+        assert_eq!(after.monsters[0].kind, WireMonsterKind::Grunt);
+    }
+
+    #[test]
+    fn one_effect_is_shown_and_the_stun_comes_before_the_slow_and_the_slow_before_the_bleed() {
+        let shown = |stunned, slowed, bleeding| {
+            let mut snapshot = snapshot(10);
+            snapshot.monsters = vec![monster(1, 4.0, 4.0, 60)];
+            snapshot.monsters[0].status = WireMonsterStatus::new(
+                WireMonsterKind::Grunt,
+                WireMonsterEffects {
+                    stunned,
+                    slowed,
+                    bleeding,
+                },
+            );
+            buffer_with(vec![snapshot])
+                .sample_at(10.0)
+                .unwrap()
+                .monsters[0]
+                .shown_effect()
+        };
+
+        assert_eq!(shown(false, false, false), None);
+        assert_eq!(shown(false, false, true), Some(ShownEffect::Bleed));
+        assert_eq!(shown(false, true, false), Some(ShownEffect::Slow));
+        assert_eq!(shown(false, true, true), Some(ShownEffect::Slow));
+        assert_eq!(shown(true, false, false), Some(ShownEffect::Stun));
+        assert_eq!(shown(true, false, true), Some(ShownEffect::Stun));
+        assert_eq!(shown(true, true, false), Some(ShownEffect::Stun));
+        assert_eq!(shown(true, true, true), Some(ShownEffect::Stun));
     }
 
     #[test]

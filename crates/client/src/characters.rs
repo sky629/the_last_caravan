@@ -348,7 +348,9 @@ mod tests {
     use crate::testing::{YOU, deliver_presence, deliver_roster, joined_flow};
     use crate::view;
     use caravan_client_core::Frame;
-    use caravan_protocol::{WireLoadout, WireMonsterKind, WirePhase, WireWagon, WireWeaponKind};
+    use caravan_protocol::{
+        WireLoadout, WireMonsterEffects, WireMonsterKind, WirePhase, WireWagon, WireWeaponKind,
+    };
     use caravan_rules::Team;
 
     /// 화면과 GPU 없이 시스템만 돌리는 앱입니다. 입장을 마친 세션을 가집니다.
@@ -404,6 +406,7 @@ mod tests {
         MonsterView {
             id,
             kind: WireMonsterKind::Grunt,
+            effects: WireMonsterEffects::NONE,
             pos: Ground::new(x, y),
             facing: Ground::new(0.0, 1.0),
             hp,

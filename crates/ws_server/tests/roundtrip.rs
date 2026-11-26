@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use caravan_protocol::{
     ClientMsg, InputMsg, LinkId, PROTOCOL_VERSION, PeerKey, RejectReason, ServerEvent,
     ServerLimits, ServerMsg, ServerTransport, Snapshot, WireAngle, WireMonster, WireMonsterKind,
-    WirePhase, WirePos, WireWagon, decode_server, encode_client,
+    WireMonsterStatus, WirePhase, WirePos, WireWagon, decode_server, encode_client,
 };
 use caravan_ws_server::WsServer;
 use futures_util::{SinkExt, StreamExt};
@@ -38,7 +38,7 @@ fn snapshot_of(monsters: u32) -> Snapshot {
         monsters: (1..=monsters)
             .map(|id| WireMonster {
                 id,
-                kind: WireMonsterKind::Grunt,
+                status: WireMonsterStatus::plain(WireMonsterKind::Grunt),
                 pos: WirePos { x: 1000, y: 1000 },
                 facing: WireAngle(0),
                 hp: 60,
