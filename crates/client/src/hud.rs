@@ -3,7 +3,7 @@
 //! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸이 있고,
 //! 야영지에서는 그 아래에 방 코드와 `C` 안내, 준비 목록, `R` 안내, 시작까지 남은 시간이 있고,
 //! 아래 가운데에 F를 누르면 하게 되는 일의 안내와 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
-//! 오른쪽 아래에 원정 중의 방 코드가 있고, 화면 가운데에 원정의 결과나 접속을 기다리는 안내가 크게 나옵니다.
+//! 오른쪽 아래에 원정 중의 방 코드가 있고, 화면 가운데에 접속을 기다리는 안내나 원정의 결과(성공 여부, 요약, 개인별 기록의 표, 확인 안내)가 크게 나옵니다.
 
 use bevy::prelude::*;
 use caravan_client_core::{BannerTone, Hud, Invite, Meter, Tone};
@@ -49,6 +49,10 @@ pub struct MeterSlot {
 #[derive(Component)]
 pub struct MeterFill;
 
+/// 결과 화면의 뒤판입니다. 결과가 있을 때만 보이고, 뒤의 세계가 글자를 가리지 않게 합니다.
+#[derive(Component)]
+pub struct ResultPanel;
+
 /// 갱신할 노드들의 목록입니다. 시작할 때 만든 것은 처음부터 있고, 동료의 막대는 입장한 뒤에 정해집니다.
 #[derive(Resource)]
 pub struct HudNodes {
@@ -69,7 +73,13 @@ pub struct HudNodes {
     camp_countdown: Entity,
     hint: Entity,
     banner_title: Entity,
-    banner_detail: Entity,
+    result_panel: Entity,
+    result_title: Entity,
+    result_summary: Entity,
+    /// 개인별 기록의 표입니다. 한 노드에 줄바꿈으로 이은 여러 줄이고, 글꼴의 글자 너비가 같아서 칸이 세로로 나란히 섭니다.
+    result_table: Entity,
+    result_action: Entity,
+    result_countdown: Entity,
     bleed: Entity,
     refusal: Entity,
     me: Entity,
@@ -239,9 +249,33 @@ pub fn setup(mut commands: Commands) {
         })
         .add_child(room);
 
-    // 가운데: 원정의 결과, 접속과 첫 스냅샷을 기다리는 안내.
+    // 가운데: 접속과 첫 스냅샷을 기다리는 안내, 원정의 결과.
     let banner_title = text_node(&mut commands, 46.0, TEXT);
-    let banner_detail = text_node(&mut commands, 22.0, TEXT);
+    let result_title = text_node(&mut commands, 46.0, TEXT);
+    let result_summary = text_node(&mut commands, 24.0, TEXT);
+    let result_table = text_node(&mut commands, 22.0, TEXT);
+    let result_action = text_node(&mut commands, 22.0, TEXT);
+    let result_countdown = text_node(&mut commands, 18.0, TEXT_DIM);
+    let result_panel = commands
+        .spawn((
+            column(Node {
+                display: Display::None,
+                align_items: AlignItems::Center,
+                row_gap: px(10),
+                padding: UiRect::axes(px(36), px(20)),
+                ..default()
+            }),
+            BackgroundColor(PANEL_BACK),
+            ResultPanel,
+        ))
+        .add_children(&[
+            result_title,
+            result_summary,
+            result_table,
+            result_action,
+            result_countdown,
+        ])
+        .id();
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
@@ -253,7 +287,7 @@ pub fn setup(mut commands: Commands) {
             row_gap: px(10),
             ..default()
         })
-        .add_children(&[banner_title, banner_detail]);
+        .add_children(&[banner_title, result_panel]);
 
     commands.insert_resource(HudNodes {
         connection,
@@ -271,7 +305,12 @@ pub fn setup(mut commands: Commands) {
         camp_countdown,
         hint,
         banner_title,
-        banner_detail,
+        result_panel,
+        result_title,
+        result_summary,
+        result_table,
+        result_action,
+        result_countdown,
         bleed,
         refusal,
         me,
@@ -368,6 +407,7 @@ pub fn update(
     mut texts: Query<(&mut Text, &mut TextColor)>,
     mut slots: Query<(&MeterSlot, &mut Node), Without<MeterFill>>,
     mut fills: Query<(&mut Node, &mut BackgroundColor), With<MeterFill>>,
+    mut panels: Query<&mut Node, (With<ResultPanel>, Without<MeterSlot>, Without<MeterFill>)>,
 ) {
     // 시작 화면에는 방에 관한 값이 없으므로 모든 칸을 비웁니다.
     let invite = Invite {
@@ -426,18 +466,43 @@ pub fn update(
     match &hud.banner {
         Some(banner) => {
             set_text(&mut texts, nodes.banner_title, &banner.title);
+            set_text_color(&mut texts, nodes.banner_title, banner_color(banner.tone));
+        }
+        None => set_text(&mut texts, nodes.banner_title, ""),
+    }
+    if let Ok(mut node) = panels.get_mut(nodes.result_panel) {
+        let display = if hud.debrief.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
+    match &hud.debrief {
+        Some(panel) => {
+            set_text(&mut texts, nodes.result_title, &panel.title);
+            set_text_color(&mut texts, nodes.result_title, banner_color(panel.tone));
             set_text(
                 &mut texts,
-                nodes.banner_detail,
-                banner.detail.as_deref().unwrap_or(""),
+                nodes.result_summary,
+                panel.summary.as_deref().unwrap_or(""),
             );
-            let color = banner_color(banner.tone);
-            set_text_color(&mut texts, nodes.banner_title, color);
-            set_text_color(&mut texts, nodes.banner_detail, color);
+            set_text(&mut texts, nodes.result_table, &panel.table.join("\n"));
+            set_text(&mut texts, nodes.result_action, &panel.action);
+            set_text(&mut texts, nodes.result_countdown, &panel.countdown);
         }
         None => {
-            set_text(&mut texts, nodes.banner_title, "");
-            set_text(&mut texts, nodes.banner_detail, "");
+            for entity in [
+                nodes.result_title,
+                nodes.result_summary,
+                nodes.result_table,
+                nodes.result_action,
+                nodes.result_countdown,
+            ] {
+                set_text(&mut texts, entity, "");
+            }
         }
     }
 
