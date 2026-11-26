@@ -6,7 +6,7 @@
 //! - `--stats`: 1초에 한 줄씩 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 출력합니다. 부하를 시험할 때 씁니다.
 //! - `--waves 8,12/20,30,40/60,90,150`: 밤마다 무리의 몬스터 수를 바꿉니다. 밤은 `/`로, 무리는 `,`로 나누고, 밤의 수가 원정의 날 수입니다.
 //!   수는 네 명이 있을 때의 크기이고, 방에 있는 사람이 적으면 그에 비례해서 줄어듭니다(`--stress`는 줄이지 않습니다). 부하를 시험할 때 씁니다.
-//! - `--stress`: 마차, 감시탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
+//! - `--stress`: 마차, 포탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
 //!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
 //!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다. 플레이어는 검과 활을 함께 가지고 시작합니다.
 //!   무리의 크기는 방에 있는 사람의 수와 관계없이 수치표 그대로입니다. 사람의 조작 없이 원정이 진행되어야 하므로 야영지를 건너뜁니다. 방은 만들어지자마자 첫날을 시작하고, 결과를 한 Tick만 보여 준 뒤 새 원정을 시작합니다.
@@ -136,6 +136,8 @@ fn tuning_from(options: &Options) -> Tuning {
         tuning.wagon.max_hp = u32::MAX;
         tuning.player.max_hp = u32::MAX;
         tuning.structures.watchtower.max_hp = u32::MAX;
+        tuning.structures.slow_tower.max_hp = u32::MAX;
+        tuning.structures.stun_tower.max_hp = u32::MAX;
         tuning.village.start_towers = tuning.spread_tower_sites(tuning.village.tower_limit);
         // 부하 시험용 클라이언트(`--bow`)가 Q로 활을 들 수 있게 검과 활을 함께 가지고 시작합니다.
         tuning.player.start_loadout = Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow));
@@ -298,6 +300,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caravan_rules::StructureKind;
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -397,7 +400,9 @@ mod tests {
         );
         assert_eq!(tuning.wagon.max_hp, u32::MAX);
         assert_eq!(tuning.player.max_hp, u32::MAX);
-        assert_eq!(tuning.structures.watchtower.max_hp, u32::MAX);
+        for kind in StructureKind::ALL {
+            assert_eq!(tuning.structures.get(kind).max_hp, u32::MAX, "{kind:?}");
+        }
         assert_eq!(tuning.ticks(tuning.nights.spawn_interval_secs), 1);
         assert_eq!(
             tuning.ticks(tuning.cycle.day_secs),

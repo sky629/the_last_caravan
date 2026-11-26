@@ -68,8 +68,9 @@ pub struct WeaponTuning {
     pub chest_weight: u32,
 }
 
-/// 맞은 몬스터에게 거는 효과입니다. 무기의 행과 포탑의 사격(`ShootTuning`)이 `on_hit`으로 가지고, 같은 값이 `Hit`에 실려서 몬스터에게 닿습니다.
-/// 효과를 추가하려면 변형을 하나 더하고, `effect::MonsterEffects::apply`의 `match`에 갈래를 하나 더합니다.
+/// 몬스터에게 거는 효과입니다. 무기의 행과 포탑의 사격(`ShootTuning`)은 `on_hit`으로 가지고, 같은 값이 `Hit`에 실려서 맞은 몬스터에게 닿습니다.
+/// 피해 없이 효과만 거는 포탑의 동작(`AfflictTuning`, `PulseTuning`)은 `debuff`로 가지고, 같은 값이 `Affliction`에 실려서 닿습니다.
+/// 효과를 추가하려면 변형을 하나 더하고, `effect::MonsterEffects`의 `would_take`와 `apply`, `Tuning::validate`의 `match`에 갈래를 하나씩 더합니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Debuff {
     /// `secs`초 동안 몬스터가 스스로 걷는 속도에 `factor`를 곱합니다. `factor`는 0보다 크고 1 이하입니다.
@@ -412,7 +413,8 @@ pub struct AfflictTuning {
 /// 범위 안의 모든 몬스터에게 효과를 거는 동작의 수치입니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PulseTuning {
-    /// 효과를 거는 간격입니다. 범위에 몬스터가 없으면 간격을 쓰지 않으므로, 몬스터가 들어오면 곧바로 겁니다.
+    /// 효과를 거는 간격입니다. 범위에 몬스터가 없으면 간격을 쓰지 않으므로, 비어 있던 범위에 몬스터가 들어오면 곧바로 겁니다.
+    /// 간격은 포탑마다 하나이므로, 두 펄스 사이에 범위에 들어온 몬스터는 다음 펄스에 효과를 받습니다.
     /// 효과의 시간 이하여야 범위 안의 몬스터에게 효과가 끊기지 않습니다(`Tuning::validate`).
     pub pulse_secs: f32,
     /// 출혈은 피해를 주고 스턴은 무리를 통째로 멈추므로 쓸 수 없습니다(`Tuning::validate`).

@@ -186,6 +186,31 @@ fn a_slow_tower_slows_every_monster_in_its_range_and_none_outside() {
 }
 
 #[test]
+fn a_monster_that_enters_the_range_between_two_pulses_is_slowed_by_the_next_pulse() {
+    let mut s = standing_still();
+    s.tower_of(StructureKind::SlowTower, 8, 8);
+    let first = s.monster_at(7.5, 9.5);
+    s.run_ticks(3);
+    assert!(effects_of(&s, first).is_slowed());
+
+    let late = s.monster_at(8.5, 9.5);
+    s.run_ticks(1);
+    assert!(
+        !effects_of(&s, late).is_slowed(),
+        "the tower pulsed three ticks ago and its next pulse has not come"
+    );
+    let mut waited = 1;
+    while !effects_of(&s, late).is_slowed() {
+        s.run_ticks(1);
+        waited += 1;
+        assert!(
+            waited <= s.ticks(0.5),
+            "not slowed half a second after entering"
+        );
+    }
+}
+
+#[test]
 fn a_crossbow_slow_of_50_percent_is_not_weakened_by_the_slow_tower_and_the_tower_takes_over_when_it_ends()
  {
     let mut s = walking_to_the_wagon();
