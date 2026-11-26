@@ -228,8 +228,8 @@ mod tests {
     use caravan_protocol::WireBuffs;
     use caravan_protocol::{
         WireChest, WireGroundWeapon, WireLife, WireLoadout, WireMonsterEffects, WireMonsterKind,
-        WireNode, WirePhase, WirePile, WirePos, WireStruck, WireTile, WireTower, WireTowerState,
-        WireWagon, WireWeaponKind,
+        WireNode, WirePhase, WirePile, WirePos, WireStruck, WireStructureKind, WireTile, WireTower,
+        WireTowerState, WireWagon, WireWeaponKind,
     };
 
     /// 모든 종류의 개체가 한 장면에 있는 야영지의 모습입니다.
@@ -255,6 +255,7 @@ mod tests {
                 spare: None,
             },
             prompt: None,
+            build_kind: WireStructureKind::Watchtower,
         };
         Frame {
             tick: 20.0,
@@ -276,7 +277,7 @@ mod tests {
             towers: vec![WireTower {
                 id: 1,
                 tile: WireTile { x: 15, y: 11 },
-                max_hp: 300,
+                kind: WireStructureKind::Watchtower,
                 state: WireTowerState::Standing {
                     hp: 250,
                     last_shot: None,

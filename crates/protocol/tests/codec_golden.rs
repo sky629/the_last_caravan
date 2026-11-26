@@ -12,13 +12,14 @@
 
 use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RackInfo, RejectReason,
-    SeatToken, ServerMsg, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuffs,
-    WireBuildRefusal, WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon, WireInteraction,
-    WireLife, WireLoadout, WireMember, WireMonster, WireMonsterKind, WireMonsterStatus,
-    WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile,
-    WirePrompt, WireRecordRow, WireRect, WireRepairTarget, WireReport, WireRoster, WireShot,
-    WireStruck, WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind,
-    WorldInfo, decode_client, decode_server, encode_client, encode_server,
+    SeatToken, ServerMsg, Snapshot, StructureKindInfo, WeaponInfo, Welcome, WireAngle, WireAttack,
+    WireBuffs, WireBuildRefusal, WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon,
+    WireInteraction, WireLife, WireLoadout, WireMember, WireMonster, WireMonsterKind,
+    WireMonsterStatus, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
+    WirePos, WireProjectile, WirePrompt, WireRecordRow, WireRect, WireRepairTarget, WireReport,
+    WireRoster, WireShot, WireStruck, WireStructureKind, WireTile, WireTower, WireTowerState,
+    WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server, encode_client,
+    encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -206,6 +207,22 @@ fn welcome_carries_the_fixed_world() {
                         pos: WirePos { x: 666, y: 4672 },
                     },
                 ],
+                structure_kinds: vec![
+                    StructureKindInfo {
+                        kind: WireStructureKind::Watchtower,
+                        max_hp: 300,
+                        build_cost: 10,
+                        range: 6.0,
+                        covers_area: false,
+                    },
+                    StructureKindInfo {
+                        kind: WireStructureKind::SlowTower,
+                        max_hp: 300,
+                        build_cost: 15,
+                        range: 4.0,
+                        covers_area: true,
+                    },
+                ],
             },
         })),
         &[
@@ -255,6 +272,17 @@ fn welcome_carries_the_fixed_world() {
             0x80, 0x04, 0xC0, 0x24, // pos 512, 4672
             0x01, // Bow
             0x9A, 0x05, 0xC0, 0x24, // pos 666, 4672
+            0x02, // structure_kinds: 길이 2
+            0x00, // Watchtower
+            0xAC, 0x02, // max_hp 300
+            0x0A, // build_cost 10
+            0x00, 0x00, 0xC0, 0x40, // range 6.0
+            0x00, // covers_area 거짓
+            0x01, // SlowTower
+            0xAC, 0x02, // max_hp 300
+            0x0F, // build_cost 15
+            0x00, 0x00, 0x80, 0x40, // range 4.0
+            0x01, // covers_area 참
         ],
     );
 }
@@ -381,7 +409,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
         towers: vec![WireTower {
             id: 1,
             tile: WireTile { x: 15, y: 11 },
-            max_hp: 300,
+            kind: WireStructureKind::SlowTower,
             state: WireTowerState::Standing {
                 hp: 120,
                 last_shot: Some(WireShot {
@@ -431,6 +459,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
                     spare: Some(WireWeaponKind::Sword),
                 },
                 prompt: Some(WirePrompt::TakeWeapon(WireWeaponKind::Spear)),
+                build_kind: WireStructureKind::SlowTower,
             },
             WirePlayer {
                 id: 2,
@@ -452,6 +481,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
                     spare: None,
                 },
                 prompt: None,
+                build_kind: WireStructureKind::Watchtower,
             },
         ],
         monsters: vec![WireMonster {
@@ -486,7 +516,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0xC2, 0x03, 0xF4, 0x03, // wagon hp 450, max_hp 500
             0x07, // stash
             0x01, // towers: 길이 1
-            0x01, 0x0F, 0x0B, 0xAC, 0x02, // id 1, tile 15 11, max_hp 300
+            0x01, 0x0F, 0x0B, 0x01, // id 1, tile 15 11, SlowTower
             0x01, 0x78, // Standing, hp 120
             0x01, 0xC8, 0x01, 0x7F, // last_shot: 있음, target 200, tick 127
             0x02, // nodes: 길이 2
@@ -509,6 +539,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x01, 0x80, 0x10, 0xC0, 0x09, // trace_end: 있음, 2048, 1216
             0x01, 0x01, 0x00, // loadout: 든 무기 Bow, 다른 칸 있음 Sword
             0x01, 0x01, 0x03, // prompt: 있음, TakeWeapon(변형 1), Spear
+            0x01, // build_kind: SlowTower
             // 플레이어 2: 쓰러졌고 25%까지 부활됨
             0x02, 0x00, // id, team
             0x80, 0x0C, 0xC0, 0x0E, // pos 1536, 1856
@@ -520,6 +551,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x00, // trace_end: 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
+            0x00, // build_kind: Watchtower
             0x01, // monsters: 길이 1
             0x05, 0x00, // id 5, Grunt
             0x80, 0x18, 0x80, 0x01, // pos 3072, 128
@@ -644,7 +676,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
     snapshot.towers = vec![WireTower {
         id: 1,
         tile: WireTile { x: 2, y: 3 },
-        max_hp: 300,
+        kind: WireStructureKind::StunTower,
         state: WireTowerState::Building { progress: 0.5 },
     }];
     let alive_with = |id, interaction, build_refusal, buffs| WirePlayer {
@@ -668,6 +700,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             spare: None,
         },
         prompt: None,
+        build_kind: WireStructureKind::Watchtower,
     };
     let alive = |id, interaction, build_refusal| {
         alive_with(id, interaction, build_refusal, WireBuffs::NONE)
@@ -691,6 +724,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
         ),
         WirePlayer {
             prompt: Some(WirePrompt::OpenChest),
+            build_kind: WireStructureKind::StunTower,
             ..alive_with(
                 4,
                 None,
@@ -744,7 +778,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x00, // wagon
             0x00, // stash
             0x01, // towers: 길이 1
-            0x01, 0x02, 0x03, 0xAC, 0x02, // id 1, tile 2 3, max_hp 300
+            0x01, 0x02, 0x03, 0x02, // id 1, tile 2 3, StunTower
             0x00, 0x00, 0x00, 0x00, 0x3F, // Building, progress 0.5
             0x00, // nodes: 길이 0
             0x00, // piles: 길이 0
@@ -758,6 +792,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
+            0x00, // build_kind: Watchtower
             0x04, 0x00, 0x00, 0x00, 0x00, // id 4, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x00, // interaction: 없음
@@ -766,6 +801,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x01, 0x00, // prompt: 있음, OpenChest
+            0x02, // build_kind: StunTower
             0x05, 0x00, 0x00, 0x00, 0x00, // id 5, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x02, 0x01, // interaction: 있음, Building, tower 1
@@ -774,6 +810,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
+            0x00, // build_kind: Watchtower
             0x07, 0x00, 0x00, 0x00, 0x00, // id 7, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x03, 0x02, // interaction: 있음, Gathering, node 2
@@ -782,6 +819,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
+            0x00, // build_kind: Watchtower
             0x08, 0x00, 0x00, 0x00, 0x00, // id 8, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x01, 0x01, 0x01, // interaction: 있음, Repairing, Wagon, stash_short 참
@@ -790,6 +828,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
+            0x00, // build_kind: Watchtower
             0x09, 0x00, 0x00, 0x00, 0x00, // id 9, team, pos 0 0, facing 0
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x04, 0x03, 0x00, 0x00, 0x00,
@@ -799,12 +838,14 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
+            0x00, // build_kind: Watchtower
             0x06, 0x00, 0x00, 0x00, 0x00, // id 6, team, pos 0 0, facing 0
             0x02, // Dead
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x01,
             0x00, // loadout: 든 무기 Bow, 다른 칸 없음 (쓰러지거나 죽어도 무기를 가집니다)
             0x00, // prompt: 없음
+            0x00, // build_kind: Watchtower
             0x00, // monsters: 길이 0
             0x00, // chests: 길이 0
             0x00, // ground_weapons: 길이 0

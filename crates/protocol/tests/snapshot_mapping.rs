@@ -5,7 +5,7 @@ use caravan_protocol::{
     RoomCode, SeatToken, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuffs,
     WireBuildRefusal, WireCannotBuild, WireDelivery, WireInteraction, WireLife, WireLoadout,
     WireMonsterKind, WireOutcome, WirePhase, WirePos, WirePrompt, WireRepairTarget, WireStruck,
-    WireTile, WireTowerState, WireWeaponKind,
+    WireStructureKind, WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
     AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Start,
@@ -563,6 +563,72 @@ fn building_in_the_camp_shows_the_camp_as_the_reason_on_the_wire() {
         build_refusal.map(|refusal| refusal.why),
         Some(WireCannotBuild::InCamp)
     );
+}
+
+#[test]
+fn a_tower_carries_its_kind_and_the_welcome_carries_its_max_hp_range_and_cost() {
+    // 보관함에 스턴 포탑(20)을 지을 자원이 있고, 플레이어가 E를 두 번 누른 뒤 B로 짓기 시작합니다.
+    let mut sim = sim_with(|t| t.wagon.start_stash = 30);
+    let builder = sim.add_player().unwrap();
+    let press_e = PlayerInputs::from([(
+        builder,
+        PlayerInput {
+            cycle_tower: true,
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &press_e, 2);
+    assert_eq!(
+        Snapshot::from_sim(&sim).players[0].build_kind,
+        WireStructureKind::StunTower,
+        "the choice is sent with the player"
+    );
+    let building = PlayerInputs::from([(
+        builder,
+        PlayerInput {
+            build: true,
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &building, 1);
+
+    let snapshot = Snapshot::from_sim(&sim);
+    let [site] = snapshot.towers[..] else {
+        panic!("one site expected, got {:?}", snapshot.towers);
+    };
+    assert_eq!(site.kind, WireStructureKind::StunTower);
+
+    let player = sim.player(builder).unwrap();
+    let welcome = Welcome::from_sim(&sim, player, &room(), SeatToken([7; 16]));
+    let kinds: Vec<_> = welcome
+        .world
+        .structure_kinds
+        .iter()
+        .map(|info| {
+            (
+                info.kind,
+                info.max_hp,
+                info.build_cost,
+                info.range,
+                info.covers_area,
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            (WireStructureKind::Watchtower, 300, 10, 6.0, false),
+            (WireStructureKind::SlowTower, 300, 15, 4.0, true),
+            (WireStructureKind::StunTower, 300, 20, 5.0, false),
+        ],
+        "one row for each kind in the order of choosing"
+    );
+    let stun = welcome
+        .world
+        .structure(site.kind)
+        .expect("the kind is listed");
+    assert_eq!((stun.build_cost, stun.range), (20, 5.0));
 }
 
 #[test]

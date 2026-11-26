@@ -13,7 +13,7 @@ use std::f32::consts::TAU;
 use caravan_protocol::{
     Snapshot, WireAngle, WireAttack, WireChest, WireGroundWeapon, WireLife, WireLoadout,
     WireMonster, WireMonsterEffects, WireMonsterKind, WireNode, WirePhase, WirePile, WirePlayer,
-    WireProjectile, WirePrompt, WireTower, WireWagon,
+    WireProjectile, WirePrompt, WireStructureKind, WireTower, WireWagon,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -91,6 +91,8 @@ pub struct PlayerView {
     pub loadout: WireLoadout,
     /// F를 누르면 하게 되는 일 가운데 화면에 안내할 것입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
     pub prompt: Option<WirePrompt>,
+    /// 건설 키가 지을 포탑의 종류입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub build_kind: WireStructureKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -310,6 +312,7 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
         last_attack: a.last_attack,
         loadout: a.loadout,
         prompt: a.prompt,
+        build_kind: a.build_kind,
     }
 }
 
@@ -425,6 +428,7 @@ mod tests {
                 spare: None,
             },
             prompt: None,
+            build_kind: WireStructureKind::Watchtower,
         }
     }
 

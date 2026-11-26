@@ -1,13 +1,13 @@
-//! 몬스터 300마리, 감시탑 40개(상한), 플레이어 4명이 있는 스냅샷의 크기가 정해 둔 한계 안인지 확인합니다.
+//! 몬스터 300마리, 포탑 40개(상한), 플레이어 4명이 있는 스냅샷의 크기가 정해 둔 한계 안인지 확인합니다.
 //!
-//! 한계는 측정한 크기보다 4%에서 5% 큰 값입니다. 한계를 넘으면 접속 하나가 쓰는 대역폭이 늘어난 것이므로, 다음 단계의 설계를 다시 정해야 합니다.
+//! 한계는 측정한 크기보다 3%에서 6% 큰 값입니다. 한계를 넘으면 접속 하나가 쓰는 대역폭이 늘어난 것이므로, 다음 단계의 설계를 다시 정해야 합니다.
 
 use caravan_protocol::{
     ServerMsg, Snapshot, WireAngle, WireAttack, WireBuffs, WireGroundWeapon, WireInteraction,
     WireLife, WireLoadout, WireMonster, WireMonsterEffects, WireMonsterKind, WireMonsterStatus,
     WireNightStep, WireNode, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt,
-    WireRecordRow, WireReport, WireShot, WireStruck, WireTile, WireTower, WireTowerState,
-    WireWagon, WireWeaponKind, encode_server,
+    WireRecordRow, WireReport, WireShot, WireStruck, WireStructureKind, WireTile, WireTower,
+    WireTowerState, WireWagon, WireWeaponKind, encode_server,
 };
 
 /// 세 효과가 모두 걸린 몬스터의 종류와 효과입니다. 효과가 크기를 늘리지 않는다는 것을 가장 큰 경우로 확인하려고 모든 몬스터가 이 상태입니다.
@@ -42,6 +42,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
         },
         // 네 명이 모두 바닥의 무기 곁에 서 있는 경우입니다.
         prompt: Some(WirePrompt::TakeWeapon(WireWeaponKind::Spear)),
+        build_kind: WireStructureKind::StunTower,
     };
     Snapshot {
         tick: 100_000,
@@ -56,7 +57,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
             max_hp: 500,
         },
         stash: 12,
-        // 감시탑이 상한(40개)만큼 서 있고 모두 사격 중입니다.
+        // 포탑이 상한(40개)만큼 서 있고 모두 사격 중입니다. 종류는 번갈아 가며 정합니다.
         towers: (1..=40)
             .map(|id| WireTower {
                 id,
@@ -64,7 +65,11 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
                     x: (2 * id % 64) as u8,
                     y: (2 * id % 56) as u8,
                 },
-                max_hp: 300,
+                kind: [
+                    WireStructureKind::Watchtower,
+                    WireStructureKind::SlowTower,
+                    WireStructureKind::StunTower,
+                ][id as usize % 3],
                 state: WireTowerState::Standing {
                     hp: 120,
                     last_shot: Some(WireShot {
@@ -170,11 +175,11 @@ fn encoded_len(snapshot: Snapshot) -> usize {
 }
 
 /// 300마리 스냅샷 하나의 한계(바이트)입니다. 몬스터 번호가 16383 이하일 때, 몬스터 하나는 9바이트이므로 300마리가 2700바이트입니다.
-/// 서 있는 감시탑 하나가 사격 중일 때 약 14바이트이므로 40개가 약 560바이트이고, 나머지(플레이어 4명, 마차, 채집 지점, 바닥의 무기 4개, 머리)가 약 150바이트입니다.
+/// 서 있는 포탑 하나가 사격 중일 때 13바이트이므로 40개가 520바이트이고, 나머지(플레이어 4명, 마차, 채집 지점, 바닥의 무기 4개, 머리)가 약 170바이트입니다.
 /// 이 한계 아래에서 가장 큰 경우는 `the_worst_case_...` 시험이 확인합니다.
 const BOUND_BYTES: usize = 3_600;
 /// 몬스터 번호가 16384 이상이면 번호가 3바이트가 되어 몬스터 하나가 10바이트입니다. 오래 이어진 방에서 이 크기가 됩니다.
-/// 감시탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,765바이트이고, 한계가 5% 큽니다.
+/// 포탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,729바이트이고, 한계가 6% 큽니다.
 const BOUND_BYTES_WITH_LARGE_IDS: usize = 3_950;
 
 #[test]

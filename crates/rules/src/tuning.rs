@@ -380,6 +380,16 @@ pub enum TowerAction {
     Pulse(PulseTuning),
 }
 
+impl TowerAction {
+    /// 범위 안의 모두에게 작용하는 동작이면 참이고, 한 마리만 노리는 동작이면 거짓입니다. 화면은 참인 포탑이 서 있는 동안 범위를 원으로 그립니다.
+    pub fn covers_area(&self) -> bool {
+        match self {
+            TowerAction::Shoot(_) | TowerAction::Afflict(_) => false,
+            TowerAction::Pulse(_) => true,
+        }
+    }
+}
+
 /// 몬스터 한 마리에게 피해를 주는 동작의 수치입니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShootTuning {

@@ -215,6 +215,7 @@ mod tests {
                 spare: None,
             },
             prompt: None,
+            build_kind: caravan_protocol::WireStructureKind::Watchtower,
         }
     }
 

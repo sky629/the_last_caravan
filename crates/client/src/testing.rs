@@ -16,12 +16,18 @@ pub const YOU: u32 = 1;
 
 /// 기본 수치의 방 `test`에 이름 `KANG`, 플레이어 번호 `YOU`로 입장을 마친 화면 흐름입니다.
 pub fn joined_flow() -> ClientFlow {
+    joined_flow_with(|_| {})
+}
+
+/// `joined_flow`와 같되, 서버의 입장 안내를 `adjust`로 고쳐서 받은 것으로 합니다.
+pub fn joined_flow_with(adjust: impl FnOnce(&mut Welcome)) -> ClientFlow {
     let mut sim = Sim::new(Tuning::default(), Seed(1));
     let first = sim.add_player().unwrap();
     let room = RoomCode::parse("test").unwrap();
     let mut welcome =
         Welcome::from_sim(&sim, sim.player(first).unwrap(), &room, SeatToken([7; 16]));
     welcome.you = YOU;
+    adjust(&mut welcome);
     let launch = LaunchOptions::from_values(
         Some("test".to_string()),
         Some("KANG".to_string()),

@@ -13,8 +13,8 @@ use caravan_rules::{MonsterKind, NightPlan, Tuning, WavePlan, WaveScaling};
 use common::rig_in_expedition;
 
 /// 이 크기를 넘으면 접속 하나의 전송량이 측정한 값보다 늘어난 것입니다.
-/// 몬스터 번호가 16383 이하이므로 몬스터 하나는 9바이트이고, 300마리가 2700바이트입니다. 감시탑 40개가 약 560바이트를 더하고,
-/// 이 테스트의 감시탑은 HP가 `u32::MAX`여서 실제보다 값마다 3바이트씩 더 씁니다.
+/// 몬스터 번호가 16383 이하이므로 몬스터 하나는 9바이트이고, 300마리가 2700바이트입니다. 포탑 40개가 약 520바이트를 더하고,
+/// 이 테스트의 포탑은 HP가 `u32::MAX`여서 실제보다 값마다 3바이트씩 더 씁니다.
 const BOUND_BYTES: usize = 3_600;
 
 fn crowd_tuning() -> Tuning {

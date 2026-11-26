@@ -353,8 +353,8 @@ mod tests {
     use crate::view;
     use caravan_client_core::{Frame, ShownEffect};
     use caravan_protocol::{
-        WireBuffs, WireLoadout, WireMonsterEffects, WireMonsterKind, WirePhase, WireWagon,
-        WireWeaponKind,
+        WireBuffs, WireLoadout, WireMonsterEffects, WireMonsterKind, WirePhase, WireStructureKind,
+        WireWagon, WireWeaponKind,
     };
     use caravan_rules::Team;
 
@@ -405,6 +405,7 @@ mod tests {
                 spare: None,
             },
             prompt: None,
+            build_kind: WireStructureKind::Watchtower,
         }
     }
 

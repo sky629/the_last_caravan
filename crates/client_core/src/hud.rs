@@ -6,7 +6,8 @@
 use caravan_protocol::{
     PROTOCOL_VERSION, RejectReason, RoomCode, WireBuildRefusal, WireCannotBuild, WireInteraction,
     WireLife, WireLoadout, WireMember, WireNightStep, WireOutcome, WirePhase, WirePrompt,
-    WireRecordRow, WireRepairTarget, WireReport, WireTowerState, WireWeaponKind,
+    WireRecordRow, WireRepairTarget, WireReport, WireStructureKind, WireTowerState, WireWeaponKind,
+    WorldInfo,
 };
 use caravan_rules::Team;
 
@@ -33,6 +34,8 @@ pub struct Hud {
     /// 내가 받은 버프의 이름입니다. `HASTE`(공격 속도)와 `SWIFT`(이동 속도) 가운데 받은 것을 두 칸 띄워 적습니다.
     /// 살아 있고 버프가 있을 때만 있고, 결과를 보여 주는 동안에도 없습니다. 다른 플레이어의 버프는 보이지 않습니다.
     pub buffs: Option<String>,
+    /// 건설 키(B)가 지을 포탑의 종류와 비용입니다. `BUILD  SLOW TOWER  15`처럼 적습니다. 원정 중에만 있고, E를 누르면 바뀝니다.
+    pub build: Option<String>,
     /// F를 누르면 하게 되는 일의 안내입니다. 서버가 정해서 스냅샷에 실어 보내고, 내 캐릭터의 것만 표시합니다.
     pub hint: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 접속과 첫 스냅샷을 기다리는 안내가 여기에 나옵니다.
@@ -160,6 +163,7 @@ impl Hud {
             carry: None,
             weapon: None,
             buffs: None,
+            build: None,
             hint: None,
             banner: None,
             camp: None,
@@ -253,8 +257,12 @@ impl Hud {
                 return hud;
             }
             hud.buffs = buffs_text(me);
+            // 야영지에서는 건설할 수 없고 종류도 바뀌지 않으므로 원정 중에만 보여 줍니다.
+            if !matches!(frame.phase, WirePhase::Camp { .. }) {
+                hud.build = Some(build_text(me.build_kind, &joined.welcome.world));
+            }
             hud.hint = me.prompt.map(prompt_text);
-            hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
+            hud.action = action_meter(me, frame, &joined.welcome.world);
             if let WireLife::Alive {
                 carried,
                 interaction,
@@ -528,9 +536,10 @@ fn ally_meter(ally: &PlayerView) -> Meter {
 }
 
 /// 내가 부활, 수리, 채집, 건설, 상자 열기를 하고 있거나 부활당하고 있을 때의 진행 막대입니다.
-/// 수리에는 진행도가 따로 없으므로, 수리하는 감시탑이나 마차의 HP가 차오르는 모습을 진행도로 보여 줍니다.
-/// 채집도 마찬가지로 채집하는 지점의 남은 자원(`node_amount`가 가득 찬 양)이 줄어드는 모습을 보여 줍니다.
-fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Meter> {
+/// 수리에는 진행도가 따로 없으므로, 수리하는 포탑이나 마차의 HP가 차오르는 모습을 진행도로 보여 줍니다.
+/// 포탑의 최대 HP는 종류마다 다르므로 입장 안내(`world`)의 종류표에서 읽습니다.
+/// 채집도 마찬가지로 채집하는 지점의 남은 자원(`world.node_amount`가 가득 찬 양)이 줄어드는 모습을 보여 줍니다.
+fn action_meter(me: &PlayerView, frame: &Frame, world: &WorldInfo) -> Option<Meter> {
     match me.life {
         WireLife::Alive {
             interaction: Some(WireInteraction::Reviving { target, progress }),
@@ -570,9 +579,10 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
             let WireTowerState::Standing { hp, .. } = tower.state else {
                 return None;
             };
+            let max_hp = world.structure(tower.kind)?.max_hp;
             Some(Meter {
-                label: format!("REPAIRING TOWER  {hp} / {}", tower.max_hp),
-                fraction: bar_fraction(hp, tower.max_hp),
+                label: format!("REPAIRING TOWER  {hp} / {max_hp}"),
+                fraction: bar_fraction(hp, max_hp),
                 tone: Tone::Progress,
             })
         }
@@ -582,8 +592,8 @@ fn action_meter(me: &PlayerView, frame: &Frame, node_amount: u32) -> Option<Mete
         } => {
             let node = frame.nodes.iter().find(|candidate| candidate.id == node)?;
             Some(Meter {
-                label: format!("GATHERING  {} / {node_amount}", node.amount),
-                fraction: bar_fraction(node.amount, node_amount),
+                label: format!("GATHERING  {} / {}", node.amount, world.node_amount),
+                fraction: bar_fraction(node.amount, world.node_amount),
                 tone: Tone::Progress,
             })
         }
@@ -641,6 +651,24 @@ fn buffs_text(me: &PlayerView) -> Option<String> {
         .filter_map(|(on, name)| on.then_some(name))
         .collect();
     (!names.is_empty()).then(|| names.join("  "))
+}
+
+/// 지을 포탑의 이름과 비용입니다. 서버가 보내지 않은 종류이면 비용 없이 이름만 적습니다.
+fn build_text(kind: WireStructureKind, world: &WorldInfo) -> String {
+    let name = structure_name(kind);
+    match world.structure(kind) {
+        Some(info) => format!("BUILD  {name}  {}", info.build_cost),
+        None => format!("BUILD  {name}"),
+    }
+}
+
+/// 포탑의 이름입니다. `match`가 모든 종류를 다루므로, 종류를 추가하면 여기서 컴파일 오류가 납니다.
+pub fn structure_name(kind: WireStructureKind) -> &'static str {
+    match kind {
+        WireStructureKind::Watchtower => "WATCHTOWER",
+        WireStructureKind::SlowTower => "SLOW TOWER",
+        WireStructureKind::StunTower => "STUN TOWER",
+    }
 }
 
 /// F를 누르면 하게 되는 일의 안내 문구입니다. `match`가 모든 안내를 다루므로, 안내를 추가하면 여기서 컴파일 오류가 납니다.
@@ -756,12 +784,18 @@ mod tests {
     }
 
     fn session_in_room() -> Session {
+        session_in_room_with(|_| {})
+    }
+
+    /// 입장 안내를 `adjust`로 고친 방입니다.
+    fn session_in_room_with(adjust: impl FnOnce(&mut Welcome)) -> Session {
         let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         let room = RoomCode::parse("test").unwrap();
         let mut welcome =
             Welcome::from_sim(&sim, sim.player(first).unwrap(), &room, SeatToken([7; 16]));
         welcome.you = YOU;
+        adjust(&mut welcome);
         let mut session = Session::new(request("test"), DEFAULT_SERVER.to_string(), None);
         session.on_event(ClientEvent::Connected);
         session.on_event(ClientEvent::Message(ServerMsg::Welcome(Box::new(welcome))));
@@ -794,6 +828,7 @@ mod tests {
             last_attack: None,
             loadout: loadout(WireWeaponKind::Sword, None),
             prompt: None,
+            build_kind: WireStructureKind::Watchtower,
         }
     }
 
@@ -818,7 +853,7 @@ mod tests {
             towers: vec![WireTower {
                 id: 1,
                 tile: WireTile { x: 15, y: 11 },
-                max_hp: 300,
+                kind: WireStructureKind::Watchtower,
                 state: WireTowerState::Standing {
                     hp: 250,
                     last_shot: None::<WireShot>,
@@ -1497,7 +1532,7 @@ mod tests {
         frame.towers.push(WireTower {
             id: 2,
             tile: WireTile { x: 16, y: 11 },
-            max_hp: 300,
+            kind: WireStructureKind::Watchtower,
             state: WireTowerState::Building { progress: 0.4 },
         });
         let hud = Hud::of(&session, Some(&frame), INVITE);
@@ -2060,6 +2095,90 @@ mod tests {
         assert_eq!(hud.hint, None);
         assert_eq!(hud.action, None);
         assert!(hud.me.is_some(), "my own meter stays");
+    }
+
+    #[test]
+    fn the_kind_i_build_and_its_cost_are_shown_during_the_expedition_and_follow_my_choice() {
+        let session = session_in_room();
+        let mut me = player(YOU, alive(100));
+        me.build_kind = WireStructureKind::SlowTower;
+        let hud = Hud::of(&session, Some(&frame(vec![me.clone()])), INVITE);
+        assert_eq!(hud.build.as_deref(), Some("BUILD  SLOW TOWER  15"));
+
+        me.build_kind = WireStructureKind::StunTower;
+        let hud = Hud::of(&session, Some(&frame(vec![me])), INVITE);
+        assert_eq!(hud.build.as_deref(), Some("BUILD  STUN TOWER  20"));
+    }
+
+    #[test]
+    fn the_build_line_is_not_shown_in_the_camp_or_for_an_ally() {
+        let session = session_in_room();
+        let hud = Hud::of(&session, Some(&camp_frame(vec![], None)), INVITE);
+        assert_eq!(hud.build, None);
+
+        let mut ally = player(2, alive(100));
+        ally.build_kind = WireStructureKind::StunTower;
+        let allies = frame(vec![player(YOU, alive(100)), ally]);
+        let hud = Hud::of(&session, Some(&allies), INVITE);
+        assert_eq!(hud.build.as_deref(), Some("BUILD  WATCHTOWER  10"));
+    }
+
+    #[test]
+    fn a_kind_the_welcome_does_not_list_is_shown_by_its_name_alone() {
+        let session = session_in_room_with(|welcome| {
+            welcome
+                .world
+                .structure_kinds
+                .retain(|info| info.kind != WireStructureKind::SlowTower);
+        });
+        let mut me = player(YOU, alive(100));
+        me.build_kind = WireStructureKind::SlowTower;
+        let hud = Hud::of(&session, Some(&frame(vec![me])), INVITE);
+        assert_eq!(hud.build.as_deref(), Some("BUILD  SLOW TOWER"));
+    }
+
+    #[test]
+    fn every_tower_kind_has_its_own_name_on_the_screen() {
+        let names: std::collections::BTreeSet<&str> = [
+            WireStructureKind::Watchtower,
+            WireStructureKind::SlowTower,
+            WireStructureKind::StunTower,
+        ]
+        .into_iter()
+        .map(structure_name)
+        .collect();
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn the_repair_bar_reads_the_max_hp_of_the_tower_kind_from_the_welcome() {
+        let session = session_in_room_with(|welcome| {
+            for info in &mut welcome.world.structure_kinds {
+                if info.kind == WireStructureKind::SlowTower {
+                    info.max_hp = 500;
+                }
+            }
+        });
+        let repairer = player(
+            YOU,
+            WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 0,
+                stamina: 100,
+                interaction: Some(WireInteraction::Repairing {
+                    target: WireRepairTarget::Tower { tower: 1 },
+                    stash_short: false,
+                }),
+                build_refusal: None,
+                buffs: WireBuffs::NONE,
+            },
+        );
+        let mut frame = frame(vec![repairer]);
+        frame.towers[0].kind = WireStructureKind::SlowTower;
+        let action = Hud::of(&session, Some(&frame), INVITE).action.unwrap();
+        assert_eq!(action.label, "REPAIRING TOWER  250 / 500");
+        assert_eq!(action.fraction, 0.5);
     }
 
     #[test]
