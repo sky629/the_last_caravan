@@ -84,14 +84,14 @@ impl PlayerBuffs {
 
     /// 버프를 받습니다. 버프를 거는 길은 이 함수 하나입니다. 세기는 `Tuning::effects`의 값이고, 길이는 거는 쪽이 정합니다.
     /// 이미 같은 버프가 걸려 있으면 남은 시간이 새 길이로 바뀝니다.
+    /// 길이가 한 Tick도 되지 않는 버프(0초 이하이거나 숫자가 아닌 길이)는 받지 않고, 걸려 있던 버프도 그대로 둡니다.
     pub(crate) fn grant(&mut self, buff: Buff, t: &Tuning) {
-        match buff {
-            Buff::Haste { secs } => {
-                self.haste = Some(Scaling::new(t.effects.haste_cooldown_factor, secs, t));
-            }
-            Buff::Swift { secs } => {
-                self.swift = Some(Scaling::new(t.effects.swift_speed_factor, secs, t));
-            }
+        let (slot, factor, secs) = match buff {
+            Buff::Haste { secs } => (&mut self.haste, t.effects.haste_cooldown_factor, secs),
+            Buff::Swift { secs } => (&mut self.swift, t.effects.swift_speed_factor, secs),
+        };
+        if t.ticks(secs) > 0 {
+            *slot = Some(Scaling::new(factor, secs, t));
         }
     }
 

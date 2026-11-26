@@ -601,7 +601,7 @@ impl Tuning {
     /// 속도는 모두 유한하고 0 이상이어야 합니다.
     /// 가장 중요한 전제는 「한 번에 움직이는 거리가 몸의 반지름보다 짧다」입니다.
     /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 얇은 벽을 건너뛰는 거리를 한 번에 움직일 수 있으면 개체가 벽을 통과합니다.
-    /// 플레이어는 한 Tick의 이동이 반지름 이상이면 반지름보다 짧은 걸음으로 나누어 옮기므로(`player::move_players`) 속도에 상한이 없고, 걸음의 수를 정하는 반지름만 0보다 커야 합니다.
+    /// 플레이어는 한 Tick의 이동이 반지름 이상이면 반지름보다 짧은 걸음으로 나누어 옮기므로(`player::move_players`) 반지름보다 길게 움직여도 됩니다. 다만 걸음의 수가 한 Tick의 거리를 반지름으로 나눈 값이므로, 반지름은 0보다 커야 하고 가장 빠른 한 Tick의 거리(달리면서 이동 속도 버프를 받은 경우)는 맵의 짧은 변보다 짧아야 합니다.
     /// 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값이 이 전제를 지키는지 검사합니다.
     ///
     /// 맵은 타일에 꼭 맞아야 합니다. 크기, 장애물, 마차가 정수 좌표이고, 몸의 반지름이 타일의 절반보다 짧고,
@@ -785,6 +785,17 @@ impl Tuning {
             |value: f32| value >= 1.0 && value <= f32::from(u16::MAX) && value.fract() == 0.0;
         if !tiled(map.width) || !tiled(map.height) {
             return Err("the map size must be a whole number of tiles".to_string());
+        }
+        // 플레이어의 걸음의 수는 한 Tick의 거리에 비례하므로, 거리에 상한이 없으면 Tick 하나가 끝나지 않습니다.
+        let fastest_tick =
+            (self.player.speed * sprint.speed_multiplier * self.effects.swift_speed_factor)
+                .max(self.player.crawl_speed)
+                * self.dt();
+        let shorter_side = map.width.min(map.height);
+        if fastest_tick >= shorter_side {
+            return Err(format!(
+                "player speed must move a player less than the shorter side of the map ({shorter_side}) in one tick, but the fastest player moves {fastest_tick}"
+            ));
         }
         let bounds = Rect::new(0.0, 0.0, map.width, map.height);
         for solid in map.obstacles.iter().chain([&map.wagon]) {
@@ -1042,7 +1053,7 @@ impl Tuning {
     /// - 탄환의 반지름은 유한하고 0 이상이며, √2를 곱한 값이 플레이어의 반지름보다 짧습니다. 탄환은 플레이어의 중심에서 나가므로,
     ///   벽이나 장애물의 모서리에 붙어 선 플레이어가 쏘는 탄환이 처음부터 막힌 곳에 닿으면 안 되기 때문입니다.
     ///
-    /// 탄환의 속도에는 상한이 없습니다. 이동(`collision`)은 한 Tick의 거리가 반지름보다 짧아야 하지만, 탄환의 명중 판정은 이동하는 선분 전체를 검사합니다.
+    /// 탄환의 속도에는 상한이 없습니다. 이동(`collision`)은 한 번에 움직이는 거리가 반지름보다 짧아야 하지만, 탄환의 명중 판정은 이동하는 선분 전체를 검사합니다.
     ///
     /// `match`에 `_` 갈래가 없으므로 전달 방식을 추가하면 컴파일러가 이 검사를 더하라고 알려 줍니다.
     fn validate_weapons(&self) -> Result<(), String> {

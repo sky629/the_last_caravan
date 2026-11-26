@@ -14,7 +14,7 @@ fn the_default_tuning_is_valid() {
 }
 
 #[test]
-fn one_tick_of_walking_is_shorter_than_a_body_radius_so_nothing_tunnels() {
+fn one_tick_of_a_walking_monster_is_shorter_than_a_body_radius_so_it_does_not_tunnel() {
     let t = Tuning::default();
     assert!(t.monsters.grunt.speed * t.dt() < t.monsters.grunt.radius);
 }
@@ -527,6 +527,34 @@ fn a_sprint_that_moves_a_player_a_body_radius_or_more_in_one_tick_is_valid() {
 }
 
 #[test]
+fn a_player_fast_enough_to_cross_the_map_in_one_tick_is_rejected_and_the_reason_names_it() {
+    // 걸음의 수는 한 Tick의 거리를 반지름으로 나눈 값이므로, 거리에 상한이 없으면 Tick 하나가 끝나지 않거나 걸음의 수가 넘칩니다.
+    let side = Tuning::default().map.width;
+    let dt = Tuning::default().dt();
+    let boosts =
+        Tuning::default().sprint.speed_multiplier * Tuning::default().effects.swift_speed_factor;
+    let mut just_below = Tuning::default();
+    just_below.player.speed = side / dt / boosts * 0.99;
+    assert_eq!(just_below.validate(), Ok(()));
+
+    let fields: [(&str, SpeedField); 2] = [
+        ("speed", |t| &mut t.player.speed),
+        ("crawl_speed", |t| &mut t.player.crawl_speed),
+    ];
+    for (name, field) in fields {
+        for bad in [side / dt, 7e6, 1e30, f32::MAX] {
+            let mut t = Tuning::default();
+            *field(&mut t) = bad;
+            let why = t.validate().expect_err(&format!("{name} of {bad}"));
+            assert!(why.contains("player speed"), "{name} of {bad}: {why}");
+        }
+    }
+    let mut boosted = Tuning::default();
+    boosted.player.speed = side / dt / boosts * 1.01;
+    assert!(boosted.validate().is_err(), "the sprint and the buff count");
+}
+
+#[test]
 fn a_player_without_a_positive_radius_is_rejected_and_the_reason_names_it() {
     // 반지름이 걸음의 수를 정하므로, 0은 나눗셈을 깨고 음수는 걸음을 나누지 않게 합니다.
     for bad in [0.0, -0.35, f32::NAN, f32::INFINITY] {
@@ -776,7 +804,7 @@ fn a_projectile_as_wide_as_the_player_is_rejected() {
 
 #[test]
 fn a_projectile_fast_enough_to_cross_the_map_in_one_tick_is_still_valid() {
-    // 명중 판정이 이동하는 선분 전체를 검사하므로 속도에 상한이 없습니다. 이동과 달리 한 Tick의 거리가 반지름보다 길어도 됩니다.
+    // 명중 판정이 이동하는 선분 전체를 검사하므로 속도에 상한이 없습니다. 몸의 이동과 달리 한 번에 움직이는 거리가 반지름보다 길어도 됩니다.
     let t = with_bow(ProjectileTuning {
         speed: 5000.0,
         ..default_shot()

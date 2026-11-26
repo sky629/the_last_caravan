@@ -162,6 +162,28 @@ fn a_buff_received_again_restarts_its_time_and_does_not_get_stronger() {
 }
 
 #[test]
+fn a_buff_shorter_than_one_tick_is_not_received_and_leaves_a_held_buff_alone() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(2.0, 5.0);
+    for secs in [0.0, -1.0, f32::NAN] {
+        s.grant(a, Buff::Haste { secs });
+        s.grant(a, Buff::Swift { secs });
+        assert_eq!(buffs_of(&s, a), (false, false), "a length of {secs}");
+    }
+
+    s.grant(a, Buff::Haste { secs: 1.0 });
+    s.grant(a, Buff::Swift { secs: 1.0 });
+    for secs in [0.0, -1.0, f32::NAN] {
+        s.grant(a, Buff::Haste { secs });
+        s.grant(a, Buff::Swift { secs });
+    }
+    s.run_ticks(s.ticks(1.0) - 1);
+    assert_eq!(buffs_of(&s, a), (true, true), "the first second still runs");
+    s.run_ticks(1);
+    assert_eq!(buffs_of(&s, a), (false, false));
+}
+
+#[test]
 fn haste_and_swift_are_held_together() {
     let mut s = Scenario::open_field();
     let a = s.player_at(2.0, 5.0);
