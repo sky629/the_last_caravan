@@ -5,6 +5,7 @@ use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
 use crate::tuning::{
     ArcTuning, Delivery, HitscanTuning, PLAYTEST_DAMAGE_MULTIPLIER, ProjectileTuning, Tuning,
+    WaveScaling,
 };
 use crate::world::Tile;
 
@@ -78,6 +79,21 @@ fn a_night_without_waves_and_a_wave_without_monsters_are_rejected() {
     let mut t = Tuning::default();
     t.nights.plans = Vec::new();
     assert!(t.validate().is_err());
+}
+
+#[test]
+fn the_table_of_waves_is_for_a_party_of_four_and_a_party_of_zero_is_rejected() {
+    let mut t = Tuning::default();
+    assert_eq!(t.nights.scaling, WaveScaling::ByParty { full_party: 4 });
+    assert_eq!(t.max_players, 4, "a full room plays the table as it is");
+
+    t.nights.scaling = WaveScaling::ByParty { full_party: 0 };
+    assert!(t.validate().unwrap_err().contains("full_party"));
+
+    t.nights.scaling = WaveScaling::ByParty { full_party: 1 };
+    assert_eq!(t.validate(), Ok(()));
+    t.nights.scaling = WaveScaling::Fixed;
+    assert_eq!(t.validate(), Ok(()));
 }
 
 #[test]

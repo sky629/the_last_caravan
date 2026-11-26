@@ -398,11 +398,23 @@ pub struct WavePlan {
     pub count: u32,
 }
 
+/// 무리의 크기가 방의 인원에 따라 달라지는지입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaveScaling {
+    /// `NightTuning::plans`의 수는 `full_party`명이 있을 때의 크기입니다. 무리의 크기는 `올림(수 × 인원 / full_party)`이고 1 이상입니다.
+    /// 인원은 그 밤이 시작될 때 방에 있는 플레이어의 수입니다(`Phase::Night::party`). `full_party`는 1 이상이어야 합니다.
+    ByParty { full_party: u32 },
+    /// 인원과 관계없이 `plans`의 수 그대로입니다. 몬스터의 수를 정해서 재는 부하 시험(`--stress`)이 씁니다.
+    Fixed,
+}
+
 /// 밤의 진행과 밤의 몬스터가 나타나는 방법입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NightTuning {
-    /// 날마다 밤 하나입니다. 길이가 원정의 날 수입니다.
+    /// 날마다 밤 하나입니다. 길이가 원정의 날 수입니다. 무리의 수는 `scaling`이 정하는 기준 인원일 때의 크기입니다.
     pub plans: Vec<NightPlan>,
+    /// `plans`의 수를 방의 인원에 따라 바꾸는 방법입니다.
+    pub scaling: WaveScaling,
     /// 밤이 시작된 뒤 첫 무리가 나타나기까지의 시간입니다.
     pub first_wave_delay_secs: f32,
     /// 한 무리를 모두 처치한 뒤 다음 무리가 나타나기까지의 시간입니다.
@@ -428,6 +440,22 @@ impl NightTuning {
     pub fn wave(&self, day: u32, wave: u32) -> Option<WavePlan> {
         let index = (wave as usize).checked_sub(1)?;
         self.plan(day)?.waves.get(index).copied()
+    }
+
+    /// `day`번째 밤의 `wave`번째 무리에 나올 몬스터의 수입니다. 방에 플레이어가 `party`명 있을 때의 크기이고, 없는 무리는 0입니다.
+    /// 인원에 따라 달라지는 값은 이 함수 한 곳에서 정합니다. 있는 무리는 인원이 몇 명이어도 한 마리 이상입니다.
+    pub fn wave_size(&self, day: u32, wave: u32, party: u32) -> u32 {
+        let Some(plan) = self.wave(day, wave) else {
+            return 0;
+        };
+        match self.scaling {
+            WaveScaling::Fixed => plan.count,
+            WaveScaling::ByParty { full_party } => {
+                let scaled =
+                    (u64::from(plan.count) * u64::from(party)).div_ceil(u64::from(full_party));
+                u32::try_from(scaled.max(1)).unwrap_or(u32::MAX)
+            }
+        }
     }
 
     /// 원정의 첫 무리부터 센 이 무리의 순번입니다(0부터 셉니다). 무리가 나타나는 방향이 이 순번으로 정해집니다.
@@ -567,6 +595,9 @@ impl Tuning {
                         .to_string(),
                 );
             }
+        }
+        if let WaveScaling::ByParty { full_party: 0 } = self.nights.scaling {
+            return Err("the full_party of the wave scaling must be at least 1".to_string());
         }
         if self.nights.spawn_lanes == 0 {
             return Err("spawn_lanes must be at least 1".to_string());
@@ -1231,6 +1262,8 @@ impl Default for Tuning {
                         waves: vec![grunts(60), grunts(90), grunts(150)],
                     },
                 ],
+                // 위의 무리는 네 명이 모였을 때의 크기입니다.
+                scaling: WaveScaling::ByParty { full_party: 4 },
                 first_wave_delay_secs: 3.0,
                 between_waves_secs: 4.0,
                 spawn_interval_secs: 0.3,

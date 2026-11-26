@@ -66,6 +66,6 @@ pub use tuning::{
     HitscanTuning, LootTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan, NightTuning,
     PlayerTuning, ProjectileTuning, RepairTuning, ResourceTuning, ReviveTuning, SprintTuning,
     Start, StructureTable, StructureTuning, Tuning, VillageTuning, WagonTuning, WavePlan,
-    WeaponTable, WeaponTuning,
+    WaveScaling, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;
