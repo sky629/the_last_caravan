@@ -33,7 +33,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 12);
+    assert_eq!(PROTOCOL_VERSION, 13);
 }
 
 /// 값이 눈에 띄도록 0x10부터 이어지는 바이트로 만든 표식입니다.
@@ -53,7 +53,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
         },
         &[
             0x00, // Join 변형
-            0x0C, // version
+            0x0D, // version
             0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
             0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
             0x00, // token: 없음
@@ -67,7 +67,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
             token: Some(TOKEN),
         },
         &[
-            0x00, 0x0C, 0x00, 0x04, b'K', b'A', b'N', b'G', //
+            0x00, 0x0D, 0x00, 0x04, b'K', b'A', b'N', b'G', //
             0x01, // token: 있음
             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 길이 없이 16바이트
             0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -86,7 +86,7 @@ fn seat_taken_over_is_server_variant_four_and_nothing_else() {
 }
 
 #[test]
-fn input_is_the_sequence_number_two_vectors_and_eight_buttons() {
+fn input_is_the_sequence_number_two_vectors_and_nine_buttons() {
     assert_client_wire(
         ClientMsg::Input(InputMsg {
             seq: 300,
@@ -100,6 +100,7 @@ fn input_is_the_sequence_number_two_vectors_and_eight_buttons() {
             switch_weapon: true,
             toggle_ready: true,
             confirm: true,
+            cycle_tower: true,
         }),
         &[
             0x01, // Input 변형
@@ -116,6 +117,7 @@ fn input_is_the_sequence_number_two_vectors_and_eight_buttons() {
             0x01, // switch_weapon
             0x01, // toggle_ready
             0x01, // confirm
+            0x01, // cycle_tower
         ],
     );
 }

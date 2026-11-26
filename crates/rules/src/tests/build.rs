@@ -7,6 +7,7 @@ use super::support::Scenario;
 use crate::build::{BuildRefusal, CannotBuild, front_tile};
 use crate::ids::PlayerId;
 use crate::input::PlayerInput;
+use crate::kind::StructureKind;
 use crate::math::{Rect, Vec2};
 use crate::structures::TowerState;
 use crate::world::Tile;
@@ -673,4 +674,232 @@ fn the_server_builds_on_the_tile_the_front_tile_names() {
             "aiming ({x}, {y})"
         );
     }
+}
+
+#[test]
+fn the_kinds_are_chosen_in_the_order_of_all_and_the_last_is_followed_by_the_first() {
+    assert_eq!(
+        StructureKind::ALL,
+        [
+            StructureKind::Watchtower,
+            StructureKind::SlowTower,
+            StructureKind::StunTower,
+        ]
+    );
+    for (index, kind) in StructureKind::ALL.into_iter().enumerate() {
+        let after = StructureKind::ALL[(index + 1) % StructureKind::ALL.len()];
+        assert_eq!(kind.next(), after, "{kind:?}");
+    }
+}
+
+#[test]
+fn each_press_of_e_moves_the_choice_to_the_next_kind_and_the_last_goes_back_to_the_first() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(14.5, 14.5);
+    assert_eq!(s.player(a).build_kind, StructureKind::Watchtower);
+
+    let mut chosen = Vec::new();
+    for _ in 0..StructureKind::ALL.len() {
+        s.tap_tower_key(a);
+        chosen.push(s.player(a).build_kind);
+    }
+
+    assert_eq!(
+        chosen,
+        [
+            StructureKind::SlowTower,
+            StructureKind::StunTower,
+            StructureKind::Watchtower,
+        ]
+    );
+    s.run_ticks(5);
+    assert_eq!(
+        s.player(a).build_kind,
+        StructureKind::Watchtower,
+        "only a press changes the choice"
+    );
+}
+
+#[test]
+fn a_press_of_e_that_the_server_repeats_in_late_ticks_changes_the_choice_once() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(14.5, 14.5);
+    let pressed = PlayerInput {
+        cycle_tower: true,
+        ..PlayerInput::default()
+    };
+
+    s.hold(a, pressed);
+    s.run_ticks(1);
+    s.hold(a, pressed.held());
+    s.run_ticks(10);
+
+    assert_eq!(s.player(a).build_kind, StructureKind::SlowTower);
+}
+
+#[test]
+fn two_presses_of_e_then_holding_b_builds_a_stun_tower_for_20_and_a_cancel_returns_the_20() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(14.5, 14.5);
+    s.set_stash(30);
+    s.tap_tower_key(a);
+    s.tap_tower_key(a);
+
+    s.hold_build(a, 1.0, 0.0);
+    s.run_ticks(1);
+
+    let site = s.sim.towers().next().expect("a site");
+    assert_eq!(site.kind, StructureKind::StunTower);
+    assert_eq!(s.sim.stash(), 10, "the stun tower costs 20");
+    s.hold(a, PlayerInput::default());
+    s.run_ticks(1);
+    assert_eq!(s.sim.towers().count(), 0, "the site is gone");
+    assert_eq!(s.sim.stash(), 30, "the 20 came back");
+}
+
+#[test]
+fn a_tower_that_is_built_to_the_end_is_the_kind_that_was_chosen_when_the_build_began() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(14.5, 14.5);
+    s.set_stash(30);
+    s.tap_tower_key(a);
+
+    s.hold_build(a, 1.0, 0.0);
+    s.run_ticks(s.ticks(s.sim.tuning().structures.slow_tower.build_secs));
+
+    let tower = s.sim.towers().next().expect("the tower");
+    assert!(tower.is_standing());
+    assert_eq!(tower.kind, StructureKind::SlowTower);
+    assert_eq!(s.sim.stash(), 15, "the slow tower costs 15");
+}
+
+#[test]
+fn e_and_b_in_the_same_tick_build_the_kind_the_press_chose() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(14.5, 14.5);
+    s.set_stash(30);
+    s.hold_build(a, 1.0, 0.0);
+
+    s.tap_tower_key(a);
+
+    let site = s.sim.towers().next().expect("a site");
+    assert_eq!(site.kind, StructureKind::SlowTower);
+}
+
+#[test]
+fn a_press_of_e_while_building_does_not_change_the_tower_being_built() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(14.5, 14.5);
+    s.set_stash(30);
+    s.tap_tower_key(a);
+    s.hold_build(a, 1.0, 0.0);
+    s.run_ticks(1);
+
+    s.tap_tower_key(a);
+
+    let site = s.sim.towers().next().expect("the site");
+    assert_eq!(
+        site.kind,
+        StructureKind::SlowTower,
+        "the site keeps its kind"
+    );
+    assert_eq!(
+        s.player(a).build_kind,
+        StructureKind::StunTower,
+        "the next build"
+    );
+    assert_eq!(s.sim.stash(), 15, "nothing was paid again");
+}
+
+#[test]
+fn a_kind_that_costs_more_than_the_stash_is_refused_for_the_stash() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(14.5, 14.5);
+    s.set_stash(19);
+    s.tap_tower_key(a);
+    s.tap_tower_key(a);
+
+    s.hold_build(a, 1.0, 0.0);
+    s.run_ticks(1);
+
+    assert_eq!(
+        s.sim.towers().count(),
+        0,
+        "19 is not enough for a stun tower"
+    );
+    assert_eq!(s.sim.stash(), 19);
+    assert_eq!(
+        refusal(&s, a).map(|refusal| refusal.why),
+        Some(CannotBuild::NotEnoughStash)
+    );
+}
+
+#[test]
+fn the_choice_is_per_player_and_a_new_expedition_or_a_new_player_starts_at_the_watchtower() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(14.5, 14.5);
+    let b = s.player_at(12.5, 14.5);
+
+    s.tap_tower_key(a);
+
+    assert_eq!(s.player(a).build_kind, StructureKind::SlowTower);
+    assert_eq!(
+        s.player(b).build_kind,
+        StructureKind::Watchtower,
+        "b chose nothing"
+    );
+
+    s.restart_expedition();
+    assert_eq!(
+        s.player(a).build_kind,
+        StructureKind::Watchtower,
+        "a new expedition"
+    );
+    let late = s.player_at(10.5, 10.5);
+    assert_eq!(
+        s.player(late).build_kind,
+        StructureKind::Watchtower,
+        "a new player"
+    );
+}
+
+#[test]
+fn e_changes_nothing_for_a_downed_player_and_the_choice_survives_a_revive() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(5.0, 5.0);
+    let helper = s.player_at(5.5, 5.0);
+    s.tap_tower_key(a);
+    s.knock_down(a);
+
+    s.tap_tower_key(a);
+    assert_eq!(
+        s.player(a).build_kind,
+        StructureKind::SlowTower,
+        "no change while downed"
+    );
+
+    s.hold_interact(helper);
+    s.run_until(200, |sim| sim.player(a).is_some_and(|p| p.is_alive()));
+    assert_eq!(
+        s.player(a).build_kind,
+        StructureKind::SlowTower,
+        "the choice is kept"
+    );
+}
+
+#[test]
+fn e_changes_nothing_in_the_camp() {
+    let mut s = Scenario::camp(|_| {});
+    let a = s.player_at(4.0, 4.0);
+
+    s.tap_tower_key(a);
+
+    assert_eq!(s.player(a).build_kind, StructureKind::Watchtower);
+}
+
+#[test]
+fn the_default_costs_of_the_kinds_are_10_15_and_20() {
+    let t = crate::tuning::Tuning::default();
+    let costs = StructureKind::ALL.map(|kind| t.structures.get(kind).build_cost);
+    assert_eq!(costs, [10, 15, 20]);
 }

@@ -7,7 +7,7 @@ use crate::build::{self, BuildRefusal};
 use crate::collision::{Body, move_circle};
 use crate::effect::PlayerBuffs;
 use crate::ids::{ChestId, NodeId, PlayerId, Team, TowerId};
-use crate::kind::WeaponKind;
+use crate::kind::{StructureKind, WeaponKind};
 use crate::loadout::Loadout;
 use crate::loot::{self, Pickup, Prompt};
 use crate::math::Vec2;
@@ -34,7 +34,7 @@ pub enum Presence {
 /// 원정 도중에 들어온 플레이어는 0에서 시작합니다.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Record {
-    /// 마지막 피해를 주어 처치한 몬스터의 수입니다. 감시탑이 처치한 몬스터는 세지 않습니다(`World::tower_kills`).
+    /// 마지막 피해를 주어 처치한 몬스터의 수입니다. 포탑이 처치한 몬스터는 세지 않습니다(`World::tower_kills`).
     pub kills: u32,
     /// 부활을 끝까지 마친 횟수입니다.
     pub revives: u32,
@@ -65,6 +65,9 @@ pub struct Player {
     pub presence: Presence,
     /// 이번 원정의 기록입니다. 스냅샷에 싣지 않고 결과(`Report`)로만 읽습니다.
     pub(crate) record: Record,
+    /// 건설 키(B)가 지을 포탑의 종류입니다. 종류를 바꾸는 키(E)가 바꾸고, 입장할 때와 새 원정이 시작될 때 감시탑으로 돌아갑니다.
+    /// 생명 상태가 아니라 플레이어에게 있으므로, 쓰러졌다가 부활하거나 낮이 시작되어도 그대로입니다.
+    pub build_kind: StructureKind,
 }
 
 /// 플레이어가 마지막으로 한 공격입니다. 공격한 무기를 함께 기억하므로, 공격한 직후에 무기를 바꿔도 화면은 공격한 무기의 효과를 그립니다.
@@ -120,7 +123,7 @@ pub enum Life {
 
 /// 상호작용 키(F)나 건설 키(B)를 누르고 있는 동안의 행동입니다. 그 행동을 하는 플레이어가 가지고 있습니다.
 ///
-/// 부활의 진행도는 부활시키는 플레이어의 `Interaction`에만 있고, 건설의 진행도는 짓는 중인 감시탑(`TowerState::Building`)에만 있습니다.
+/// 부활의 진행도는 부활시키는 플레이어의 `Interaction`에만 있고, 건설의 진행도는 짓는 중인 포탑(`TowerState::Building`)에만 있습니다.
 /// 채집 지점의 남은 양은 지점(`GatherNode`)에만 있습니다.
 /// 「플레이어 X가 부활되고 있는가」는 `Reviving { target: X }`를 가진 플레이어를 찾아서 알아냅니다.
 /// 쓰러진 플레이어에게는 아무것도 저장하지 않으므로, 두 곳의 값이 서로 어긋날 수 없습니다.
@@ -142,7 +145,7 @@ pub enum Interaction {
         /// 마지막으로 자원을 옮긴 뒤의 Tick 수입니다. 채집을 멈춰도 이미 든 자원은 그대로입니다.
         since_pulse_ticks: u32,
     },
-    /// `tower`는 이 플레이어가 짓고 있는 감시탑입니다.
+    /// `tower`는 이 플레이어가 짓고 있는 포탑입니다.
     Building { tower: TowerId },
     /// 무기 상자를 엽니다. 진행도는 이 값에만 있고, 상자는 열릴 때까지 아무것도 기억하지 않습니다.
     /// F를 놓거나 상자가 사라지거나 닿는 거리 밖으로 벗어나거나 피해를 받으면 값을 통째로 버리므로 진행도가 처음으로 돌아갑니다.
@@ -154,7 +157,7 @@ pub enum Interaction {
     },
 }
 
-/// 수리하는 대상입니다. 감시탑은 번호로 가리키고, 마차는 방마다 하나뿐이므로 번호가 없습니다.
+/// 수리하는 대상입니다. 포탑은 번호로 가리키고, 마차는 방마다 하나뿐이므로 번호가 없습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepairTarget {
     Tower(TowerId),
@@ -198,6 +201,7 @@ impl Player {
             last_attack: None,
             presence: Presence::Here,
             record: Record::default(),
+            build_kind: StructureKind::Watchtower,
         }
     }
 
@@ -539,7 +543,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
 }
 
 /// 새로 시작할 상호작용을 고릅니다. 범위 안에 있는 것 가운데 다음 순서로 고르고, 같은 종류 안에서는 가장 가까운 것입니다.
-/// 쓰러진 동료의 부활, 손상된 감시탑의 수리, 손상된 마차의 수리, 채집 지점의 채집, 무기 상자 열기.
+/// 쓰러진 동료의 부활, 손상된 포탑의 수리, 손상된 마차의 수리, 채집 지점의 채집, 무기 상자 열기.
 /// 이 뒤에 바닥의 무기 줍기가 있지만, 줍기는 시간이 걸리는 일이 아니라서 `Interaction`이 아니고 `update_interactions`가 따로 처리합니다.
 fn choose_interaction(
     world: &World,
@@ -602,7 +606,7 @@ fn nearest_downed_ally(
     })
 }
 
-/// 범위 안에서 손상된 가장 가까운 감시탑의 수리입니다. 파괴된 감시탑과 HP가 가득 찬 감시탑은 고르지 않습니다.
+/// 범위 안에서 손상된 가장 가까운 포탑의 수리입니다. 파괴된 포탑과 HP가 가득 찬 포탑은 고르지 않습니다.
 fn nearest_damaged_tower(world: &World, me: &Player, t: &Tuning) -> Option<Interaction> {
     let mut nearest_tower: Option<(f32, TowerId)> = None;
     for tower in world.towers.values() {
@@ -637,7 +641,7 @@ fn damaged_wagon_in_reach(world: &World, me: &Player, t: &Tuning) -> Option<Inte
     )
 }
 
-/// 수리 대상의 수리 수치입니다. 대상인 감시탑이 사라졌으면 `None`입니다.
+/// 수리 대상의 수리 수치입니다. 대상인 포탑이 사라졌으면 `None`입니다.
 pub(crate) fn repair_spec<'a>(
     world: &World,
     target: RepairTarget,

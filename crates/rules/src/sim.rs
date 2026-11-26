@@ -1,5 +1,6 @@
 //! `Sim`은 방 하나의 게임 상태 전체이며, 규칙 크레이트의 공개 진입점입니다.
 
+use crate::build;
 use crate::camp::Camp;
 use crate::debrief::{Debrief, Report};
 use crate::effect;
@@ -249,6 +250,7 @@ impl Sim {
         };
         let mut hits = Vec::new();
         let mut afflictions = Vec::new();
+        build::cycle_kinds(&mut self.world, &ctx);
         player::update_interactions(&mut self.world, &ctx);
         structures::advance_construction(&mut self.world, &ctx);
         self.paths.sync(&self.world, &self.tuning);

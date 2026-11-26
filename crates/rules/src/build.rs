@@ -1,4 +1,4 @@
-//! 건설의 조건입니다. 감시탑을 놓을 수 있는지 판정하는 곳은 이 파일의 `check_site` 하나입니다.
+//! 건설의 조건입니다. 포탑을 놓을 수 있는지 판정하는 곳은 이 파일의 `check_site` 하나입니다.
 //!
 //! 건설을 시작할 때와 완료할 때 같은 함수를 부릅니다. 시작할 때는 거기에 보관함의 자원을 확인하는 일(`start_builds`)이 더해집니다.
 //! 어느 타일에 놓을지는 플레이어의 위치와 조준 방향에서 서버가 정합니다(`front_tile`). 클라이언트는 타일의 좌표를 보내지 않습니다.
@@ -6,26 +6,22 @@
 
 use crate::collision::move_circle;
 use crate::ids::{PlayerId, TowerId};
-use crate::kind::StructureKind;
 use crate::math::{Rect, Vec2};
 use crate::player::{Interaction, Life};
 use crate::structures::TowerState;
 use crate::tuning::Tuning;
 use crate::world::{Ctx, Tile, TileUse, World};
 
-/// 건설 키가 세우는 시설입니다.
-const BUILT_KIND: StructureKind = StructureKind::Watchtower;
-
 /// 건설이 거절되는 이유입니다. 이유가 여럿이면 아래 순서의 첫 번째입니다. 비싼 검사가 뒤에 있습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CannotBuild {
     /// 보관함의 자원이 건설 비용보다 적습니다. 건설을 시작할 때만 나옵니다.
     NotEnoughStash,
-    /// 서 있는 감시탑과 짓는 중인 감시탑의 수가 상한에 닿았습니다.
+    /// 서 있는 포탑과 짓는 중인 포탑의 수가 상한에 닿았습니다.
     TowerLimit,
     /// 맵 밖이거나 마차에서 너무 멉니다(마을의 범위 밖입니다).
     OutsideVillage,
-    /// 그 타일에 장애물, 마차, 감시탑이 있거나, 짓는 사람이 아닌 플레이어나 몬스터가 걸쳐 있습니다.
+    /// 그 타일에 장애물, 마차, 포탑이 있거나, 짓는 사람이 아닌 플레이어나 몬스터가 걸쳐 있습니다.
     TileTaken,
     /// 그 자리에 놓으면 걸어서 마차에 갈 수 없는 곳이 생깁니다.
     WouldBlockPath,
@@ -45,7 +41,7 @@ pub struct BuildRefusal {
 /// 가로와 세로가 `map_size`(타일 수)인 맵에서, `pos`에 서서 `facing`을 바라보는 플레이어의 앞 타일입니다.
 /// 서 있는 타일에서 바라보는 쪽으로 이웃한 타일이고, 이웃은 여덟 곳(상하좌우와 대각선)입니다.
 /// 바라보는 방향의 두 성분에 1.2를 곱해서 반올림한 값(-1, 0, 1)이 이웃을 정합니다. 길이 1인 방향은 성분 하나가 항상 0.7 이상이므로 (0, 0)이 나오지 않습니다.
-/// 서 있는 위치가 같은 타일 안에서 조금 달라도 같은 타일이 정해지므로, 감시탑을 줄지어 세우기 쉽습니다. 맵 밖이면 `None`입니다.
+/// 서 있는 위치가 같은 타일 안에서 조금 달라도 같은 타일이 정해지므로, 포탑을 줄지어 세우기 쉽습니다. 맵 밖이면 `None`입니다.
 pub fn front_tile(pos: Vec2, facing: Vec2, map_size: (u16, u16)) -> Option<Tile> {
     let (cols, rows) = map_size;
     let here = Tile::containing(pos, cols, rows);
@@ -56,12 +52,12 @@ pub fn front_tile(pos: Vec2, facing: Vec2, map_size: (u16, u16)) -> Option<Tile>
     (target.x < cols && target.y < rows).then_some(target)
 }
 
-/// `tile`에 감시탑을 놓을 수 있는지 판정합니다. 자원은 보지 않습니다.
+/// `tile`에 포탑을 놓을 수 있는지 판정합니다. 자원은 보지 않습니다.
 ///
 /// `own`이 `None`이면 아직 지어지지 않은 새 자리를 검사합니다. 타일이 비어 있어야 하고, 상한에 하나 더 들어가고,
 /// 연결 검사는 이 타일과 무기 상자의 후보 자리를 막힌 것으로 보고 합니다.
-/// `own`이 `Some(id)`이면 이미 짓는 중인 감시탑 `id`가 이 타일을 차지하고 있으므로, 그 감시탑을 뺀 나머지에 대해 검사합니다.
-/// 짓는 중인 다른 감시탑은 타일 지도에 이미 막힌 타일로 들어 있으므로 따로 합치지 않습니다.
+/// `own`이 `Some(id)`이면 이미 짓는 중인 포탑 `id`가 이 타일을 차지하고 있으므로, 그 포탑을 뺀 나머지에 대해 검사합니다.
+/// 짓는 중인 다른 포탑은 타일 지도에 이미 막힌 타일로 들어 있으므로 따로 합치지 않습니다.
 ///
 /// `builder`의 몸은 건설할 타일에 걸쳐 있어도 거절 이유가 아닙니다. 건설을 시작할 때 타일 밖으로 밀려납니다.
 pub(crate) fn check_site(
@@ -119,19 +115,20 @@ fn body_on(world: &World, t: &Tuning, builder: PlayerId, rect: Rect) -> bool {
 ///
 /// 요청을 한꺼번에 판정하지 않고 하나씩 적용하는 이유는 앞 요청이 놓은 자리가 뒤 요청의 판정에 들어가야 하기 때문입니다.
 /// 두 플레이어가 같은 Tick에 시작해도 같은 타일이거나 둘이 합쳐서 길을 막는 자리이면 뒤 요청이 거절되고,
-/// 보관함이 감시탑 하나 분량이면 뒤 요청이 자원이 모자라서 거절됩니다.
+/// 보관함이 포탑 하나 분량이면 뒤 요청이 자원이 모자라서 거절됩니다.
 /// 「먼저 읽고 모은 뒤 적용한다」는 Tick의 원칙에서 벗어나는 유일한 곳이며, 이 함수 하나에만 있습니다.
 ///
-/// 시작하면 보관함에서 비용을 빼고 `Building` 상태의 감시탑을 놓습니다. 짓는 사람의 몸이 그 타일에 걸쳐 있으면 밖으로 밀어냅니다.
+/// 시작하면 보관함에서 비용을 빼고 `Building` 상태의 포탑을 놓습니다. 짓는 사람의 몸이 그 타일에 걸쳐 있으면 밖으로 밀어냅니다.
 /// 거절되면 그 플레이어에게 이유를 남깁니다.
 pub(crate) fn start_builds(world: &mut World, ctx: &Ctx, requests: &[PlayerId]) {
     let t = ctx.t;
-    let cost = t.structures.get(BUILT_KIND).build_cost;
     let mut scratch = Vec::new();
     for &id in requests {
         let Some(player) = world.players.get(&id) else {
             continue;
         };
+        let kind = player.build_kind;
+        let cost = t.structures.get(kind).build_cost;
         // 바라보는 방향은 이번 Tick의 조준입니다. `move_players`가 고치는 것은 이 판정보다 뒤입니다.
         let facing = ctx
             .inputs
@@ -169,7 +166,7 @@ pub(crate) fn start_builds(world: &mut World, ctx: &Ctx, requests: &[PlayerId]) 
                     paid: cost,
                     elapsed_ticks: 0,
                 };
-                let tower = world.add_tower(BUILT_KIND, tile, state);
+                let tower = world.add_tower(kind, tile, state);
                 if let Some(player) = world.players.get_mut(&id) {
                     player.pos = move_circle(
                         player.pos,
@@ -200,10 +197,24 @@ pub(crate) fn start_builds(world: &mut World, ctx: &Ctx, requests: &[PlayerId]) 
     }
 }
 
-/// `Interaction::Building`을 가진 플레이어가 가리키는 감시탑이 아직 그 플레이어가 짓는 중인지 확인합니다.
+/// `Interaction::Building`을 가진 플레이어가 가리키는 포탑이 아직 그 플레이어가 짓는 중인지 확인합니다.
 pub(crate) fn is_building(world: &World, tower: TowerId, by: PlayerId) -> bool {
     matches!(
         world.towers.get(&tower).map(|tower| &tower.state),
         Some(TowerState::Building { builder, .. }) if *builder == by
     )
+}
+
+/// 종류를 바꾸는 키(E)를 누른 플레이어마다 지을 종류를 `StructureKind::ALL`의 다음 종류로 바꿉니다. 원정의 Tick에서 건설 키를 처리하기 전에 부르므로,
+/// 같은 Tick에 누른 B는 바뀐 종류를 짓습니다. 쓰러졌거나 사망한 플레이어는 바꿀 수 없고, 이미 짓고 있는 포탑의 종류는 바뀌지 않습니다.
+pub(crate) fn cycle_kinds(world: &mut World, ctx: &Ctx) {
+    for player in world.players.values_mut() {
+        let pressed = ctx
+            .inputs
+            .get(&player.id)
+            .is_some_and(|input| input.cycle_tower);
+        if pressed && player.is_alive() {
+            player.build_kind = player.build_kind.next();
+        }
+    }
 }

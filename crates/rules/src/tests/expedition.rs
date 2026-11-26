@@ -371,6 +371,7 @@ fn play_a_scripted_expedition() -> String {
                     switch_weapon: tick % 90 == 45,
                     toggle_ready: false,
                     confirm: false,
+                    cycle_tower: tick % 130 == 65,
                 },
             );
         }

@@ -293,6 +293,13 @@ impl Scenario {
         self.sim.step(&inputs);
     }
 
+    /// 지금 누르고 있는 입력은 그대로 두고, 포탑의 종류를 바꾸는 키(E)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.
+    pub fn tap_tower_key(&mut self, id: PlayerId) {
+        let mut inputs = self.held.clone();
+        inputs.entry(id).or_default().cycle_tower = true;
+        self.sim.step(&inputs);
+    }
+
     /// 날아가는 중인 탄환의 수입니다. 이번 Tick에 끝난 탄환은 세지 않습니다.
     pub fn flying(&self) -> usize {
         self.sim

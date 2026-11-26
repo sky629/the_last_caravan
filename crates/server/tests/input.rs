@@ -250,6 +250,7 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
         switch_weapon: false,
         toggle_ready: false,
         confirm: false,
+        cycle_tower: false,
     }));
     rig.run_ticks(3);
 

@@ -40,10 +40,13 @@ pub struct PlayerInput {
     /// 확인 키(Enter)를 누른 순간입니다. 결과 화면에서 확인을 켭니다. 한 번 켠 확인은 끌 수 없습니다. 다른 단계에서는 아무 일도 하지 않습니다.
     /// 입력이 늦는 Tick에 이전 입력을 다시 쓸 때는 `held`가 이 값을 지웁니다.
     pub confirm: bool,
+    /// 포탑의 종류를 바꾸는 키(E)를 누른 순간입니다. 원정 중에 건설 키(B)가 지을 포탑을 `StructureKind::ALL`의 다음 종류로 바꿉니다.
+    /// 입력이 늦는 Tick에 이전 입력을 다시 쓸 때는 `held`가 이 값을 지웁니다.
+    pub cycle_tower: bool,
 }
 
 impl PlayerInput {
-    /// 입력이 늦는 Tick에 다시 쓰는 사본입니다. 누르고 있는 상태는 그대로 두고, 누른 순간인 조작(`switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`)은 지웁니다.
+    /// 입력이 늦는 Tick에 다시 쓰는 사본입니다. 누르고 있는 상태는 그대로 두고, 누른 순간인 조작(`switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`, `cycle_tower`)은 지웁니다.
     /// 그래서 한 번 누른 키가 입력이 늦는 Tick마다 되풀이되지 않습니다. 누른 순간인 조작을 더하면 이 함수가 그 값도 지웁니다.
     pub fn held(self) -> PlayerInput {
         PlayerInput {
@@ -51,6 +54,7 @@ impl PlayerInput {
             interact_pressed: false,
             toggle_ready: false,
             confirm: false,
+            cycle_tower: false,
             ..self
         }
     }

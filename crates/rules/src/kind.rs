@@ -28,11 +28,21 @@ pub enum StructureKind {
 }
 
 impl StructureKind {
+    /// 종류를 바꾸는 키(E)가 고르는 순서입니다.
     pub const ALL: [StructureKind; 3] = [
         StructureKind::Watchtower,
         StructureKind::SlowTower,
         StructureKind::StunTower,
     ];
+
+    /// 종류를 바꾸는 키(E)를 눌렀을 때 고르는 다음 종류입니다. `ALL`의 순서를 따르고, 마지막 다음은 처음입니다.
+    pub fn next(self) -> StructureKind {
+        match self {
+            StructureKind::Watchtower => StructureKind::SlowTower,
+            StructureKind::SlowTower => StructureKind::StunTower,
+            StructureKind::StunTower => StructureKind::Watchtower,
+        }
+    }
 }
 
 /// 플레이어가 드는 무기의 종류입니다. 종류마다 수치와 공격이 전달되는 방식은 `WeaponTable`에 있습니다.
