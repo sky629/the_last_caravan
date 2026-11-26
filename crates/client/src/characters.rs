@@ -353,7 +353,8 @@ mod tests {
     use crate::view;
     use caravan_client_core::{Frame, ShownEffect};
     use caravan_protocol::{
-        WireLoadout, WireMonsterEffects, WireMonsterKind, WirePhase, WireWagon, WireWeaponKind,
+        WireBuffs, WireLoadout, WireMonsterEffects, WireMonsterKind, WirePhase, WireWagon,
+        WireWeaponKind,
     };
     use caravan_rules::Team;
 
@@ -387,6 +388,7 @@ mod tests {
             stamina: 100,
             interaction: None,
             build_refusal: None,
+            buffs: WireBuffs::NONE,
         }
     }
 
@@ -1027,6 +1029,7 @@ mod tests {
             stamina: 100,
             interaction: None,
             build_refusal: None,
+            buffs: WireBuffs::NONE,
         };
         show(
             &mut app,

@@ -367,7 +367,7 @@ pub fn effect_progress(playback_tick: f64, event_tick: u64, duration_ticks: f64)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::{WireMonsterStatus, WirePos, WireWeaponKind};
+    use caravan_protocol::{WireBuffs, WireMonsterStatus, WirePos, WireWeaponKind};
 
     fn snapshot(tick: u64) -> Snapshot {
         Snapshot {
@@ -416,6 +416,7 @@ mod tests {
                 stamina: 100,
                 interaction: None,
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
             last_input_seq: 0,
             last_attack: None,

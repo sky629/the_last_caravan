@@ -716,8 +716,8 @@ fn whole_secs(secs: f32) -> u32 {
 mod tests {
     use super::*;
     use caravan_protocol::{
-        ClientEvent, PlayerName, RejectReason, RoomCode, SeatToken, ServerMsg, Welcome, WireNode,
-        WireRoster, WireShot, WireTile, WireTower, WireWagon,
+        ClientEvent, PlayerName, RejectReason, RoomCode, SeatToken, ServerMsg, Welcome, WireBuffs,
+        WireNode, WireRoster, WireShot, WireTile, WireTower, WireWagon,
     };
     use caravan_rules::{Seed, Sim, Team, Tuning, Vec2};
 
@@ -759,6 +759,7 @@ mod tests {
             stamina: 100,
             interaction: None,
             build_refusal: None,
+            buffs: WireBuffs::NONE,
         }
     }
 
@@ -919,6 +920,7 @@ mod tests {
             stamina,
             interaction: None,
             build_refusal: None,
+            buffs: WireBuffs::NONE,
         }
     }
 
@@ -1192,6 +1194,7 @@ mod tests {
                     progress: 0.5,
                 }),
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
         );
         let action = Hud::of(&session, Some(&frame(vec![reviver])), INVITE)
@@ -1216,6 +1219,7 @@ mod tests {
                     stash_short: false,
                 }),
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
         );
         let action = Hud::of(&session, Some(&frame(vec![repairer])), INVITE)
@@ -1240,6 +1244,7 @@ mod tests {
                     stash_short: false,
                 }),
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
         );
         let mut frame = frame(vec![repairer]);
@@ -1265,6 +1270,7 @@ mod tests {
                     stash_short,
                 }),
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
         )
     }
@@ -1327,6 +1333,7 @@ mod tests {
                 stamina: 100,
                 interaction: Some(WireInteraction::Gathering { node: 1 }),
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
         );
         let action = Hud::of(&session, Some(&frame(vec![gatherer])), INVITE)
@@ -1351,6 +1358,7 @@ mod tests {
                     progress: 0.4,
                 }),
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
         );
 
@@ -1383,6 +1391,7 @@ mod tests {
                 stamina: 100,
                 interaction: None,
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
         );
         let hud = Hud::of(&session, Some(&frame(vec![carrying])), INVITE);
@@ -1414,6 +1423,7 @@ mod tests {
                 stamina: 100,
                 interaction: Some(WireInteraction::Building { tower: 2 }),
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
         );
         let mut frame = frame(vec![builder]);
@@ -1458,6 +1468,7 @@ mod tests {
                         tile: WireTile { x: 3, y: 4 },
                         why,
                     }),
+                    buffs: WireBuffs::NONE,
                 },
             );
             let hud = Hud::of(&session, Some(&frame(vec![refused])), INVITE);
@@ -1485,6 +1496,7 @@ mod tests {
                     tile: WireTile { x: 3, y: 4 },
                     why: WireCannotBuild::TileTaken,
                 }),
+                buffs: WireBuffs::NONE,
             },
         );
         let hud = Hud::of(

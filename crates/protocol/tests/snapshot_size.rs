@@ -3,8 +3,8 @@
 //! 한계는 측정한 크기보다 4%에서 5% 큰 값입니다. 한계를 넘으면 접속 하나가 쓰는 대역폭이 늘어난 것이므로, 다음 단계의 설계를 다시 정해야 합니다.
 
 use caravan_protocol::{
-    ServerMsg, Snapshot, WireAngle, WireAttack, WireGroundWeapon, WireInteraction, WireLife,
-    WireLoadout, WireMonster, WireMonsterEffects, WireMonsterKind, WireMonsterStatus,
+    ServerMsg, Snapshot, WireAngle, WireAttack, WireBuffs, WireGroundWeapon, WireInteraction,
+    WireLife, WireLoadout, WireMonster, WireMonsterEffects, WireMonsterKind, WireMonsterStatus,
     WireNightStep, WireNode, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt,
     WireRecordRow, WireReport, WireShot, WireStruck, WireTile, WireTower, WireTowerState,
     WireWagon, WireWeaponKind, encode_server,
@@ -103,6 +103,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
                         progress: 0.5,
                     }),
                     build_refusal: None,
+                    buffs: WireBuffs::NONE,
                 },
             ),
             player(
@@ -121,6 +122,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
                     stamina: 100,
                     interaction: None,
                     build_refusal: None,
+                    buffs: WireBuffs::NONE,
                 },
             ),
             player(4, WireLife::Dead),
@@ -172,7 +174,7 @@ fn encoded_len(snapshot: Snapshot) -> usize {
 /// 이 한계 아래에서 가장 큰 경우는 `the_worst_case_...` 시험이 확인합니다.
 const BOUND_BYTES: usize = 3_600;
 /// 몬스터 번호가 16384 이상이면 번호가 3바이트가 되어 몬스터 하나가 10바이트입니다. 오래 이어진 방에서 이 크기가 됩니다.
-/// 감시탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,761바이트이고, 한계가 5% 큽니다.
+/// 감시탑이 쏜 몬스터의 번호도 3바이트가 되어 측정값은 3,765바이트이고, 한계가 5% 큽니다.
 const BOUND_BYTES_WITH_LARGE_IDS: usize = 3_950;
 
 #[test]
@@ -287,6 +289,60 @@ fn a_rifle_trace_costs_four_bytes_more_than_an_attack_without_one() {
     });
 
     assert_eq!(encoded_len(snapshot) - without, 4);
+}
+
+/// 플레이어 넷이 모두 살아 있고 두 버프를 모두 가진 상태로 바꿉니다. 버프를 실어야 해서 가장 큰 경우입니다.
+fn make_all_four_alive_with_both_buffs(snapshot: &mut Snapshot) {
+    for player in &mut snapshot.players {
+        player.life = alive_with(WireBuffs {
+            haste: true,
+            swift: true,
+        });
+    }
+}
+
+fn alive_with(buffs: WireBuffs) -> WireLife {
+    WireLife::Alive {
+        hp: 100,
+        max_hp: 100,
+        carried: 10,
+        stamina: 100,
+        interaction: None,
+        build_refusal: None,
+        buffs,
+    }
+}
+
+#[test]
+fn four_alive_players_with_both_buffs_stay_under_the_bound() {
+    let mut worst = four_rifle_traces_and_the_most_weapons_on_the_ground(8);
+    make_all_four_alive_with_both_buffs(&mut worst);
+    let mut large_ids = crowded_snapshot(20_000, 300, 0);
+    make_all_four_alive_with_both_buffs(&mut large_ids);
+    let (worst, large_ids) = (encoded_len(worst), encoded_len(large_ids));
+    println!(
+        "four alive players with both buffs: {worst} bytes in the worst case, {large_ids} bytes with 3-byte monster ids"
+    );
+    assert!(worst < BOUND_BYTES, "{worst} bytes");
+    assert!(large_ids < BOUND_BYTES_WITH_LARGE_IDS, "{large_ids} bytes");
+}
+
+#[test]
+fn the_buffs_of_an_alive_player_cost_two_bytes_whether_or_not_it_has_any() {
+    // 살아 있는 플레이어의 생명 상태는 변형 1, HP 1, 최대 HP 1, 든 자원 1, 달리기 게이지 1, 상호작용 없음 1, 건설 거절 없음 1, 버프 2로 9바이트이고,
+    // 죽은 플레이어는 변형 1바이트입니다. 네 번째 플레이어가 죽어 있는 기준 상황에서 그 플레이어를 살립니다.
+    let dead = encoded_len(crowded_snapshot(10_000, 300, 0));
+    for buffs in [
+        WireBuffs::NONE,
+        WireBuffs {
+            haste: true,
+            swift: true,
+        },
+    ] {
+        let mut snapshot = crowded_snapshot(10_000, 300, 0);
+        snapshot.players[3].life = alive_with(buffs);
+        assert_eq!(encoded_len(snapshot) - dead, 8, "{buffs:?}");
+    }
 }
 
 /// 야영지의 스냅샷입니다. 플레이어 넷이 모두 준비해서 카운트다운이 돌고, 허수아비 셋이 모두 막 맞은 가장 큰 경우입니다.
