@@ -1,7 +1,8 @@
 //! 플레이어의 버프(공격 속도, 이동 속도)를 확인합니다. 이 게임에는 버프를 거는 곳이 없으므로 테스트가 `Scenario::grant`로 줍니다.
 //! 버프는 플레이어의 공격이 나가는 Tick과 이동한 거리, 그리고 버프가 걸려 있는지의 질문(`PlayerBuffs::has_haste`, `has_swift`)으로 읽습니다.
 
-use super::support::{Scenario, close};
+use super::support::{Scenario, close, in_camp, nights, phase};
+use crate::expedition::{NightStep, Outcome, Phase};
 use crate::ids::PlayerId;
 use crate::input::{AimDir, PlayerInput};
 use crate::player::{Life, Presence};
@@ -200,6 +201,31 @@ fn a_player_who_is_downed_loses_the_buffs_and_a_revived_player_has_none() {
 }
 
 #[test]
+fn a_buff_of_a_living_player_continues_into_the_next_day() {
+    let plans = nights(&[&[1], &[1]]);
+    let mut s = Scenario::with_cycle(|t| {
+        t.cycle.day_secs = 0.5;
+        t.nights.plans = plans;
+    });
+    let a = s.player_at(2.0, 2.0);
+    s.grant(a, Buff::Swift { secs: 600.0 });
+
+    s.run_until(2000, |sim| {
+        matches!(
+            phase(sim),
+            Phase::Night {
+                step: NightStep::Fighting { to_spawn: 0, .. },
+                ..
+            }
+        )
+    });
+    s.clear_monsters();
+    s.run_until(400, |sim| matches!(phase(sim), Phase::Day { day: 2, .. }));
+
+    assert_eq!(buffs_of(&s, a), (false, true));
+}
+
+#[test]
 fn a_new_expedition_starts_without_buffs() {
     let mut s = Scenario::open_field();
     let a = s.player_at(2.0, 5.0);
@@ -208,6 +234,19 @@ fn a_new_expedition_starts_without_buffs() {
 
     s.restart_expedition();
 
+    assert_eq!(buffs_of(&s, a), (false, false));
+}
+
+#[test]
+fn a_player_who_returns_to_the_camp_has_no_buffs() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(2.0, 5.0);
+    s.grant(a, Buff::Haste { secs: 600.0 });
+    s.sim.end_expedition(Outcome::Defeat);
+
+    s.tap_confirm(a);
+
+    assert!(in_camp(&s.sim));
     assert_eq!(buffs_of(&s, a), (false, false));
 }
 

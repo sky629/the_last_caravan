@@ -210,8 +210,8 @@ impl Player {
         self.presence = presence;
     }
 
-    /// 낮이 시작될 때 최대 HP와 가득 찬 달리기 게이지의 살아 있는 상태로 되돌립니다. 위치, 하고 있던 일, 든 자원은 그대로이고,
-    /// 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다(쓰러질 때 든 자원은 이미 떨어졌습니다).
+    /// 낮이 시작될 때 최대 HP와 가득 찬 달리기 게이지의 살아 있는 상태로 되돌립니다. 위치, 하고 있던 일, 든 자원, 받은 버프는 그대로이고,
+    /// 쓰러졌거나 사망한 플레이어도 그 자리에서 되살아납니다(쓰러질 때 든 자원은 이미 떨어졌고, 되살아난 플레이어는 버프가 없습니다).
     pub(crate) fn restore_for_new_day(&mut self, t: &Tuning) {
         if let Life::Alive { hp, stamina, .. } = &mut self.life {
             *hp = t.player.max_hp;
@@ -320,6 +320,7 @@ impl Player {
 
     /// 버프를 받습니다. 플레이어에게 버프를 거는 길은 이 함수 하나이고, 버프를 거는 쪽이 부릅니다.
     /// 쓰러졌거나 사망한 플레이어는 버프를 가질 수 없으므로 아무 일도 하지 않습니다.
+    /// 아래 `expect` 속성은 게임 코드가 이 함수를 부르면 컴파일러가 경고하게 합니다. 그래서 게임 코드가 플레이어에게 버프를 거는지를 컴파일러가 확인합니다.
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "no game code calls this function")

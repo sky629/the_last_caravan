@@ -80,7 +80,7 @@ pub enum Debuff {
     Stun { secs: f32 },
 }
 
-/// 플레이어가 받는 버프입니다. 버프의 세기는 `EffectTuning`에 있고, 길이는 버프를 거는 쪽이 정합니다.
+/// 플레이어가 받는 버프입니다. 버프의 세기는 `EffectTuning`에 있고, 길이는 버프를 거는 쪽이 정합니다. `secs`는 0보다 길어야 합니다.
 /// 버프를 추가하려면 변형을 하나 더하고, `effect::PlayerBuffs::grant`의 `match`에 갈래를 하나 더합니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Buff {
