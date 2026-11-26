@@ -104,6 +104,7 @@ fn arc_row(damage: u32, cooldown_secs: f32, reach: f32, half_angle_deg: f32) -> 
             reach,
             half_angle_deg,
         }),
+        on_hit: None,
         chest_weight: 1,
     }
 }
@@ -219,6 +220,7 @@ fn crossbow_with_its_own_numbers() -> Scenario {
                 radius: 0.2,
                 pierce: 2,
             }),
+            on_hit: None,
             chest_weight: 1,
         };
     })

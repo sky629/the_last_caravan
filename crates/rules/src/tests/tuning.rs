@@ -3,7 +3,9 @@
 use super::support::{Scenario, nights};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
-use crate::tuning::{ArcTuning, Delivery, HitscanTuning, ProjectileTuning, Tuning, WaveScaling};
+use crate::tuning::{
+    ArcTuning, Debuff, Delivery, HitscanTuning, ProjectileTuning, Tuning, WaveScaling,
+};
 use crate::world::Tile;
 
 #[test]
@@ -854,4 +856,109 @@ fn a_chest_weight_above_the_limit_is_rejected_and_the_reason_names_the_weapon() 
     t.weapons.spear.chest_weight = 1001;
     let why = t.validate().expect_err("a weight above the limit");
     assert!(why.contains("Spear chest_weight"), "{why}");
+}
+
+#[test]
+fn a_slow_that_does_not_slow_is_rejected_and_the_reason_names_the_row() {
+    for bad in [0.0, 1.5, -0.5, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.weapons.bow.on_hit = Some(Debuff::Slow {
+            factor: bad,
+            secs: 2.0,
+        });
+        let why = t.validate().expect_err(&format!("a factor of {bad}"));
+        assert!(why.contains("Bow slow factor"), "{bad}: {why}");
+    }
+    let mut t = Tuning::default();
+    t.weapons.bow.on_hit = Some(Debuff::Slow {
+        factor: 1.0,
+        secs: 2.0,
+    });
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "a slow of 100% changes nothing but is valid"
+    );
+}
+
+#[test]
+fn an_effect_that_lasts_no_time_is_rejected_and_the_reason_names_the_row() {
+    for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.weapons.crossbow.on_hit = Some(Debuff::Slow {
+            factor: 0.5,
+            secs: bad,
+        });
+        let why = t.validate().expect_err(&format!("a slow of {bad} s"));
+        assert!(why.contains("Crossbow slow secs"), "{bad}: {why}");
+
+        let mut t = Tuning::default();
+        t.weapons.greatsword.on_hit = Some(Debuff::Stun { secs: bad });
+        let why = t.validate().expect_err(&format!("a stun of {bad} s"));
+        assert!(why.contains("Greatsword stun secs"), "{bad}: {why}");
+
+        let mut t = Tuning::default();
+        t.weapons.spear.on_hit = Some(Debuff::Bleed {
+            damage: 6,
+            secs: bad,
+        });
+        let why = t.validate().expect_err(&format!("a bleed of {bad} s"));
+        assert!(why.contains("Spear bleed secs"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn a_bleed_that_never_hurts_is_rejected_and_the_reason_names_the_row() {
+    let mut t = Tuning::default();
+    t.weapons.sword.on_hit = Some(Debuff::Bleed {
+        damage: 0,
+        secs: 3.0,
+    });
+    let why = t.validate().expect_err("a bleed of 0 damage");
+    assert!(why.contains("Sword bleed damage"), "{why}");
+
+    // 출혈이 간격(1초)보다 짧으면 첫 피해가 나기 전에 끝납니다.
+    let mut t = Tuning::default();
+    t.weapons.sword.on_hit = Some(Debuff::Bleed {
+        damage: 5,
+        secs: 0.9,
+    });
+    let why = t.validate().expect_err("a bleed shorter than its interval");
+    assert!(why.contains("Sword bleed secs"), "{why}");
+
+    t.weapons.sword.on_hit = Some(Debuff::Bleed {
+        damage: 5,
+        secs: 1.0,
+    });
+    assert_eq!(
+        t.validate(),
+        Ok(()),
+        "a bleed as long as the interval hurts once"
+    );
+}
+
+#[test]
+fn the_numbers_all_effects_share_must_be_longer_than_no_time() {
+    for bad in [0.0, -1.0, f32::NAN] {
+        let mut t = Tuning::default();
+        t.effects.stun_immunity_secs = bad;
+        let why = t.validate().expect_err(&format!("an immunity of {bad} s"));
+        assert!(why.contains("effects stun_immunity_secs"), "{bad}: {why}");
+
+        let mut t = Tuning::default();
+        t.effects.bleed_interval_secs = bad;
+        let why = t.validate().expect_err(&format!("an interval of {bad} s"));
+        assert!(why.contains("effects bleed_interval_secs"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn the_row_of_a_structure_is_checked_like_the_row_of_a_weapon() {
+    let mut t = Tuning::default();
+    t.structures.watchtower.on_hit = Some(Debuff::Stun { secs: 0.0 });
+    let why = t.validate().expect_err("a stun of no time");
+    assert!(why.contains("Watchtower stun secs"), "{why}");
+
+    t.structures.watchtower.on_hit = Some(Debuff::Stun { secs: 0.5 });
+    assert_eq!(t.validate(), Ok(()));
 }

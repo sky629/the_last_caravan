@@ -202,6 +202,7 @@ fn the_rifle_shoots_the_damage_and_range_of_its_own_row() {
             damage: 7,
             cooldown_secs: 0.25,
             delivery: Delivery::Hitscan(HitscanTuning { range: 5.0 }),
+            on_hit: None,
             chest_weight: 1,
         };
     });
