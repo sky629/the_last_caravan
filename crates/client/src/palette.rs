@@ -9,7 +9,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use caravan_client_core::{ShownEffect, TILE_HEIGHT_PX, TILE_WIDTH_PX};
-use caravan_protocol::WireWeaponKind;
+use caravan_protocol::{WireStructureKind, WireWeaponKind};
 
 use crate::config;
 
@@ -30,8 +30,8 @@ pub struct Palette {
     pub ground: Handle<ColorMaterial>,
     pub obstacle: Handle<ColorMaterial>,
     pub wagon: Handle<ColorMaterial>,
-    pub tower: Handle<ColorMaterial>,
-    pub site: Handle<ColorMaterial>,
+    /// 포탑의 재질입니다. 종류마다 색이 다르고, 서 있는 포탑과 짓는 중인 포탑(낮은 상자)이 같은 색을 씁니다.
+    pub towers: TowerPaints,
     pub node: Handle<ColorMaterial>,
     pub node_empty: Handle<ColorMaterial>,
     pub chest: Handle<ColorMaterial>,
@@ -85,6 +85,33 @@ impl WeaponPaints {
     }
 }
 
+/// 포탑의 재질입니다. 종류마다 색이 다릅니다.
+pub struct TowerPaints {
+    watchtower: Handle<ColorMaterial>,
+    slow_tower: Handle<ColorMaterial>,
+    stun_tower: Handle<ColorMaterial>,
+}
+
+impl TowerPaints {
+    /// `match`가 모든 종류를 다루므로, 포탑의 종류를 추가하면 여기서 컴파일 오류가 납니다.
+    pub fn of(&self, kind: WireStructureKind) -> &Handle<ColorMaterial> {
+        match kind {
+            WireStructureKind::Watchtower => &self.watchtower,
+            WireStructureKind::SlowTower => &self.slow_tower,
+            WireStructureKind::StunTower => &self.stun_tower,
+        }
+    }
+}
+
+/// 포탑의 색입니다. 범위의 원도 이 색을 옅게 해서 그립니다. `match`가 모든 종류를 다룹니다.
+pub fn tower_color(kind: WireStructureKind) -> Color {
+    match kind {
+        WireStructureKind::Watchtower => config::WATCHTOWER,
+        WireStructureKind::SlowTower => config::SLOW_TOWER,
+        WireStructureKind::StunTower => config::STUN_TOWER,
+    }
+}
+
 /// 효과에 걸린 몬스터의 몸통 재질입니다. 효과마다 색이 다릅니다.
 pub struct EffectPaints {
     stun: Handle<ColorMaterial>,
@@ -114,8 +141,11 @@ pub fn setup_palette(
         ground: paint(Color::WHITE),
         obstacle: paint(config::OBSTACLE),
         wagon: paint(config::WAGON),
-        tower: paint(config::TOWER),
-        site: paint(config::SITE),
+        towers: TowerPaints {
+            watchtower: paint(tower_color(WireStructureKind::Watchtower)),
+            slow_tower: paint(tower_color(WireStructureKind::SlowTower)),
+            stun_tower: paint(tower_color(WireStructureKind::StunTower)),
+        },
         node: paint(config::NODE),
         node_empty: paint(config::NODE_EMPTY),
         chest: paint(config::CHEST),
@@ -169,7 +199,7 @@ pub fn setup_palette(
 /// 타일 하나 위에 서 있는 높이 `height`의 상자입니다. 원점은 바닥 마름모의 중심입니다.
 ///
 /// 보이는 세 면(윗면, 왼쪽 앞면, 오른쪽 앞면)을 한 메시에 담고, 면마다 꼭짓점 색의 밝기를 달리해서 입체로 보이게 합니다.
-/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 감시탑, 공사터, 채집 지점, 무기 상자, 무기 진열대의 색을 모두 냅니다.
+/// 재질의 색이 꼭짓점 색에 곱해지므로, 같은 메시로 장애물, 마차, 포탑, 공사터, 채집 지점, 무기 상자, 무기 진열대의 색을 모두 냅니다.
 fn block_mesh(height: f32) -> Mesh {
     let half_w = TILE_WIDTH_PX / 2.0;
     let half_h = TILE_HEIGHT_PX / 2.0;

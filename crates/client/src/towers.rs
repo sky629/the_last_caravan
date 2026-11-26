@@ -33,19 +33,20 @@ struct Look {
     height: f32,
 }
 
-/// 종류표에 없는 종류의 최대 HP는 알 수 없으므로 0으로 보고, 막대를 비워 둡니다.
+/// 색은 종류가 정하고, 모양과 막대는 짓는 중인지가 정합니다. 종류표에 없는 종류의 최대 HP는 알 수 없으므로 0으로 보고, 막대를 비워 둡니다.
 fn look_of(tower: &WireTower, palette: &Palette, world: &WorldInfo) -> Look {
+    let paint = palette.towers.of(tower.kind).clone();
     match tower.state {
         WireTowerState::Building { progress } => Look {
             block: palette.site_block.clone(),
-            paint: palette.site.clone(),
+            paint,
             bar_fill: palette.bar_site.clone(),
             bar: progress,
             height: config::SITE_HEIGHT,
         },
         WireTowerState::Standing { hp, .. } => Look {
             block: palette.tower_block.clone(),
-            paint: palette.tower.clone(),
+            paint,
             bar_fill: palette.bar_tower.clone(),
             bar: bar_fraction(
                 hp,
@@ -239,13 +240,16 @@ mod tests {
         let site = look(&app, 1);
         let palette = app.world().resource::<Palette>();
         assert_eq!(site.0, palette.site_block);
-        assert_eq!(site.1, palette.site);
+        assert_eq!(site.1, *palette.towers.of(WireStructureKind::Watchtower));
 
         show(&mut app, vec![tower(1, 15, 11, standing(300))]);
         let finished = look(&app, 1);
         let palette = app.world().resource::<Palette>();
         assert_eq!(finished.0, palette.tower_block);
-        assert_eq!(finished.1, palette.tower);
+        assert_eq!(
+            finished.1,
+            *palette.towers.of(WireStructureKind::Watchtower)
+        );
         assert_ne!(site.0, finished.0);
     }
 
@@ -319,5 +323,49 @@ mod tests {
         let [_, fill] = view.bar.entities();
         let transform = app.world().get::<Transform>(fill).unwrap();
         assert!(transform.translation.is_finite() && transform.scale.is_finite());
+    }
+
+    #[test]
+    fn every_kind_has_its_own_colour_while_standing_and_while_being_built() {
+        let mut app = app();
+        let kinds = [
+            WireStructureKind::Watchtower,
+            WireStructureKind::SlowTower,
+            WireStructureKind::StunTower,
+        ];
+        let towers = kinds
+            .iter()
+            .enumerate()
+            .flat_map(|(i, kind)| {
+                let x = 2 * i as u8;
+                let id = 2 * i as u32;
+                [
+                    WireTower {
+                        kind: *kind,
+                        ..tower(1 + id, x, 3, standing(300))
+                    },
+                    WireTower {
+                        kind: *kind,
+                        ..tower(2 + id, x, 5, WireTowerState::Building { progress: 0.5 })
+                    },
+                ]
+            })
+            .collect();
+        show(&mut app, towers);
+
+        let colour_of = |app: &App, id: u32| {
+            let paint = look(app, id).1;
+            let materials = app.world().resource::<Assets<ColorMaterial>>();
+            materials.get(&paint).expect("the paint exists").color
+        };
+        let standing: Vec<Color> = (0..3).map(|i| colour_of(&app, 1 + 2 * i)).collect();
+        let building: Vec<Color> = (0..3).map(|i| colour_of(&app, 2 + 2 * i)).collect();
+        assert_eq!(standing, building, "a site has the colour of its kind");
+        let expected = kinds.map(crate::palette::tower_color);
+        assert_eq!(standing, expected, "the colour is the one of its kind");
+        assert!(
+            standing[0] != standing[1] && standing[1] != standing[2] && standing[0] != standing[2],
+            "each kind has its own colour"
+        );
     }
 }

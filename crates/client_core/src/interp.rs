@@ -53,7 +53,7 @@ pub struct Frame {
     pub wagon: WireWagon,
     /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
     pub stash: u32,
-    /// 서 있는 감시탑과 짓는 중인 감시탑입니다. 위치는 타일이라서 섞지 않습니다.
+    /// 서 있는 포탑과 짓는 중인 포탑입니다. 위치는 타일이라서 섞지 않습니다.
     pub towers: Vec<WireTower>,
     /// 채집 지점의 남은 자원입니다. 위치는 입장 안내에 있습니다.
     pub nodes: Vec<WireNode>,
