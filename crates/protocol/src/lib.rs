@@ -43,10 +43,11 @@ pub use room_code::{RoomCode, RoomCodeError};
 pub use roster::{WireMember, WireRoster};
 pub use seat_token::SeatToken;
 pub use snapshot::{
-    Snapshot, WireAttack, WireBuildRefusal, WireCannotBuild, WireChest, WireGroundWeapon,
-    WireInteraction, WireLife, WireLoadout, WireMonster, WireMonsterKind, WireNightStep, WireNode,
-    WireOutcome, WirePhase, WirePile, WirePlayer, WireProjectile, WirePrompt, WireRepairTarget,
-    WireShot, WireStruck, WireTower, WireTowerState, WireWagon, WireWeaponKind,
+    Snapshot, WireAttack, WireBuffs, WireBuildRefusal, WireCannotBuild, WireChest,
+    WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMonster, WireMonsterKind,
+    WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer, WireProjectile,
+    WirePrompt, WireRepairTarget, WireShot, WireStruck, WireTower, WireTowerState, WireWagon,
+    WireWeaponKind,
 };
 pub use transport::{ClientEvent, ClientTransport, LinkId, PeerKey, ServerEvent, ServerTransport};
 pub use units::{WireAngle, WirePos, WireRect, WireTile};

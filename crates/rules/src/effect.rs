@@ -1,25 +1,30 @@
-//! 몬스터에게 붙었다가 시간이 지나면 끝나는 효과(감속, 출혈, 스턴)입니다.
+//! 대상에 붙었다가 시간이 지나면 끝나는 효과입니다. 몬스터가 입는 효과(감속, 출혈, 스턴)는 `MonsterEffects`이고,
+//! 플레이어가 받는 버프(공격 속도, 이동 속도)는 `PlayerBuffs`입니다. 두 타입을 하나로 합치지 않으므로,
+//! 스턴에 걸린 플레이어나 공격 속도 버프를 받은 몬스터는 코드로 만들 수 없습니다.
 //!
-//! 효과는 몬스터가 가진 상태(`Monster::effects`)이므로 몬스터가 사라지면 함께 사라집니다.
-//! 효과마다 필드가 하나이고, 효과 하나의 값을 바꾸는 길은 `apply`와 `advance` 둘뿐입니다. 필드가 이 파일 밖에서는 보이지 않으므로,
+//! 몬스터의 효과는 몬스터가 가진 상태(`Monster::effects`)이므로 몬스터가 사라지면 함께 사라집니다.
+//! 플레이어의 버프는 살아 있는 플레이어(`Life::Alive`)만 가지므로, 플레이어가 쓰러지거나 새 원정이 시작되면 함께 사라집니다.
+//! 효과마다 필드가 하나이고, 효과 하나의 값을 바꾸는 길은 `apply`(버프는 `grant`)와 `advance` 둘뿐입니다. 필드가 이 파일 밖에서는 보이지 않으므로,
 //! 다른 파일은 스턴이 걸려 있거나 면역인 몬스터에게 스턴을 걸 수 없고, 남은 시간이나 세기를 직접 고칠 수 없습니다.
-//! 다른 파일이 할 수 있는 것은 효과 전체를 빈 값(`MonsterEffects::default()`)으로 두는 것뿐이고, 새 몬스터를 만들 때 그렇게 합니다.
+//! 다른 파일이 할 수 있는 것은 효과 전체를 빈 값(`MonsterEffects::default()`, `PlayerBuffs::default()`)으로 두는 것뿐이고, 새 몬스터와 살아난 플레이어를 만들 때 그렇게 합니다.
 //!
 //! 한 Tick의 순서는 다음과 같습니다(`Sim::simulate`).
 //!
 //! ```text
+//!   (플레이어는 `Player::stats`가 버프를 읽으며 행동합니다)
 //!   monsters_act       몬스터는 이전 Tick까지 걸린 효과로 행동합니다. (감속은 `Monster::stats`, 스턴은 `monster::plan`이 읽습니다)
-//!   advance_effects    몬스터의 효과의 시간을 한 Tick 줄이고, 이번 Tick에 나는 출혈의 피해를 `hits`의 끝에 더합니다.
+//!   advance_effects    몬스터의 효과와 플레이어의 버프의 시간을 한 Tick 줄이고, 이번 Tick에 나는 출혈의 피해를 `hits`의 끝에 더합니다.
 //!   apply_hits         모든 피해를 적용합니다. 출혈의 피해도 여기를 지나므로 처치의 주인이 정해집니다.
 //!   apply_debuffs      이번 Tick에 맞은 몬스터 가운데 살아남은 몬스터에게 새 효과를 겁니다. 이 효과는 다음 Tick의 행동부터 바꿉니다.
 //! ```
 //!
-//! 행동한 뒤에 줄이고 새 효과를 그 뒤에 걸기 때문에, `secs`초짜리 효과는 정확히 `secs`초 분량의 Tick 동안 몬스터의 행동을 바꿉니다.
+//! 행동한 뒤에 줄이고 새 효과를 그 뒤에 걸기 때문에, `secs`초짜리 효과는 정확히 `secs`초 분량의 Tick 동안 대상의 행동을 바꿉니다.
 
-use crate::tuning::{Debuff, Tuning};
+use crate::player::Life;
+use crate::tuning::{Buff, Debuff, Tuning};
 use crate::world::{Ctx, Hit, Source, Target, World};
 
-/// 시간이 지나면 끝나는 배율 하나입니다. 몬스터의 감속이 씁니다.
+/// 시간이 지나면 끝나는 배율 하나입니다. 몬스터의 감속과 플레이어의 두 버프(공격 속도, 이동 속도)가 같은 값을 씁니다.
 /// 다시 받으면 칸을 새 값으로 바꾸므로 시간이 처음으로 돌아가고 세기는 겹치지 않습니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Scaling {
@@ -48,6 +53,52 @@ impl Scaling {
 
     fn factor_of(slot: &Option<Scaling>) -> f32 {
         slot.map_or(1.0, |scaling| scaling.factor)
+    }
+}
+
+/// 살아 있는 플레이어가 받은 버프 전부입니다. 다른 버프는 함께 걸리고, 같은 버프를 다시 받으면 남은 시간이 처음으로 돌아갑니다. 세기는 겹치지 않습니다.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlayerBuffs {
+    haste: Option<Scaling>,
+    swift: Option<Scaling>,
+}
+
+impl PlayerBuffs {
+    pub fn has_haste(&self) -> bool {
+        self.haste.is_some()
+    }
+
+    pub fn has_swift(&self) -> bool {
+        self.swift.is_some()
+    }
+
+    /// 공격의 쿨다운에 곱하는 값입니다. 공격 속도 버프가 없으면 1입니다.
+    pub(crate) fn cooldown_factor(&self) -> f32 {
+        Scaling::factor_of(&self.haste)
+    }
+
+    /// 이동 속도에 곱하는 값입니다. 달리기의 배율과 곱해집니다. 이동 속도 버프가 없으면 1입니다.
+    pub(crate) fn speed_factor(&self) -> f32 {
+        Scaling::factor_of(&self.swift)
+    }
+
+    /// 버프를 받습니다. 버프를 거는 길은 이 함수 하나입니다. 세기는 `Tuning::effects`의 값이고, 길이는 거는 쪽이 정합니다.
+    /// 이미 같은 버프가 걸려 있으면 남은 시간이 새 길이로 바뀝니다.
+    /// 길이가 한 Tick도 되지 않는 버프(0초 이하이거나 숫자가 아닌 길이)는 받지 않고, 걸려 있던 버프도 그대로 둡니다.
+    pub(crate) fn grant(&mut self, buff: Buff, t: &Tuning) {
+        let (slot, factor, secs) = match buff {
+            Buff::Haste { secs } => (&mut self.haste, t.effects.haste_cooldown_factor, secs),
+            Buff::Swift { secs } => (&mut self.swift, t.effects.swift_speed_factor, secs),
+        };
+        if t.ticks(secs) > 0 {
+            *slot = Some(Scaling::new(factor, secs, t));
+        }
+    }
+
+    /// 모든 버프를 한 Tick 진행합니다.
+    fn advance(&mut self) {
+        Scaling::advance(&mut self.haste);
+        Scaling::advance(&mut self.swift);
     }
 }
 
@@ -186,9 +237,10 @@ impl MonsterEffects {
     }
 }
 
-/// 모든 몬스터의 효과를 한 Tick 진행하고, 이번 Tick에 나는 출혈의 피해를 `hits`의 끝에 더합니다.
+/// 모든 몬스터의 효과와 모든 플레이어의 버프를 한 Tick 진행하고, 이번 Tick에 나는 출혈의 피해를 `hits`의 끝에 더합니다.
+/// 자리를 비운 플레이어의 버프도 같이 흐르고, 야영지의 Tick도 이 함수를 부릅니다.
 /// 출혈의 피해도 `Hit`이므로 `World::apply_hits`를 지나고, 그 피해로 몬스터가 죽으면 처치는 출혈을 건 쪽의 것입니다.
-/// 몬스터가 행동한 뒤에 부르므로, 몬스터는 이번 Tick에 끝나는 효과의 영향을 마지막으로 받은 뒤에 풀립니다.
+/// 몬스터와 플레이어가 행동한 뒤에 부르므로, 이번 Tick에 끝나는 효과는 마지막으로 행동을 바꾼 뒤에 풀립니다.
 pub(crate) fn advance_effects(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
     for monster in &mut world.monsters {
         if let Some(pulse) = monster.effects.advance(ctx.t) {
@@ -198,6 +250,11 @@ pub(crate) fn advance_effects(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>)
                 by: pulse.by,
                 debuff: None,
             });
+        }
+    }
+    for player in world.players.values_mut() {
+        if let Life::Alive { buffs, .. } = &mut player.life {
+            buffs.advance();
         }
     }
 }

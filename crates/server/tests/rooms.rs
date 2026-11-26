@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use caravan_protocol::{
     ClientEvent, ClientMsg, ClientTransport, LoopbackClient, PROTOCOL_VERSION, RejectReason,
-    RoomCode, SeatToken, ServerLimits, ServerMsg, Welcome, WireLife, WireNightStep, WirePhase,
-    check_welcome, loopback,
+    RoomCode, SeatToken, ServerLimits, ServerMsg, Welcome, WireBuffs, WireLife, WireNightStep,
+    WirePhase, check_welcome, loopback,
 };
 use caravan_rules::{PlayerId, Seed, Sim, Tuning};
 use caravan_server::{GameServer, Notice, RoomSeeds, ServerError, ServerStats};
@@ -488,7 +488,8 @@ fn a_player_who_joins_during_a_fight_enters_the_running_expedition_alive() {
             carried: 0,
             stamina: 100,
             interaction: None,
-            build_refusal: None
+            build_refusal: None,
+            buffs: WireBuffs::NONE,
         }
     );
 }
@@ -809,10 +810,10 @@ fn a_server_refuses_to_start_with_numbers_that_break_the_rules() {
     assert_eq!(build(Tuning::default()), Ok(()));
 
     let mut too_fast = Tuning::default();
-    too_fast.player.speed = 100.0;
+    too_fast.monsters.grunt.speed = 100.0;
     assert!(matches!(
         build(too_fast),
-        Err(ServerError::InvalidTuning(why)) if why.contains("player")
+        Err(ServerError::InvalidTuning(why)) if why.contains("Grunt")
     ));
     assert!(matches!(
         build(Tuning {

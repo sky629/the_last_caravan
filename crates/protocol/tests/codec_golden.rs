@@ -12,13 +12,13 @@
 
 use caravan_protocol::{
     ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RackInfo, RejectReason,
-    SeatToken, ServerMsg, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal,
-    WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife,
-    WireLoadout, WireMember, WireMonster, WireMonsterKind, WireMonsterStatus, WireNightStep,
-    WireNode, WireOutcome, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt,
-    WireRecordRow, WireRect, WireRepairTarget, WireReport, WireRoster, WireShot, WireStruck,
-    WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo,
-    decode_client, decode_server, encode_client, encode_server,
+    SeatToken, ServerMsg, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuffs,
+    WireBuildRefusal, WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon, WireInteraction,
+    WireLife, WireLoadout, WireMember, WireMonster, WireMonsterKind, WireMonsterStatus,
+    WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile,
+    WirePrompt, WireRecordRow, WireRect, WireRepairTarget, WireReport, WireRoster, WireShot,
+    WireStruck, WireTile, WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind,
+    WorldInfo, decode_client, decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -33,7 +33,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 11);
+    assert_eq!(PROTOCOL_VERSION, 12);
 }
 
 /// 값이 눈에 띄도록 0x10부터 이어지는 바이트로 만든 표식입니다.
@@ -53,7 +53,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
         },
         &[
             0x00, // Join 변형
-            0x0B, // version
+            0x0C, // version
             0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
             0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
             0x00, // token: 없음
@@ -67,7 +67,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
             token: Some(TOKEN),
         },
         &[
-            0x00, 0x0B, 0x00, 0x04, b'K', b'A', b'N', b'G', //
+            0x00, 0x0C, 0x00, 0x04, b'K', b'A', b'N', b'G', //
             0x01, // token: 있음
             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 길이 없이 16바이트
             0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -413,6 +413,10 @@ fn a_busy_snapshot_matches_golden_bytes() {
                         progress: 0.5,
                     }),
                     build_refusal: None,
+                    buffs: WireBuffs {
+                        haste: true,
+                        swift: false,
+                    },
                 },
                 last_input_seq: 300,
                 last_attack: Some(WireAttack {
@@ -497,6 +501,7 @@ fn a_busy_snapshot_matches_golden_bytes() {
             0x01, 0x00, 0x02, 0x00, 0x00, 0x00,
             0x3F, // interaction: 있음, Reviving, target 2, progress 0.5
             0x00, // build_refusal: 없음
+            0x01, 0x00, // buffs: 공격 속도 있음, 이동 속도 없음
             0xAC, 0x02, // last_input_seq 300
             0x01, 0x78, 0x05, // last_attack: 있음, tick 120, 공격한 무기 Rifle
             0x01, 0x80, 0x10, 0xC0, 0x09, // trace_end: 있음, 2048, 1216
@@ -640,7 +645,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
         max_hp: 300,
         state: WireTowerState::Building { progress: 0.5 },
     }];
-    let alive = |id, interaction, build_refusal| WirePlayer {
+    let alive_with = |id, interaction, build_refusal, buffs| WirePlayer {
         id,
         team: 0,
         pos: WirePos { x: 0, y: 0 },
@@ -652,6 +657,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             stamina: 100,
             interaction,
             build_refusal,
+            buffs,
         },
         last_input_seq: 0,
         last_attack: None,
@@ -660,6 +666,17 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             spare: None,
         },
         prompt: None,
+    };
+    let alive = |id, interaction, build_refusal| {
+        alive_with(id, interaction, build_refusal, WireBuffs::NONE)
+    };
+    let haste = WireBuffs {
+        haste: true,
+        swift: false,
+    };
+    let swift = WireBuffs {
+        haste: false,
+        swift: true,
     };
     snapshot.players = vec![
         alive(
@@ -672,17 +689,26 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
         ),
         WirePlayer {
             prompt: Some(WirePrompt::OpenChest),
-            ..alive(
+            ..alive_with(
                 4,
                 None,
                 Some(WireBuildRefusal {
                     tile: WireTile { x: 4, y: 5 },
                     why: WireCannotBuild::WouldBlockPath,
                 }),
+                haste,
             )
         },
-        alive(5, Some(WireInteraction::Building { tower: 1 }), None),
-        alive(7, Some(WireInteraction::Gathering { node: 2 }), None),
+        alive_with(5, Some(WireInteraction::Building { tower: 1 }), None, swift),
+        alive_with(
+            7,
+            Some(WireInteraction::Gathering { node: 2 }),
+            None,
+            WireBuffs {
+                haste: true,
+                swift: true,
+            },
+        ),
         alive(
             8,
             Some(WireInteraction::Repairing {
@@ -726,6 +752,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x01, 0x01, 0x00, 0x01,
             0x00, // interaction: 있음, Repairing, Tower, tower 1, stash_short 거짓
             0x00, // build_refusal: 없음
+            0x00, 0x00, // buffs: 없음
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
@@ -733,6 +760,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x00, // interaction: 없음
             0x01, 0x04, 0x05, 0x04, // build_refusal: 있음, tile 4 5, WouldBlockPath
+            0x01, 0x00, // buffs: 공격 속도 있음, 이동 속도 없음
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x01, 0x00, // prompt: 있음, OpenChest
@@ -740,6 +768,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x02, 0x01, // interaction: 있음, Building, tower 1
             0x00, // build_refusal: 없음
+            0x00, 0x01, // buffs: 공격 속도 없음, 이동 속도 있음
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
@@ -747,6 +776,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x03, 0x02, // interaction: 있음, Gathering, node 2
             0x00, // build_refusal: 없음
+            0x01, 0x01, // buffs: 공격 속도 있음, 이동 속도 있음
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
@@ -754,6 +784,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
             0x01, 0x01, 0x01, 0x01, // interaction: 있음, Repairing, Wagon, stash_short 참
             0x00, // build_refusal: 없음
+            0x00, 0x00, // buffs: 없음
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음
@@ -762,6 +793,7 @@ fn a_site_a_refusal_a_builder_two_repairers_a_gatherer_an_opener_and_a_dead_play
             0x01, 0x04, 0x03, 0x00, 0x00, 0x00,
             0x3F, // interaction: 있음, Opening, chest 3, progress 0.5
             0x00, // build_refusal: 없음
+            0x00, 0x00, // buffs: 없음
             0x00, 0x00, // last_input_seq 0, last_attack 없음
             0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
             0x00, // prompt: 없음

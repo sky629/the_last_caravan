@@ -10,7 +10,7 @@
 
 use caravan_rules::{
     BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life, Loadout,
-    Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, Projectile, Prompt,
+    Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, PlayerBuffs, Projectile, Prompt,
     RepairTarget, Sim, Stage, Tower, TowerState, Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
@@ -267,6 +267,8 @@ pub enum WireLife {
         interaction: Option<WireInteraction>,
         /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
         build_refusal: Option<WireBuildRefusal>,
+        /// 받은 버프입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다. 쓰러지면 사라지므로 `Alive`에만 있습니다.
+        buffs: WireBuffs,
     },
     Downed {
         /// 남은 출혈 시간(초)입니다. 부활이 진행되는 동안에는 줄지 않습니다.
@@ -275,6 +277,28 @@ pub enum WireLife {
         revive_progress: Option<f32>,
     },
     Dead,
+}
+
+/// 플레이어가 받은 버프입니다. 남은 시간은 싣지 않습니다. 플레이어는 최대 넷이므로 bool 둘로 보내도 스냅샷은 플레이어마다 2바이트, 모두 합쳐 8바이트만 커집니다.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireBuffs {
+    pub haste: bool,
+    pub swift: bool,
+}
+
+impl WireBuffs {
+    /// 버프가 하나도 없습니다.
+    pub const NONE: WireBuffs = WireBuffs {
+        haste: false,
+        swift: false,
+    };
+
+    fn of(buffs: &PlayerBuffs) -> WireBuffs {
+        WireBuffs {
+            haste: buffs.has_haste(),
+            swift: buffs.has_swift(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -565,6 +589,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
             stamina,
             interaction,
             build_refusal,
+            buffs,
             ..
         } => WireLife::Alive {
             hp: *hp,
@@ -575,6 +600,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
                 .as_ref()
                 .map(|interaction| wire_interaction(sim, player, interaction)),
             build_refusal: build_refusal.as_ref().map(WireBuildRefusal::of),
+            buffs: WireBuffs::of(buffs),
         },
         Life::Downed { bleed_left_ticks } => WireLife::Downed {
             bleed_secs_left: secs(*bleed_left_ticks, tuning),

@@ -1,6 +1,6 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
-//! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸이 있고,
+//! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸, 내가 받은 버프의 이름이 있고,
 //! 야영지에서는 그 아래에 방 코드와 `C` 안내, 준비 목록, `R` 안내, 시작까지 남은 시간이 있고,
 //! 아래 가운데에 F를 누르면 하게 되는 일의 안내와 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 원정 중의 방 코드가 있고, 화면 가운데에 접속을 기다리는 안내나 원정의 결과(성공 여부, 요약, 개인별 기록의 표, 확인 안내)가 크게 나옵니다.
@@ -64,6 +64,8 @@ pub struct HudNodes {
     stash: Entity,
     carry: Entity,
     weapon: Entity,
+    /// 내가 받은 버프의 이름입니다.
+    buffs: Entity,
     /// 야영지의 방 코드와 `C` 안내입니다.
     camp_room: Entity,
     /// 야영지의 준비 목록입니다. 한 줄씩 담는 상자이고, 줄은 방의 정원만큼 입장한 뒤에 만듭니다.
@@ -172,13 +174,14 @@ pub fn setup(mut commands: Commands) {
         }))
         .add_children(&[me, stamina, wagon, allies_panel]);
 
-    // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함, 내가 든 자원, 내가 든 무기.
+    // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함, 내가 든 자원, 내가 든 무기, 내가 받은 버프.
     let day = text_node(&mut commands, 30.0, TEXT);
     let timer = text_node(&mut commands, 20.0, TEXT);
     let expedition = text_node(&mut commands, 16.0, TEXT_DIM);
     let stash = text_node(&mut commands, 22.0, TEXT);
     let carry = text_node(&mut commands, 22.0, TEXT);
     let weapon = text_node(&mut commands, 22.0, TEXT);
+    let buffs = text_node(&mut commands, 22.0, TEXT);
     // 야영지에서는 이 아래에 방 코드와 준비 목록이 나옵니다.
     let camp_room = text_node(&mut commands, 20.0, TEXT);
     let camp_rows_box = commands
@@ -206,6 +209,7 @@ pub fn setup(mut commands: Commands) {
             stash,
             carry,
             weapon,
+            buffs,
             camp_room,
             camp_rows_box,
             camp_hint,
@@ -298,6 +302,7 @@ pub fn setup(mut commands: Commands) {
         stash,
         carry,
         weapon,
+        buffs,
         camp_room,
         camp_rows_box,
         camp_rows: Vec::new(),
@@ -435,6 +440,7 @@ pub fn update(
         nodes.weapon,
         hud.weapon.as_deref().unwrap_or(""),
     );
+    set_text(&mut texts, nodes.buffs, hud.buffs.as_deref().unwrap_or(""));
     let camp = hud.camp.as_ref();
     set_text(
         &mut texts,

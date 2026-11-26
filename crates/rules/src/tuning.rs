@@ -80,6 +80,16 @@ pub enum Debuff {
     Stun { secs: f32 },
 }
 
+/// 플레이어가 받는 버프입니다. 버프의 세기는 `EffectTuning`에 있고, 길이는 버프를 거는 쪽이 정합니다. `secs`는 0보다 길어야 합니다.
+/// 버프를 추가하려면 변형을 하나 더하고, `effect::PlayerBuffs::grant`의 `match`에 갈래를 하나 더합니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Buff {
+    /// `secs`초 동안 공격의 쿨다운이 `EffectTuning::haste_cooldown_factor`배가 됩니다.
+    Haste { secs: f32 },
+    /// `secs`초 동안 이동 속도가 `EffectTuning::swift_speed_factor`배가 됩니다. 달리기의 배율과 곱해집니다.
+    Swift { secs: f32 },
+}
+
 /// 효과의 규칙에 공통으로 쓰이는 수치입니다. 효과마다 다른 수치는 효과를 거는 쪽의 행(`Debuff`)에 있습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EffectTuning {
@@ -87,6 +97,10 @@ pub struct EffectTuning {
     pub bleed_interval_secs: f32,
     /// 스턴이 끝난 몬스터가 스턴에 다시 걸리지 않는 시간입니다. 스턴을 건 무기가 달라도 같습니다.
     pub stun_immunity_secs: f32,
+    /// 공격 속도 버프(`Buff::Haste`)가 쿨다운에 곱하는 값입니다. 0보다 크고 1 이하입니다.
+    pub haste_cooldown_factor: f32,
+    /// 이동 속도 버프(`Buff::Swift`)가 이동 속도에 곱하는 값입니다. 1 이상입니다.
+    pub swift_speed_factor: f32,
 }
 
 /// 공격이 맞히는 곳까지 전달되는 방식입니다. 방식마다 그 방식에서만 의미가 있는 수치를 한 구조체로 가집니다.
@@ -585,9 +599,10 @@ impl Tuning {
     /// 수치가 규칙의 전제를 지키는지 검사합니다. 어긋난 첫 번째 항목을 설명하는 문장을 돌려줍니다.
     ///
     /// 속도는 모두 유한하고 0 이상이어야 합니다.
-    /// 가장 중요한 전제는 「한 Tick에 움직일 수 있는 거리가 몸의 반지름보다 짧다」입니다.
-    /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 한 Tick에 얇은 벽을 건너뛰는 거리를 움직일 수 있으면 개체가 벽을 통과합니다.
-    /// 플레이어는 가장 빠른 속도(달리는 속도)로 움직이는 거리를, 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값을 이 전제에 맞춰 검사합니다.
+    /// 가장 중요한 전제는 「한 번에 움직이는 거리가 몸의 반지름보다 짧다」입니다.
+    /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 얇은 벽을 건너뛰는 거리를 한 번에 움직일 수 있으면 개체가 벽을 통과합니다.
+    /// 플레이어는 한 Tick의 이동이 반지름 이상이면 반지름보다 짧은 걸음으로 나누어 옮기므로(`player::move_players`) 반지름보다 길게 움직여도 됩니다. 다만 걸음의 수가 한 Tick의 거리를 반지름으로 나눈 값이므로, 반지름은 0보다 커야 하고 가장 빠른 한 Tick의 거리(달리면서 이동 속도 버프를 받은 경우)는 반지름의 `MAX_PLAYER_STEPS_PER_TICK`배보다 짧아야 합니다.
+    /// 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값이 이 전제를 지키는지 검사합니다.
     ///
     /// 맵은 타일에 꼭 맞아야 합니다. 크기, 장애물, 마차가 정수 좌표이고, 몸의 반지름이 타일의 절반보다 짧고,
     /// 채집 지점이 맵 안의 빈 타일이면서 마을의 범위 밖에 있고,
@@ -651,6 +666,7 @@ impl Tuning {
         // 음수 속도는 개체를 목표의 반대쪽으로 걷게 하고, NaN은 아래의 모든 비교를 거짓으로 만들어 검사를 통과하므로 먼저 거절합니다.
         check_not_negative("player speed", self.player.speed)?;
         check_not_negative("player crawl_speed", self.player.crawl_speed)?;
+        check_positive("player radius", self.player.radius)?;
         for kind in MonsterKind::ALL {
             let monster = self.monsters.get(kind);
             check_not_negative(&format!("{kind:?} speed"), monster.speed)?;
@@ -667,6 +683,17 @@ impl Tuning {
             return Err(format!(
                 "sprint speed_multiplier must be a finite number of at least 1, but it is {}",
                 sprint.speed_multiplier
+            ));
+        }
+        // 플레이어의 걸음의 수는 한 Tick의 거리를 반지름으로 나눈 값이므로, 이 비율에 상한이 없으면 Tick 하나가 끝나지 않습니다.
+        let fastest_tick =
+            (self.player.speed * sprint.speed_multiplier * self.effects.swift_speed_factor)
+                .max(self.player.crawl_speed)
+                * self.dt();
+        let radii = fastest_tick / self.player.radius;
+        if radii >= MAX_PLAYER_STEPS_PER_TICK {
+            return Err(format!(
+                "player speed must move a player fewer than {MAX_PLAYER_STEPS_PER_TICK} body radii in one tick, but the fastest player moves {radii}"
             ));
         }
         for (name, secs) in [
@@ -691,15 +718,6 @@ impl Tuning {
         }
 
         let dt = self.dt();
-        let fastest_player =
-            (self.player.speed * sprint.speed_multiplier).max(self.player.crawl_speed);
-        if fastest_player * dt >= self.player.radius {
-            return Err(format!(
-                "a player moves {} tiles per tick, which must be shorter than its radius {}",
-                fastest_player * dt,
-                self.player.radius
-            ));
-        }
         for kind in MonsterKind::ALL {
             let monster = self.monsters.get(kind);
             // 몬스터는 같은 Tick에 걸으면서 밀려날 수 있으므로, 움직일 수 있는 거리의 최댓값은 두 거리의 합입니다.
@@ -968,10 +986,24 @@ impl Tuning {
     /// - 시간은 유한하고 0보다 길어야 합니다. 0초 효과는 아무것도 하지 않고, 스턴이 끝난 뒤의 면역이 0초이면 스턴을 끝없이 이을 수 있습니다.
     /// - 감속의 비율은 0보다 크고 1 이하입니다. 0이면 스턴이고, 1보다 크면 빨라집니다.
     /// - 출혈의 피해는 1 이상이고, 출혈이 계속되는 시간은 간격 이상입니다. 그보다 짧으면 한 번도 피해가 나지 않습니다.
+    /// - 공격 속도 버프의 비율은 0보다 크고 1 이하입니다. 0이면 쿨다운이 없어지고, 1보다 크면 버프가 공격을 느리게 합니다.
+    /// - 이동 속도 버프의 비율은 1 이상입니다. 1보다 작으면 버프가 이동을 느리게 하고, 음수이면 뒤로 걷게 합니다.
     fn validate_effects(&self) -> Result<(), String> {
         let effects = &self.effects;
         check_positive("effects bleed_interval_secs", effects.bleed_interval_secs)?;
         check_positive("effects stun_immunity_secs", effects.stun_immunity_secs)?;
+        let haste = effects.haste_cooldown_factor;
+        if !(haste.is_finite() && haste > 0.0 && haste <= 1.0) {
+            return Err(format!(
+                "effects haste_cooldown_factor must be above 0 and at most 1, but it is {haste}"
+            ));
+        }
+        let swift = effects.swift_speed_factor;
+        if !(swift.is_finite() && swift >= 1.0) {
+            return Err(format!(
+                "effects swift_speed_factor must be a finite number of at least 1, but it is {swift}"
+            ));
+        }
         let rows = WeaponKind::ALL
             .map(|kind| (format!("{kind:?}"), self.weapons.get(kind).on_hit))
             .into_iter()
@@ -1021,7 +1053,7 @@ impl Tuning {
     /// - 탄환의 반지름은 유한하고 0 이상이며, √2를 곱한 값이 플레이어의 반지름보다 짧습니다. 탄환은 플레이어의 중심에서 나가므로,
     ///   벽이나 장애물의 모서리에 붙어 선 플레이어가 쏘는 탄환이 처음부터 막힌 곳에 닿으면 안 되기 때문입니다.
     ///
-    /// 탄환의 속도에는 상한이 없습니다. 이동(`collision`)은 한 Tick의 거리가 반지름보다 짧아야 하지만, 탄환의 명중 판정은 이동하는 선분 전체를 검사합니다.
+    /// 탄환의 속도에는 상한이 없습니다. 이동(`collision`)은 한 번에 움직이는 거리가 반지름보다 짧아야 하지만, 탄환의 명중 판정은 이동하는 선분 전체를 검사합니다.
     ///
     /// `match`에 `_` 갈래가 없으므로 전달 방식을 추가하면 컴파일러가 이 검사를 더하라고 알려 줍니다.
     fn validate_weapons(&self) -> Result<(), String> {
@@ -1070,6 +1102,9 @@ impl Tuning {
         Ok(())
     }
 }
+
+/// 플레이어가 한 Tick에 움직일 수 있는 거리를 몸의 반지름의 배수로 잰 상한입니다. 한 Tick의 걸음의 수가 이 값을 넘지 않습니다.
+const MAX_PLAYER_STEPS_PER_TICK: f32 = 64.0;
 
 /// 속도는 유한하고 0 이상이어야 합니다.
 fn check_not_negative(name: &str, value: f32) -> Result<(), String> {
@@ -1245,6 +1280,8 @@ impl Default for Tuning {
             effects: EffectTuning {
                 bleed_interval_secs: 1.0,
                 stun_immunity_secs: 2.0,
+                haste_cooldown_factor: 0.7,
+                swift_speed_factor: 1.3,
             },
             monsters: MonsterTable {
                 grunt: MonsterTuning {

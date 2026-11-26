@@ -14,9 +14,8 @@ fn the_default_tuning_is_valid() {
 }
 
 #[test]
-fn one_tick_of_walking_is_shorter_than_a_body_radius_so_nothing_tunnels() {
+fn one_tick_of_a_walking_monster_is_shorter_than_a_body_radius_so_it_does_not_tunnel() {
     let t = Tuning::default();
-    assert!(t.player.speed * t.dt() < t.player.radius);
     assert!(t.monsters.grunt.speed * t.dt() < t.monsters.grunt.radius);
 }
 
@@ -517,18 +516,65 @@ fn a_gauge_too_big_to_count_in_whole_numbers_is_rejected() {
 }
 
 #[test]
-fn a_sprint_that_moves_a_player_a_body_radius_or_more_in_one_tick_is_rejected() {
+fn a_sprint_that_moves_a_player_a_body_radius_or_more_in_one_tick_is_valid() {
     // 걷는 속도 4에 배율 1.75를 곱한 속도 7은 한 Tick에 0.35타일이고, 이것이 몸의 반지름입니다.
-    let mut t = Tuning::default();
-    t.sprint.speed_multiplier = 1.74;
-    assert_eq!(t.validate(), Ok(()), "just under the radius");
+    // 플레이어의 이동은 반지름보다 짧은 걸음으로 나뉘므로 그보다 빨라도 수치가 맞습니다.
+    for multiplier in [1.74, 1.76, 3.0, 20.0] {
+        let mut t = Tuning::default();
+        t.sprint.speed_multiplier = multiplier;
+        assert_eq!(t.validate(), Ok(()), "a sprint multiplier of {multiplier}");
+    }
+}
 
-    t.sprint.speed_multiplier = 1.76;
-    let why = t.validate().expect_err("longer than the radius");
-    assert!(why.contains("a player moves"), "{why}");
+#[test]
+fn a_player_who_moves_64_body_radii_in_one_tick_is_rejected_and_the_reason_names_it() {
+    // 걸음의 수는 한 Tick의 거리를 반지름으로 나눈 값이므로, 이 비율에 상한이 없으면 Tick 하나가 끝나지 않거나 걸음의 수가 넘칩니다.
+    let base = Tuning::default();
+    let boosts = base.sprint.speed_multiplier * base.effects.swift_speed_factor;
+    let limit = 64.0 * base.player.radius / base.dt();
+    let mut just_below = Tuning::default();
+    just_below.player.speed = limit / boosts * 0.99;
+    assert_eq!(just_below.validate(), Ok(()));
 
-    t.sprint.speed_multiplier = 3.0;
-    assert!(t.validate().is_err());
+    let fields: [(&str, SpeedField); 2] = [
+        ("speed", |t| &mut t.player.speed),
+        ("crawl_speed", |t| &mut t.player.crawl_speed),
+    ];
+    for (name, field) in fields {
+        for bad in [limit * 1.01, 7e6, 1e30, f32::MAX] {
+            let mut t = Tuning::default();
+            *field(&mut t) = bad;
+            let why = t.validate().expect_err(&format!("{name} of {bad}"));
+            assert!(why.contains("player speed"), "{name} of {bad}: {why}");
+        }
+    }
+    let mut boosted = Tuning::default();
+    boosted.player.speed = limit / boosts * 1.01;
+    assert!(boosted.validate().is_err(), "the sprint and the buff count");
+
+    // 탄환의 반지름이 0이면 플레이어의 반지름에 다른 하한이 없으므로, 아주 작은 반지름은 이 검사가 거절합니다.
+    for radius in [1e-5, 1e-30] {
+        let mut tiny = Tuning::default();
+        tiny.player.radius = radius;
+        for weapon in [&mut tiny.weapons.bow, &mut tiny.weapons.crossbow] {
+            if let Delivery::Projectile(shot) = &mut weapon.delivery {
+                shot.radius = 0.0;
+            }
+        }
+        let why = tiny.validate().expect_err(&format!("a radius of {radius}"));
+        assert!(why.contains("player speed"), "a radius of {radius}: {why}");
+    }
+}
+
+#[test]
+fn a_player_without_a_positive_radius_is_rejected_and_the_reason_names_it() {
+    // 반지름이 걸음의 수를 정하므로, 0은 나눗셈을 깨고 음수는 걸음을 나누지 않게 합니다.
+    for bad in [0.0, -0.35, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.player.radius = bad;
+        let why = t.validate().expect_err(&format!("a radius of {bad}"));
+        assert!(why.contains("player radius"), "{bad}: {why}");
+    }
 }
 
 #[test]
@@ -770,7 +816,7 @@ fn a_projectile_as_wide_as_the_player_is_rejected() {
 
 #[test]
 fn a_projectile_fast_enough_to_cross_the_map_in_one_tick_is_still_valid() {
-    // 명중 판정이 이동하는 선분 전체를 검사하므로 속도에 상한이 없습니다. 이동과 달리 한 Tick의 거리가 반지름보다 길어도 됩니다.
+    // 명중 판정이 이동하는 선분 전체를 검사하므로 속도에 상한이 없습니다. 몸의 이동과 달리 한 번에 움직이는 거리가 반지름보다 길어도 됩니다.
     let t = with_bow(ProjectileTuning {
         speed: 5000.0,
         ..default_shot()
@@ -950,6 +996,37 @@ fn the_numbers_all_effects_share_must_be_longer_than_no_time() {
         let why = t.validate().expect_err(&format!("an interval of {bad} s"));
         assert!(why.contains("effects bleed_interval_secs"), "{bad}: {why}");
     }
+}
+
+#[test]
+fn a_haste_that_does_not_shorten_the_cooldown_is_rejected_and_the_reason_names_it() {
+    for bad in [0.0, 1.5, -0.7, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.effects.haste_cooldown_factor = bad;
+        let why = t.validate().expect_err(&format!("a haste of {bad}"));
+        assert!(
+            why.contains("effects haste_cooldown_factor"),
+            "{bad}: {why}"
+        );
+    }
+    for valid in [0.01, 1.0] {
+        let mut t = Tuning::default();
+        t.effects.haste_cooldown_factor = valid;
+        assert_eq!(t.validate(), Ok(()), "a haste of {valid}");
+    }
+}
+
+#[test]
+fn a_swift_that_does_not_speed_up_the_player_is_rejected_and_the_reason_names_it() {
+    for bad in [0.99, 0.0, -1.3, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.effects.swift_speed_factor = bad;
+        let why = t.validate().expect_err(&format!("a swift of {bad}"));
+        assert!(why.contains("effects swift_speed_factor"), "{bad}: {why}");
+    }
+    let mut t = Tuning::default();
+    t.effects.swift_speed_factor = 1.0;
+    assert_eq!(t.validate(), Ok(()), "a swift of 100% changes nothing");
 }
 
 #[test]

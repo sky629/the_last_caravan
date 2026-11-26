@@ -225,6 +225,7 @@ mod tests {
     use crate::towers;
     use bevy::mesh::VertexAttributeValues;
     use caravan_client_core::{Frame, MonsterView, PlayerView};
+    use caravan_protocol::WireBuffs;
     use caravan_protocol::{
         WireChest, WireGroundWeapon, WireLife, WireLoadout, WireMonsterEffects, WireMonsterKind,
         WireNode, WirePhase, WirePile, WirePos, WireStruck, WireTile, WireTower, WireTowerState,
@@ -246,6 +247,7 @@ mod tests {
                 stamina: 100,
                 interaction: None,
                 build_refusal: None,
+                buffs: WireBuffs::NONE,
             },
             last_attack: None,
             loadout: WireLoadout {

@@ -2,10 +2,10 @@
 //! 규칙은 공개 함수(`add_player`, `step`)로만 움직이고, 기대하는 값은 규칙의 약속(수치표의 값)에서 구합니다.
 
 use caravan_protocol::{
-    RoomCode, SeatToken, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal,
-    WireCannotBuild, WireDelivery, WireInteraction, WireLife, WireLoadout, WireMonsterKind,
-    WireOutcome, WirePhase, WirePos, WirePrompt, WireRepairTarget, WireStruck, WireTile,
-    WireTowerState, WireWeaponKind,
+    RoomCode, SeatToken, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuffs,
+    WireBuildRefusal, WireCannotBuild, WireDelivery, WireInteraction, WireLife, WireLoadout,
+    WireMonsterKind, WireOutcome, WirePhase, WirePos, WirePrompt, WireRepairTarget, WireStruck,
+    WireTile, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::{
     AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Start,
@@ -139,7 +139,8 @@ fn a_fresh_expedition_maps_to_the_numbers_in_the_tuning_table() {
             carried: 0,
             stamina: 100,
             interaction: None,
-            build_refusal: None
+            build_refusal: None,
+            buffs: WireBuffs::NONE,
         }
     );
     assert_eq!((player.last_input_seq, player.last_attack), (0, None));
@@ -678,7 +679,8 @@ fn a_downed_player_and_the_reviver_show_the_same_progress() {
             carried: 0,
             stamina: 100,
             interaction: None,
-            build_refusal: None
+            build_refusal: None,
+            buffs: WireBuffs::NONE,
         },
         "revived with 30 percent of the maximum HP and a full gauge"
     );
@@ -756,7 +758,8 @@ fn a_gatherer_the_load_it_carries_and_a_dropped_pile_show_on_the_wire() {
             carried: 1,
             stamina: 100,
             interaction: Some(WireInteraction::Gathering { node: 1 }),
-            build_refusal: None
+            build_refusal: None,
+            buffs: WireBuffs::NONE,
         }
     );
 
