@@ -31,8 +31,13 @@ use crate::world::World;
 pub enum Phase {
     /// `day`번째 날의 낮입니다. `ticks_left`가 지나면 밤이 됩니다.
     Day { day: u32, ticks_left: u32 },
-    /// `day`번째 날의 밤입니다. 그 밤의 무리가 차례로 나옵니다.
-    Night { day: u32, step: NightStep },
+    /// `day`번째 날의 밤입니다. 그 밤의 무리가 차례로 나옵니다. `party`는 밤이 시작될 때 방에 있던 플레이어의 수(자리를 비운 플레이어 포함)이고,
+    /// 그 밤의 무리의 크기를 정합니다(`NightTuning::wave_size`). 밤 도중에 들어오거나 나가도 바뀌지 않습니다.
+    Night {
+        day: u32,
+        party: u32,
+        step: NightStep,
+    },
     /// 밤의 무리를 모두 처치했고, `ticks_left`가 지나면 `next_day`번째 날의 낮이 시작됩니다.
     Dawn { next_day: u32, ticks_left: u32 },
 }
@@ -86,6 +91,7 @@ pub(crate) fn advance_phase(
                 nightfall(world);
                 Phase::Night {
                     day,
+                    party: world.players.len() as u32,
                     step: NightStep::Waiting {
                         next_wave: 1,
                         ticks_left: t.ticks(t.nights.first_wave_delay_secs),
@@ -110,7 +116,7 @@ pub(crate) fn advance_phase(
                 begin_day(world, spawns, expedition, next_day, t);
             }
         }
-        Phase::Night { day, step } => match step {
+        Phase::Night { day, party, step } => match step {
             NightStep::Waiting {
                 next_wave,
                 ticks_left,
@@ -118,15 +124,17 @@ pub(crate) fn advance_phase(
                 if ticks_left > 1 {
                     *phase = Phase::Night {
                         day,
+                        party,
                         step: NightStep::Waiting {
                             next_wave,
                             ticks_left: ticks_left - 1,
                         },
                     };
                 } else {
-                    let to_spawn = t.nights.wave(day, next_wave).map_or(0, |wave| wave.count);
+                    let to_spawn = t.nights.wave_size(day, next_wave, party);
                     *phase = Phase::Night {
                         day,
+                        party,
                         step: NightStep::Fighting {
                             wave: next_wave,
                             to_spawn,
@@ -179,6 +187,7 @@ fn nightfall(world: &mut World) {
 fn spawn_next(phase: &mut Phase, world: &mut World, spawns: &SpawnPlan, t: &Tuning) {
     let Phase::Night {
         day,
+        party,
         step:
             NightStep::Fighting {
                 wave,
@@ -194,6 +203,7 @@ fn spawn_next(phase: &mut Phase, world: &mut World, spawns: &SpawnPlan, t: &Tuni
     }
     let fighting = |to_spawn, spawn_in_ticks| Phase::Night {
         day,
+        party,
         step: NightStep::Fighting {
             wave,
             to_spawn,
@@ -207,7 +217,7 @@ fn spawn_next(phase: &mut Phase, world: &mut World, spawns: &SpawnPlan, t: &Tuni
     let Some(plan) = t.nights.wave(day, wave) else {
         return;
     };
-    let nth = plan.count - to_spawn;
+    let nth = t.nights.wave_size(day, wave, party) - to_spawn;
     let spot: Vec2 = spawns.night_spot(t.nights.wave_serial(day, wave), nth);
     world.spawn_monster(plan.kind, Order::Raid, spot, t);
     *phase = fighting(
@@ -237,6 +247,7 @@ pub(crate) fn settle_outcome(phase: &mut Phase, world: &World, t: &Tuning) -> Op
     }
     if let Phase::Night {
         day,
+        party,
         step: NightStep::Fighting {
             wave, to_spawn: 0, ..
         },
@@ -246,6 +257,7 @@ pub(crate) fn settle_outcome(phase: &mut Phase, world: &World, t: &Tuning) -> Op
         if wave < t.nights.wave_count(day) {
             *phase = Phase::Night {
                 day,
+                party,
                 step: NightStep::Waiting {
                     next_wave: wave + 1,
                     ticks_left: t.ticks(t.nights.between_waves_secs),

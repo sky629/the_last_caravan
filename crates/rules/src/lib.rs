@@ -54,7 +54,7 @@ pub use loadout::Loadout;
 pub use loot::{Chest, GroundWeapon, Prompt, Rack, Seed};
 pub use math::{Rect, Vec2};
 pub use monster::{Monster, Order};
-pub use player::{Interaction, LastAttack, Life, Player, Presence, RepairTarget};
+pub use player::{Interaction, LastAttack, Life, Player, Presence, Record, RepairTarget};
 pub use projectile::{Flight, Projectile};
 pub use resources::{GatherNode, Pile, nodes_of};
 pub use sim::{JoinError, Sim};
@@ -66,6 +66,6 @@ pub use tuning::{
     HitscanTuning, LootTuning, MapSpec, MonsterTable, MonsterTuning, NightPlan, NightTuning,
     PlayerTuning, ProjectileTuning, RepairTuning, ResourceTuning, ReviveTuning, SprintTuning,
     Start, StructureTable, StructureTuning, Tuning, VillageTuning, WagonTuning, WavePlan,
-    WeaponTable, WeaponTuning,
+    WaveScaling, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;

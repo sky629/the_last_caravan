@@ -5,13 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::report::WireReport;
 use crate::roster::WireRoster;
 use crate::seat_token::SeatToken;
 use crate::snapshot::Snapshot;
 use crate::welcome::Welcome;
 
 /// 전송 형식이 바뀔 때 올리는 번호입니다. 서버는 다른 번호로 입장을 요청한 클라이언트를 거절합니다.
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// 클라이언트에서 서버로 가는 메시지입니다. 이 열거형이 클라이언트가 서버에 할 수 있는 말의 전부입니다.
 /// 위치, 피해량, 공격 대상, 명중 여부는 어디에도 없습니다. 서버가 모든 결과를 판정합니다.
@@ -100,6 +101,9 @@ pub enum ServerMsg {
     /// 같은 표식으로 새 접속이 이 접속의 자리를 이어받았다는 알림입니다. 서버는 이 접속을 닫지 않고, 알림을 읽은 클라이언트가 닫기를 기다립니다.
     /// 브라우저는 닫힘을 이 메시지보다 먼저 알릴 수 있어서, 보내자마자 닫으면 이유가 화면에 나오지 않습니다.
     SeatTakenOver,
+    /// 끝난 원정의 결과입니다. 결과 화면이 열린 Tick에 방의 모든 접속에 한 번 보내고, 결과 화면 중에 들어오거나 돌아온 접속에는 입장 안내와 명단 다음에 보냅니다.
+    /// 요약과 기록은 스냅샷에 싣지 않으므로 Tick마다 보내는 크기가 결과의 크기와 관계가 없습니다.
+    Debrief(WireReport),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

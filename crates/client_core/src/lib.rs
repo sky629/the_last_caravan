@@ -28,8 +28,8 @@ mod start;
 pub use flow::{Command, Flow, Screen};
 pub use fps::FpsMeter;
 pub use hud::{
-    Banner, BannerTone, CampPanel, Hud, Invite, InviteKind, Meter, Tone, bar_fraction, reject_text,
-    weapon_name,
+    Banner, BannerTone, CampPanel, DebriefPanel, Hud, Invite, InviteKind, Meter, Tone,
+    bar_fraction, reject_text, weapon_name,
 };
 pub use input::Controls;
 pub use interp::{Frame, MonsterView, PlayerView, ProjectileView, Setting, effect_progress};

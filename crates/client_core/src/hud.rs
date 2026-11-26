@@ -6,7 +6,7 @@
 use caravan_protocol::{
     PROTOCOL_VERSION, RejectReason, RoomCode, WireBuildRefusal, WireCannotBuild, WireInteraction,
     WireLife, WireLoadout, WireMember, WireNightStep, WireOutcome, WirePhase, WirePrompt,
-    WireRepairTarget, WireTowerState, WireWeaponKind,
+    WireRecordRow, WireRepairTarget, WireReport, WireTowerState, WireWeaponKind,
 };
 use caravan_rules::Team;
 
@@ -32,10 +32,12 @@ pub struct Hud {
     pub weapon: Option<String>,
     /// F를 누르면 하게 되는 일의 안내입니다. 서버가 정해서 스냅샷에 실어 보내고, 내 캐릭터의 것만 표시합니다.
     pub hint: Option<String>,
-    /// 화면 가운데에 크게 띄우는 안내입니다. 원정의 결과와, 접속과 첫 스냅샷을 기다리는 안내가 여기에 나옵니다.
+    /// 화면 가운데에 크게 띄우는 안내입니다. 접속과 첫 스냅샷을 기다리는 안내가 여기에 나옵니다.
     pub banner: Option<Banner>,
     /// 야영지에서 화면 오른쪽에 띄우는 준비 목록입니다. 야영지일 때만 있습니다.
     pub camp: Option<CampPanel>,
+    /// 결과 화면의 가운데에 띄우는 원정의 요약과 개인별 기록의 표입니다. 결과 화면일 때만 있습니다.
+    pub debrief: Option<DebriefPanel>,
     pub me: Option<Meter>,
     /// 내 달리기 게이지입니다. 살아 있을 때만 있습니다.
     pub stamina: Option<Meter>,
@@ -63,6 +65,24 @@ pub struct CampPanel {
     pub countdown: Option<String>,
 }
 
+/// 결과 화면입니다. 위에 원정이 성공했는지와 요약이 있고, 아래에 플레이어마다 한 줄의 기록이 있습니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DebriefPanel {
+    /// `EXPEDITION SUCCESS`나 `EXPEDITION FAILED`입니다.
+    pub title: String,
+    pub tone: BannerTone,
+    /// `DAYS 3 / 3    TIME 14:32    TOWER KILLS 41`입니다. 버틴 날은 원정이 끝난 날이고, 시간은 분과 초입니다.
+    /// 지금 그리는 원정의 결과가 아직 도착하지 않았으면 없습니다.
+    pub summary: Option<String>,
+    /// 표의 머리 줄 하나와 플레이어마다 한 줄이고, 플레이어 번호 순서입니다. 칸은 글자 수를 맞춰서 한 줄씩 세로로 나란히 서고,
+    /// 이름은 왼쪽에 맞추고 수는 오른쪽에 맞춥니다. 요약과 같이 결과가 아직 도착하지 않았으면 비어 있습니다.
+    pub table: Vec<String>,
+    /// 내가 Enter를 누르면 하게 되는 일과 확인한 사람의 수입니다. 내가 확인했으면 기다리라는 안내입니다.
+    pub action: String,
+    /// 모두가 확인하지 않아도 야영지로 돌아가기까지 남은 시간입니다.
+    pub countdown: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Meter {
     pub label: String,
@@ -74,7 +94,6 @@ pub struct Meter {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Banner {
     pub title: String,
-    pub detail: Option<String>,
     pub tone: BannerTone,
 }
 
@@ -140,6 +159,7 @@ impl Hud {
             hint: None,
             banner: None,
             camp: None,
+            debrief: None,
             me: None,
             stamina: None,
             wagon: None,
@@ -192,12 +212,18 @@ impl Hud {
                     confirmed,
                 } = phase
                 {
-                    hud.banner = Some(result_banner(
+                    // 결과는 몇 번째 원정의 것인지 알고 있으므로, 지금 그리는 원정의 결과일 때만 보여 줍니다.
+                    let report = joined
+                        .report
+                        .as_ref()
+                        .filter(|report| report.expedition == frame.expedition);
+                    hud.debrief = Some(debrief_panel(
                         *outcome,
                         *secs_left,
                         confirmed,
                         you,
                         agreement(&joined.roster, &frame.players, confirmed),
+                        report.map(|report| (report, joined.welcome.world.day_count)),
                     ));
                 }
             }
@@ -263,26 +289,26 @@ fn session_banner(session: &Session, frame: Option<&Frame>) -> Option<Banner> {
         Session::InRoom(_) if frame.is_some() => None,
         Session::InRoom(_) => Some(Banner {
             title: "Waiting for the first snapshot...".to_string(),
-            detail: None,
             tone: BannerTone::Info,
         }),
         _ => Some(Banner {
             title: session.status_text(),
-            detail: None,
             tone: BannerTone::Info,
         }),
     }
 }
 
-/// 원정의 결과입니다. 둘째 줄은 확인한 사람의 수이고, 내가 확인했으면 Enter를 누르라는 안내 대신 기다리라는 안내가 나옵니다.
-/// 셋째 줄은 모두가 확인하지 않아도 야영지로 돌아가기까지 남은 시간입니다.
-fn result_banner(
+/// 결과 화면입니다. 요약과 표는 서버가 따로 보낸 결과(`report`와 원정의 날 수)에서 오고, 결과가 도착하기 전에는 성공 여부와 확인 안내만 나옵니다.
+/// 확인 안내는 확인한 사람의 수이고, 내가 확인했으면 Enter를 누르라는 안내 대신 기다리라는 안내가 나옵니다.
+/// 남은 시간은 모두가 확인하지 않아도 야영지로 돌아가기까지의 시간입니다.
+fn debrief_panel(
     outcome: WireOutcome,
     secs_left: f32,
     confirmed: &[u32],
     you: u32,
     (done, required): (usize, usize),
-) -> Banner {
+    report: Option<(&WireReport, u32)>,
+) -> DebriefPanel {
     let (title, tone) = match outcome {
         WireOutcome::Victory => ("EXPEDITION SUCCESS", BannerTone::Good),
         WireOutcome::Defeat => ("EXPEDITION FAILED", BannerTone::Bad),
@@ -293,14 +319,56 @@ fn result_banner(
     } else {
         format!("ENTER  BACK TO CAMP  {count}")
     };
-    Banner {
+    DebriefPanel {
         title: title.to_string(),
-        detail: Some(format!(
-            "{action}\nBACK TO CAMP IN {}s",
-            whole_secs(secs_left)
-        )),
         tone,
+        summary: report.map(|(report, day_count)| {
+            format!(
+                "DAYS {} / {day_count}    TIME {}    TOWER KILLS {}",
+                report.day,
+                minutes_and_seconds(report.elapsed_secs),
+                report.tower_kills
+            )
+        }),
+        table: report.map_or_else(Vec::new, |(report, _)| record_table(&report.rows)),
+        action,
+        countdown: format!("BACK TO CAMP IN {}s", whole_secs(secs_left)),
     }
+}
+
+/// `872`초는 `14:32`이고 `307`초는 `05:07`입니다. 한 시간이 넘어도 분으로 셉니다.
+fn minutes_and_seconds(secs: u32) -> String {
+    format!("{:02}:{:02}", secs / 60, secs % 60)
+}
+
+/// 개인별 기록의 표입니다. 머리 줄 하나와 플레이어마다 한 줄이고, 칸의 너비는 머리 글자와 그 칸에서 가장 긴 값 가운데 긴 쪽입니다.
+/// 글꼴의 글자 너비가 같으므로 칸이 세로로 나란히 섭니다. 이름은 왼쪽에, 수는 오른쪽에 맞춥니다.
+fn record_table(rows: &[WireRecordRow]) -> Vec<String> {
+    let numbers = |row: &WireRecordRow| {
+        [row.kills, row.revives, row.downs, row.deposited].map(|value| value.to_string())
+    };
+    let heads = ["KILLS", "REVIVES", "DOWNS", "DEPOSITED"];
+    let name_width = rows
+        .iter()
+        .map(|row| row.name.len())
+        .fold("NAME".len(), usize::max);
+    let widths: Vec<usize> = (0..heads.len())
+        .map(|column| {
+            rows.iter()
+                .map(|row| numbers(row)[column].len())
+                .fold(heads[column].len(), usize::max)
+        })
+        .collect();
+    let line = |name: &str, cells: [String; 4]| {
+        let mut line = format!("{name:<name_width$}");
+        for (cell, width) in cells.iter().zip(&widths) {
+            line.push_str(&format!("   {cell:>width$}"));
+        }
+        line
+    };
+    let mut table = vec![line("NAME", heads.map(str::to_string))];
+    table.extend(rows.iter().map(|row| line(&row.name, numbers(row))));
+    table
 }
 
 /// 결과 화면에서 확인한 사람의 수와 확인해야 하는 사람의 수입니다. 자리를 비운 사람은 서버가 기다리지 않으므로 어느 쪽에도 세지 않습니다.
@@ -1606,85 +1674,279 @@ mod tests {
         assert_eq!(expedition.carry.as_deref(), Some("CARRY  0 / 10"));
     }
 
+    fn debrief_frame(outcome: WireOutcome, secs_left: f32, confirmed: Vec<u32>) -> Frame {
+        let mut frame = frame(vec![player(YOU, alive(100)), player(2, alive(100))]);
+        frame.phase = WirePhase::Debrief {
+            outcome,
+            secs_left,
+            confirmed,
+        };
+        frame
+    }
+
+    /// 행은 (이름, 처치, 부활, 쓰러짐, 맡긴 자원)입니다.
+    fn report_of_expedition(
+        expedition: u32,
+        elapsed_secs: u32,
+        rows: &[(&str, [u32; 4])],
+    ) -> WireReport {
+        WireReport {
+            expedition,
+            day: 3,
+            elapsed_secs,
+            tower_kills: 41,
+            rows: rows
+                .iter()
+                .map(
+                    |&(name, [kills, revives, downs, deposited])| WireRecordRow {
+                        name: name.to_string(),
+                        kills,
+                        revives,
+                        downs,
+                        deposited,
+                    },
+                )
+                .collect(),
+        }
+    }
+
+    fn with_report(mut session: Session, report: WireReport) -> Session {
+        session.on_event(ClientEvent::Message(ServerMsg::Debrief(report)));
+        session
+    }
+
     #[test]
     fn the_result_is_shown_with_the_confirmations_and_the_time_until_the_camp() {
         let session = session_in_room();
-        let mut frame = frame(vec![player(YOU, alive(100)), player(2, alive(100))]);
-        frame.phase = WirePhase::Debrief {
-            outcome: WireOutcome::Defeat,
-            secs_left: 59.6,
-            confirmed: vec![],
-        };
-        let failed = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
-        assert_eq!(failed.title, "EXPEDITION FAILED");
-        assert_eq!(
-            failed.detail.as_deref(),
-            Some("ENTER  BACK TO CAMP  (0 / 2)\nBACK TO CAMP IN 60s")
-        );
-        assert_eq!(failed.tone, BannerTone::Bad);
 
-        frame.phase = WirePhase::Debrief {
-            outcome: WireOutcome::Defeat,
-            secs_left: 40.0,
-            confirmed: vec![2],
-        };
-        let other_confirmed = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
+        let failed = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Defeat, 59.6, vec![])),
+            INVITE,
+        );
+        let panel = failed.debrief.expect("the result screen has its panel");
+        assert_eq!(panel.title, "EXPEDITION FAILED");
+        assert_eq!(panel.action, "ENTER  BACK TO CAMP  (0 / 2)");
+        assert_eq!(panel.countdown, "BACK TO CAMP IN 60s");
+        assert_eq!(panel.tone, BannerTone::Bad);
+        assert_eq!(failed.banner, None);
+
+        let other_confirmed = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Defeat, 40.0, vec![2])),
+            INVITE,
+        )
+        .debrief
+        .unwrap();
         assert_eq!(
-            other_confirmed.detail.as_deref(),
-            Some("ENTER  BACK TO CAMP  (1 / 2)\nBACK TO CAMP IN 40s"),
+            other_confirmed.action, "ENTER  BACK TO CAMP  (1 / 2)",
             "I still have to confirm"
         );
+        assert_eq!(other_confirmed.countdown, "BACK TO CAMP IN 40s");
 
-        frame.phase = WirePhase::Debrief {
-            outcome: WireOutcome::Defeat,
-            secs_left: 40.0,
-            confirmed: vec![1],
-        };
-        let i_confirmed = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
-        assert_eq!(
-            i_confirmed.detail.as_deref(),
-            Some("WAITING FOR THE OTHERS  (1 / 2)\nBACK TO CAMP IN 40s")
+        let i_confirmed = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Defeat, 40.0, vec![1])),
+            INVITE,
+        )
+        .debrief
+        .unwrap();
+        assert_eq!(i_confirmed.action, "WAITING FOR THE OTHERS  (1 / 2)");
+
+        let won = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Victory, 1.0, vec![])),
+            INVITE,
         );
+        assert_eq!(won.camp, None);
+        assert_eq!(won.day, None);
+        let panel = won.debrief.unwrap();
+        assert_eq!(panel.title, "EXPEDITION SUCCESS");
+        assert_eq!(panel.tone, BannerTone::Good);
 
-        frame.phase = WirePhase::Debrief {
-            outcome: WireOutcome::Victory,
-            secs_left: 1.0,
-            confirmed: vec![],
-        };
-        assert_eq!(Hud::of(&session, Some(&frame), INVITE).camp, None);
-        let won = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
-        assert_eq!(won.title, "EXPEDITION SUCCESS");
-        assert_eq!(won.tone, BannerTone::Good);
-        assert_eq!(Hud::of(&session, Some(&frame), INVITE).day, None);
+        let during_the_expedition = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100))])),
+            INVITE,
+        );
+        assert_eq!(
+            during_the_expedition.debrief, None,
+            "only the result screen has the panel"
+        );
     }
 
     #[test]
     fn the_result_does_not_wait_for_a_player_who_is_away() {
         let session = with_presence(session_in_room(), &[(1, "KANG", true), (2, "MIRO", false)]);
-        let mut frame = frame(vec![player(YOU, alive(100)), player(2, alive(100))]);
-        frame.phase = WirePhase::Debrief {
-            outcome: WireOutcome::Defeat,
-            secs_left: 40.0,
-            confirmed: vec![],
-        };
-        let waiting = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
+
+        let waiting = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Defeat, 40.0, vec![])),
+            INVITE,
+        )
+        .debrief
+        .unwrap();
         assert_eq!(
-            waiting.detail.as_deref(),
-            Some("ENTER  BACK TO CAMP  (0 / 1)\nBACK TO CAMP IN 40s"),
+            waiting.action, "ENTER  BACK TO CAMP  (0 / 1)",
             "only the one who is here has to confirm"
         );
 
-        frame.phase = WirePhase::Debrief {
-            outcome: WireOutcome::Defeat,
-            secs_left: 40.0,
-            confirmed: vec![2],
-        };
-        let away_confirmed = Hud::of(&session, Some(&frame), INVITE).banner.unwrap();
+        let away_confirmed = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Defeat, 40.0, vec![2])),
+            INVITE,
+        )
+        .debrief
+        .unwrap();
         assert_eq!(
-            away_confirmed.detail.as_deref(),
-            Some("ENTER  BACK TO CAMP  (0 / 1)\nBACK TO CAMP IN 40s"),
+            away_confirmed.action, "ENTER  BACK TO CAMP  (0 / 1)",
             "a confirmation of someone who went away is not counted"
         );
+    }
+
+    #[test]
+    fn the_summary_and_the_table_come_from_the_result_in_the_order_of_its_rows() {
+        let session = with_report(
+            session_in_room(),
+            report_of_expedition(
+                2,
+                872,
+                &[("KANG", [88, 2, 1, 34]), ("MIRO", [61, 0, 3, 52])],
+            ),
+        );
+        let panel = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Victory, 50.0, vec![])),
+            INVITE,
+        )
+        .debrief
+        .unwrap();
+
+        assert_eq!(
+            panel.summary.as_deref(),
+            Some("DAYS 3 / 3    TIME 14:32    TOWER KILLS 41")
+        );
+        assert_eq!(
+            panel.table,
+            [
+                "NAME   KILLS   REVIVES   DOWNS   DEPOSITED",
+                "KANG      88         2       1          34",
+                "MIRO      61         0       3          52",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_long_name_or_a_big_number_widens_its_column_and_every_line_keeps_the_same_columns() {
+        let session = with_report(
+            session_in_room(),
+            report_of_expedition(
+                2,
+                872,
+                &[
+                    ("KANG", [1_234_567, 2, 1, 34]),
+                    ("A_LONG_NAME", [61, 0, 12, 5]),
+                ],
+            ),
+        );
+        let panel = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Victory, 50.0, vec![])),
+            INVITE,
+        )
+        .debrief
+        .unwrap();
+
+        assert_eq!(
+            panel.table,
+            [
+                "NAME            KILLS   REVIVES   DOWNS   DEPOSITED",
+                "KANG          1234567         2       1          34",
+                "A_LONG_NAME        61         0      12           5",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_days_survived_are_counted_against_the_days_of_the_expedition() {
+        let mut report = report_of_expedition(2, 872, &[("KANG", [0, 0, 0, 0])]);
+        report.day = 2;
+        let session = with_report(session_in_room(), report);
+
+        let panel = Hud::of(
+            &session,
+            Some(&debrief_frame(WireOutcome::Defeat, 50.0, vec![])),
+            INVITE,
+        )
+        .debrief
+        .unwrap();
+
+        assert_eq!(
+            panel.summary.as_deref(),
+            Some("DAYS 2 / 3    TIME 14:32    TOWER KILLS 41")
+        );
+    }
+
+    #[test]
+    fn the_time_is_minutes_and_seconds_with_two_digits_each() {
+        let summary_of = |elapsed_secs| {
+            let session = with_report(
+                session_in_room(),
+                report_of_expedition(2, elapsed_secs, &[("KANG", [0, 0, 0, 0])]),
+            );
+            Hud::of(
+                &session,
+                Some(&debrief_frame(WireOutcome::Defeat, 50.0, vec![])),
+                INVITE,
+            )
+            .debrief
+            .unwrap()
+            .summary
+            .unwrap()
+        };
+
+        assert_eq!(summary_of(0), "DAYS 3 / 3    TIME 00:00    TOWER KILLS 41");
+        assert_eq!(
+            summary_of(307),
+            "DAYS 3 / 3    TIME 05:07    TOWER KILLS 41"
+        );
+        assert_eq!(
+            summary_of(3599),
+            "DAYS 3 / 3    TIME 59:59    TOWER KILLS 41"
+        );
+        assert_eq!(
+            summary_of(4000),
+            "DAYS 3 / 3    TIME 66:40    TOWER KILLS 41",
+            "an hour is counted in minutes"
+        );
+    }
+
+    #[test]
+    fn a_result_that_is_missing_or_belongs_to_another_expedition_leaves_the_summary_and_table_empty()
+     {
+        let frame = debrief_frame(WireOutcome::Defeat, 50.0, vec![]);
+
+        let missing = Hud::of(&session_in_room(), Some(&frame), INVITE)
+            .debrief
+            .unwrap();
+        assert_eq!(missing.summary, None);
+        assert!(missing.table.is_empty());
+        assert_eq!(
+            missing.action, "ENTER  BACK TO CAMP  (0 / 2)",
+            "the confirmations do not wait for the result"
+        );
+
+        let earlier = with_report(
+            session_in_room(),
+            report_of_expedition(1, 872, &[("KANG", [88, 2, 1, 34])]),
+        );
+        let stale = Hud::of(&earlier, Some(&frame), INVITE).debrief.unwrap();
+        assert_eq!(
+            stale.summary, None,
+            "the result of the first expedition is not the second one's"
+        );
+        assert!(stale.table.is_empty());
+        assert_eq!(stale.title, "EXPEDITION FAILED");
     }
 
     #[test]

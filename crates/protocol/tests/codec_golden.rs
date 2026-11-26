@@ -15,10 +15,10 @@ use caravan_protocol::{
     SeatToken, ServerMsg, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal,
     WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife,
     WireLoadout, WireMember, WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome,
-    WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt, WireRect,
-    WireRepairTarget, WireRoster, WireShot, WireStruck, WireTile, WireTower, WireTowerState,
-    WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server, encode_client,
-    encode_server,
+    WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt, WireRecordRow, WireRect,
+    WireRepairTarget, WireReport, WireRoster, WireShot, WireStruck, WireTile, WireTower,
+    WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server,
+    encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -33,7 +33,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 9);
+    assert_eq!(PROTOCOL_VERSION, 10);
 }
 
 /// 값이 눈에 띄도록 0x10부터 이어지는 바이트로 만든 표식입니다.
@@ -53,7 +53,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
         },
         &[
             0x00, // Join 변형
-            0x09, // version
+            0x0A, // version
             0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
             0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
             0x00, // token: 없음
@@ -67,7 +67,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
             token: Some(TOKEN),
         },
         &[
-            0x00, 0x09, 0x00, 0x04, b'K', b'A', b'N', b'G', //
+            0x00, 0x0A, 0x00, 0x04, b'K', b'A', b'N', b'G', //
             0x01, // token: 있음
             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 길이 없이 16바이트
             0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -317,6 +317,46 @@ fn the_roster_is_variant_three_then_the_revision_then_the_members_with_their_pre
             0x01, // 번호 1, 이름 글자 4개, 자리에 있음
             0x02, 0x04, b'M', b'I', b'R', b'O',
             0x00, // 번호 2, 이름 글자 4개, 자리를 비움
+        ],
+    );
+}
+
+#[test]
+fn the_report_is_variant_five_then_the_expedition_the_summary_and_a_row_for_each_player() {
+    assert_server_wire(
+        ServerMsg::Debrief(WireReport {
+            expedition: 2,
+            day: 3,
+            elapsed_secs: 872,
+            tower_kills: 41,
+            rows: vec![
+                WireRecordRow {
+                    name: "KANG".to_string(),
+                    kills: 88,
+                    revives: 2,
+                    downs: 1,
+                    deposited: 34,
+                },
+                WireRecordRow {
+                    name: "MIRO".to_string(),
+                    kills: 300,
+                    revives: 0,
+                    downs: 3,
+                    deposited: 52,
+                },
+            ],
+        }),
+        &[
+            0x05, // Debrief 변형
+            0x02, // 몇 번째 원정인지
+            0x03, // 버틴 날
+            0xE8, 0x06, // 걸린 시간 872초
+            0x29, // 감시탑의 처치 41
+            0x02, // 목록: 길이 2
+            0x04, b'K', b'A', b'N', b'G', 0x58, 0x02, 0x01,
+            0x22, // 이름, 처치 88, 부활 2, 쓰러짐 1, 넣은 자원 34
+            0x04, b'M', b'I', b'R', b'O', 0xAC, 0x02, 0x00, 0x03,
+            0x34, // 이름, 처치 300, 부활 0, 쓰러짐 3, 넣은 자원 52
         ],
     );
 }

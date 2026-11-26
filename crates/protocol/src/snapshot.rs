@@ -462,7 +462,7 @@ fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
             day,
             secs_left: secs(ticks_left, tuning),
         },
-        Phase::Night { day, step } => WirePhase::Night {
+        Phase::Night { day, step, .. } => WirePhase::Night {
             day,
             wave_count: tuning.nights.wave_count(day),
             step: match step {

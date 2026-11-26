@@ -12,7 +12,7 @@ use crate::player::{LastAttack, Life};
 use crate::projectile::Launch;
 use crate::sweep;
 use crate::tuning::{ArcTuning, Delivery, HitscanTuning, arc_cos};
-use crate::world::{Ctx, Hit, Target, World};
+use crate::world::{Ctx, Hit, Source, Target, World};
 
 /// 이번 Tick에 플레이어가 한 공격입니다. 공격을 정하는 단계가 모으고, 전달하는 단계가 `delivery`에 따라 처리합니다.
 struct Attack {
@@ -90,6 +90,7 @@ fn deliver(world: &mut World, ctx: &Ctx, attacks: &[Attack], hits: &mut Vec<Hit>
             Delivery::Arc(arc) => swing(attack, arc, &world.monsters, ctx, &mut candidates, hits),
             Delivery::Projectile(spec) => {
                 world.launch(Launch {
+                    shooter: attack.player,
                     team: attack.team,
                     from: attack.origin,
                     dir: attack.facing,
@@ -136,6 +137,7 @@ fn shoot(
             hits.push(Hit {
                 target: Target::Monster(id),
                 amount: attack.damage,
+                by: Source::Player(attack.player),
             });
             at
         }
@@ -177,6 +179,7 @@ fn swing(
             hits.push(Hit {
                 target: Target::Monster(monster.id),
                 amount: attack.damage,
+                by: Source::Player(attack.player),
             });
         }
     }

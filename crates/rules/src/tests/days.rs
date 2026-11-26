@@ -70,7 +70,8 @@ fn the_first_night_begins_when_the_day_time_is_over() {
         phase(&s.sim),
         Phase::Night {
             day: 1,
-            step: NightStep::Waiting { next_wave: 1, .. }
+            step: NightStep::Waiting { next_wave: 1, .. },
+            ..
         }
     ));
 }
@@ -123,7 +124,8 @@ fn the_next_wave_comes_after_a_pause_once_the_wave_is_cleared() {
         phase(&s.sim),
         Phase::Night {
             day: 1,
-            step: NightStep::Waiting { next_wave: 2, .. }
+            step: NightStep::Waiting { next_wave: 2, .. },
+            ..
         }
     ));
     s.run_ticks(pause - 2);

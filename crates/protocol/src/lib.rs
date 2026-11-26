@@ -1,9 +1,10 @@
 //! 클라이언트와 서버가 합의해야 하는 모든 것입니다.
 //!
 //! - `messages`, `snapshot`, `welcome`: 주고받는 메시지의 정의. 게임 상태를 전송 형식으로 바꾸는 함수는 `Snapshot::from_sim` 하나입니다.
-//!   `Welcome::from_sim`은 접속 중에 바뀌지 않는 설정을 입장할 때 한 번 바꿉니다.
+//!   `Welcome::from_sim`은 접속 중에 바뀌지 않는 설정을 입장할 때 한 번 바꾸고, `WireReport::from_report`는 끝난 원정의 결과를 결과 화면이 열릴 때 한 번 바꿉니다.
 //! - `player_name`, `room_code`: 플레이어가 입력하는 이름과 방 코드의 검사. 서버와 클라이언트가 같은 함수를 씁니다.
 //! - `roster`: 방에 있는 사람의 이름과 자리에 있는지입니다. 명단이 바뀔 때만 보냅니다.
+//! - `report`: 끝난 원정의 요약과 개인별 기록입니다. 스냅샷에는 싣지 않고 결과 화면이 열릴 때 한 번 보냅니다.
 //! - `seat_token`: 자리의 표식입니다. 다시 입장하는 사람을 알아보는 비밀 값이고, 로그에 값이 남지 않습니다.
 //! - `units`: 위치와 방향을 정수로 줄이는 변환과 그 오차. 정수와 실수 사이의 변환은 이 파일에만 있습니다.
 //! - `codec`: 메시지를 바이트로 바꾸는 함수와 되돌리는 함수. 전송 형식을 아는 파일은 이것 하나입니다.
@@ -19,6 +20,7 @@ mod limits;
 mod loopback;
 mod messages;
 mod player_name;
+mod report;
 mod room_code;
 mod roster;
 mod seat_token;
@@ -33,6 +35,7 @@ pub use limits::ServerLimits;
 pub use loopback::{LoopbackClient, LoopbackConnector, LoopbackServer, loopback};
 pub use messages::{ClientMsg, InputMsg, PROTOCOL_VERSION, RejectReason, ServerMsg, WireVec2};
 pub use player_name::{NameError, PlayerName};
+pub use report::{WireRecordRow, WireReport};
 pub use room_code::{RoomCode, RoomCodeError};
 pub use roster::{WireMember, WireRoster};
 pub use seat_token::SeatToken;

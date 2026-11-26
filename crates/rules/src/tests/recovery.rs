@@ -111,6 +111,7 @@ fn a_player_is_healed_at_night_too() {
     let mut s = Scenario::open_field();
     s.sim.set_phase(Phase::Night {
         day: 1,
+        party: 1,
         step: NightStep::Waiting {
             next_wave: 1,
             ticks_left: u32::MAX,

@@ -5,11 +5,11 @@
 //! - `--debug-net`: 주고받는 모든 메시지를 읽을 수 있는 형태로 출력합니다. 스냅샷은 요약해서 출력합니다.
 //! - `--stats`: 1초에 한 줄씩 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 출력합니다. 부하를 시험할 때 씁니다.
 //! - `--waves 8,12/20,30,40/60,90,150`: 밤마다 무리의 몬스터 수를 바꿉니다. 밤은 `/`로, 무리는 `,`로 나누고, 밤의 수가 원정의 날 수입니다.
-//!   부하를 시험할 때 씁니다.
+//!   수는 네 명이 있을 때의 크기이고, 방에 있는 사람이 적으면 그에 비례해서 줄어듭니다(`--stress`는 줄이지 않습니다). 부하를 시험할 때 씁니다.
 //! - `--stress`: 마차, 감시탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
 //!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
 //!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다. 플레이어는 검과 활을 함께 가지고 시작합니다.
-//!   사람의 조작 없이 원정이 진행되어야 하므로 야영지를 건너뜁니다. 방은 만들어지자마자 첫날을 시작하고, 결과를 한 Tick만 보여 준 뒤 새 원정을 시작합니다.
+//!   무리의 크기는 방에 있는 사람의 수와 관계없이 수치표 그대로입니다. 사람의 조작 없이 원정이 진행되어야 하므로 야영지를 건너뜁니다. 방은 만들어지자마자 첫날을 시작하고, 결과를 한 Tick만 보여 준 뒤 새 원정을 시작합니다.
 //! - `--seed 42`: 모든 방의 무작위를 이 씨앗 하나로 정합니다. 씨앗을 주지 않으면 방마다, 서버를 실행할 때마다 다른 씨앗을 씁니다.
 //!   방을 만들 때 출력하는 씨앗을 이 옵션에 주면 같은 상태에서 다시 시작합니다.
 //!
@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
-use caravan_rules::{Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WeaponKind};
+use caravan_rules::{
+    Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WaveScaling, WeaponKind,
+};
 use caravan_server::{GameServer, RandomSource, RoomSeeds};
 use caravan_ws_server::WsServer;
 use report::TickTimer;
@@ -141,6 +143,8 @@ fn tuning_from(options: &Options) -> Tuning {
         tuning.nights.spawn_interval_secs = tuning.dt();
         tuning.camp.start = Start::AtOnce;
         tuning.camp.debrief_secs = tuning.dt();
+        // 부하의 크기는 접속한 클라이언트의 수로 정해지지 않고 수치표로 정해집니다.
+        tuning.nights.scaling = WaveScaling::Fixed;
     }
     tuning
 }
@@ -241,7 +245,12 @@ fn main() -> ExitCode {
             .iter()
             .map(|night| night.waves.iter().map(|wave| wave.count).collect())
             .collect();
-        eprintln!("wave sizes by night: {nights:?}");
+        match tuning.nights.scaling {
+            WaveScaling::ByParty { full_party } => {
+                eprintln!("wave sizes by night for {full_party} players: {nights:?}");
+            }
+            WaveScaling::Fixed => eprintln!("wave sizes by night: {nights:?}"),
+        }
     }
     // 자리의 표식은 운영체제의 무작위로 만듭니다. 운영체제가 무작위를 주지 못하면 사람이 입장한 뒤에 멈추지 않고, 시작하지 않습니다.
     if let Err(err) = getrandom::fill(&mut [0u8; 16]) {
@@ -417,6 +426,44 @@ mod tests {
             caravan_rules::Sim::new(normal, Seed(1)).expedition_number(),
             0,
             "a normal server starts every room in the camp"
+        );
+    }
+
+    /// 플레이어 한 명이 있는 방에서 첫째 밤의 첫 무리가 모두 나온 뒤 필드에 있는 몬스터의 수입니다.
+    /// 낮의 몬스터를 빼서 무리만 세고, 무리는 마차에 닿기 전이므로 아직 아무도 처치되지 않았습니다.
+    fn first_wave_for_one_player(mut tuning: Tuning) -> usize {
+        tuning.guards.per_node = 0;
+        tuning.guards.per_chest = 0;
+        let mut sim = caravan_rules::Sim::new(tuning, Seed(1));
+        sim.add_player().expect("the room has space");
+        for _ in 0..100 {
+            sim.step(&caravan_rules::PlayerInputs::new());
+        }
+        assert!(
+            matches!(sim.phase(), Some(caravan_rules::Phase::Night { .. })),
+            "the first night has begun"
+        );
+        sim.monsters().count()
+    }
+
+    #[test]
+    fn stress_does_not_scale_the_waves_with_the_party_and_a_normal_server_does() {
+        let stress = tuning_from(&parse_args(&args(&["--stress"])).unwrap());
+        assert_eq!(
+            first_wave_for_one_player(stress),
+            8,
+            "the whole first wave for one player"
+        );
+
+        // 야영지와 낮을 건너뛰고 몬스터가 Tick마다 나오게 하는 것 말고는 일반 서버의 수치입니다.
+        let mut normal = tuning_from(&parse_args(&[]).unwrap());
+        normal.camp.start = Start::AtOnce;
+        normal.cycle.day_secs = normal.dt();
+        normal.nights.spawn_interval_secs = normal.dt();
+        assert_eq!(
+            first_wave_for_one_player(normal),
+            2,
+            "a quarter of the first wave: 8 x 1 / 4"
         );
     }
 

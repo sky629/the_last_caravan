@@ -206,6 +206,7 @@ fn a_tower_can_be_built_during_the_night() {
     let mut s = Scenario::open_field();
     s.sim.set_phase(crate::expedition::Phase::Night {
         day: 1,
+        party: 1,
         step: crate::expedition::NightStep::Fighting {
             wave: 1,
             to_spawn: 1,

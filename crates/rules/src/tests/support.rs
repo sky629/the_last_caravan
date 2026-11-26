@@ -17,6 +17,7 @@ use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
     CampLayout, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning, WavePlan,
+    WaveScaling,
 };
 use crate::world::Tile;
 
@@ -64,10 +65,12 @@ impl Scenario {
         Scenario::started(Tuning::default(), adjust)
     }
 
-    /// 원정이 이미 시작된 시나리오입니다. 야영지를 거치지 않고, 준비가 끝났을 때와 같은 함수(`Sim::begin_expedition`)로 첫날을 시작합니다.
+    /// 원정이 이미 시작된 시나리오입니다. 무리의 크기는 인원에 따라 달라지지 않습니다(`WaveScaling::Fixed`). 인원에 비례하는 무리를 시험하는 테스트가 `adjust`로 다시 정합니다.
+    /// 야영지를 거치지 않고, 준비가 끝났을 때와 같은 함수(`Sim::begin_expedition`)로 첫날을 시작합니다.
     /// 원정을 시험하는 테스트는 야영지를 보지 않으므로, 테스트가 어떤 벽을 세워도 수치 검사를 통과하도록 허수아비를 두지 않고 진열대를 첫 등장 지점에 모읍니다.
     fn started(tuning: Tuning, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
         let mut scenario = Scenario::in_camp(tuning, |t| {
+            t.nights.scaling = WaveScaling::Fixed;
             adjust(t);
             let first_spawn = t.map.player_spawns.first().copied().unwrap_or(Vec2::ZERO);
             t.map.camp = without_camp(first_spawn);

@@ -157,7 +157,7 @@ fn run(options: &Options) -> Result<(), String> {
                 Ok(ServerMsg::SeatTakenOver) => {
                     return Err("another connection took this seat".to_string());
                 }
-                Ok(ServerMsg::Roster(_)) => {}
+                Ok(ServerMsg::Roster(_) | ServerMsg::Debrief(_)) => {}
                 Ok(ServerMsg::Snapshot(snapshot)) => {
                     window.snapshots += 1;
                     window.bytes += bytes.len();

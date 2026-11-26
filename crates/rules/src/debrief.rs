@@ -10,15 +10,23 @@ use crate::camp::who_must_agree;
 use crate::expedition::Outcome;
 use crate::ids::PlayerId;
 use crate::input::PlayerInputs;
+use crate::player::Record;
 use crate::tuning::Tuning;
 use crate::world::World;
 
-/// 끝난 원정의 요약입니다. 원정이 끝나는 Tick에 한 번 만들고 바뀌지 않습니다.
+/// 끝난 원정의 요약과 개인별 기록입니다. 원정이 끝나는 Tick에 한 번 만들고 바뀌지 않습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Report {
     pub outcome: Outcome,
     /// 원정이 끝날 때의 날입니다(버틴 날). 성공이면 원정의 날 수입니다.
     pub day: u32,
+    /// 원정이 진행된 Tick의 수입니다(걸린 시간). 야영지에서 보낸 시간과 방이 멈춘 시간은 세지 않습니다.
+    pub elapsed_ticks: u64,
+    /// 감시탑이 마지막 피해를 주어 처치한 몬스터의 수입니다.
+    pub tower_kills: u32,
+    /// 원정이 끝날 때 방에 있던 플레이어(자리를 비운 플레이어 포함)의 기록입니다. 번호가 작은 플레이어부터이고,
+    /// 그전에 나간 플레이어는 없습니다. 결과 화면 중에 나가도 이 표는 바뀌지 않습니다.
+    pub rows: Vec<(PlayerId, Record)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

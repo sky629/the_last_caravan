@@ -1,9 +1,9 @@
 //! 한 원정과 그 앞의 야영지 동안 변하는 상태(`World`), 한 Tick 동안 규칙이 읽는 값(`Ctx`),
 //! 그리고 피해가 상태로 바뀌는 유일한 곳(`World::apply_hits`)입니다.
 //!
-//! 공격하는 쪽(플레이어, 감시탑, 몬스터)은 피해를 직접 적용하지 않고 `Hit`만 만듭니다.
+//! 공격하는 쪽(플레이어, 감시탑, 몬스터)은 피해를 직접 적용하지 않고 `Hit`만 만듭니다. `Hit`은 누가 준 피해인지(`Source`)도 담습니다.
 //! 모든 공격이 결정된 뒤에 `apply_hits`가 한꺼번에 적용하므로, 개체를 어떤 순서로 방문해도 결과가 같고,
-//! 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다.
+//! 같은 Tick에 죽는 몬스터도 자기 공격은 마칩니다. 몬스터의 HP를 0으로 만든 피해가 그 처치의 주인을 정합니다.
 //! 한 개체의 행동이 다른 개체의 현재 상태에 달린 곳(상호작용, 몬스터의 이동)도 같은 방식으로,
 //! 먼저 `&World`를 읽기만 하면서 모든 결정을 `Vec`에 모으고 그 뒤에 `&mut World`로 적용합니다.
 //! 그래서 한 맵을 읽으면서 같은 맵을 고치려는 대여 충돌이 생기지 않습니다.
@@ -61,6 +61,8 @@ pub(crate) struct World {
     pub ground_weapons: Vec<GroundWeapon>,
     /// 야영지의 무기 진열대입니다. 야영지에만 있고 `WeaponKind::ALL`의 순서입니다.
     pub racks: Vec<Rack>,
+    /// 이번 원정에서 감시탑이 마지막 피해를 주어 처치한 몬스터의 수입니다. 새 원정이나 야영지가 시작되면 0으로 돌아갑니다(`restart`).
+    pub tower_kills: u32,
     /// 읽기만 할 수 있습니다. `TileMap::set`은 이 모듈 밖에서 부를 수 없습니다.
     pub tiles: TileMap,
     /// 감시탑이 생기거나, 서거나, 사라질 때마다 올라가고 줄어들지 않습니다.
@@ -108,6 +110,7 @@ impl World {
             chests: Vec::new(),
             ground_weapons: Vec::new(),
             racks: Vec::new(),
+            tower_kills: 0,
             tiles: TileMap::from_map(&t.map),
             layout_revision: 0,
             next_monster: 1,
@@ -122,7 +125,7 @@ impl World {
     }
 
     /// 플레이어만 남기고 세계를 `layout`의 모습으로 다시 놓습니다. 몬스터(허수아비 포함), 탄환, 감시탑, 떨어진 자원, 무기 상자, 바닥의 무기, 진열대를 모두 치우고,
-    /// 마차를 최대 HP로 되돌리고, 타일 지도를 다시 만듭니다. 야영지에서 생긴 것은 원정으로 이어지지 않고, 원정에서 생긴 것은 야영지로 이어지지 않습니다.
+    /// 감시탑의 처치 수를 0으로 되돌리고, 마차를 최대 HP로 되돌리고, 타일 지도를 다시 만듭니다. 야영지에서 생긴 것은 원정으로 이어지지 않고, 원정에서 생긴 것은 야영지로 이어지지 않습니다.
     /// 번호를 세는 값은 되돌리지 않으므로 이전에 쓴 번호가 다시 쓰이지 않습니다. `layout_revision`이 올라가므로 이동 경로는 다음 `sync`에서 다시 만들어집니다.
     pub fn restart(&mut self, t: &Tuning, layout: Layout) {
         self.monsters.clear();
@@ -132,6 +135,7 @@ impl World {
         self.chests.clear();
         self.ground_weapons.clear();
         self.racks.clear();
+        self.tower_kills = 0;
         self.wagon = Wagon::new(t);
         self.layout_revision += 1;
         match layout {
@@ -301,15 +305,27 @@ pub(crate) enum Target {
     Wagon,
 }
 
+/// 피해를 준 쪽입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Source {
+    /// 플레이어의 공격입니다. 탄환은 쏜 플레이어의 것입니다(`Projectile::shooter`).
+    Player(PlayerId),
+    Tower,
+    /// 몬스터의 공격입니다. 몬스터는 몬스터를 맞히지 않으므로 처치를 세는 일이 없습니다.
+    Monster,
+}
+
 /// 이번 Tick에 결정된 피해입니다.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Hit {
     pub target: Target,
     pub amount: u32,
+    pub by: Source,
 }
 
 impl World {
-    /// 모든 피해를 적용하는 유일한 곳입니다.
+    /// 모든 피해를 적용하는 유일한 곳입니다. 몬스터의 HP를 0으로 만든 피해가 있으면 그 피해를 준 쪽이 처치를 가져갑니다.
+    /// 같은 Tick에 여럿이 같은 몬스터를 맞히면 `hits`의 순서(플레이어의 공격, 탄환, 감시탑)에서 HP를 0으로 만든 피해가 주인입니다.
     pub fn apply_hits(&mut self, hits: &[Hit], t: &Tuning) {
         for hit in hits {
             match hit.target {
@@ -324,7 +340,11 @@ impl World {
                 Target::Monster(id) => {
                     if let Ok(index) = self.monsters.binary_search_by_key(&id, |m| m.id) {
                         let monster = &mut self.monsters[index];
+                        let was_alive = monster.hp > 0;
                         monster.hp = monster.hp.saturating_sub(hit.amount);
+                        if was_alive && monster.hp == 0 {
+                            self.credit_kill(hit.by);
+                        }
                     }
                 }
                 Target::Tower(id) => {
@@ -349,6 +369,19 @@ impl World {
         }
         // 몬스터는 모든 피해를 받은 뒤에 한꺼번에 제거합니다. 중간에 제거하면 뒤따르는 피해가 엉뚱한 몬스터에 닿을 수 있습니다.
         self.monsters.retain(|monster| monster.hp > 0);
+    }
+
+    /// 몬스터를 쓰러뜨린 처치를 `by`의 것으로 셉니다. 쏜 플레이어가 이미 방을 떠났으면 셀 사람이 없습니다.
+    fn credit_kill(&mut self, by: Source) {
+        match by {
+            Source::Player(id) => {
+                if let Some(player) = self.players.get_mut(&id) {
+                    player.record.kills += 1;
+                }
+            }
+            Source::Tower => self.tower_kills += 1,
+            Source::Monster => {}
+        }
     }
 
     /// 몬스터가 쫓거나 공격하는 대상의 모양입니다. 대상이 사라졌으면 `None`입니다.

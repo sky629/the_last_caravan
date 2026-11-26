@@ -6,7 +6,7 @@ use crate::expedition::Outcome;
 use crate::math::Vec2;
 use crate::player::Presence;
 use crate::stage::Stage;
-use crate::world::{Hit, Target, Tile};
+use crate::world::{Hit, Source, Target, Tile};
 
 #[test]
 fn a_monster_ignores_an_away_player_and_walks_on_to_the_wagon() {
@@ -71,6 +71,7 @@ fn a_hit_that_reaches_an_away_player_does_nothing() {
         &[Hit {
             target: Target::Player(a),
             amount: t.player.max_hp,
+            by: Source::Monster,
         }],
         &t,
     );
