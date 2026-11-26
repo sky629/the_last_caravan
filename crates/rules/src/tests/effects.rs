@@ -396,8 +396,8 @@ fn a_new_bleed_takes_over_the_damage_of_the_old_one() {
 }
 
 #[test]
-fn a_kill_by_bleeding_belongs_to_the_player_who_applied_the_bleed_last() {
-    // HP 12는 5와 6의 합(11)보다 많고 6의 두 배(12)와 같으므로, 두 번째 사람의 피해량(6)으로 두 번 맞아야 죽습니다.
+fn a_kill_by_bleeding_belongs_to_the_player_whose_bleed_is_on_the_monster() {
+    // HP 12는 5와 6의 합(11)보다 많고 6의 두 배(12)와 같으므로, 더 센 두 번째 사람의 피해량(6)으로 두 번 맞아야 죽습니다.
     let mut s = Scenario::with_tuning(|t| {
         t.monsters.grunt.max_hp = 12;
         t.monsters.grunt.speed = 0.0;
@@ -595,8 +595,8 @@ fn a_sword_blow_makes_a_monster_bleed_five_a_second_for_three_seconds() {
 }
 
 #[test]
-fn a_kill_by_bleeding_belongs_to_the_player_who_blew_last() {
-    // 검의 피해, 창의 피해, 창의 출혈(6) 두 번이 합쳐서 HP와 같습니다. 두 번째 사람의 출혈이 두 번째 피해를 냅니다.
+fn a_kill_by_bleeding_belongs_to_the_player_whose_stronger_bleed_replaced_the_other() {
+    // 검의 피해, 창의 피해, 창의 출혈(6) 두 번이 합쳐서 HP와 같습니다. 창의 출혈이 검의 출혈(5)보다 세므로 칸을 이어받고, 두 번째 사람의 출혈이 두 번째 피해를 냅니다.
     let mut s = Scenario::with_tuning(|t| {
         t.monsters.grunt.max_hp = t.weapons.sword.damage + t.weapons.spear.damage + 2 * 6;
         t.monsters.grunt.speed = 0.0;
@@ -709,4 +709,141 @@ fn standing_still_with_a_tower(on_hit: Option<Debuff>) -> Scenario {
     s.tower_at(14, 3);
     s.monster_at(14.5, 5.0);
     s
+}
+
+fn slow(factor: f32, secs: f32) -> Debuff {
+    Debuff::Slow { factor, secs }
+}
+
+/// 제자리에 서고 HP가 `hp`인 몬스터의 시나리오입니다. 출혈의 피해로 죽는지 봅니다.
+fn standing_still_with_hp(hp: u32) -> Scenario {
+    Scenario::with_tuning(|t| {
+        t.monsters.grunt.max_hp = hp;
+        t.monsters.grunt.speed = 0.0;
+        t.monsters.grunt.separation_speed = 0.0;
+        t.monsters.grunt.aggro_range = 0.0;
+    })
+}
+
+#[test]
+fn a_weaker_slow_is_ignored_while_a_stronger_one_lasts_and_is_not_remembered() {
+    let mut s = walking_to_the_wagon();
+    let owner = s.player_at(2.0, 2.0);
+    let monster = s.monster_at(5.0, 18.0);
+    s.afflict(monster, slow(0.5, 2.0), owner);
+    s.run_ticks(s.ticks(1.0));
+
+    // 남은 시간은 1초이고 새 감속은 3초입니다. 시간이 더 길어도 약하므로 버려집니다.
+    s.afflict(monster, slow(0.7, 3.0), owner);
+
+    assert!(
+        close(walked_in_a_tick(&mut s, monster), 0.055),
+        "still half speed"
+    );
+    let rest = ticks_while(&mut s, |s| effects_of(s, monster).is_slowed());
+    assert_eq!(
+        rest + 1 + s.ticks(1.0),
+        s.ticks(2.0),
+        "it ends with the first slow"
+    );
+    assert!(
+        close(walked_in_a_tick(&mut s, monster), 0.11),
+        "the weaker slow was not kept for after the stronger one"
+    );
+}
+
+#[test]
+fn a_stronger_slow_replaces_a_weaker_one_even_when_it_is_shorter() {
+    let mut s = walking_to_the_wagon();
+    let owner = s.player_at(2.0, 2.0);
+    let monster = s.monster_at(5.0, 18.0);
+    s.afflict(monster, slow(0.7, 3.0), owner);
+
+    s.afflict(monster, slow(0.5, 1.0), owner);
+
+    assert!(
+        close(walked_in_a_tick(&mut s, monster), 0.055),
+        "half speed"
+    );
+    let rest = ticks_while(&mut s, |s| effects_of(s, monster).is_slowed());
+    assert_eq!(rest + 1, s.ticks(1.0), "the time of the stronger slow");
+}
+
+#[test]
+fn an_equal_slow_with_less_time_left_is_ignored() {
+    let mut s = walking_to_the_wagon();
+    let owner = s.player_at(2.0, 2.0);
+    let monster = s.monster_at(5.0, 18.0);
+    s.afflict(monster, slow(0.5, 3.0), owner);
+
+    s.afflict(monster, SLOW, owner);
+
+    let slowed_for = ticks_while(&mut s, |s| effects_of(s, monster).is_slowed());
+    assert_eq!(slowed_for, s.ticks(3.0), "the longer one stays");
+}
+
+#[test]
+fn a_spear_bleed_is_not_replaced_by_a_sword_bleed_and_the_kill_stays_with_the_spear_player() {
+    let t = Tuning::default();
+    let spear = t.weapons.spear.on_hit.expect("the spear makes a bleed");
+    let sword = t.weapons.sword.on_hit.expect("the sword makes a bleed");
+    // HP 18은 창의 출혈(6) 세 번입니다. 검의 출혈(5)로 바뀌었다면 세 번으로 죽지 않습니다.
+    let mut s = standing_still_with_hp(18);
+    let spearman = s.player_at(2.0, 2.0);
+    let swordsman = s.player_at(3.0, 2.0);
+    let monster = s.monster_at(6.0, 10.0);
+    s.afflict(monster, spear, spearman);
+    s.run_ticks(s.ticks(0.5));
+
+    s.afflict(monster, sword, swordsman);
+
+    s.run_ticks(s.ticks(0.5));
+    assert_eq!(hp_of(&s, monster), 12, "six, not five");
+    s.run_ticks(s.ticks(2.0) - 1);
+    assert_eq!(hp_of(&s, monster), 6);
+    s.run_ticks(1);
+    assert!(
+        s.monster(monster).is_none(),
+        "three pulses of six, three seconds after the spear"
+    );
+    let report = report_at_the_end(&mut s);
+    assert_eq!(kills_of(&report, spearman), 1);
+    assert_eq!(kills_of(&report, swordsman), 0);
+}
+
+#[test]
+fn of_two_bleeds_of_the_same_damage_and_the_same_time_left_the_newer_one_stays() {
+    let mut s = standing_still_with_hp(5);
+    let first = s.player_at(2.0, 2.0);
+    let second = s.player_at(3.0, 2.0);
+    let monster = s.monster_at(6.0, 10.0);
+
+    s.afflict(monster, bleed(5), first);
+    s.afflict(monster, bleed(5), second);
+    s.run_until(100, |sim| sim.monsters().next().is_none());
+
+    let report = report_at_the_end(&mut s);
+    assert_eq!(kills_of(&report, first), 0);
+    assert_eq!(kills_of(&report, second), 1);
+}
+
+#[test]
+fn a_stronger_bleed_continues_the_clock_of_the_damage() {
+    let mut s = standing_still();
+    let owner = s.player_at(2.0, 2.0);
+    let monster = s.monster_at(6.0, 10.0);
+    let full = hp_of(&s, monster);
+    s.afflict(monster, bleed(5), owner);
+    s.run_ticks(s.ticks(0.5));
+
+    s.afflict(monster, bleed(6), owner);
+
+    s.run_ticks(s.ticks(0.5) - 1);
+    assert_eq!(
+        hp_of(&s, monster),
+        full,
+        "one second after the first bleed, not the second"
+    );
+    s.run_ticks(1);
+    assert_eq!(hp_of(&s, monster), full - 6);
 }

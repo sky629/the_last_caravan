@@ -6,6 +6,7 @@
 //! 플레이어의 버프는 살아 있는 플레이어(`Life::Alive`)만 가지므로, 플레이어가 쓰러지거나 새 원정이 시작되면 함께 사라집니다.
 //! 효과마다 필드가 하나이고, 효과 하나의 값을 바꾸는 길은 `apply`(버프는 `grant`)와 `advance` 둘뿐입니다. 필드가 이 파일 밖에서는 보이지 않으므로,
 //! 다른 파일은 스턴이 걸려 있거나 면역인 몬스터에게 스턴을 걸 수 없고, 남은 시간이나 세기를 직접 고칠 수 없습니다.
+//! 같은 효과가 겹치면 센 쪽이 칸에 남고, 약한 쪽은 버려지며 따로 기억하지 않습니다(`new_one_stays`).
 //! 다른 파일이 할 수 있는 것은 효과 전체를 빈 값(`MonsterEffects::default()`, `PlayerBuffs::default()`)으로 두는 것뿐이고, 새 몬스터와 살아난 플레이어를 만들 때 그렇게 합니다.
 //!
 //! 한 Tick의 순서는 다음과 같습니다(`Sim::simulate`).
@@ -20,12 +21,21 @@
 //!
 //! 행동한 뒤에 줄이고 새 효과를 그 뒤에 걸기 때문에, `secs`초짜리 효과는 정확히 `secs`초 분량의 Tick 동안 대상의 행동을 바꿉니다.
 
+use std::cmp::Ordering;
+
 use crate::player::Life;
 use crate::tuning::{Buff, Debuff, Tuning};
 use crate::world::{Ctx, Hit, Source, Target, World};
 
+/// 같은 칸에 걸려 있는 효과와 새로 받은 효과 가운데 새것이 칸에 남는지 정합니다. 몬스터의 효과와 플레이어의 버프가 이 규칙 하나를 씁니다.
+/// 센 쪽이 남고, 세기가 같으면 남은 시간이 긴 쪽이 남고, 그것도 같으면 새것이 남습니다.
+/// `new_is`는 새것의 세기를 걸려 있는 것의 세기와 견준 값이고 `Greater`이면 새것이 셉니다. 세기를 재는 방법은 효과마다 다르므로 부르는 쪽이 정합니다.
+fn new_one_stays(new_is: Ordering, new_ticks: u32, held_ticks: u32) -> bool {
+    new_is.then(new_ticks.cmp(&held_ticks)) != Ordering::Less
+}
+
 /// 시간이 지나면 끝나는 배율 하나입니다. 몬스터의 감속과 플레이어의 두 버프(공격 속도, 이동 속도)가 같은 값을 씁니다.
-/// 다시 받으면 칸을 새 값으로 바꾸므로 시간이 처음으로 돌아가고 세기는 겹치지 않습니다.
+/// 같은 칸에 배율은 하나이므로 세기는 겹치지 않습니다. 다시 받았을 때 어느 쪽이 남는지는 `new_one_stays`가 정합니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Scaling {
     factor: f32,
@@ -56,7 +66,7 @@ impl Scaling {
     }
 }
 
-/// 살아 있는 플레이어가 받은 버프 전부입니다. 다른 버프는 함께 걸리고, 같은 버프를 다시 받으면 남은 시간이 처음으로 돌아갑니다. 세기는 겹치지 않습니다.
+/// 살아 있는 플레이어가 받은 버프 전부입니다. 다른 버프는 함께 걸리고, 같은 버프를 다시 받으면 남은 시간이 긴 쪽이 남습니다. 세기는 겹치지 않습니다.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlayerBuffs {
     haste: Option<Scaling>,
@@ -83,14 +93,16 @@ impl PlayerBuffs {
     }
 
     /// 버프를 받습니다. 버프를 거는 길은 이 함수 하나입니다. 세기는 `Tuning::effects`의 값이고, 길이는 거는 쪽이 정합니다.
-    /// 이미 같은 버프가 걸려 있으면 남은 시간이 새 길이로 바뀝니다.
+    /// 이미 같은 버프가 걸려 있으면 세기가 같으므로 남은 시간이 긴 쪽이 남고, 남은 시간이 같으면 새 버프가 남습니다.
     /// 길이가 한 Tick도 되지 않는 버프(0초 이하이거나 숫자가 아닌 길이)는 받지 않고, 걸려 있던 버프도 그대로 둡니다.
     pub(crate) fn grant(&mut self, buff: Buff, t: &Tuning) {
         let (slot, factor, secs) = match buff {
             Buff::Haste { secs } => (&mut self.haste, t.effects.haste_cooldown_factor, secs),
             Buff::Swift { secs } => (&mut self.swift, t.effects.swift_speed_factor, secs),
         };
-        if t.ticks(secs) > 0 {
+        let ticks = t.ticks(secs);
+        let stays = slot.is_none_or(|held| new_one_stays(Ordering::Equal, ticks, held.ticks_left));
+        if ticks > 0 && stays {
             *slot = Some(Scaling::new(factor, secs, t));
         }
     }
@@ -105,11 +117,11 @@ impl PlayerBuffs {
 /// 몬스터의 출혈입니다. 걸려 있는 동안 정해진 간격마다 피해를 줍니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Bleed {
-    /// 출혈을 마지막으로 건 쪽입니다. 출혈의 피해로 몬스터가 죽으면 이 쪽이 처치를 가져갑니다.
+    /// 칸에 남은 출혈을 건 쪽입니다. 출혈의 피해로 몬스터가 죽으면 이 쪽이 처치를 가져갑니다.
     by: Source,
     damage: u32,
     ticks_left: u32,
-    /// 다음 피해까지 남은 Tick입니다. 출혈을 다시 받아도 되돌리지 않으므로 피해는 계속 같은 간격으로 납니다.
+    /// 다음 피해까지 남은 Tick입니다. 칸에 남는 출혈이 바뀌어도 되돌리지 않으므로 피해는 계속 같은 간격으로 납니다.
     ticks_to_pulse: u32,
 }
 
@@ -150,7 +162,7 @@ impl Stun {
     }
 }
 
-/// 한 몬스터에게 걸린 효과 전부입니다. 서로 다른 효과는 함께 걸리고, 같은 효과를 다시 받으면 남은 시간이 처음으로 돌아갑니다. 세기는 겹치지 않습니다.
+/// 한 몬스터에게 걸린 효과 전부입니다. 서로 다른 효과는 함께 걸리고, 같은 효과를 다시 받으면 센 쪽이 남습니다. 세기는 겹치지 않습니다.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MonsterEffects {
     slow: Option<Scaling>,
@@ -183,12 +195,36 @@ impl MonsterEffects {
         Scaling::factor_of(&self.slow)
     }
 
-    /// 효과를 겁니다. 효과를 거는 길은 이 함수 하나입니다.
+    /// `debuff`를 지금 받으면 칸이 바뀌는지입니다. `apply`가 이 질문으로 시작하므로, 거짓이면 `apply`는 아무것도 바꾸지 않습니다.
+    /// 감속과 출혈은 `new_one_stays`를 따르고, 스턴은 걸려 있지 않고 면역도 아닐 때만 걸립니다.
+    /// 효과 하나를 거는 포탑이 대상을 고를 때 이 질문으로 걸리지 않을 몬스터를 건너뜁니다.
+    pub(crate) fn would_take(&self, debuff: Debuff, t: &Tuning) -> bool {
+        match debuff {
+            // 비율이 작을수록 센 감속입니다.
+            Debuff::Slow { factor, secs } => self.slow.is_none_or(|held| {
+                new_one_stays(
+                    held.factor.total_cmp(&factor),
+                    t.ticks(secs),
+                    held.ticks_left,
+                )
+            }),
+            // 한 번의 피해가 클수록 센 출혈입니다.
+            Debuff::Bleed { damage, secs } => self.bleed.is_none_or(|held| {
+                new_one_stays(damage.cmp(&held.damage), t.ticks(secs), held.ticks_left)
+            }),
+            Debuff::Stun { .. } => self.stun == Stun::Ready,
+        }
+    }
+
+    /// 효과를 겁니다. 효과를 거는 길은 이 함수 하나이고, 걸리는지는 `would_take`가 정합니다.
     ///
     /// - 감속: 비율과 시간이 새 값으로 바뀝니다.
     /// - 출혈: 주인, 피해량, 남은 시간이 새 값으로 바뀝니다. 피해가 나는 시점은 이어집니다. 처음 걸리면 `bleed_interval_secs` 뒤에 첫 피해가 납니다.
-    /// - 스턴: 걸려 있지 않고 면역도 아닐 때만 걸립니다.
+    /// - 스턴: 시간만큼 걸립니다.
     pub(crate) fn apply(&mut self, debuff: Debuff, by: Source, t: &Tuning) {
+        if !self.would_take(debuff, t) {
+            return;
+        }
         match debuff {
             Debuff::Slow { factor, secs } => self.slow = Some(Scaling::new(factor, secs, t)),
             Debuff::Bleed { damage, secs } => {
@@ -204,11 +240,9 @@ impl MonsterEffects {
                 });
             }
             Debuff::Stun { secs } => {
-                if self.stun == Stun::Ready {
-                    self.stun = Stun::Stunned {
-                        ticks_left: t.ticks(secs),
-                    };
-                }
+                self.stun = Stun::Stunned {
+                    ticks_left: t.ticks(secs),
+                };
             }
         }
     }
