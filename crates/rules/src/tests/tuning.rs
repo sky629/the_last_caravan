@@ -3,10 +3,7 @@
 use super::support::{Scenario, nights};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
-use crate::tuning::{
-    ArcTuning, Delivery, HitscanTuning, PLAYTEST_DAMAGE_MULTIPLIER, ProjectileTuning, Tuning,
-    WaveScaling,
-};
+use crate::tuning::{ArcTuning, Delivery, HitscanTuning, ProjectileTuning, Tuning, WaveScaling};
 use crate::world::Tile;
 
 #[test]
@@ -781,46 +778,18 @@ fn a_projectile_fast_enough_to_cross_the_map_in_one_tick_is_still_valid() {
 }
 
 #[test]
-fn the_playtest_multiplier_raises_every_weapon_by_the_same_ratio() {
+fn the_default_weapons_deal_their_normal_damage() {
     let t = Tuning::default();
-    let sword = t.weapons.get(WeaponKind::Sword).damage;
-    let bow = t.weapons.get(WeaponKind::Bow).damage;
-
-    assert_eq!(
-        sword,
-        25 * PLAYTEST_DAMAGE_MULTIPLIER,
-        "the normal sword damage is 25"
-    );
-    assert_eq!(
-        bow,
-        15 * PLAYTEST_DAMAGE_MULTIPLIER,
-        "the normal bow damage is 15"
-    );
-    assert_eq!(
-        sword * 15,
-        bow * 25,
-        "the bow is 60% of the sword at any multiplier"
-    );
-    assert_eq!(
-        t.weapons.get(WeaponKind::Greatsword).damage,
-        45 * PLAYTEST_DAMAGE_MULTIPLIER,
-        "the normal greatsword damage is 45"
-    );
-    assert_eq!(
-        t.weapons.get(WeaponKind::Spear).damage,
-        30 * PLAYTEST_DAMAGE_MULTIPLIER,
-        "the normal spear damage is 30"
-    );
-    assert_eq!(
-        t.weapons.get(WeaponKind::Crossbow).damage,
-        20 * PLAYTEST_DAMAGE_MULTIPLIER,
-        "the normal crossbow damage is 20"
-    );
-    assert_eq!(
-        t.weapons.get(WeaponKind::Rifle).damage,
-        60 * PLAYTEST_DAMAGE_MULTIPLIER,
-        "the normal rifle damage is 60"
-    );
+    for (kind, damage) in [
+        (WeaponKind::Sword, 25),
+        (WeaponKind::Bow, 15),
+        (WeaponKind::Greatsword, 45),
+        (WeaponKind::Spear, 30),
+        (WeaponKind::Crossbow, 20),
+        (WeaponKind::Rifle, 60),
+    ] {
+        assert_eq!(t.weapons.get(kind).damage, damage, "{kind:?}");
+    }
 }
 
 #[test]
@@ -885,20 +854,4 @@ fn a_chest_weight_above_the_limit_is_rejected_and_the_reason_names_the_weapon() 
     t.weapons.spear.chest_weight = 1001;
     let why = t.validate().expect_err("a weight above the limit");
     assert!(why.contains("Spear chest_weight"), "{why}");
-}
-
-#[test]
-#[ignore = "the playtest damage is on; run `cargo test -p caravan_rules -- --ignored` before a release"]
-fn before_a_release_the_damage_is_the_normal_damage() {
-    assert_eq!(
-        PLAYTEST_DAMAGE_MULTIPLIER, 1,
-        "lower PLAYTEST_DAMAGE_MULTIPLIER to 1"
-    );
-    let t = Tuning::default();
-    assert_eq!(t.weapons.get(WeaponKind::Sword).damage, 25);
-    assert_eq!(t.weapons.get(WeaponKind::Bow).damage, 15);
-    assert_eq!(t.weapons.get(WeaponKind::Greatsword).damage, 45);
-    assert_eq!(t.weapons.get(WeaponKind::Spear).damage, 30);
-    assert_eq!(t.weapons.get(WeaponKind::Crossbow).damage, 20);
-    assert_eq!(t.weapons.get(WeaponKind::Rifle).damage, 60);
 }

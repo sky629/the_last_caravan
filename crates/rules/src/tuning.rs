@@ -148,19 +148,6 @@ impl WeaponTable {
     }
 }
 
-/// 정상 피해량입니다. 서비스할 때의 값입니다.
-const SWORD_DAMAGE: u32 = 25;
-const BOW_DAMAGE: u32 = 15;
-const GREATSWORD_DAMAGE: u32 = 45;
-const SPEAR_DAMAGE: u32 = 30;
-const CROSSBOW_DAMAGE: u32 = 20;
-const RIFLE_DAMAGE: u32 = 60;
-
-/// 테스트하는 동안 모든 무기의 피해량에 곱하는 배수입니다. 서비스하기 전에 1로 내립니다.
-/// 무기마다 따로 올리지 않고 이 값 하나로 올리므로, 무기 사이의 피해량 비율은 정상 값과 같습니다.
-/// 서비스하기 전에는 `cargo test -p caravan_rules -- --ignored`가 이 값이 1인지 확인합니다.
-pub(crate) const PLAYTEST_DAMAGE_MULTIPLIER: u32 = 4;
-
 /// 달리기의 수치입니다. 달리기 키를 누르고 움직이는 살아 있는 플레이어는 걷는 속도에 배율을 곱한 속도로 달리고,
 /// 달리는 동안 게이지가 줄고 키를 떼고 있으면 게이지가 찹니다.
 #[derive(Clone, Debug, PartialEq)]
@@ -1096,7 +1083,7 @@ impl Default for Tuning {
             },
             weapons: WeaponTable {
                 sword: WeaponTuning {
-                    damage: SWORD_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 25,
                     cooldown_secs: 0.5,
                     delivery: Delivery::Arc(ArcTuning {
                         reach: 1.0,
@@ -1105,7 +1092,7 @@ impl Default for Tuning {
                     chest_weight: 0,
                 },
                 bow: WeaponTuning {
-                    damage: BOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 15,
                     cooldown_secs: 0.4,
                     delivery: Delivery::Projectile(ProjectileTuning {
                         speed: 14.0,
@@ -1116,7 +1103,7 @@ impl Default for Tuning {
                     chest_weight: 1,
                 },
                 greatsword: WeaponTuning {
-                    damage: GREATSWORD_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 45,
                     cooldown_secs: 1.0,
                     delivery: Delivery::Arc(ArcTuning {
                         reach: 1.3,
@@ -1125,7 +1112,7 @@ impl Default for Tuning {
                     chest_weight: 1,
                 },
                 spear: WeaponTuning {
-                    damage: SPEAR_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 30,
                     cooldown_secs: 0.6,
                     delivery: Delivery::Arc(ArcTuning {
                         reach: 2.2,
@@ -1134,7 +1121,7 @@ impl Default for Tuning {
                     chest_weight: 1,
                 },
                 crossbow: WeaponTuning {
-                    damage: CROSSBOW_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 20,
                     cooldown_secs: 0.9,
                     delivery: Delivery::Projectile(ProjectileTuning {
                         speed: 18.0,
@@ -1145,7 +1132,7 @@ impl Default for Tuning {
                     chest_weight: 1,
                 },
                 rifle: WeaponTuning {
-                    damage: RIFLE_DAMAGE * PLAYTEST_DAMAGE_MULTIPLIER,
+                    damage: 60,
                     cooldown_secs: 1.5,
                     delivery: Delivery::Hitscan(HitscanTuning { range: 12.0 }),
                     chest_weight: 1,
