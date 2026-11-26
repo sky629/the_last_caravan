@@ -248,6 +248,7 @@ impl Sim {
             practice: false,
         };
         let mut hits = Vec::new();
+        let mut afflictions = Vec::new();
         player::update_interactions(&mut self.world, &ctx);
         structures::advance_construction(&mut self.world, &ctx);
         self.paths.sync(&self.world, &self.tuning);
@@ -256,7 +257,7 @@ impl Sim {
         resources::deposit_and_pickup(&mut self.world, &ctx);
         weapon::use_weapons(&mut self.world, &ctx, &mut hits);
         projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
-        structures::towers_act(&mut self.world, &ctx, &mut hits);
+        structures::towers_act(&mut self.world, &ctx, &mut hits, &mut afflictions);
         monster::monsters_act(
             &mut self.world,
             &ctx,
@@ -266,6 +267,7 @@ impl Sim {
         );
         effect::advance_effects(&mut self.world, &ctx, &mut hits);
         self.world.apply_hits(&hits, &self.tuning);
+        effect::apply_afflictions(&mut self.world, &afflictions, &self.tuning);
         player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);
         loot::finish_openings(&mut self.world, &self.tuning);

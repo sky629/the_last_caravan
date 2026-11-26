@@ -17,6 +17,7 @@
 //!   advance_effects    몬스터의 효과와 플레이어의 버프의 시간을 한 Tick 줄이고, 이번 Tick에 나는 출혈의 피해를 `hits`의 끝에 더합니다.
 //!   apply_hits         모든 피해를 적용합니다. 출혈의 피해도 여기를 지나므로 처치의 주인이 정해집니다.
 //!   apply_debuffs      이번 Tick에 맞은 몬스터 가운데 살아남은 몬스터에게 새 효과를 겁니다. 이 효과는 다음 Tick의 행동부터 바꿉니다.
+//!   apply_afflictions  피해 없이 효과만 거는 포탑이 정한 효과를 겁니다. 같은 규칙으로 걸고, 이 효과도 다음 Tick의 행동부터 바꿉니다.
 //! ```
 //!
 //! 행동한 뒤에 줄이고 새 효과를 그 뒤에 걸기 때문에, `secs`초짜리 효과는 정확히 `secs`초 분량의 Tick 동안 대상의 행동을 바꿉니다.
@@ -25,7 +26,7 @@ use std::cmp::Ordering;
 
 use crate::player::Life;
 use crate::tuning::{Buff, Debuff, Tuning};
-use crate::world::{Ctx, Hit, Source, Target, World};
+use crate::world::{Affliction, Ctx, Hit, Source, Target, World};
 
 /// 같은 칸에 걸려 있는 효과와 새로 받은 효과 가운데 새것이 칸에 남는지 정합니다. 몬스터의 효과와 플레이어의 버프가 이 규칙 하나를 씁니다.
 /// 센 쪽이 남고, 세기가 같으면 남은 시간이 긴 쪽이 남고, 그것도 같으면 새것이 남습니다.
@@ -305,6 +306,21 @@ pub(crate) fn apply_debuffs(world: &mut World, hits: &[Hit], t: &Tuning) {
             .binary_search_by_key(&id, |monster| monster.id)
         {
             world.monsters[index].effects.apply(debuff, hit.by, t);
+        }
+    }
+}
+
+/// 효과만 거는 포탑이 이번 Tick에 정한 효과를 겁니다. `World::apply_hits`가 몬스터를 제거하고 `Hit`이 싣고 온 효과를 건 뒤에 부릅니다.
+/// 같은 Tick에 죽어서 이미 제거된 몬스터는 목록에 없으므로 효과가 걸리지 않습니다.
+pub(crate) fn apply_afflictions(world: &mut World, afflictions: &[Affliction], t: &Tuning) {
+    for affliction in afflictions {
+        if let Ok(index) = world
+            .monsters
+            .binary_search_by_key(&affliction.target, |monster| monster.id)
+        {
+            world.monsters[index]
+                .effects
+                .apply(affliction.debuff, affliction.by, t);
         }
     }
 }

@@ -4,7 +4,8 @@ use super::support::{Scenario, nights, watchtower_shot};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
 use crate::tuning::{
-    ArcTuning, Debuff, Delivery, HitscanTuning, ProjectileTuning, Tuning, WaveScaling,
+    ArcTuning, Debuff, Delivery, HitscanTuning, ProjectileTuning, PulseTuning, TowerAction, Tuning,
+    WaveScaling,
 };
 use crate::world::Tile;
 
@@ -1066,4 +1067,52 @@ fn the_cooldown_of_a_shot_is_finite_and_not_negative() {
     let mut t = Tuning::default();
     watchtower_shot(&mut t).cooldown_secs = 0.0;
     assert_eq!(t.validate(), Ok(()), "a tower that shoots every tick");
+}
+
+#[test]
+fn a_pulse_longer_than_its_effect_is_rejected_and_one_as_long_is_accepted() {
+    let slow = |pulse_secs| {
+        TowerAction::Pulse(PulseTuning {
+            pulse_secs,
+            debuff: Debuff::Slow {
+                factor: 0.7,
+                secs: 1.0,
+            },
+        })
+    };
+    let mut t = Tuning::default();
+    t.structures.slow_tower.action = slow(1.05);
+    let why = t.validate().expect_err("a pulse that lets the slow lapse");
+    assert!(why.contains("SlowTower pulses every"), "{why}");
+
+    t.structures.slow_tower.action = slow(1.0);
+    assert_eq!(t.validate(), Ok(()), "a pulse as long as the effect");
+
+    for bad in [0.0, -0.5, f32::NAN, f32::INFINITY] {
+        t.structures.slow_tower.action = slow(bad);
+        let why = t.validate().expect_err(&format!("a pulse of {bad}"));
+        assert!(why.contains("SlowTower pulse_secs"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn a_tower_on_every_monster_cannot_bleed_or_stun() {
+    let mut t = Tuning::default();
+    for (debuff, said) in [
+        (
+            Debuff::Bleed {
+                damage: 5,
+                secs: 3.0,
+            },
+            "cannot apply a bleed",
+        ),
+        (Debuff::Stun { secs: 0.8 }, "cannot stun"),
+    ] {
+        t.structures.slow_tower.action = TowerAction::Pulse(PulseTuning {
+            pulse_secs: 0.5,
+            debuff,
+        });
+        let why = t.validate().expect_err(&format!("{debuff:?}"));
+        assert!(why.contains("SlowTower") && why.contains(said), "{why}");
+    }
 }

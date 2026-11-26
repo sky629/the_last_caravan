@@ -12,7 +12,7 @@ use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
 use crate::player::{Interaction, Life};
 use crate::tuning::{TowerAction, Tuning};
-use crate::world::{Ctx, Hit, Source, Target, Tile, World};
+use crate::world::{Affliction, Ctx, Hit, Source, Target, Tile, World};
 
 /// 마차입니다. HP가 0이 되면 원정이 실패합니다.
 /// 같은 Tick에 원정이 끝나므로 「파괴된 상태」는 따로 없습니다.
@@ -134,11 +134,19 @@ impl Tower {
     }
 }
 
-/// 서 있는 포탑의 이번 Tick의 동작을 정합니다. 피해는 `hits`에 모으고, `World::apply_hits`가 한꺼번에 적용합니다.
+/// 서 있는 포탑의 이번 Tick의 동작을 정합니다. 피해는 `hits`에, 피해 없이 거는 효과는 `afflictions`에 모으고,
+/// `World::apply_hits`와 `effect::apply_afflictions`가 한꺼번에 적용합니다. 그래서 같은 Tick에 몬스터가 보는 상태는 모두 이전 Tick까지의 상태입니다.
 ///
-/// 포탑은 쿨다운을 Tick마다 줄이고, 0이 되면 대상을 찾아서 찾았을 때만 동작하고 쿨다운을 다시 채웁니다. 대상이 없으면 쿨다운은 0에 머물므로 대상이 나타난 Tick에 곧바로 동작합니다.
+/// 포탑은 쿨다운(감속 포탑은 펄스의 간격)을 Tick마다 줄이고, 0이 되면 대상을 찾아서 찾았을 때만 동작하고 쿨다운을 다시 채웁니다.
+/// 대상이 없으면 쿨다운은 0에 머물므로 대상이 나타난 Tick에 곧바로 동작합니다.
 /// - 사격: 범위 안의 가장 가까운 적대적 몬스터 한 마리입니다. 거리가 같으면 번호가 작은 몬스터입니다.
-pub(crate) fn towers_act(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
+/// - 범위에 효과: 범위 안의 모든 적대적 몬스터입니다. 이미 더 센 효과가 걸린 몬스터에게는 `MonsterEffects::apply`가 걸지 않습니다.
+pub(crate) fn towers_act(
+    world: &mut World,
+    ctx: &Ctx,
+    hits: &mut Vec<Hit>,
+    afflictions: &mut Vec<Affliction>,
+) {
     let t = ctx.t;
     let mut candidates = Vec::new();
     for tower in world.towers.values_mut() {
@@ -153,6 +161,7 @@ pub(crate) fn towers_act(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
         let spec = t.structures.get(tower.kind);
         let period_secs = match spec.action {
             TowerAction::Shoot(shoot) => shoot.cooldown_secs,
+            TowerAction::Pulse(pulse) => pulse.pulse_secs,
         };
         *cooldown_ticks = cooldown_ticks.saturating_sub(1);
         if *cooldown_ticks > 0 {
@@ -177,6 +186,20 @@ pub(crate) fn towers_act(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
                     });
                 }
                 target.is_some()
+            }
+            TowerAction::Pulse(pulse) => {
+                let before = afflictions.len();
+                for &index in &candidates {
+                    let monster = &world.monsters[index];
+                    if tower.team.is_hostile_to(monster.team) {
+                        afflictions.push(Affliction {
+                            target: monster.id,
+                            debuff: pulse.debuff,
+                            by: Source::Tower,
+                        });
+                    }
+                }
+                afflictions.len() > before
             }
         };
         if acted {

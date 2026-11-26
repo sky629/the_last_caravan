@@ -35,7 +35,9 @@ fn crowd_tuning() -> Tuning {
     // 감시탑이 상한만큼 서 있습니다. 감시탑은 사격하지만 피해를 주지 않아서 300마리가 그대로 쌓입니다.
     tuning.village.start_towers = tuning.spread_tower_sites(tuning.village.tower_limit);
     tuning.structures.watchtower.max_hp = u32::MAX;
-    let caravan_rules::TowerAction::Shoot(shot) = &mut tuning.structures.watchtower.action;
+    let caravan_rules::TowerAction::Shoot(shot) = &mut tuning.structures.watchtower.action else {
+        panic!("the watchtower shoots");
+    };
     shot.damage = 0;
     tuning
 }

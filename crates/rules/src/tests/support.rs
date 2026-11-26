@@ -174,7 +174,11 @@ impl Scenario {
 
     /// 타일 (`x`, `y`)에 서 있는 감시탑을 하나 놓습니다. 건설의 조건은 거치지 않으므로, 다른 규칙을 시험할 상황을 만들 때만 씁니다.
     pub fn tower_at(&mut self, x: u16, y: u16) -> TowerId {
-        let kind = StructureKind::Watchtower;
+        self.tower_of(StructureKind::Watchtower, x, y)
+    }
+
+    /// 타일 (`x`, `y`)에 서 있는 `kind` 포탑을 하나 놓습니다. 건설의 조건은 거치지 않으므로, 다른 규칙을 시험할 상황을 만들 때만 씁니다.
+    pub fn tower_of(&mut self, kind: StructureKind, x: u16, y: u16) -> TowerId {
         let state = Tower::standing_state(kind, self.sim.tuning());
         self.sim.world_mut().add_tower(kind, Tile::new(x, y), state)
     }
@@ -418,6 +422,7 @@ pub(crate) fn chest_tuning(t: &mut Tuning, contents: WeaponKind, guards: u32) {
 pub(crate) fn watchtower_shot(t: &mut Tuning) -> &mut ShootTuning {
     match &mut t.structures.watchtower.action {
         TowerAction::Shoot(shoot) => shoot,
+        other => panic!("the watchtower shoots, but its action is {other:?}"),
     }
 }
 

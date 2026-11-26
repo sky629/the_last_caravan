@@ -374,6 +374,8 @@ pub struct StructureTuning {
 pub enum TowerAction {
     /// 쿨다운마다 범위 안의 가장 가까운 적대적 몬스터 한 마리에게 피해를 줍니다.
     Shoot(ShootTuning),
+    /// 간격마다 범위 안의 모든 적대적 몬스터에게 `debuff`를 겁니다. 피해는 없습니다.
+    Pulse(PulseTuning),
 }
 
 /// 몬스터 한 마리에게 피해를 주는 동작의 수치입니다.
@@ -386,16 +388,28 @@ pub struct ShootTuning {
     pub on_hit: Option<Debuff>,
 }
 
+/// 범위 안의 모든 몬스터에게 효과를 거는 동작의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PulseTuning {
+    /// 효과를 거는 간격입니다. 범위에 몬스터가 없으면 간격을 쓰지 않으므로, 몬스터가 들어오면 곧바로 겁니다.
+    /// 효과의 시간 이하여야 범위 안의 몬스터에게 효과가 끊기지 않습니다(`Tuning::validate`).
+    pub pulse_secs: f32,
+    /// 출혈은 피해를 주고 스턴은 무리를 통째로 멈추므로 쓸 수 없습니다(`Tuning::validate`).
+    pub debuff: Debuff,
+}
+
 /// 포탑 종류별 수치표입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructureTable {
     pub watchtower: StructureTuning,
+    pub slow_tower: StructureTuning,
 }
 
 impl StructureTable {
     pub fn get(&self, kind: StructureKind) -> &StructureTuning {
         match kind {
             StructureKind::Watchtower => &self.watchtower,
+            StructureKind::SlowTower => &self.slow_tower,
         }
     }
 }
@@ -692,8 +706,8 @@ impl Tuning {
             )?;
         }
         self.validate_weapons()?;
-        self.validate_structures()?;
         self.validate_effects()?;
+        self.validate_structures()?;
 
         let sprint = &self.sprint;
         if !(sprint.speed_multiplier.is_finite() && sprint.speed_multiplier >= 1.0) {
@@ -1027,6 +1041,7 @@ impl Tuning {
             .chain(StructureKind::ALL.map(|kind| {
                 let on_hit = match self.structures.get(kind).action {
                     TowerAction::Shoot(shoot) => shoot.on_hit,
+                    TowerAction::Pulse(pulse) => Some(pulse.debuff),
                 };
                 (format!("{kind:?}"), on_hit)
             }));
@@ -1061,11 +1076,14 @@ impl Tuning {
         Ok(())
     }
 
-    /// 모든 포탑의 수치를 검사합니다. 효과의 수치는 `validate_effects`가 검사합니다.
+    /// 모든 포탑의 수치를 검사합니다. 효과의 수치는 `validate_effects`가 먼저 검사하므로, 여기서는 효과가 올바른 수치라고 봅니다.
     ///
     /// - 범위는 유한하고 0보다 깁니다. 0 이하이면 포탑이 아무것에도 작용하지 못하고, NaN이면 범위의 비교가 모두 거짓이 됩니다.
     /// - 건설 비용은 1 이상입니다. 0이면 자원 없이 포탑을 상한까지 지을 수 있습니다.
     /// - 사격의 쿨다운은 유한하고 0 이상입니다. 음수나 NaN이면 Tick 수로 바꾸는 계산이 깨집니다.
+    /// - 범위의 모든 몬스터에게 거는 동작(`Pulse`)의 간격은 유한하고 0보다 길며, Tick으로 바꾼 값이 효과의 시간 이하입니다.
+    ///   간격이 효과보다 길면 범위 안에서도 효과가 끊깁니다.
+    /// - 피해를 주지 않는 동작(`Pulse`)은 출혈을 걸 수 없습니다. 범위의 모든 몬스터에게 거는 동작은 스턴도 걸 수 없습니다. 무리가 통째로 멈추기 때문입니다.
     ///
     /// `match`에 `_` 갈래가 없으므로 동작을 추가하면 컴파일러가 이 검사를 더하라고 알려 줍니다.
     fn validate_structures(&self) -> Result<(), String> {
@@ -1078,6 +1096,28 @@ impl Tuning {
             match tower.action {
                 TowerAction::Shoot(shoot) => {
                     check_not_negative(&format!("{kind:?} cooldown_secs"), shoot.cooldown_secs)?;
+                }
+                TowerAction::Pulse(pulse) => {
+                    check_positive(&format!("{kind:?} pulse_secs"), pulse.pulse_secs)?;
+                    let lasts = match pulse.debuff {
+                        Debuff::Slow { secs, .. } => secs,
+                        Debuff::Bleed { .. } => {
+                            return Err(format!(
+                                "{kind:?} deals no damage, so it cannot apply a bleed"
+                            ));
+                        }
+                        Debuff::Stun { .. } => {
+                            return Err(format!(
+                                "{kind:?} reaches every monster in range, so it cannot stun"
+                            ));
+                        }
+                    };
+                    if self.ticks(pulse.pulse_secs) > self.ticks(lasts) {
+                        return Err(format!(
+                            "{kind:?} pulses every {} s, longer than its effect of {lasts} s, so the effect would lapse inside the range",
+                            pulse.pulse_secs
+                        ));
+                    }
                 }
             }
         }
@@ -1389,6 +1429,18 @@ impl Default for Tuning {
                         damage: 15,
                         cooldown_secs: 0.8,
                         on_hit: None,
+                    }),
+                ),
+                // 1초짜리 감속을 0.5초마다 걸므로 범위 안에서는 끊기지 않고, 범위를 나가면 1초 안에 끝납니다.
+                slow_tower: tower(
+                    4.0,
+                    15,
+                    TowerAction::Pulse(PulseTuning {
+                        pulse_secs: 0.5,
+                        debuff: Debuff::Slow {
+                            factor: 0.7,
+                            secs: 1.0,
+                        },
                     }),
                 ),
             },
