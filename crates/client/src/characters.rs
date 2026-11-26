@@ -128,13 +128,19 @@ fn update_character(
     }
 }
 
-fn player_look(player: &PlayerView, scene: &Scene, palette: &Palette) -> Look {
-    let alive_color = if player.id == scene.you {
-        &palette.you
-    } else if player.team.is_allied_with(scene.team) {
-        &palette.ally
-    } else {
-        &palette.hostile_player
+/// 플레이어의 몸통입니다. `away`이면 산 플레이어는 투명하게 그립니다. 쓰러졌거나 죽은 플레이어는 그 상태의 색이 먼저입니다.
+fn player_look(player: &PlayerView, scene: &Scene, palette: &Palette, away: bool) -> Look {
+    let alive_color = match (
+        player.id == scene.you,
+        player.team.is_allied_with(scene.team),
+        away,
+    ) {
+        (true, _, false) => &palette.you,
+        (true, _, true) => &palette.you_away,
+        (false, true, false) => &palette.ally,
+        (false, true, true) => &palette.ally_away,
+        (false, false, false) => &palette.hostile_player,
+        (false, false, true) => &palette.hostile_player_away,
     };
     let (body, height, bar) = match player.life {
         WireLife::Alive { hp, max_hp, .. } => (
@@ -184,6 +190,7 @@ fn monster_look(
 
 /// 플레이어와 몬스터의 도형을 이번 프레임의 모습에 맞춥니다.
 pub fn sync_characters(
+    flow: Res<ClientFlow>,
     frame: Res<CurrentFrame>,
     scene: Res<Scene>,
     palette: Res<Palette>,
@@ -205,7 +212,7 @@ pub fn sync_characters(
         bar_fill: &palette.bar_player,
     };
     for player in &frame.players {
-        let look = player_look(player, &scene, &palette);
+        let look = player_look(player, &scene, &palette, is_away(&flow, player.id));
         match spawned.players.find(player.id) {
             Some(entity) => {
                 if let Ok((mut transform, parts)) = roots.get_mut(entity) {
@@ -258,6 +265,25 @@ pub fn sync_characters(
     spawned.monsters.despawn_unseen(&mut commands);
 }
 
+/// 서버가 명단으로 알려 준 대로 이 플레이어가 자리를 비웠는지입니다. 명단에 없는 플레이어는 자리에 있는 것으로 봅니다.
+fn is_away(flow: &ClientFlow, player: u32) -> bool {
+    flow.joined().is_some_and(|joined| {
+        joined
+            .roster
+            .iter()
+            .any(|member| member.id == player && !member.here)
+    })
+}
+
+/// 캐릭터 위에 쓰는 글자입니다. 자리를 비운 플레이어는 이름 뒤에 `AWAY`가 붙습니다.
+fn label_text(name: &str, away: bool) -> String {
+    if away {
+        format!("{name}  AWAY")
+    } else {
+        name.to_string()
+    }
+}
+
 /// 플레이어 캐릭터 위의 이름을 명단에 맞춥니다. 명단에서 이름을 알게 된 플레이어에게만 이름을 달고,
 /// 이미 달린 이름은 위치와 글자를 이번 프레임에 맞춥니다. 캐릭터가 사라지면 자식인 이름도 함께 지워집니다.
 pub fn sync_name_labels(
@@ -285,10 +311,11 @@ pub fn sync_name_labels(
         else {
             continue;
         };
-        if text.0 != member.name {
-            text.0.clone_from(&member.name);
+        let wanted = label_text(&member.name, !member.here);
+        if text.0 != wanted {
+            text.0 = wanted;
         }
-        let look = player_look(player, &scene, &palette);
+        let look = player_look(player, &scene, &palette, !member.here);
         transform.translation.y = look.name_y();
     }
     for player in &frame.players {
@@ -301,10 +328,10 @@ pub fn sync_name_labels(
         let Some(root) = spawned.players.entity_of(player.id) else {
             continue;
         };
-        let look = player_look(player, &scene, &palette);
+        let look = player_look(player, &scene, &palette, !member.here);
         commands.entity(root).with_child((
             NameLabel { player: player.id },
-            Text2d::new(member.name.clone()),
+            Text2d::new(label_text(&member.name, !member.here)),
             TextFont {
                 font_size: FontSize::Px(config::NAME_SIZE),
                 ..default()
@@ -318,7 +345,7 @@ pub fn sync_name_labels(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{YOU, deliver_roster, joined_flow};
+    use crate::testing::{YOU, deliver_presence, deliver_roster, joined_flow};
     use crate::view;
     use caravan_client_core::Frame;
     use caravan_protocol::{WireLoadout, WireMonsterKind, WirePhase, WireWagon, WireWeaponKind};
@@ -555,6 +582,160 @@ mod tests {
         app.update();
         let texts: Vec<_> = name_labels(&mut app).into_iter().map(|l| l.0).collect();
         assert_eq!(texts, ["KANG"], "the name of the player who left is gone");
+    }
+
+    /// 플레이어 몸통의 재질입니다.
+    fn body_material(app: &App, id: u32) -> Handle<ColorMaterial> {
+        let root = player_entity(app, id);
+        let parts = *app.world().get::<Parts>(root).unwrap();
+        app.world()
+            .get::<MeshMaterial2d<ColorMaterial>>(parts.body)
+            .unwrap()
+            .0
+            .clone()
+    }
+
+    fn alpha_of(app: &App, material: &Handle<ColorMaterial>) -> f32 {
+        app.world()
+            .resource::<Assets<ColorMaterial>>()
+            .get(material)
+            .unwrap()
+            .color
+            .alpha()
+    }
+
+    #[test]
+    fn a_player_who_is_away_wears_away_on_the_name_and_is_drawn_see_through() {
+        let mut app = app();
+        deliver_roster(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG"), (2, "MIRO")],
+        );
+        let players = vec![
+            player(YOU, 12.0, 9.0, alive(100)),
+            player(2, 14.0, 9.0, alive(100)),
+        ];
+        show(&mut app, frame(players.clone(), Vec::new()));
+        let texts: Vec<_> = name_labels(&mut app).into_iter().map(|l| l.0).collect();
+        assert_eq!(texts, ["KANG", "MIRO"]);
+        let present = body_material(&app, 2);
+        assert_eq!(alpha_of(&app, &present), 1.0);
+
+        deliver_presence(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG", true), (2, "MIRO", false)],
+        );
+        show(&mut app, frame(players.clone(), Vec::new()));
+        let texts: Vec<_> = name_labels(&mut app).into_iter().map(|l| l.0).collect();
+        assert_eq!(
+            texts,
+            ["KANG", "MIRO  AWAY"],
+            "only the absent one is marked"
+        );
+        assert!(alpha_of(&app, &body_material(&app, 2)) < 1.0);
+        assert_eq!(alpha_of(&app, &body_material(&app, YOU)), 1.0);
+
+        deliver_roster(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG"), (2, "MIRO")],
+        );
+        show(&mut app, frame(players, Vec::new()));
+        let texts: Vec<_> = name_labels(&mut app).into_iter().map(|l| l.0).collect();
+        assert_eq!(texts, ["KANG", "MIRO"], "the mark goes when he returns");
+        assert_eq!(
+            body_material(&app, 2),
+            present,
+            "and the body is solid again"
+        );
+    }
+
+    #[test]
+    fn yourself_an_ally_and_a_rival_who_are_away_are_see_through_in_their_own_color() {
+        let mut app = app();
+        let rival = PlayerView {
+            team: Team(2),
+            ..player(3, 9.0, 12.0, alive(100))
+        };
+        let players = vec![
+            player(YOU, 12.0, 9.0, alive(100)),
+            player(2, 8.0, 12.0, alive(100)),
+            rival,
+        ];
+        show(&mut app, frame(players.clone(), Vec::new()));
+        let solid: Vec<_> = [YOU, 2, 3]
+            .into_iter()
+            .map(|id| {
+                app.world()
+                    .resource::<Assets<ColorMaterial>>()
+                    .get(&body_material(&app, id))
+                    .unwrap()
+                    .color
+            })
+            .collect();
+
+        deliver_presence(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG", false), (2, "MIRO", false), (3, "ROX", false)],
+        );
+        show(&mut app, frame(players, Vec::new()));
+
+        for (id, solid) in [YOU, 2, 3].into_iter().zip(solid) {
+            let faded = app
+                .world()
+                .resource::<Assets<ColorMaterial>>()
+                .get(&body_material(&app, id))
+                .unwrap()
+                .color;
+            assert!(faded.alpha() < 1.0, "player {id} is see-through");
+            assert_eq!(faded.with_alpha(1.0), solid, "player {id} keeps the hue");
+        }
+    }
+
+    #[test]
+    fn a_player_who_is_away_when_first_drawn_is_already_marked() {
+        let mut app = app();
+        deliver_presence(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG", true), (2, "MIRO", false)],
+        );
+        show(
+            &mut app,
+            frame(
+                vec![
+                    player(YOU, 12.0, 9.0, alive(100)),
+                    player(2, 14.0, 9.0, alive(100)),
+                ],
+                Vec::new(),
+            ),
+        );
+
+        let texts: Vec<_> = name_labels(&mut app).into_iter().map(|l| l.0).collect();
+        assert_eq!(texts, ["KANG", "MIRO  AWAY"]);
+        assert!(alpha_of(&app, &body_material(&app, 2)) < 1.0);
+    }
+
+    #[test]
+    fn a_player_who_is_down_keeps_the_color_of_being_down_even_when_away() {
+        let mut app = app();
+        deliver_presence(
+            &mut app.world_mut().resource_mut::<ClientFlow>(),
+            &[(YOU, "KANG", false)],
+        );
+        let downed = WireLife::Downed {
+            bleed_secs_left: 20.0,
+            revive_progress: None,
+        };
+        show(
+            &mut app,
+            frame(vec![player(YOU, 12.0, 9.0, downed)], Vec::new()),
+        );
+
+        assert_eq!(alpha_of(&app, &body_material(&app, YOU)), 1.0);
+        assert_eq!(
+            name_labels(&mut app)[0].0,
+            "KANG  AWAY",
+            "the name still says it"
+        );
     }
 
     #[test]

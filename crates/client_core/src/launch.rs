@@ -1,6 +1,6 @@
 //! 이름, 방 코드, 서버 주소를 정하는 곳입니다.
 //!
-//! PC: `caravan-client --name KANG --room k7m2q --server ws://127.0.0.1:7777 --debug-net`
+//! PC: `caravan-client --name KANG --room k7m2q --server ws://127.0.0.1:7777 --debug-net --profile two`
 //! 웹: `http://127.0.0.1:8080/?room=k7m2q&name=KANG&server=ws://127.0.0.1:7777&debug-net`
 //! 두 방식 모두 `from_values`에서 같은 규칙으로 검사합니다. 이름과 방 코드는 시작 화면의 칸을 미리 채우고,
 //! 둘 다 있으면 시작 화면 없이 입장합니다. 값이 없으면 마지막으로 입장한 방과 이름을 기기에서 불러오고, 그것도 없으면 칸이 빕니다.
@@ -20,7 +20,14 @@ pub struct LaunchOptions {
     pub server_url: String,
     /// 켜면 주고받는 메시지를 읽을 수 있는 형태로 로그에 출력합니다.
     pub debug_net: bool,
+    /// PC에서 이 기기가 기억하는 것(이름, 마지막 방, 자리의 표식)을 담는 파일을 고릅니다. 없으면 기본 파일입니다.
+    /// 같은 컴퓨터에서 클라이언트 두 개를 실행해 두 사람을 시험할 때, 서로 다른 값을 주면 한 자리를 서로 가져가지 않습니다.
+    /// 웹은 브라우저의 프로필이 그 일을 하므로 이 값이 없습니다.
+    pub profile: Option<String>,
 }
+
+/// 기억 파일을 고르는 이름의 최대 길이입니다.
+const MAX_PROFILE_LEN: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LaunchError {
@@ -28,6 +35,7 @@ pub enum LaunchError {
     MissingValue(&'static str),
     BadRoomCode(RoomCodeError),
     BadServerUrl(String),
+    BadProfile(String),
 }
 
 impl fmt::Display for LaunchError {
@@ -42,6 +50,10 @@ impl fmt::Display for LaunchError {
                     "server address must start with ws:// or wss://, got {url}"
                 )
             }
+            LaunchError::BadProfile(profile) => write!(
+                f,
+                "--profile must be 1-{MAX_PROFILE_LEN} letters, digits, - or _, got {profile}"
+            ),
         }
     }
 }
@@ -53,6 +65,7 @@ impl LaunchOptions {
         let mut name = None;
         let mut server = None;
         let mut debug_net = false;
+        let mut profile = None;
         let mut rest = args.iter();
         while let Some(arg) = rest.next() {
             match arg.as_str() {
@@ -77,11 +90,17 @@ impl LaunchOptions {
                             .clone(),
                     )
                 }
+                "--profile" => {
+                    let raw = rest.next().ok_or(LaunchError::MissingValue("--profile"))?;
+                    profile = Some(valid_profile(raw)?);
+                }
                 "--debug-net" => debug_net = true,
                 other => return Err(LaunchError::UnknownArgument(other.to_string())),
             }
         }
-        LaunchOptions::from_values(room, name, server, debug_net)
+        let mut options = LaunchOptions::from_values(room, name, server, debug_net)?;
+        options.profile = profile;
+        Ok(options)
     }
 
     /// 서버 주소가 없으면 기본값을 사용하고, 방 코드와 서버 주소가 있으면 검사합니다. 비어 있는 값은 없는 것으로 봅니다.
@@ -104,7 +123,22 @@ impl LaunchOptions {
             name,
             server_url,
             debug_net,
+            profile: None,
         })
+    }
+}
+
+/// 파일 이름에 들어가므로 영문자, 숫자, `-`, `_`만 받습니다.
+fn valid_profile(raw: &str) -> Result<String, LaunchError> {
+    let fits = !raw.is_empty()
+        && raw.len() <= MAX_PROFILE_LEN
+        && raw
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if fits {
+        Ok(raw.to_string())
+    } else {
+        Err(LaunchError::BadProfile(raw.to_string()))
     }
 }
 
@@ -160,6 +194,27 @@ mod tests {
         assert_eq!(options.name.as_deref(), Some("KANG"));
         assert_eq!(options.server_url, "ws://10.0.0.5:9000");
         assert!(options.debug_net);
+    }
+
+    #[test]
+    fn a_profile_names_the_file_this_client_remembers_in() {
+        let options = LaunchOptions::from_args(&args(&["--profile", "two_B-1"])).unwrap();
+        assert_eq!(options.profile.as_deref(), Some("two_B-1"));
+        let longest = LaunchOptions::from_args(&args(&["--profile", "abcdefghijklmnop"])).unwrap();
+        assert_eq!(longest.profile.as_deref(), Some("abcdefghijklmnop"));
+        assert_eq!(LaunchOptions::from_args(&[]).unwrap().profile, None);
+
+        for bad in ["", "a b", "../x", "a/b", "한글", "abcdefghijklmnopq"] {
+            assert_eq!(
+                LaunchOptions::from_args(&args(&["--profile", bad])),
+                Err(LaunchError::BadProfile(bad.to_string())),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            LaunchOptions::from_args(&args(&["--profile"])),
+            Err(LaunchError::MissingValue("--profile"))
+        );
     }
 
     #[test]

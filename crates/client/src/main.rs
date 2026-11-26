@@ -37,7 +37,11 @@ use caravan_client_core::{Flow, LaunchError, LaunchOptions};
 fn main() {
     let launch = read_launch_options();
     let debug_net = launch.as_ref().is_ok_and(|launch| launch.debug_net);
-    let (flow, first) = Flow::new(launch, storage::load(), page_url());
+    let profile = launch
+        .as_ref()
+        .ok()
+        .and_then(|launch| launch.profile.clone());
+    let (flow, first) = Flow::new(launch, storage::load(profile.as_deref()), page_url());
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -49,7 +53,7 @@ fn main() {
         }),
         ..default()
     }));
-    net::install(&mut app, flow, first, debug_net);
+    net::install(&mut app, flow, first, debug_net, profile);
     app.insert_resource(ClearColor(config::BACKGROUND))
         .init_resource::<input::HeldControls>()
         .init_resource::<characters::Spawned>()
@@ -74,8 +78,7 @@ fn main() {
             Update,
             (
                 (
-                    net::pump_network,
-                    start::read_form_keys,
+                    net::keys_then_network(),
                     start::draw_form,
                     net::advance_playback,
                     view::clear_world

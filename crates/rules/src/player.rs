@@ -17,6 +17,18 @@ use crate::structures::TowerState;
 use crate::tuning::{RepairTuning, Tuning};
 use crate::world::{Ctx, World};
 
+/// 플레이어가 자리에 있는지입니다. 규칙은 접속을 알지 못하고, 서버가 접속과 입력을 보고 `Sim::set_presence`로 알려 줍니다.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Presence {
+    /// 조작하고 있습니다.
+    #[default]
+    Here,
+    /// 자리를 비웠습니다(접속이 끊겼거나, 입력이 멈췄거나, 야영지에서 조작이 없습니다). 캐릭터는 그 자리에 남고,
+    /// 몬스터가 노리지 않고, 피해를 받지 않고, 쓰러져 있으면 출혈이 멈춥니다.
+    /// 실패의 판정, 야영지의 「모두 준비」, 결과 화면의 「모두 확인」에서는 빠지고, 방의 정원과 밤의 인원에는 들어갑니다.
+    Away,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Player {
     pub id: PlayerId,
@@ -34,6 +46,8 @@ pub struct Player {
     pub last_input_seq: u32,
     /// 마지막으로 한 공격입니다. 이벤트가 아니라 상태이므로, 스냅샷을 한 번 놓친 클라이언트도 공격 효과를 그릴 수 있습니다.
     pub last_attack: Option<LastAttack>,
+    /// 자리에 있는지입니다. 새 원정이나 야영지가 시작되어도 이어집니다.
+    pub presence: Presence,
 }
 
 /// 플레이어가 마지막으로 한 공격입니다. 공격한 무기를 함께 기억하므로, 공격한 직후에 무기를 바꿔도 화면은 공격한 무기의 효과를 그립니다.
@@ -161,15 +175,17 @@ impl Player {
             loadout: t.player.start_loadout,
             last_input_seq: 0,
             last_attack: None,
+            presence: Presence::Here,
         }
     }
 
     /// 새 원정이 시작될 때 최대 HP의 살아 있는 상태로 등장 순서가 `spawn_slot`인 `pos`에 돌려놓습니다.
-    /// 입력의 순서 번호는 원정이 바뀌어도 이어집니다.
+    /// 입력의 순서 번호와 자리에 있는지는 원정이 바뀌어도 이어집니다. 자리를 비운 사람은 원정이 시작되어도 자리를 비운 채로 보호받습니다.
     pub(crate) fn reset(&mut self, spawn_slot: usize, pos: Vec2, t: &Tuning) {
-        let seq = self.last_input_seq;
+        let (seq, presence) = (self.last_input_seq, self.presence);
         *self = Player::new(self.id, self.team, spawn_slot, pos, t);
         self.last_input_seq = seq;
+        self.presence = presence;
     }
 
     /// 낮이 시작될 때 최대 HP와 가득 찬 달리기 게이지의 살아 있는 상태로 되돌립니다. 위치, 하고 있던 일, 든 자원은 그대로이고,
@@ -190,6 +206,15 @@ impl Player {
 
     pub fn is_alive(&self) -> bool {
         matches!(self.life, Life::Alive { .. })
+    }
+
+    pub fn is_present(&self) -> bool {
+        self.presence == Presence::Here
+    }
+
+    /// 몬스터가 노릴 수 있는 플레이어입니다. 살아 있고 자리에 있어야 합니다.
+    pub(crate) fn is_targetable(&self) -> bool {
+        self.is_alive() && self.is_present()
     }
 
     pub fn is_downed(&self) -> bool {
@@ -276,10 +301,13 @@ impl Player {
 
     /// 피해를 받습니다. 살아 있는 플레이어의 HP가 0이 되면 쓰러지고, 이때 하고 있던 상호작용이 함께 사라집니다.
     /// 상자를 열고 있었다면 HP가 남아도 열기가 취소됩니다. 부활, 수리, 채집, 건설은 HP가 남으면 이어집니다.
-    /// 쓰러졌거나 사망한 플레이어는 피해를 받지 않습니다.
+    /// 쓰러졌거나 사망한 플레이어와 자리를 비운 플레이어는 피해를 받지 않습니다.
     ///
     /// 쓰러지면서 잃은 든 자원의 양을 돌려주므로, 부르는 쪽이 그 자리에 떨어뜨립니다. 쓰러지지 않았으면 0입니다.
     pub(crate) fn take_damage(&mut self, amount: u32, t: &Tuning) -> u32 {
+        if !self.is_present() {
+            return 0;
+        }
         let Life::Alive {
             hp,
             carried,
@@ -670,10 +698,11 @@ pub(crate) fn advance_life_timers(world: &mut World, t: &Tuning) {
         }
     }
 
-    // 부활이 진행되는 동안에는 출혈 시간이 멈춥니다.
+    // 부활이 진행되는 동안과 자리를 비운 동안에는 출혈 시간이 멈춥니다. 쓰러진 채로 접속이 끊긴 사람이 돌아왔을 때 이미 죽어 있으면 안 됩니다.
     for player in world.players.values_mut() {
         if let Life::Downed { bleed_left_ticks } = &mut player.life
             && !being_revived.contains(&player.id)
+            && player.presence == Presence::Here
         {
             *bleed_left_ticks = bleed_left_ticks.saturating_sub(1);
             if *bleed_left_ticks == 0 {

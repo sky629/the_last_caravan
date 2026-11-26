@@ -8,7 +8,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use caravan_protocol::{ServerMsg, encode_server};
+use caravan_protocol::{ClientTransport, ServerMsg, encode_server};
 use caravan_rules::{MonsterKind, NightPlan, Tuning, WavePlan};
 use common::rig_in_expedition;
 
@@ -45,7 +45,9 @@ fn the_snapshot_of_a_real_300_monster_crowd_stays_under_the_bound() {
     let mut largest = (0, 0);
     let mut spent = Duration::ZERO;
     let mut worst = Duration::ZERO;
-    for _ in 0..400 {
+    for seq in 1..=400 {
+        // 클라이언트는 Tick마다 입력을 보냅니다. 입력이 3초 넘게 없으면 서버가 자리를 비운 것으로 보고 방을 멈춥니다.
+        client.send(&common::input(seq));
         rig.now += rig.period;
         let started = Instant::now();
         rig.server.pump(rig.now);

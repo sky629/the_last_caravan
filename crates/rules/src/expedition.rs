@@ -7,6 +7,7 @@
 //! 단계를 바꾸는 바로 그 자리에서 부르므로, 단계와 그 일이 어긋날 수 없습니다.
 //! 첫날의 낮은 `Sim::begin_expedition`이 `begin_day`를 불러 시작합니다.
 
+use crate::camp::who_must_agree;
 use crate::loot::{self, Seed};
 use crate::math::Vec2;
 use crate::monster::Order;
@@ -225,10 +226,12 @@ pub(crate) fn day_of(phase: Phase) -> u32 {
 
 /// Tick의 맨 끝에서 원정이 끝났는지, 무리를 모두 처치했는지 판정합니다. 원정이 끝났으면 결과를 돌려주고, 단계는 그대로 둡니다.
 /// 실패를 먼저 검사하므로, 마지막 몬스터가 죽은 Tick에 마차도 부서졌다면 실패입니다. 실패는 낮에도 밤에도 같습니다.
-/// 플레이어가 한 명도 없는 방은 실패하지 않습니다.
+/// 실패는 자리에 있는 플레이어를 기준으로 판정합니다. 자리에 있는 사람이 모두 쓰러지거나 죽으면 실패이고,
+/// 보호받는 캐릭터가 살아 있다고 해서 실패가 미뤄지지 않습니다. 자리에 있는 플레이어가 한 명도 없는 방은 실패하지 않습니다.
 pub(crate) fn settle_outcome(phase: &mut Phase, world: &World, t: &Tuning) -> Option<Outcome> {
-    let defeated = !world.players.is_empty()
-        && (world.wagon.hp == 0 || world.players.values().all(|player| !player.is_alive()));
+    let mut present = who_must_agree(world).peekable();
+    let defeated = present.peek().is_some()
+        && (world.wagon.hp == 0 || present.all(|player| !player.is_alive()));
     if defeated {
         return Some(Outcome::Defeat);
     }

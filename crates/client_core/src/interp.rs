@@ -769,6 +769,56 @@ mod tests {
         assert_eq!(buffer.playback, Some(expected));
     }
 
+    /// 스냅샷이 멈추는 동안(접속한 사람이 없어서 방이 멈춥니다) 그림이 뒤로 가지 않고, 서버가 같은 Tick에서 이어 보내면 그림도 이어집니다.
+    /// 이어지는 스냅샷은 멈추기 전 Tick 바로 다음 Tick입니다. 멈춘 동안 서버의 Tick 번호도 멈추기 때문입니다.
+    #[test]
+    fn a_pause_in_the_snapshots_never_runs_the_picture_backwards_and_the_resume_continues_it() {
+        let frame_dt = 1.0 / 60.0;
+        let (mut buffer, mut newest) = run_steady(2.0);
+        let mut last_shown = buffer.frame().unwrap().tick;
+        let check = |buffer: &mut SnapshotBuffer, last_shown: &mut f64, what: &str| {
+            buffer.advance(frame_dt);
+            let shown = buffer.frame().unwrap().tick;
+            assert!(
+                shown >= *last_shown - 1e-9,
+                "{what}: {last_shown} -> {shown}"
+            );
+            *last_shown = shown;
+        };
+
+        for frame in 0..(5 * 60) {
+            check(
+                &mut buffer,
+                &mut last_shown,
+                &format!("pause frame {frame}"),
+            );
+        }
+        let held = last_shown;
+        assert!(
+            (held - newest as f64).abs() < 1e-9,
+            "the picture rests on the newest snapshot, {held} vs {newest}"
+        );
+
+        let mut next_arrival = 0.0;
+        let mut now = 0.0;
+        while now < 3.0 {
+            if now >= next_arrival {
+                newest += 1;
+                buffer.push(snapshot(newest));
+                next_arrival += 1.0 / 20.0;
+            }
+            check(
+                &mut buffer,
+                &mut last_shown,
+                &format!("resume at {now:.2}s"),
+            );
+            now += frame_dt;
+        }
+
+        let behind = newest as f64 - buffer.playback.unwrap();
+        assert!((behind - 2.0).abs() < 0.6, "settled {behind} ticks behind");
+    }
+
     #[test]
     fn effects_run_from_zero_to_one_and_then_end() {
         assert_eq!(effect_progress(10.0, 10, 4.0), Some(0.0));

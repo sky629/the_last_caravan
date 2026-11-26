@@ -5,6 +5,8 @@
 use std::collections::VecDeque;
 
 use bevy::clipboard::Clipboard;
+use bevy::ecs::schedule::ScheduleConfigs;
+use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 use caravan_client_core::{Command, Flow, Frame, Joined, Session};
 use caravan_protocol::{ClientEvent, ClientTransport, ServerMsg, WirePhase};
@@ -19,6 +21,8 @@ use crate::storage;
 pub struct Net {
     transport: Option<Box<dyn ClientTransport>>,
     debug_net: bool,
+    /// PC에서 기억하는 것을 담는 파일을 고르는 이름입니다(`--profile`). 없으면 기본 파일입니다.
+    profile: Option<String>,
 }
 
 /// 화면 흐름입니다. `Flow`는 Bevy를 모르는 크레이트의 타입이므로 리소스로 쓰려면 감쌉니다.
@@ -54,7 +58,13 @@ impl InviteFlash {
 pub struct StartupCommands(Vec<Command>);
 
 /// 리소스를 넣습니다. 시스템은 `main.rs`의 프레임 순서에 있습니다.
-pub fn install(app: &mut App, flow: Flow, first: Vec<Command>, debug_net: bool) {
+pub fn install(
+    app: &mut App,
+    flow: Flow,
+    first: Vec<Command>,
+    debug_net: bool,
+    profile: Option<String>,
+) {
     app.insert_resource(ClientFlow(flow))
         .insert_resource(StartupCommands(first))
         .init_resource::<CurrentFrame>()
@@ -62,6 +72,7 @@ pub fn install(app: &mut App, flow: Flow, first: Vec<Command>, debug_net: bool) 
         .insert_non_send(Net {
             transport: None,
             debug_net,
+            profile,
         });
 }
 
@@ -96,7 +107,7 @@ pub fn run_commands(
             }
             // 접속을 버리면 닫힙니다.
             Command::Disconnect => net.transport = None,
-            Command::Save(text) => storage::save(&text),
+            Command::Save(text) => storage::save(net.profile.as_deref(), &text),
             Command::Copy(text) => match clipboard.set_text(text) {
                 Ok(()) => copied = true,
                 Err(err) => warn!("cannot copy to the clipboard: {err}"),
@@ -104,6 +115,13 @@ pub fn run_commands(
         }
     }
     copied
+}
+
+/// 한 프레임의 앞부분입니다. 키를 먼저 읽고 그다음에 네트워크 이벤트를 처리합니다.
+/// 키를 누른 순간에 화면에 떠 있던 쪽이 그 키를 받아야 하기 때문입니다. 순서가 반대이면 접속이 끊겨서 시작 화면이 나타난 프레임에,
+/// 방에서 누른 키(이동 키 등)가 방금 나타난 시작 화면의 칸에 글자로 들어갑니다.
+pub fn keys_then_network() -> ScheduleConfigs<ScheduleSystem> {
+    (crate::start::read_form_keys, pump_network).chain()
 }
 
 /// 첫 프레임에 시작 일을 실행하고, 접속 방식에 도착한 이벤트를 모두 `Flow`에 넘깁니다.
@@ -225,7 +243,7 @@ mod tests {
     use super::*;
     use crate::testing::empty_frame;
     use caravan_client_core::{LaunchOptions, Memory};
-    use caravan_protocol::ClientMsg;
+    use caravan_protocol::{ClientMsg, PROTOCOL_VERSION};
 
     /// 보낸 메시지를 모아 두는 접속 방식입니다.
     struct Recorder(Rc<RefCell<Vec<ClientMsg>>>);
@@ -245,19 +263,79 @@ mod tests {
         Flow::new(launch, Memory::default(), None).0
     }
 
+    /// 처음 `poll`할 때 접속이 끊겼다고 알리는 접속 방식입니다.
+    struct DropsOnce(bool);
+
+    impl ClientTransport for DropsOnce {
+        fn poll(&mut self) -> Option<ClientEvent> {
+            if self.0 {
+                return None;
+            }
+            self.0 = true;
+            Some(ClientEvent::Disconnected {
+                reason: "the server closed the connection".to_string(),
+            })
+        }
+
+        fn send(&mut self, _msg: &ClientMsg) {}
+    }
+
+    #[test]
+    fn a_key_pressed_in_the_frame_the_start_screen_appears_is_not_typed_into_it() {
+        use bevy::input::ButtonState;
+        use bevy::input::keyboard::{Key, KeyboardFocusLost, KeyboardInput};
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_message::<KeyboardInput>()
+            .add_message::<KeyboardFocusLost>()
+            .insert_resource(crate::testing::joined_flow())
+            .insert_resource(StartupCommands(Vec::new()))
+            .insert_resource(Clipboard::default())
+            .insert_non_send(Net {
+                transport: Some(Box::new(DropsOnce(false))),
+                debug_net: false,
+                profile: None,
+            })
+            .add_systems(Update, keys_then_network());
+        // 방에 있을 때 이동 키를 눌렀고, 같은 프레임에 접속이 끊겼습니다.
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::KeyD,
+            logical_key: Key::Character("d".into()),
+            state: ButtonState::Pressed,
+            text: Some("d".into()),
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+
+        app.update();
+
+        let flow = &app.world().resource::<ClientFlow>().0;
+        let form = flow
+            .form()
+            .expect("the connection is gone, so the start screen is back");
+        assert_eq!(
+            (form.name.text(), form.room.text()),
+            ("KANG", "test"),
+            "the key was pressed in the room"
+        );
+    }
+
     #[test]
     fn what_the_flow_sends_goes_out_on_the_open_connection_and_leaving_closes_it() {
         let sent = Rc::new(RefCell::new(Vec::new()));
         let mut net = Net {
             transport: Some(Box::new(Recorder(sent.clone()))),
             debug_net: false,
+            profile: None,
         };
         let mut flow = start_screen();
         let mut clipboard = Clipboard::default();
         let join = ClientMsg::Join {
-            version: 8,
+            version: PROTOCOL_VERSION,
             room: None,
             name: "KANG".to_string(),
+            token: None,
         };
 
         run_commands(
@@ -283,11 +361,13 @@ mod tests {
         let mut net = Net {
             transport: None,
             debug_net: false,
+            profile: None,
         };
         let join = ClientMsg::Join {
-            version: 8,
+            version: PROTOCOL_VERSION,
             room: None,
             name: "KANG".to_string(),
+            token: None,
         };
         run_commands(
             vec![Command::Send(join)],

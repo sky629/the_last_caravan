@@ -3,10 +3,14 @@
 //! ```text
 //!   Start --Enter(맞는 값)--> Playing(Connecting -> Joining -> InRoom)
 //!   Playing --거절--> Start(입력한 값과 거절된 이유)
-//!   Playing --끊김, 접속 실패--> Start(들어가 있던 방 코드와 끊긴 이유)
+//!   Playing --끊김, 접속 실패, 자리를 다른 창에 내줌--> Start(들어가 있던 방 코드와 이유)
 //!   Playing --Esc--> Start(들어가 있던 방 코드)
 //!   (시작할 때 이름과 방 코드가 모두 주어졌으면 Start 없이 Playing)
 //! ```
+//!
+//! 입장하면 서버가 알려 준 자리의 표식을 기기에 저장합니다. 끊겨서 시작 화면으로 돌아온 뒤 같은 방 코드로 입장하면(방 코드를 비우고 방을
+//! 만들었어도 칸에 서버가 정한 코드가 채워집니다) 그 표식을 `Join`에 실어서, 서버가 60초 동안 유지하는 같은 캐릭터로 돌아갑니다.
+//! Esc는 스스로 나가는 것이므로 서버에 `Leave`를 보내서 자리를 곧바로 내놓고 표식을 지웁니다.
 //!
 //! 이 파일은 접속 방식, 저장소, 클립보드를 직접 다루지 않고 해야 할 일을 `Command`로 돌려줍니다.
 //! 그래서 Bevy 없이 키와 이벤트를 넣고 돌아온 `Command`를 보는 테스트로 확인합니다.
@@ -72,6 +76,7 @@ impl Flow {
                     name: None,
                     server_url: DEFAULT_SERVER.to_string(),
                     debug_net: false,
+                    profile: None,
                 },
                 Some(err.to_string()),
             ),
@@ -95,12 +100,13 @@ impl Flow {
             .and_then(|raw| PlayerName::parse(raw).err())
             .map(|err| err.to_string());
         let direct = launch.name.is_some() && launch.room.is_some() && name_error.is_none();
+        let mut form = StartForm::new(&name, &room, launch_error.clone().or(name_error.clone()));
+        if name_error.is_some() {
+            // 고칠 것은 이름이므로 입력 위치를 이름 칸에 둡니다. 이름이 남아 있으면 방 코드 칸에 놓이기 때문입니다.
+            form.focus = Field::Name;
+        }
         let mut flow = Flow {
-            screen: Screen::Start(StartForm::new(
-                &name,
-                &room,
-                launch_error.clone().or(name_error),
-            )),
+            screen: Screen::Start(form),
             server: launch.server_url,
             launch_error,
             page_url,
@@ -174,8 +180,12 @@ impl Flow {
             commands.push(Command::Send(reply));
         }
         if !was_in_room && let Some(joined) = session.joined() {
-            self.memory
-                .remember_join(&self.server, &joined.name, &joined.room);
+            self.memory.remember_join(
+                &self.server,
+                &joined.name,
+                &joined.room,
+                joined.welcome.token,
+            );
             if let Some(attempt) = &mut self.attempt {
                 attempt.room = Some(joined.room.clone());
             }
@@ -202,13 +212,25 @@ impl Flow {
     }
 
     /// 방 안에서 Esc입니다. 접속을 버리고, 들어가 있던 방 코드가 채워진 시작 화면으로 돌아갑니다.
-    /// 서버는 접속이 끊긴 것으로 보고 플레이어를 곧바로 내보냅니다.
+    /// 입장 요청(`Join`)을 보낸 뒤였으면 서버에 `Leave`를 먼저 보내서 자리를 곧바로 내놓고, 이 서버의 표식을 지웁니다.
+    /// 서버는 `Join` 뒤의 `Leave`를 순서대로 받으므로, 입장 안내가 오기 전에 Esc를 눌러도 자리가 남지 않습니다.
+    /// 접속이 열리기 전에는 서버가 아무것도 모르므로 접속만 버립니다.
     pub fn leave(&mut self) -> Vec<Command> {
-        if !matches!(self.screen, Screen::Playing(_)) {
+        let Screen::Playing(session) = &self.screen else {
             return Vec::new();
-        }
+        };
+        let join_sent = matches!(session, Session::Joining { .. } | Session::InRoom(_));
         self.back_to_start(None);
-        vec![Command::Disconnect]
+        let mut commands = Vec::new();
+        if join_sent {
+            commands.push(Command::Send(ClientMsg::Leave));
+        }
+        commands.push(Command::Disconnect);
+        if join_sent {
+            self.memory.forget_seat(&self.server);
+            commands.push(Command::Save(self.memory.to_text()));
+        }
+        commands
     }
 
     /// C로 복사하는 것의 종류입니다. 페이지 주소가 있는 웹은 링크이고, PC는 방 코드입니다.
@@ -245,7 +267,12 @@ impl Flow {
             return Vec::new();
         }
         self.attempt = Some(request.clone());
-        self.screen = Screen::Playing(Session::new(request, self.server.clone()));
+        // 이 기기가 이 서버의 그 방에서 기억하는 자리가 있으면 그 자리로 돌아갑니다. 방 코드가 비어 있으면 새 방이므로 돌아갈 자리가 없습니다.
+        let token = request
+            .room
+            .as_ref()
+            .and_then(|room| self.memory.seat(&self.server, room));
+        self.screen = Screen::Playing(Session::new(request, self.server.clone(), token));
         vec![Command::Connect {
             server: self.server.clone(),
         }]
@@ -280,12 +307,16 @@ fn encode_query_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use caravan_protocol::{PROTOCOL_VERSION, RoomCode, ServerMsg};
+    use caravan_protocol::{PROTOCOL_VERSION, RoomCode, SeatToken, ServerMsg};
     use caravan_rules::{Seed, Sim, Tuning};
 
     use super::*;
 
     const SERVER: &str = "ws://127.0.0.1:7777";
+    /// `remembered`가 기억해 둔 자리의 표식입니다.
+    const MEMORISED_TOKEN: SeatToken = SeatToken([3; 16]);
+    /// `welcome`이 알려 주는 자리의 표식입니다.
+    const WELCOMED_TOKEN: SeatToken = SeatToken([7; 16]);
 
     fn launch(room: Option<&str>, name: Option<&str>) -> Result<LaunchOptions, LaunchError> {
         LaunchOptions::from_values(
@@ -302,6 +333,7 @@ mod tests {
             server,
             &PlayerName::parse(name).unwrap(),
             &RoomCode::parse(room).unwrap(),
+            MEMORISED_TOKEN,
         );
         memory
     }
@@ -324,8 +356,13 @@ mod tests {
         let mut sim = Sim::new(Tuning::default(), Seed(1));
         let first = sim.add_player().unwrap();
         let room = RoomCode::parse(room).unwrap();
-        let welcome = caravan_protocol::Welcome::from_sim(&sim, sim.player(first).unwrap(), &room);
-        ServerMsg::Welcome(welcome)
+        let welcome = caravan_protocol::Welcome::from_sim(
+            &sim,
+            sim.player(first).unwrap(),
+            &room,
+            WELCOMED_TOKEN,
+        );
+        ServerMsg::Welcome(Box::new(welcome))
     }
 
     fn rejected(reason: RejectReason) -> ClientEvent {
@@ -376,6 +413,7 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 room: Some("k7m2q".to_string()),
                 name: "KANG".to_string(),
+                token: None,
             })]
         );
 
@@ -397,6 +435,7 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 room: None,
                 name: "KANG".to_string(),
+                token: None,
             })]
         );
 
@@ -521,6 +560,11 @@ mod tests {
         assert_eq!(commands, vec![]);
         assert_eq!(form(&flow).room.text(), "k7m2q");
         assert!(form(&flow).notice.as_deref().unwrap().contains("'!'"));
+        assert_eq!(
+            form(&flow).focus,
+            Field::Name,
+            "the name is what has to be fixed, though some of it was kept"
+        );
     }
 
     #[test]
@@ -617,11 +661,215 @@ mod tests {
 
         let commands = flow.leave();
 
-        assert_eq!(commands, vec![Command::Disconnect]);
+        let [
+            Command::Send(ClientMsg::Leave),
+            Command::Disconnect,
+            Command::Save(_),
+        ] = &commands[..]
+        else {
+            panic!("expected Leave, Disconnect and Save, got {commands:?}");
+        };
         let form = form(&flow);
         assert_eq!(form.room.text(), "k7m2q");
         assert_eq!(form.name.text(), "KANG");
         assert_eq!(form.notice, None);
+    }
+
+    /// 입장한 뒤 `Save`가 알려 준 글자를 돌려줍니다.
+    fn saved_text(commands: &[Command]) -> String {
+        commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Save(text) => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a Save in {commands:?}"))
+    }
+
+    #[test]
+    fn the_seat_token_of_the_welcome_is_saved_with_the_room() {
+        let mut flow = start(launch(None, None), Memory::default());
+        connected(&mut flow, "KANG", "");
+
+        let commands = flow.on_event(ClientEvent::Message(welcome("k7m2q")));
+
+        let saved = Memory::parse(&saved_text(&commands));
+        assert_eq!(
+            saved.seat(SERVER, &RoomCode::parse("k7m2q").unwrap()),
+            Some(WELCOMED_TOKEN)
+        );
+    }
+
+    #[test]
+    fn after_a_disconnection_enter_asks_for_the_same_seat_in_the_room_the_server_made() {
+        let mut flow = start(launch(None, None), Memory::default());
+        connected(&mut flow, "KANG", "");
+        flow.on_event(ClientEvent::Message(welcome("k7m2q")));
+        flow.on_event(ClientEvent::Disconnected {
+            reason: "the server closed the connection".to_string(),
+        });
+        assert_eq!(
+            form(&flow).room.text(),
+            "k7m2q",
+            "a blank room became the server's"
+        );
+
+        let commands = flow.on_key(FormKey::Enter);
+        assert_eq!(
+            commands,
+            vec![Command::Connect {
+                server: SERVER.to_string()
+            }]
+        );
+        let commands = flow.on_event(ClientEvent::Connected);
+
+        assert_eq!(
+            commands,
+            vec![Command::Send(ClientMsg::Join {
+                version: PROTOCOL_VERSION,
+                room: Some("k7m2q".to_string()),
+                name: "KANG".to_string(),
+                token: Some(WELCOMED_TOKEN),
+            })]
+        );
+    }
+
+    #[test]
+    fn the_token_of_one_room_is_not_sent_to_another_room() {
+        let mut flow = start(launch(None, None), Memory::default());
+        connected(&mut flow, "KANG", "k7m2q");
+        flow.on_event(ClientEvent::Message(welcome("k7m2q")));
+        flow.on_event(ClientEvent::Disconnected {
+            reason: "gone".to_string(),
+        });
+        assert_eq!(form(&flow).focus, Field::Room, "the cursor is on the room");
+        for _ in 0..5 {
+            flow.on_key(FormKey::Backspace);
+        }
+        type_text(&mut flow, "night");
+        flow.on_key(FormKey::Enter);
+
+        let commands = flow.on_event(ClientEvent::Connected);
+
+        assert_eq!(
+            commands,
+            vec![Command::Send(ClientMsg::Join {
+                version: PROTOCOL_VERSION,
+                room: Some("night".to_string()),
+                name: "KANG".to_string(),
+                token: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn a_link_to_the_room_the_device_remembers_a_seat_in_returns_to_that_seat() {
+        let memory = remembered("KANG", SERVER, "k7m2q");
+        let (mut flow, _) = Flow::new(launch(Some("k7m2q"), Some("KANG")), memory, None);
+
+        let commands = flow.on_event(ClientEvent::Connected);
+
+        assert_eq!(
+            commands,
+            vec![Command::Send(ClientMsg::Join {
+                version: PROTOCOL_VERSION,
+                room: Some("k7m2q".to_string()),
+                name: "KANG".to_string(),
+                token: Some(MEMORISED_TOKEN),
+            })]
+        );
+    }
+
+    #[test]
+    fn escape_gives_up_the_seat_and_the_next_enter_asks_for_a_new_one() {
+        let mut flow = start(launch(None, None), Memory::default());
+        connected(&mut flow, "KANG", "");
+        flow.on_event(ClientEvent::Message(welcome("k7m2q")));
+
+        let commands = flow.leave();
+
+        let [
+            Command::Send(ClientMsg::Leave),
+            Command::Disconnect,
+            Command::Save(text),
+        ] = &commands[..]
+        else {
+            panic!("expected Leave, Disconnect and Save, got {commands:?}");
+        };
+        let saved = Memory::parse(text);
+        let room = RoomCode::parse("k7m2q").unwrap();
+        assert_eq!(saved.seat(SERVER, &room), None, "the token is forgotten");
+        assert_eq!(
+            saved.last_room(SERVER),
+            Some(&room),
+            "the room stays for the next Enter"
+        );
+        assert_eq!(saved.name().map(PlayerName::as_str), Some("KANG"));
+
+        flow.on_key(FormKey::Enter);
+        let commands = flow.on_event(ClientEvent::Connected);
+        assert_eq!(
+            commands,
+            vec![Command::Send(ClientMsg::Join {
+                version: PROTOCOL_VERSION,
+                room: Some("k7m2q".to_string()),
+                name: "KANG".to_string(),
+                token: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn escape_sends_leave_only_after_the_join_was_sent() {
+        let mut flow = start(launch(None, None), Memory::default());
+        type_text(&mut flow, "KANG");
+        flow.on_key(FormKey::Enter);
+        assert_eq!(
+            flow.leave(),
+            vec![Command::Disconnect],
+            "the server knows nothing of a connection that is not open"
+        );
+
+        flow.on_key(FormKey::Enter);
+        flow.on_event(ClientEvent::Connected);
+        let commands = flow.leave();
+        assert!(
+            matches!(
+                &commands[..],
+                [
+                    Command::Send(ClientMsg::Leave),
+                    Command::Disconnect,
+                    Command::Save(_)
+                ]
+            ),
+            "{commands:?}"
+        );
+    }
+
+    #[test]
+    fn a_seat_taken_over_by_another_window_returns_to_the_form_with_the_reason() {
+        let mut flow = joined("k7m2q");
+
+        let commands = flow.on_event(ClientEvent::Message(ServerMsg::SeatTakenOver));
+
+        assert_eq!(commands, vec![Command::Disconnect]);
+        let form = form(&flow);
+        assert_eq!(form.room.text(), "k7m2q");
+        assert_eq!(form.name.text(), "KANG");
+        assert_eq!(
+            form.notice.as_deref(),
+            Some("Seat taken over: Another window took over this seat")
+        );
+
+        flow.on_key(FormKey::Enter);
+        let commands = flow.on_event(ClientEvent::Connected);
+        assert!(
+            matches!(
+                &commands[..],
+                [Command::Send(ClientMsg::Join { token: Some(_), .. })]
+            ),
+            "Enter takes the seat back: {commands:?}"
+        );
     }
 
     #[test]
@@ -649,10 +897,12 @@ mod tests {
             caravan_protocol::WireMember {
                 id: 1,
                 name: "KANG".to_string(),
+                here: true,
             },
             caravan_protocol::WireMember {
                 id: 2,
                 name: "MIRO".to_string(),
+                here: true,
             },
         ];
         flow.on_event(ClientEvent::Message(ServerMsg::Roster(

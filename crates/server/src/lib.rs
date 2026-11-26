@@ -4,12 +4,13 @@
 //! 호출하는 쪽이 접속 방식과 현재 시각을 넘기고 `GameServer::pump`를 반복해서 호출합니다.
 //! 그래서 전용 서버 실행 파일과 테스트가 같은 코드를 실행하고, 다른 게임 프로세스에 내장할 수도 있습니다.
 //!
-//! 읽는 순서: `input`(플레이어 한 명의 입력), `seat`(자리 하나), `room`(방 하나), `mint`(새 방의 코드), `hub`(접속과 방), `clock`(Tick 일정), 이 파일.
+//! 읽는 순서: `input`(플레이어 한 명의 입력), `seat`(자리 하나), `room`(방 하나), `random`(무작위 바이트의 원천), `mint`(새 방의 코드와 자리의 표식), `hub`(접속과 방), `clock`(Tick 일정), 이 파일.
 
 mod clock;
 mod hub;
 mod input;
 mod mint;
+mod random;
 mod room;
 mod seat;
 
@@ -18,14 +19,15 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{
-    LinkId, PlayerName, RejectReason, RoomCode, ServerLimits, ServerTransport, Welcome,
+    LinkId, PlayerName, RejectReason, RoomCode, SeatToken, ServerLimits, ServerTransport, Welcome,
     check_welcome,
 };
 use caravan_rules::{PlayerId, Seed, Tuning};
 
 use clock::TickClock;
-use hub::{Hub, Out};
-use room::Room;
+use hub::{Hub, Out, ticks_of};
+pub use random::{PredictableRandom, RandomSource};
+use room::{Room, RoomTimes};
 
 /// 서버에서 일어난 일 가운데 운영자에게 알릴 것입니다. 라이브러리는 직접 로그를 쓰지 않고, 이 값을 돌려줍니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,7 +38,7 @@ pub enum Notice {
         /// 방이 쓰는 씨앗입니다. 전용 서버를 `--seed`로 이 값을 주고 실행하면 방의 첫 원정이 같은 상태로 시작합니다.
         seed: Seed,
     },
-    /// 마지막 플레이어가 나가서 방이 없어졌습니다. 그 `Left` 바로 뒤에 옵니다.
+    /// 자리가 하나도 남지 않아서 방이 없어졌습니다. 마지막 `Left` 바로 뒤에 옵니다.
     RoomRemoved {
         room: RoomCode,
     },
@@ -45,10 +47,21 @@ pub enum Notice {
         player: PlayerId,
         members: usize,
     },
+    /// 플레이어가 방을 떠났습니다. 스스로 나갔거나(`Leave`), 끊긴 자리를 유지하는 시간이 다 되었습니다.
     Left {
         room: RoomCode,
         player: PlayerId,
         members: usize,
+    },
+    /// 접속이 끊긴 플레이어의 자리를 유지합니다. 플레이어는 방에 남아 있고, 시간이 다 되면 `Left`가 옵니다.
+    Held {
+        room: RoomCode,
+        player: PlayerId,
+    },
+    /// 유지 중이던 자리로, 또는 아직 접속 중으로 보던 자리로 같은 표식의 새 접속이 돌아왔습니다.
+    Returned {
+        room: RoomCode,
+        player: PlayerId,
     },
     Rejected {
         reason: RejectReason,
@@ -81,6 +94,16 @@ impl fmt::Display for Notice {
                 "player {} left room {room} ({members} members)",
                 player.0
             ),
+            Notice::Held { room, player } => {
+                write!(
+                    f,
+                    "player {} lost the link in room {room}; the seat is held",
+                    player.0
+                )
+            }
+            Notice::Returned { room, player } => {
+                write!(f, "player {} returned to room {room}", player.0)
+            }
             Notice::Rejected { reason } => write!(f, "join rejected: {reason:?}"),
             Notice::RoomCreated { room, seed } => {
                 write!(f, "room {room} created (seed {})", seed.0)
@@ -89,14 +112,6 @@ impl fmt::Display for Notice {
             Notice::LinkClosed { link, reason } => write!(f, "link {} closed: {reason}", link.0),
         }
     }
-}
-
-/// 새 방의 코드를 만드는 비밀 값입니다. 서버는 운영체제의 무작위를 직접 읽지 않으므로 호출하는 쪽이 넘깁니다.
-/// 전용 서버는 실행할 때마다 새 값을, 테스트는 고정된 값을 넘깁니다. 로그에 값이 남지 않도록 `Debug`를 만들지 않습니다.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ServerSecret {
-    pub k0: u64,
-    pub k1: u64,
 }
 
 /// 방마다 씨앗을 정하는 방법입니다. 서버는 시계를 읽지 않으므로 호출하는 쪽이 씨앗을 넘깁니다.
@@ -181,18 +196,76 @@ fn check_config(tuning: &Tuning, limits: &ServerLimits) -> Result<(), ServerErro
             limits.max_messages_per_sec, tuning.tick_hz
         )));
     }
+
+    if ticks_of(limits.camp_idle, tuning.tick_hz) == 0 {
+        return Err(ServerError::InvalidLimits(format!(
+            "camp_idle {:?} must be at least one tick",
+            limits.camp_idle
+        )));
+    }
+    // 한 집에서 방 하나의 사람들이 함께 끊겨도 모두 유지되어야 합니다.
+    if limits.max_held_seats_per_ip < tuning.max_players {
+        return Err(ServerError::InvalidLimits(format!(
+            "max_held_seats_per_ip {} must be at least max_players {}",
+            limits.max_held_seats_per_ip, tuning.max_players
+        )));
+    }
+    // 한 상대가 열린 접속과 유지시킨 자리로 방을 모두 차지하지 못하려면, 방의 수가 그 상대가 차지할 수 있는 방의 수보다 커야 합니다.
+    let one_peer_can_hold = limits
+        .max_links_per_ip
+        .saturating_add(limits.max_held_seats_per_ip);
+    // 서버 전체의 한도는 한 상대의 한도 이상이어야 그 한도가 의미가 있고, 방의 한도보다 작아야 끊긴 자리만으로는 방의 한도를 채우지 못합니다.
+    if limits.max_held_seats < limits.max_held_seats_per_ip
+        || limits.max_held_seats >= limits.max_rooms
+    {
+        return Err(ServerError::InvalidLimits(format!(
+            "max_held_seats {} must be at least max_held_seats_per_ip {} and smaller than max_rooms {}",
+            limits.max_held_seats, limits.max_held_seats_per_ip, limits.max_rooms
+        )));
+    }
+    if limits.max_rooms <= one_peer_can_hold {
+        return Err(ServerError::InvalidLimits(format!(
+            "max_rooms {} must be larger than max_links_per_ip {} plus max_held_seats_per_ip {}",
+            limits.max_rooms, limits.max_links_per_ip, limits.max_held_seats_per_ip
+        )));
+    }
+
+    // 자리를 비운 것으로 보는 시간이 자리를 내놓는 시간보다 짧아야, 자리가 끝나기 전에 보호가 시작됩니다.
+    let (away, hold) = (
+        ticks_of(limits.away_after, tuning.tick_hz),
+        ticks_of(limits.seat_hold, tuning.tick_hz),
+    );
+    if away == 0 || away >= hold {
+        return Err(ServerError::InvalidLimits(format!(
+            "away_after {:?} must be at least one tick and shorter than seat_hold {:?}",
+            limits.away_after, limits.seat_hold
+        )));
+    }
+    // 자리를 내놓는 시간은 마지막 메시지부터 셉니다. 조용한 접속을 닫는 시간이 그보다 길면, 자리가 끝난 뒤에도 접속이 열려 있게 됩니다.
+    if limits.idle_timeout > limits.seat_hold {
+        return Err(ServerError::InvalidLimits(format!(
+            "idle_timeout {:?} must not be longer than seat_hold {:?}",
+            limits.idle_timeout, limits.seat_hold
+        )));
+    }
     Ok(())
 }
 
 /// 이 수치로 만든 빈 방에 첫 플레이어가 입장할 때 서버가 보내는 입장 안내입니다.
 fn first_welcome(tuning: &Tuning, limits: &ServerLimits) -> Welcome {
     // 입장 안내는 씨앗에서 정해지는 것을 담지 않으므로, 어떤 씨앗으로 만든 방이든 같은 안내를 냅니다.
-    // 입장 안내의 방 코드와 이름은 입장 안내의 크기와 상한에 관계가 없으므로 아무 값이나 씁니다.
+    // 입장 안내의 방 코드, 이름, 표식은 입장 안내의 크기와 상한에 관계가 없으므로 아무 값이나 씁니다.
     let code = RoomCode::parse("check").expect("the code is valid");
     let name = PlayerName::parse("check").expect("the name is valid");
-    let mut room = Room::new(code, tuning.clone(), Seed(0), limits.input_stale_ticks);
+    let times = RoomTimes {
+        input_stale_ticks: limits.input_stale_ticks,
+        away_ticks: 1,
+        camp_idle_ticks: 1,
+        hold_ticks: 2,
+    };
+    let mut room = Room::new(code, tuning.clone(), Seed(0), times);
     // `Tuning::validate`가 정원이 1 이상임을 확인했으므로 빈 방의 첫 입장은 항상 성공합니다.
-    room.enter(LinkId(0), name)
+    room.enter(LinkId(0), name, None, SeatToken([0; 16]))
         .expect("a validated tuning admits the first player")
         .welcome
 }
@@ -206,14 +279,14 @@ impl GameServer {
         tuning: Tuning,
         limits: ServerLimits,
         seeds: RoomSeeds,
-        secret: ServerSecret,
+        random: Box<dyn RandomSource>,
         now: Instant,
     ) -> Result<GameServer, ServerError> {
         check_config(&tuning, &limits)?;
         Ok(GameServer {
             transport,
             clock: TickClock::new(tuning.tick_hz, now),
-            hub: Hub::new(tuning, limits, seeds, secret),
+            hub: Hub::new(tuning, limits, seeds, random),
             events_per_pump: limits.events_per_pump,
             ticks_run: 0,
         })

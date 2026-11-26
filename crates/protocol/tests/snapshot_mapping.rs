@@ -2,7 +2,7 @@
 //! 규칙은 공개 함수(`add_player`, `step`)로만 움직이고, 기대하는 값은 규칙의 약속(수치표의 값)에서 구합니다.
 
 use caravan_protocol::{
-    RoomCode, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal,
+    RoomCode, SeatToken, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuildRefusal,
     WireCannotBuild, WireDelivery, WireInteraction, WireLife, WireLoadout, WireMonsterKind,
     WireOutcome, WirePhase, WirePos, WirePrompt, WireRepairTarget, WireStruck, WireTile,
     WireTowerState, WireWeaponKind,
@@ -230,7 +230,7 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
     sim.add_player().unwrap();
     let second = sim.add_player().unwrap();
     let me = sim.player(second).unwrap();
-    let welcome = Welcome::from_sim(&sim, me, &room());
+    let welcome = Welcome::from_sim(&sim, me, &room(), SeatToken([7; 16]));
 
     assert_eq!((welcome.you, welcome.team), (2, 0));
     assert_eq!((welcome.tick_hz, welcome.capacity), (20, 4));
@@ -995,7 +995,12 @@ fn the_welcome_lists_one_rack_for_each_weapon_in_whichever_stage_the_room_is() {
         let mut sim = sim_with(|t| t.camp.start = start);
         let first = sim.add_player().unwrap();
 
-        let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room());
+        let welcome = Welcome::from_sim(
+            &sim,
+            sim.player(first).unwrap(),
+            &room(),
+            SeatToken([7; 16]),
+        );
 
         let racks: Vec<(WireWeaponKind, Vec2)> = welcome
             .world
@@ -1021,7 +1026,12 @@ fn the_welcome_lists_the_nodes_of_the_expedition_even_while_the_room_is_in_the_c
     assert_eq!(sim.nodes().count(), 0, "the camp has no gather nodes");
     let first = sim.add_player().unwrap();
 
-    let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room());
+    let welcome = Welcome::from_sim(
+        &sim,
+        sim.player(first).unwrap(),
+        &room(),
+        SeatToken([7; 16]),
+    );
 
     assert_eq!(welcome.world.nodes.len(), Tuning::default().map.nodes.len());
 }
@@ -1031,7 +1041,12 @@ fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
     let mut sim = Sim::new(Tuning::default(), Seed(1));
     let first = sim.add_player().unwrap();
 
-    let welcome = Welcome::from_sim(&sim, sim.player(first).unwrap(), &room());
+    let welcome = Welcome::from_sim(
+        &sim,
+        sim.player(first).unwrap(),
+        &room(),
+        SeatToken([7; 16]),
+    );
 
     assert_eq!(
         welcome.world.weapons,

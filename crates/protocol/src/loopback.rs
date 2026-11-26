@@ -4,10 +4,13 @@
 //! 메시지를 바이트로 바꾸지 않고 값 그대로 옮깁니다.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 
 use crate::messages::{ClientMsg, ServerMsg};
-use crate::transport::{ClientEvent, ClientTransport, LinkId, ServerEvent, ServerTransport};
+use crate::transport::{
+    ClientEvent, ClientTransport, LinkId, PeerKey, ServerEvent, ServerTransport,
+};
 
 /// 서버 쪽 끝과, 클라이언트 쪽 끝을 원하는 만큼 만드는 연결기를 만듭니다.
 pub fn loopback() -> (LoopbackServer, LoopbackConnector) {
@@ -25,7 +28,7 @@ pub fn loopback() -> (LoopbackServer, LoopbackConnector) {
 }
 
 enum ToServer {
-    Open(LinkId, Sender<ToClient>),
+    Open(LinkId, PeerKey, Sender<ToClient>),
     Msg(LinkId, ClientMsg),
     Closed(LinkId),
 }
@@ -51,9 +54,9 @@ impl ServerTransport for LoopbackServer {
         }
         loop {
             match self.inbox.try_recv().ok()? {
-                ToServer::Open(link, outbox) => {
+                ToServer::Open(link, peer, outbox) => {
                     self.outboxes.insert(link, outbox);
-                    return Some(ServerEvent::Connected(link));
+                    return Some(ServerEvent::Connected(link, peer));
                 }
                 ToServer::Msg(link, msg) => {
                     if self.outboxes.contains_key(&link) {
@@ -90,12 +93,19 @@ pub struct LoopbackConnector {
 }
 
 impl LoopbackConnector {
-    /// 접속 하나를 엽니다. 서버와 클라이언트는 각각 다음 `poll`에서 `Connected`를 받습니다.
+    /// 접속 하나를 엽니다. 서버와 클라이언트는 각각 다음 `poll`에서 `Connected`를 받습니다. 상대의 주소는 `127.0.0.1`입니다.
     pub fn connect(&mut self) -> LoopbackClient {
+        self.connect_from(IpAddr::V4(Ipv4Addr::LOCALHOST))
+    }
+
+    /// `connect`와 같고, 상대의 주소를 정합니다. 주소가 같은 접속은 서버에서 같은 상대입니다.
+    pub fn connect_from(&mut self, address: IpAddr) -> LoopbackClient {
         let link = LinkId(self.next_link);
         self.next_link += 1;
         let (outbox, inbox) = channel();
-        let _ = self.to_server.send(ToServer::Open(link, outbox));
+        let _ = self
+            .to_server
+            .send(ToServer::Open(link, PeerKey::of(address), outbox));
         LoopbackClient {
             link,
             to_server: self.to_server.clone(),

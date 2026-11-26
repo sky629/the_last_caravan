@@ -39,7 +39,7 @@ pub enum FormKey {
     /// 다음 칸으로 갑니다. 마지막 칸이면 첫 칸으로 돌아갑니다.
     Tab,
     Enter,
-    /// 클립보드에서 읽은 글자입니다. 한 글자씩 넣은 것과 같습니다.
+    /// 클립보드에서 읽은 글자입니다. 이름 칸에는 한 글자씩 넣은 것과 같고, 방 코드 칸에는 칸의 글자를 바꿔 넣습니다.
     Paste(String),
 }
 
@@ -82,16 +82,21 @@ impl TextField {
     }
 }
 
-/// 방 코드 칸에 붙여 넣은 글자에서 방 코드로 쓸 부분입니다. 초대 링크(`...?room=k7m2q&server=...`)이면 `room=`의 값이고, 아니면 글자 전체입니다.
-/// 링크를 통째로 넣으면 칸이 받는 글자만 남아서 엉뚱한 코드가 되고, 없는 코드는 새 방이 되므로 친구의 방이 아닌 빈 방에 들어가게 됩니다.
-fn room_in_invite(pasted: &str) -> &str {
-    match pasted.split_once("room=") {
-        Some((_, rest)) => rest
-            .split(|c: char| c == '&' || c == '#' || c.is_whitespace())
-            .next()
-            .unwrap_or(rest),
-        None => pasted,
-    }
+/// 방 코드 칸에 붙여 넣은 글자에서 방 코드로 쓸 부분입니다.
+/// - `?`가 있으면 초대 링크(`...?room=k7m2q&server=...`)로 보고, 쿼리에서 이름이 정확히 `room`인 값을 돌려줍니다.
+///   `room`이 없는 링크에서는 가져올 것이 없으므로 `None`입니다. 링크를 통째로 넣으면 칸이 받는 글자만 남아서 엉뚱한 코드가 되고,
+///   없는 코드는 새 방이 되므로 친구의 방이 아닌 빈 방에 들어가게 됩니다.
+/// - `?`가 없으면 글자 전체입니다.
+fn room_in_paste(pasted: &str) -> Option<&str> {
+    let Some((_, query)) = pasted.split_once('?') else {
+        return Some(pasted);
+    };
+    let query = query.split('#').next().unwrap_or(query);
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find_map(|(key, value)| (key == "room").then_some(value))
+        .map(|value| value.split(char::is_whitespace).next().unwrap_or(value))
 }
 
 /// 입장을 요청하는 값입니다. 시작 화면이 검사를 마친 값만 담습니다.
@@ -144,6 +149,19 @@ impl StartForm {
         }
     }
 
+    /// 방 코드 칸에 붙여 넣습니다. 칸에 있던 글자를 붙여 넣은 방 코드로 바꿔 넣습니다.
+    /// 칸이 마지막 방 코드로 채워져 있을 때 이어 붙이면 두 코드가 합쳐져서, 친구의 방이 아닌 빈 방에 혼자 들어가게 되기 때문입니다.
+    /// 붙여 넣은 글자에서 방 코드로 쓸 글자가 하나도 나오지 않으면 칸을 그대로 둡니다. 칸이 비는 것은 새 방을 만든다는 뜻이기 때문입니다.
+    fn paste_room(&mut self, pasted: &str) {
+        let Some(code) = room_in_paste(pasted) else {
+            return;
+        };
+        let pasted = TextField::new(Field::Room, code);
+        if !pasted.text().is_empty() {
+            self.room = pasted;
+        }
+    }
+
     /// 키 하나를 처리합니다. Enter에서 두 칸이 모두 맞으면 입장 요청을 돌려주고, 맞지 않으면 `notice`에 이유를 적고 틀린 칸으로 갑니다.
     pub fn press(&mut self, key: FormKey) -> Option<JoinRequest> {
         match key {
@@ -153,11 +171,10 @@ impl StartForm {
             }
             FormKey::Paste(text) => {
                 self.notice = None;
-                let text = match self.focus {
-                    Field::Name => text.as_str(),
-                    Field::Room => room_in_invite(&text),
-                };
-                text.chars().for_each(|c| self.focused().push(c));
+                match self.focus {
+                    Field::Name => text.chars().for_each(|c| self.name.push(c)),
+                    Field::Room => self.paste_room(&text),
+                }
             }
             FormKey::Backspace => self.focused().backspace(),
             FormKey::Tab => {
@@ -227,6 +244,64 @@ mod tests {
             "roomabc",
             "the name field takes what it is given"
         );
+    }
+
+    #[test]
+    fn pasting_into_a_room_field_that_is_already_filled_replaces_it_instead_of_joining_two_codes() {
+        // 칸이 마지막 방 코드로 채워져 있을 때 붙여 넣으면 두 코드가 이어 붙어서 빈 새 방에 혼자 들어가게 됩니다.
+        let mut form = StartForm::new("KANG", "oldroom", None);
+        assert_eq!(form.focus, Field::Room);
+        form.press(FormKey::Paste("k7m2q".to_string()));
+        assert_eq!(form.room.text(), "k7m2q");
+
+        form.press(FormKey::Paste(
+            "http://127.0.0.1:8080/?room=night&server=ws://10.0.0.5:7777".to_string(),
+        ));
+        assert_eq!(form.room.text(), "night", "a link replaces it as well");
+    }
+
+    #[test]
+    fn only_a_query_value_named_exactly_room_is_taken_from_a_link() {
+        let paste = |link: &str| {
+            let mut form = StartForm::new("KANG", "oldroom", None);
+            form.press(FormKey::Paste(link.to_string()));
+            form.room.text().to_string()
+        };
+        assert_eq!(
+            paste("http://x/?classroom=abc&room=k7m2q"),
+            "k7m2q",
+            "a name that merely ends in room is not room"
+        );
+        assert_eq!(
+            paste("http://x/?room=a&room=b"),
+            "a",
+            "the first value wins"
+        );
+        assert_eq!(paste("http://x/?sub-room=abc"), "oldroom");
+        assert_eq!(
+            paste("http://x/?x=1#room=abc"),
+            "oldroom",
+            "a fragment is not the query"
+        );
+        assert_eq!(paste("http://x/?room=k7m2q#top"), "k7m2q");
+        assert_eq!(paste("http://x/?room=k7m2q \n"), "k7m2q");
+    }
+
+    #[test]
+    fn a_paste_with_no_room_code_in_it_leaves_the_field_as_it_was() {
+        // 칸이 비는 것은 새 방을 만든다는 뜻이므로, 붙여 넣은 것에서 코드가 나오지 않으면 칸을 비우지 않습니다.
+        for nothing in [
+            "",
+            "   ",
+            "!!!",
+            "http://x/?server=ws://a:1",
+            "http://x/?room=",
+            "한글",
+        ] {
+            let mut form = StartForm::new("KANG", "oldroom", None);
+            form.press(FormKey::Paste(nothing.to_string()));
+            assert_eq!(form.room.text(), "oldroom", "{nothing:?}");
+        }
     }
 
     #[test]

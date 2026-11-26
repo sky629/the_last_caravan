@@ -9,7 +9,7 @@ use crate::loot::{self, Chest, GroundWeapon, Prompt, Rack, Seed};
 use crate::math::Vec2;
 use crate::monster::{self, Monster, TileFields};
 use crate::nav::Paths;
-use crate::player::{self, Interaction, Player};
+use crate::player::{self, Interaction, Player, Presence};
 use crate::projectile::{self, Projectile};
 use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
@@ -136,6 +136,28 @@ impl Sim {
                 debrief.forget(id);
                 self.world.players.remove(&id);
             }
+        }
+    }
+
+    /// 플레이어가 자리에 있는지 알립니다. 규칙은 접속을 알지 못하므로, 접속이 끊기거나 입력이 멈추거나 야영지에서 조작이 없는 것을
+    /// 서버가 `Away`로 알려 줍니다. 자리를 비운 플레이어는 몬스터가 노리지 않고, 피해를 받지 않고, 쓰러져 있으면 출혈이 멈추고,
+    /// 실패의 판정과 야영지의 「모두 준비」와 결과 화면의 「모두 확인」에서 빠집니다. 없는 번호는 무시합니다.
+    /// 야영지에서는 카운트다운을 그 자리에서 다시 정합니다. 준비하지 않은 사람이 돌아오면 세던 시간이 취소됩니다.
+    pub fn set_presence(&mut self, id: PlayerId, presence: Presence) {
+        let Some(player) = self.world.players.get_mut(&id) else {
+            return;
+        };
+        player.presence = presence;
+        if let Stage::Camp(camp) = &mut self.stage {
+            camp.settle(&self.world);
+        }
+    }
+
+    /// 야영지에서 플레이어의 준비를 끕니다. 야영지가 아니거나 준비하지 않은 플레이어이면 아무 일도 하지 않습니다.
+    /// 야영지에서 조작이 없어 자리를 비운 사람은 돌아올 때 준비하지 않은 상태여야 하므로, 서버가 그 사람을 `Away`로 알린 뒤에 부릅니다.
+    pub fn withdraw_ready(&mut self, id: PlayerId) {
+        if let Stage::Camp(camp) = &mut self.stage {
+            camp.withdraw(id, &self.world);
         }
     }
 

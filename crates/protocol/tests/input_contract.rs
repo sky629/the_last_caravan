@@ -25,7 +25,7 @@ fn an_input_carries_a_sequence_number_two_directions_and_eight_buttons_and_nothi
 }
 
 #[test]
-fn the_client_can_only_join_or_send_input() {
+fn the_client_can_only_join_send_input_or_leave() {
     fn name(msg: &ClientMsg) -> &'static str {
         // 와일드카드 없이 모든 변형을 나열하므로, 변형이 늘면 이 함수가 컴파일되지 않습니다.
         match msg {
@@ -33,15 +33,19 @@ fn the_client_can_only_join_or_send_input() {
                 version: _,
                 room: _,
                 name: _,
+                token: _,
             } => "join",
             ClientMsg::Input(_) => "input",
+            ClientMsg::Leave => "leave",
         }
     }
     let join = ClientMsg::Join {
         version: 1,
         room: Some("test".to_string()),
         name: "KANG".to_string(),
+        token: None,
     };
     assert_eq!(name(&join), "join");
     assert_eq!(name(&ClientMsg::Input(InputMsg::default())), "input");
+    assert_eq!(name(&ClientMsg::Leave), "leave");
 }
