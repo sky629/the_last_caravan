@@ -739,9 +739,16 @@ fn a_server_starts_exactly_when_a_client_would_accept_its_welcome() {
         tuning.map.height = side;
         tuning
     };
-    let with_capacity = |max_players: usize| Tuning {
-        max_players,
-        ..Tuning::default()
+    // 무리의 기준 인원은 정원 이상이어야 하므로 정원과 함께 올립니다.
+    let with_capacity = |max_players: usize| {
+        let mut tuning = Tuning {
+            max_players,
+            ..Tuning::default()
+        };
+        tuning.nights.scaling = caravan_rules::WaveScaling::ByParty {
+            full_party: max_players as u32,
+        };
+        tuning
     };
     let cases = [
         ("the default numbers", Tuning::default()),

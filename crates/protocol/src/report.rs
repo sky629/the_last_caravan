@@ -20,7 +20,7 @@ pub struct WireReport {
     pub rows: Vec<WireRecordRow>,
 }
 
-/// 플레이어 한 명의 기록입니다. 네 명이 모두 12자 이름이면 결과 하나가 약 100바이트입니다.
+/// 플레이어 한 명의 기록입니다. 네 명이 모두 12자 이름이면 결과 하나가 84바이트입니다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireRecordRow {
     /// 서버가 `PlayerName`으로 검사한 이름입니다. 결과가 열린 때의 이름이므로, 그 뒤에 방을 나가도 남습니다.

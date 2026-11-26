@@ -321,7 +321,7 @@ fn the_result_of_four_players_with_the_longest_names_is_sent_once_and_is_small()
         tower_kills: 1_000,
         rows: (0..4)
             .map(|index| WireRecordRow {
-                name: format!("NAME_{index}_LONG"),
+                name: format!("NAME_{index}_LONG1"),
                 kills: 5_000,
                 revives: 20,
                 downs: 20,

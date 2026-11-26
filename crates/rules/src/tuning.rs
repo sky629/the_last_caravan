@@ -402,7 +402,7 @@ pub struct WavePlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaveScaling {
     /// `NightTuning::plans`의 수는 `full_party`명이 있을 때의 크기입니다. 무리의 크기는 `올림(수 × 인원 / full_party)`이고 1 이상입니다.
-    /// 인원은 그 밤이 시작될 때 방에 있는 플레이어의 수입니다(`Phase::Night::party`). `full_party`는 1 이상이어야 합니다.
+    /// 인원은 그 밤이 시작될 때 방에 있는 플레이어의 수입니다(`Phase::Night::party`). `full_party`는 방의 정원(`max_players`) 이상이어야 하므로, 무리는 수치표보다 커지지 않습니다.
     ByParty { full_party: u32 },
     /// 인원과 관계없이 `plans`의 수 그대로입니다. 몬스터의 수를 정해서 재는 부하 시험(`--stress`)이 씁니다.
     Fixed,
@@ -596,8 +596,14 @@ impl Tuning {
                 );
             }
         }
-        if let WaveScaling::ByParty { full_party: 0 } = self.nights.scaling {
-            return Err("the full_party of the wave scaling must be at least 1".to_string());
+        // 기준 인원이 정원보다 작으면, 꽉 찬 방의 무리가 수치표보다 커져서 `max_alive`로 잰 한도를 넘습니다.
+        if let WaveScaling::ByParty { full_party } = self.nights.scaling
+            && (full_party as usize) < self.max_players
+        {
+            return Err(format!(
+                "the full_party {full_party} of the wave scaling must be at least max_players {}",
+                self.max_players
+            ));
         }
         if self.nights.spawn_lanes == 0 {
             return Err("spawn_lanes must be at least 1".to_string());
