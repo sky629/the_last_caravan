@@ -30,6 +30,9 @@ pub struct Hud {
     pub carry: Option<String>,
     /// 내가 들고 있는 무기와 바꾸는 키입니다. 내 캐릭터가 화면에 있으면 항상 있고, 쓰러졌어도 무기는 들고 있습니다.
     pub weapon: Option<String>,
+    /// 내가 받은 버프의 이름입니다. `HASTE`(공격 속도)와 `SWIFT`(이동 속도) 가운데 받은 것을 두 칸 띄워 적습니다.
+    /// 살아 있고 버프가 있을 때만 있고, 결과를 보여 주는 동안에도 없습니다. 다른 플레이어의 버프는 보이지 않습니다.
+    pub buffs: Option<String>,
     /// F를 누르면 하게 되는 일의 안내입니다. 서버가 정해서 스냅샷에 실어 보내고, 내 캐릭터의 것만 표시합니다.
     pub hint: Option<String>,
     /// 화면 가운데에 크게 띄우는 안내입니다. 접속과 첫 스냅샷을 기다리는 안내가 여기에 나옵니다.
@@ -156,6 +159,7 @@ impl Hud {
             stash: None,
             carry: None,
             weapon: None,
+            buffs: None,
             hint: None,
             banner: None,
             camp: None,
@@ -248,6 +252,7 @@ impl Hud {
             if matches!(frame.phase, WirePhase::Debrief { .. }) {
                 return hud;
             }
+            hud.buffs = buffs_text(me);
             hud.hint = me.prompt.map(prompt_text);
             hud.action = action_meter(me, frame, joined.welcome.world.node_amount);
             if let WireLife::Alive {
@@ -624,6 +629,18 @@ fn weapon_text(loadout: WireLoadout) -> String {
     let held = weapon_name(loadout.held);
     let spare = loadout.spare.map_or("-", weapon_name);
     format!("WEAPON  [{held}]  {spare}  [Q]")
+}
+
+/// 내가 받은 버프의 이름입니다. 받은 버프가 없으면 `None`입니다. 쓰러지면 버프가 없어지므로 살아 있을 때만 있습니다.
+fn buffs_text(me: &PlayerView) -> Option<String> {
+    let WireLife::Alive { buffs, .. } = me.life else {
+        return None;
+    };
+    let names: Vec<&str> = [(buffs.haste, "HASTE"), (buffs.swift, "SWIFT")]
+        .into_iter()
+        .filter_map(|(on, name)| on.then_some(name))
+        .collect();
+    (!names.is_empty()).then(|| names.join("  "))
 }
 
 /// F를 누르면 하게 되는 일의 안내 문구입니다. `match`가 모든 안내를 다루므로, 안내를 추가하면 여기서 컴파일 오류가 납니다.
@@ -1075,6 +1092,56 @@ mod tests {
             Some("WEAPON  [SWORD]  -  [Q]"),
             "only mine"
         );
+    }
+
+    fn alive_with_buffs(haste: bool, swift: bool) -> WireLife {
+        WireLife::Alive {
+            hp: 100,
+            max_hp: 100,
+            carried: 0,
+            stamina: 100,
+            interaction: None,
+            build_refusal: None,
+            buffs: WireBuffs { haste, swift },
+        }
+    }
+
+    #[test]
+    fn the_names_of_my_buffs_are_shown_while_they_last_and_never_those_of_an_ally() {
+        let session = session_in_room();
+        let shown = |haste, swift| {
+            let me = player(YOU, alive_with_buffs(haste, swift));
+            Hud::of(&session, Some(&frame(vec![me])), INVITE).buffs
+        };
+        assert_eq!(shown(false, false), None, "no buff, no line");
+        assert_eq!(shown(true, false).as_deref(), Some("HASTE"));
+        assert_eq!(shown(false, true).as_deref(), Some("SWIFT"));
+        assert_eq!(shown(true, true).as_deref(), Some("HASTE  SWIFT"));
+
+        let ally = player(2, alive_with_buffs(true, true));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), ally])),
+            INVITE,
+        );
+        assert_eq!(hud.buffs, None, "the buffs of an ally are not mine");
+
+        assert_eq!(Hud::of(&session, None, INVITE).buffs, None);
+    }
+
+    #[test]
+    fn my_buffs_are_not_shown_in_the_result() {
+        let session = session_in_room();
+        let mut frame = frame(vec![player(YOU, alive_with_buffs(true, true))]);
+        frame.phase = WirePhase::Debrief {
+            outcome: WireOutcome::Victory,
+            secs_left: 5.0,
+            confirmed: vec![],
+        };
+
+        let hud = Hud::of(&session, Some(&frame), INVITE);
+
+        assert_eq!(hud.buffs, None);
     }
 
     #[test]
