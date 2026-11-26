@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::collision::{Body, move_circle};
+use crate::effect::MonsterEffects;
 use crate::ids::{MonsterId, PlayerId, Team};
 use crate::kind::MonsterKind;
 use crate::math::Vec2;
@@ -29,6 +30,8 @@ pub struct Monster {
     pub cooldown_ticks: u32,
     /// 마지막으로 공격한 Tick입니다. 이벤트가 아니라 상태이므로, 스냅샷을 한 번 놓친 클라이언트도 공격 효과를 그릴 수 있습니다.
     pub last_attack_tick: Option<u64>,
+    /// 걸려 있는 효과입니다. 몬스터가 제거되면 함께 사라집니다.
+    pub effects: MonsterEffects,
 }
 
 /// 몬스터가 받은 명령입니다. 종류(`MonsterKind`)가 「어떤 몬스터인가」라면, 명령은 「지금 무엇을 하라고 놓였는가」입니다.
@@ -60,14 +63,16 @@ impl Monster {
             hp: t.monsters.get(kind).max_hp,
             cooldown_ticks: 0,
             last_attack_tick: None,
+            effects: MonsterEffects::default(),
         }
     }
 
-    /// 이동 속도, 공격 피해량, 쿨다운을 읽는 유일한 곳입니다. 상태 효과를 추가하면 여기에서 배율을 곱합니다.
+    /// 이동 속도, 공격 피해량, 쿨다운을 읽는 유일한 곳입니다. 감속은 스스로 걷는 속도에만 곱하고, 공격의 쿨다운은 바꾸지 않습니다.
+    /// 스턴은 속도가 아니라 행동을 막으므로 `plan`이 따로 봅니다.
     pub(crate) fn stats(&self, t: &Tuning) -> UnitStats {
         let kind = t.monsters.get(self.kind);
         UnitStats {
-            move_speed: kind.speed,
+            move_speed: kind.speed * self.effects.walk_factor(),
             attack_damage: kind.attack_damage,
             attack_cooldown_ticks: t.ticks(kind.attack_cooldown_secs),
         }
@@ -205,6 +210,7 @@ pub(crate) fn monsters_act(
                 target,
                 amount: stats.attack_damage,
                 by: Source::Monster,
+                debuff: None,
             });
             monster.cooldown_ticks = stats.attack_cooldown_ticks;
             monster.last_attack_tick = Some(ctx.tick);
@@ -290,6 +296,15 @@ fn plan(
     let t = ctx.t;
     let monster = &world.monsters[index];
     let kind = t.monsters.get(monster.kind);
+    // 스턴에 걸린 몬스터는 스스로 걷지도 공격하지도 않지만, 겹친 몬스터에게서 밀려나는 것은 그대로입니다.
+    // 공격의 쿨다운은 `monsters_act`가 계속 줄이므로, 스턴이 풀린 뒤에 밀린 공격이 한꺼번에 나오지 않고 공격 한 번이 바로 나갈 뿐입니다.
+    if monster.effects.is_stunned() {
+        return Action {
+            hit: None,
+            heading: Vec2::ZERO,
+            step: crowd_step(index, Vec2::ZERO, world, ctx, neighbours),
+        };
+    }
     if let Goal::Post(post) = goal {
         let walk = walk_to_post(post, monster, world, fields, t);
         return Action {

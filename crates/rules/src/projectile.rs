@@ -144,6 +144,7 @@ pub(crate) fn advance_projectiles(world: &mut World, ctx: &Ctx, hits: &mut Vec<H
                 target: Target::Monster(id),
                 amount: projectile.damage,
                 by: Source::Player(projectile.shooter),
+                debuff: None,
             });
             projectile.struck.push(id);
             if projectile.struck.len() >= projectile.spec.pierce as usize {

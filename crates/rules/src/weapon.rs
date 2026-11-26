@@ -138,6 +138,7 @@ fn shoot(
                 target: Target::Monster(id),
                 amount: attack.damage,
                 by: Source::Player(attack.player),
+                debuff: None,
             });
             at
         }
@@ -180,6 +181,7 @@ fn swing(
                 target: Target::Monster(monster.id),
                 amount: attack.damage,
                 by: Source::Player(attack.player),
+                debuff: None,
             });
         }
     }

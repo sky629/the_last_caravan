@@ -18,6 +18,7 @@ mod tiles;
 use std::collections::BTreeMap;
 
 use crate::collision::Body;
+use crate::effect;
 use crate::ids::{
     ChestId, GroundWeaponId, MonsterId, PileId, PlayerId, ProjectileId, Team, TowerId,
 };
@@ -31,7 +32,7 @@ use crate::projectile::{Launch, Projectile};
 use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
 use crate::structures::{Tower, TowerState, Wagon};
-use crate::tuning::Tuning;
+use crate::tuning::{Debuff, Tuning};
 
 pub use tiles::Tile;
 pub(crate) use tiles::{TileMap, TileUse};
@@ -315,17 +316,21 @@ pub(crate) enum Source {
     Monster,
 }
 
-/// 이번 Tick에 결정된 피해입니다.
+/// 이번 Tick에 결정된 피해입니다. 맞은 몬스터에게 효과도 함께 거는 공격이면 `debuff`가 있습니다.
+/// 출혈의 피해도 `Hit`이고 `debuff`는 `None`입니다. 감시탑의 사격도 같은 필드로 효과를 겁니다.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Hit {
     pub target: Target,
     pub amount: u32,
     pub by: Source,
+    /// 몬스터에게 거는 효과입니다. 대상이 몬스터가 아니면 항상 `None`입니다.
+    pub debuff: Option<Debuff>,
 }
 
 impl World {
     /// 모든 피해를 적용하는 유일한 곳입니다. 몬스터의 HP를 0으로 만든 피해가 있으면 그 피해를 준 쪽이 처치를 가져갑니다.
-    /// 같은 Tick에 여럿이 같은 몬스터를 맞히면 `hits`의 순서(플레이어의 공격, 탄환, 감시탑)에서 HP를 0으로 만든 피해가 주인입니다.
+    /// 같은 Tick에 여럿이 같은 몬스터를 맞히면 `hits`의 순서(플레이어의 공격, 탄환, 감시탑, 몬스터, 출혈)에서 HP를 0으로 만든 피해가 주인입니다.
+    /// 피해를 모두 적용하고 죽은 몬스터를 제거한 뒤에, 살아남은 몬스터에게 `Hit`이 싣고 온 효과를 겁니다.
     pub fn apply_hits(&mut self, hits: &[Hit], t: &Tuning) {
         for hit in hits {
             match hit.target {
@@ -369,6 +374,7 @@ impl World {
         }
         // 몬스터는 모든 피해를 받은 뒤에 한꺼번에 제거합니다. 중간에 제거하면 뒤따르는 피해가 엉뚱한 몬스터에 닿을 수 있습니다.
         self.monsters.retain(|monster| monster.hp > 0);
+        effect::apply_debuffs(self, hits, t);
     }
 
     /// 몬스터를 쓰러뜨린 처치를 `by`의 것으로 셉니다. 쏜 플레이어가 이미 방을 떠났으면 셀 사람이 없습니다.
