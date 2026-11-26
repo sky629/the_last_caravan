@@ -596,7 +596,7 @@ impl Tuning {
                 );
             }
         }
-        // 기준 인원이 정원보다 작으면, 꽉 찬 방의 무리가 수치표보다 커져서 `max_alive`로 잰 한도를 넘습니다.
+        // 기준 인원이 정원보다 작으면, 꽉 찬 방의 무리가 수치표보다 커집니다.
         if let WaveScaling::ByParty { full_party } = self.nights.scaling
             && (full_party as usize) < self.max_players
         {
