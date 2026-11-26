@@ -790,6 +790,9 @@ pub(crate) fn update_sprint(world: &mut World, ctx: &Ctx) {
 }
 
 /// 입력대로 플레이어를 움직입니다. 살아 있는 플레이어는 걷거나 달리고, 쓰러진 플레이어는 기어갑니다.
+///
+/// 충돌 처리(`collision`)는 한 번의 이동이 몸의 반지름보다 짧아야 하므로, 한 Tick의 이동이 반지름 이상이면 반지름보다 짧은 같은 길이의 걸음으로 나누어 옮깁니다.
+/// 기본 수치에서는 걷기도 달리기도 걸음이 하나이므로 나누지 않는 것과 같은 계산입니다.
 pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     let mut scratch = Vec::new();
@@ -804,13 +807,17 @@ pub(crate) fn move_players(world: &mut World, ctx: &Ctx) {
         let speed = player.stats(t).move_speed;
         if speed > 0.0 {
             let delta = input.move_dir.get() * (speed * t.dt());
-            player.pos = move_circle(
-                player.pos,
-                t.player.radius,
-                delta,
-                &world.tiles,
-                &mut scratch,
-            );
+            let steps = (delta.length() / t.player.radius) as u32 + 1;
+            let step = delta * (1.0 / steps as f32);
+            for _ in 0..steps {
+                player.pos = move_circle(
+                    player.pos,
+                    t.player.radius,
+                    step,
+                    &world.tiles,
+                    &mut scratch,
+                );
+            }
         }
     }
 }

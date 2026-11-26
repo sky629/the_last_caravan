@@ -585,9 +585,10 @@ impl Tuning {
     /// 수치가 규칙의 전제를 지키는지 검사합니다. 어긋난 첫 번째 항목을 설명하는 문장을 돌려줍니다.
     ///
     /// 속도는 모두 유한하고 0 이상이어야 합니다.
-    /// 가장 중요한 전제는 「한 Tick에 움직일 수 있는 거리가 몸의 반지름보다 짧다」입니다.
-    /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 한 Tick에 얇은 벽을 건너뛰는 거리를 움직일 수 있으면 개체가 벽을 통과합니다.
-    /// 플레이어는 가장 빠른 속도(달리는 속도)로 움직이는 거리를, 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값을 이 전제에 맞춰 검사합니다.
+    /// 가장 중요한 전제는 「한 번에 움직이는 거리가 몸의 반지름보다 짧다」입니다.
+    /// 충돌 처리는 이동한 뒤에 겹친 만큼 밀어내므로, 얇은 벽을 건너뛰는 거리를 한 번에 움직일 수 있으면 개체가 벽을 통과합니다.
+    /// 플레이어는 한 Tick의 이동이 반지름 이상이면 반지름보다 짧은 걸음으로 나누어 옮기므로(`player::move_players`) 속도에 상한이 없고, 걸음의 수를 정하는 반지름만 0보다 커야 합니다.
+    /// 몬스터는 걷는 거리에 겹친 몬스터에게서 밀려나는 거리를 더한 값이 이 전제를 지키는지 검사합니다.
     ///
     /// 맵은 타일에 꼭 맞아야 합니다. 크기, 장애물, 마차가 정수 좌표이고, 몸의 반지름이 타일의 절반보다 짧고,
     /// 채집 지점이 맵 안의 빈 타일이면서 마을의 범위 밖에 있고,
@@ -651,6 +652,7 @@ impl Tuning {
         // 음수 속도는 개체를 목표의 반대쪽으로 걷게 하고, NaN은 아래의 모든 비교를 거짓으로 만들어 검사를 통과하므로 먼저 거절합니다.
         check_not_negative("player speed", self.player.speed)?;
         check_not_negative("player crawl_speed", self.player.crawl_speed)?;
+        check_positive("player radius", self.player.radius)?;
         for kind in MonsterKind::ALL {
             let monster = self.monsters.get(kind);
             check_not_negative(&format!("{kind:?} speed"), monster.speed)?;
@@ -691,15 +693,6 @@ impl Tuning {
         }
 
         let dt = self.dt();
-        let fastest_player =
-            (self.player.speed * sprint.speed_multiplier).max(self.player.crawl_speed);
-        if fastest_player * dt >= self.player.radius {
-            return Err(format!(
-                "a player moves {} tiles per tick, which must be shorter than its radius {}",
-                fastest_player * dt,
-                self.player.radius
-            ));
-        }
         for kind in MonsterKind::ALL {
             let monster = self.monsters.get(kind);
             // 몬스터는 같은 Tick에 걸으면서 밀려날 수 있으므로, 움직일 수 있는 거리의 최댓값은 두 거리의 합입니다.

@@ -298,7 +298,7 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 5. `advance_construction`이 건설을 진행하고 끝내거나 취소합니다.
 6. 건설이 이동 경로를 바꿨을 수 있으므로 `Paths::sync`를 한 번 더 부릅니다.
 7. `update_sprint`가 플레이어마다 이번 Tick에 달리는지 정하고 달리기 게이지를 줄이거나 채웁니다. 4번과 5번이 정한 하고 있는 일을 읽으므로 그 뒤에 부릅니다.
-8. `move_players`가 플레이어를 움직입니다.
+8. `move_players`가 플레이어를 움직입니다. 한 Tick의 이동이 몸의 반지름 이상이면 반지름보다 짧은 같은 길이의 걸음으로 나누어 옮기므로, 이동 속도가 아무리 빨라도 얇은 벽을 건너뛰지 않습니다. 기본 수치에서는 걷기도 달리기도 걸음이 하나입니다.
 9. `deposit_and_pickup`이 마차 곁의 플레이어가 든 자원을 보관함에 넣고(넣은 양은 그 플레이어의 기록에 더합니다), 땅에 떨어진 자원을 줍게 합니다.
 10. `use_weapons`가 `Q`를 누른 플레이어의 무기를 바꾸고, 플레이어의 공격을 결정하고, 들고 있는 무기의 전달 방식에 따라 처리합니다. 검, 대검, 창은 부채꼴 안의 몬스터를 맞히고, 활과 석궁은 탄환을 만들고, 소총은 그 자리에서 조준선 위의 처음 닿는 몬스터를 맞히고 사격 선이 끝난 자리를 플레이어의 마지막 공격에 적습니다.
 11. `advance_projectiles`가 날아가는 탄환을 한 Tick만큼 움직입니다. 탄환은 이번 Tick에 쏜 것도 움직이고, 지나간 선분에서 닿는 몬스터를 닿는 순서대로 맞힐 수 있는 수(`pierce`)만큼 맞혀서 피해를 결정하고(같은 몬스터는 한 번만 맞힙니다), 막힌 타일이 몬스터보다 가까우면 그 뒤의 몬스터는 맞히지 못하며, 막힌 타일이나 사거리의 끝에서는 피해 없이 사라집니다. 끝난 탄환은 한 Tick 더 남았다가 다음 Tick의 처음에 지워집니다. 결과 화면 동안에는 날던 탄환이 그 자리에 멈추고, 끝난 탄환은 지워집니다.
@@ -321,7 +321,7 @@ caravan_ws_server                          |    caravan_ws_client   어댑터
 4. 서버의 네트워크 스레드에서 `serve_link`(`crates/ws_server/src/lib.rs`)가 프레임을 `decode_client`로 해석하고, 크기가 정해진 채널로 게임 스레드에 넘깁니다.
 5. `crates/dedicated/src/main.rs`의 반복이 `GameServer::pump`(`crates/server/src/lib.rs`)를 부릅니다. `pump`는 `WsServer::poll`로 꺼낸 메시지를 `Hub::handle_message`(`crates/server/src/hub.rs`)에 넘기고, 입력은 `Room::submit_input`(`crates/server/src/room.rs`)을 거쳐 `MemberInput::accept`(`crates/server/src/input.rs`)에 쌓입니다. 이미 받은 순서 번호보다 크지 않은 입력은 여기서 버립니다.
 6. Tick 시각이 되면(`crates/server/src/clock.rs`의 `TickClock::due`) `Room::tick`이 플레이어마다 `MemberInput::for_tick`으로 이번 Tick의 입력 하나를 정하고 `Sim::step`(`crates/rules/src/sim.rs`)을 한 번 부릅니다.
-7. `Sim::step` 안에서 `move_players`(`crates/rules/src/player.rs`)가 이동 방향에 속도(`Player::stats`가 돌려주는 값이고, 달리는 중이면 걷는 속도에 달리기 배율을 곱한 값입니다)와 Tick 길이를 곱해서 캐릭터를 옮기고, `crates/rules/src/collision.rs`가 장애물과 겹친 만큼 캐릭터를 밀어냅니다.
+7. `Sim::step` 안에서 `move_players`(`crates/rules/src/player.rs`)가 이동 방향에 속도(`Player::stats`가 돌려주는 값이고, 달리는 중이면 걷는 속도에 달리기 배율을 곱한 값입니다)와 Tick 길이를 곱해서 캐릭터를 옮기고(이동이 몸의 반지름 이상이면 같은 길이의 걸음으로 나눕니다), `crates/rules/src/collision.rs`가 걸음마다 장애물과 겹친 만큼 캐릭터를 밀어냅니다.
 8. `Snapshot::from_sim`(`crates/protocol/src/snapshot.rs`)이 방 전체의 상태를 전송 형식으로 바꿉니다. `Room::tick`은 같은 스냅샷을 방의 모든 접속에 보내라는 `Out::Send`를 돌려주고, `GameServer::apply`가 `WsServer::send`를 불러서 `encode_server`로 바꾼 바이트를 보냅니다.
 9. B의 클라이언트에서 `pump_network`(`crates/client/src/net.rs`)가 `WsClient::poll`로 스냅샷을 받고(`decode_server`), `Session::on_event`가 스냅샷을 `SnapshotBuffer`(`crates/client_core/src/interp.rs`)에 넣습니다.
 10. `advance_playback`(`crates/client/src/net.rs`)이 재생 시각을 프레임 시간만큼 앞으로 보냅니다. `SnapshotBuffer`는 가장 최근 스냅샷보다 2 Tick(100ms) 이전 시점의 위치를 그 앞뒤 스냅샷 두 개 사이에서 선형으로 보간해서 `Frame`을 만듭니다.

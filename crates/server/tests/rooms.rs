@@ -809,10 +809,10 @@ fn a_server_refuses_to_start_with_numbers_that_break_the_rules() {
     assert_eq!(build(Tuning::default()), Ok(()));
 
     let mut too_fast = Tuning::default();
-    too_fast.player.speed = 100.0;
+    too_fast.monsters.grunt.speed = 100.0;
     assert!(matches!(
         build(too_fast),
-        Err(ServerError::InvalidTuning(why)) if why.contains("player")
+        Err(ServerError::InvalidTuning(why)) if why.contains("Grunt")
     ));
     assert!(matches!(
         build(Tuning {

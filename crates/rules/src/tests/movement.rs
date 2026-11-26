@@ -213,6 +213,38 @@ fn a_fast_player_never_tunnels_through_a_one_tile_wall() {
 }
 
 #[test]
+fn a_player_who_moves_farther_than_his_radius_in_one_tick_is_still_stopped_by_a_wall() {
+    // 달리기 배율 5는 한 Tick에 1타일을 움직입니다. 한 번에 옮기면 한 칸 두께의 벽을 건너뜁니다.
+    let mut s = Scenario::with_tuning(|t| {
+        t.sprint.speed_multiplier = 5.0;
+        t.map.obstacles = vec![Rect::new(12.0, 1.0, 13.0, 20.0)];
+    });
+    let a = s.player_at(9.0, 10.0);
+    s.hold_sprint(a, 1.0, 0.0);
+
+    s.run_ticks(20);
+
+    let radius = s.sim.tuning().player.radius;
+    assert!(
+        close(s.player(a).pos.x, 12.0 - radius),
+        "stopped at the wall, got {}",
+        s.player(a).pos.x
+    );
+}
+
+#[test]
+fn a_player_who_moves_farther_than_his_radius_in_one_tick_still_covers_the_distance_of_the_tick() {
+    // 한 Tick의 1타일을 반지름(0.35)보다 짧은 세 걸음으로 나누어도 가는 거리는 같습니다.
+    let mut s = Scenario::with_tuning(|t| t.sprint.speed_multiplier = 5.0);
+    let a = s.player_at(2.0, 10.0);
+    s.hold_sprint(a, 1.0, 0.0);
+
+    s.run_ticks(3);
+
+    assert!(close(s.player(a).pos.x, 5.0), "got {}", s.player(a).pos.x);
+}
+
+#[test]
 fn players_walk_through_each_other() {
     let mut s = Scenario::open_field();
     let walker = s.player_at(5.0, 10.0);

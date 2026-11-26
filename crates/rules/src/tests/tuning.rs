@@ -16,7 +16,6 @@ fn the_default_tuning_is_valid() {
 #[test]
 fn one_tick_of_walking_is_shorter_than_a_body_radius_so_nothing_tunnels() {
     let t = Tuning::default();
-    assert!(t.player.speed * t.dt() < t.player.radius);
     assert!(t.monsters.grunt.speed * t.dt() < t.monsters.grunt.radius);
 }
 
@@ -517,18 +516,25 @@ fn a_gauge_too_big_to_count_in_whole_numbers_is_rejected() {
 }
 
 #[test]
-fn a_sprint_that_moves_a_player_a_body_radius_or_more_in_one_tick_is_rejected() {
+fn a_sprint_that_moves_a_player_a_body_radius_or_more_in_one_tick_is_valid() {
     // 걷는 속도 4에 배율 1.75를 곱한 속도 7은 한 Tick에 0.35타일이고, 이것이 몸의 반지름입니다.
-    let mut t = Tuning::default();
-    t.sprint.speed_multiplier = 1.74;
-    assert_eq!(t.validate(), Ok(()), "just under the radius");
+    // 플레이어의 이동은 반지름보다 짧은 걸음으로 나뉘므로 그보다 빨라도 수치가 맞습니다.
+    for multiplier in [1.74, 1.76, 3.0, 20.0] {
+        let mut t = Tuning::default();
+        t.sprint.speed_multiplier = multiplier;
+        assert_eq!(t.validate(), Ok(()), "a sprint multiplier of {multiplier}");
+    }
+}
 
-    t.sprint.speed_multiplier = 1.76;
-    let why = t.validate().expect_err("longer than the radius");
-    assert!(why.contains("a player moves"), "{why}");
-
-    t.sprint.speed_multiplier = 3.0;
-    assert!(t.validate().is_err());
+#[test]
+fn a_player_without_a_positive_radius_is_rejected_and_the_reason_names_it() {
+    // 반지름이 걸음의 수를 정하므로, 0은 나눗셈을 깨고 음수는 걸음을 나누지 않게 합니다.
+    for bad in [0.0, -0.35, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.player.radius = bad;
+        let why = t.validate().expect_err(&format!("a radius of {bad}"));
+        assert!(why.contains("player radius"), "{bad}: {why}");
+    }
 }
 
 #[test]
