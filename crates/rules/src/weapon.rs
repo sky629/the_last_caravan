@@ -11,7 +11,7 @@ use crate::monster::Monster;
 use crate::player::{LastAttack, Life};
 use crate::projectile::Launch;
 use crate::sweep;
-use crate::tuning::{ArcTuning, Delivery, HitscanTuning, arc_cos};
+use crate::tuning::{ArcTuning, Debuff, Delivery, HitscanTuning, arc_cos};
 use crate::world::{Ctx, Hit, Source, Target, World};
 
 /// 이번 Tick에 플레이어가 한 공격입니다. 공격을 정하는 단계가 모으고, 전달하는 단계가 `delivery`에 따라 처리합니다.
@@ -24,6 +24,8 @@ struct Attack {
     /// 길이가 1인 조준 방향입니다.
     facing: Vec2,
     damage: u32,
+    /// 맞힌 몬스터마다 거는 효과입니다.
+    debuff: Option<Debuff>,
     delivery: Delivery,
 }
 
@@ -53,7 +55,8 @@ fn decide(world: &mut World, ctx: &Ctx) -> Vec<Attack> {
         }
         let weapon = player.weapon();
         let stats = player.stats(t);
-        let delivery = t.weapons.get(weapon).delivery;
+        let row = t.weapons.get(weapon);
+        let (delivery, debuff) = (row.delivery, row.on_hit);
         let Life::Alive { cooldown_ticks, .. } = &mut player.life else {
             continue;
         };
@@ -74,6 +77,7 @@ fn decide(world: &mut World, ctx: &Ctx) -> Vec<Attack> {
             origin: player.pos,
             facing: player.facing,
             damage: stats.attack_damage,
+            debuff,
             delivery,
         });
     }
@@ -95,6 +99,7 @@ fn deliver(world: &mut World, ctx: &Ctx, attacks: &[Attack], hits: &mut Vec<Hit>
                     from: attack.origin,
                     dir: attack.facing,
                     damage: attack.damage,
+                    debuff: attack.debuff,
                     spec,
                 });
             }
@@ -138,7 +143,7 @@ fn shoot(
                 target: Target::Monster(id),
                 amount: attack.damage,
                 by: Source::Player(attack.player),
-                debuff: None,
+                debuff: attack.debuff,
             });
             at
         }
@@ -181,7 +186,7 @@ fn swing(
                 target: Target::Monster(monster.id),
                 amount: attack.damage,
                 by: Source::Player(attack.player),
-                debuff: None,
+                debuff: attack.debuff,
             });
         }
     }

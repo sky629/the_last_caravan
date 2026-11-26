@@ -6,6 +6,7 @@ use crate::debrief::Report;
 use crate::effect::MonsterEffects;
 use crate::expedition::Outcome;
 use crate::ids::{MonsterId, PlayerId};
+use crate::input::{AimDir, PlayerInput};
 use crate::kind::WeaponKind;
 use crate::tuning::{Debuff, Tuning};
 
@@ -35,6 +36,27 @@ fn walking_to_the_wagon() -> Scenario {
         t.monsters.grunt.max_hp = 1000;
         t.monsters.grunt.aggro_range = 0.0;
     })
+}
+
+fn attack_east() -> PlayerInput {
+    PlayerInput {
+        aim: AimDir::new(1.0, 0.0),
+        attack: true,
+        ..PlayerInput::default()
+    }
+}
+
+/// 한 번 공격하고 키를 뗍니다. 이 함수가 한 Tick을 진행합니다. 쿨다운이 0이어야 공격이 나갑니다.
+fn strike_once(s: &mut Scenario, id: PlayerId) {
+    s.hold(id, attack_east());
+    s.run_ticks(1);
+    s.hold(id, PlayerInput::default());
+}
+
+fn armed(s: &mut Scenario, x: f32, y: f32, weapon: WeaponKind) -> PlayerId {
+    let id = s.player_at(x, y);
+    s.give_weapon(id, weapon);
+    id
 }
 
 fn effects_of(s: &Scenario, id: MonsterId) -> &MonsterEffects {
@@ -443,4 +465,246 @@ fn the_camp_scarecrow_shows_effects_but_loses_no_hp_and_reports_no_bleed_numbers
         None,
         "no number for the bleed"
     );
+}
+
+/// 무기 하나로 몬스터를 한 번 맞히고, 걸린 효과를 (감속, 출혈, 스턴)의 순서로 돌려줍니다. 탄환은 몬스터에 닿을 때까지 진행합니다.
+fn effects_after_one_hit_with(weapon: WeaponKind) -> (bool, bool, bool) {
+    let mut s = standing_still();
+    let attacker = armed(&mut s, 5.0, 10.0, weapon);
+    let monster = s.monster_at(6.5, 10.0);
+    strike_once(&mut s, attacker);
+    s.run_until(30, |sim| sim.projectiles().all(|p| !p.is_flying()));
+    let effects = effects_of(&s, monster);
+    (
+        effects.is_slowed(),
+        effects.is_bleeding(),
+        effects.is_stunned(),
+    )
+}
+
+#[test]
+fn each_weapon_puts_its_own_effect_on_the_monster_it_hits_and_no_other() {
+    for (weapon, expected) in [
+        (WeaponKind::Sword, (false, true, false)),
+        (WeaponKind::Spear, (false, true, false)),
+        (WeaponKind::Greatsword, (false, false, true)),
+        (WeaponKind::Rifle, (false, false, true)),
+        (WeaponKind::Bow, (true, false, false)),
+        (WeaponKind::Crossbow, (true, false, false)),
+    ] {
+        assert_eq!(effects_after_one_hit_with(weapon), expected, "{weapon:?}");
+    }
+}
+
+#[test]
+fn a_monster_hit_by_a_crossbow_bolt_walks_at_half_speed_for_two_seconds() {
+    let mut s = walking_to_the_wagon();
+    let archer = armed(&mut s, 1.0, 18.0, WeaponKind::Crossbow);
+    let monster = s.monster_at(5.0, 18.0);
+    assert!(
+        close(walked_in_a_tick(&mut s, monster), 0.11),
+        "2.2 tiles a second at 20 Hz"
+    );
+
+    strike_once(&mut s, archer);
+    s.run_until(30, |sim| sim.monsters().any(|m| m.effects.is_slowed()));
+    let slowed_for = ticks_while(&mut s, |s| effects_of(s, monster).is_slowed());
+
+    assert_eq!(slowed_for, s.ticks(2.0));
+    assert!(
+        close(walked_in_a_tick(&mut s, monster), 0.11),
+        "the old speed is back"
+    );
+}
+
+#[test]
+fn a_crossbow_bolt_slows_every_monster_it_passes_through() {
+    let mut s = standing_still();
+    let archer = armed(&mut s, 1.0, 10.0, WeaponKind::Crossbow);
+    let line: Vec<MonsterId> = (0..4).map(|i| s.monster_at(4.0 + i as f32, 10.0)).collect();
+    let fifth = s.monster_at(8.0, 10.0);
+
+    strike_once(&mut s, archer);
+    s.run_until(30, |sim| sim.projectiles().all(|p| !p.is_flying()));
+
+    for id in line {
+        assert!(effects_of(&s, id).is_slowed(), "{id:?}");
+    }
+    assert!(!effects_of(&s, fifth).is_slowed(), "the bolt ended at four");
+}
+
+#[test]
+fn a_bolt_that_was_shot_slows_even_after_the_archer_changed_weapons() {
+    let mut s = standing_still();
+    let archer = armed(&mut s, 1.0, 10.0, WeaponKind::Crossbow);
+    let monster = s.monster_at(9.0, 10.0);
+
+    strike_once(&mut s, archer);
+    s.give_weapon(archer, WeaponKind::Greatsword);
+    s.run_until(30, |sim| sim.projectiles().all(|p| !p.is_flying()));
+
+    assert!(effects_of(&s, monster).is_slowed());
+    assert!(!effects_of(&s, monster).is_stunned());
+}
+
+#[test]
+fn two_smiths_who_take_turns_cannot_keep_a_monster_stunned_past_the_first_stun() {
+    let mut s = standing_still();
+    let first = armed(&mut s, 5.0, 10.0, WeaponKind::Greatsword);
+    let second = armed(&mut s, 5.0, 11.0, WeaponKind::Greatsword);
+    let monster = s.monster_at(6.0, 10.5);
+
+    strike_once(&mut s, first);
+    s.run_ticks(s.ticks(0.5));
+    strike_once(&mut s, second);
+    assert!(
+        effects_of(&s, monster).is_stunned(),
+        "the second blow changed nothing"
+    );
+    // 첫 스턴은 0.8초에 끝납니다. 두 번째 공격이 나간 Tick은 이미 0.5초가 지난 뒤입니다.
+    let rest = ticks_while(&mut s, |s| effects_of(s, monster).is_stunned());
+    assert_eq!(rest + s.ticks(0.5) + 1, s.ticks(0.8));
+
+    // 스턴이 끝난 뒤 2초 동안은 스턴이 다시 걸리지 않습니다.
+    s.run_ticks(s.ticks(1.0));
+    strike_once(&mut s, first);
+    assert!(!effects_of(&s, monster).is_stunned(), "immune");
+    s.run_ticks(s.ticks(1.0));
+    s.run_ticks(2);
+    strike_once(&mut s, second);
+    assert!(effects_of(&s, monster).is_stunned(), "free again");
+}
+
+#[test]
+fn a_sword_blow_makes_a_monster_bleed_five_a_second_for_three_seconds() {
+    let mut s = standing_still();
+    let swordsman = armed(&mut s, 5.0, 10.0, WeaponKind::Sword);
+    let monster = s.monster_at(5.8, 10.0);
+    let full = hp_of(&s, monster);
+    let blow = s.sim.tuning().weapons.sword.damage;
+
+    strike_once(&mut s, swordsman);
+    assert_eq!(hp_of(&s, monster), full - blow);
+    s.run_ticks(s.ticks(1.0) - 1);
+    assert_eq!(hp_of(&s, monster), full - blow, "not yet");
+    s.run_ticks(1);
+    assert_eq!(hp_of(&s, monster), full - blow - 5);
+    s.run_ticks(s.ticks(2.0));
+    assert_eq!(hp_of(&s, monster), full - blow - 15, "three times in all");
+    assert!(!effects_of(&s, monster).is_bleeding());
+}
+
+#[test]
+fn a_kill_by_bleeding_belongs_to_the_player_who_blew_last() {
+    // 검의 피해, 창의 피해, 창의 출혈(6) 두 번이 합쳐서 HP와 같습니다. 두 번째 사람의 출혈이 두 번째 피해를 냅니다.
+    let mut s = Scenario::with_tuning(|t| {
+        t.monsters.grunt.max_hp = t.weapons.sword.damage + t.weapons.spear.damage + 2 * 6;
+        t.monsters.grunt.speed = 0.0;
+        t.monsters.grunt.separation_speed = 0.0;
+        t.monsters.grunt.aggro_range = 0.0;
+    });
+    let first = armed(&mut s, 5.0, 10.0, WeaponKind::Sword);
+    let second = armed(&mut s, 3.0, 10.5, WeaponKind::Spear);
+    s.monster_at(5.8, 10.5);
+
+    strike_once(&mut s, first);
+    s.run_ticks(s.ticks(0.5));
+    strike_once(&mut s, second);
+    s.run_until(200, |sim| sim.monsters().next().is_none());
+
+    let report = report_at_the_end(&mut s);
+    assert_eq!(kills_of(&report, first), 0);
+    assert_eq!(kills_of(&report, second), 1);
+}
+
+#[test]
+fn a_blow_that_kills_one_monster_still_puts_its_effect_on_the_survivor_beside_it() {
+    let mut s = standing_still();
+    let swordsman = armed(&mut s, 5.0, 10.0, WeaponKind::Sword);
+    let doomed = s.monster_at(5.8, 10.0);
+    let survivor = s.monster_at(5.9, 10.3);
+    s.sim.world_mut().monsters[0].hp = s.sim.tuning().weapons.sword.damage;
+
+    strike_once(&mut s, swordsman);
+
+    assert!(s.monster(doomed).is_none(), "the blow killed it");
+    assert!(effects_of(&s, survivor).is_bleeding());
+}
+
+#[test]
+fn a_blow_that_kills_in_the_tick_of_a_bleed_damage_counts_one_kill() {
+    let mut s = standing_still();
+    let swordsman = armed(&mut s, 5.0, 10.0, WeaponKind::Sword);
+    let bleeder = s.player_at(2.0, 2.0);
+    let monster = s.monster_at(5.8, 10.0);
+    s.sim.world_mut().monsters[0].hp = s.sim.tuning().weapons.sword.damage;
+    s.afflict(monster, bleed(5), bleeder);
+    s.run_ticks(s.ticks(1.0) - 1);
+
+    strike_once(&mut s, swordsman);
+
+    assert!(s.monster(monster).is_none());
+    let report = report_at_the_end(&mut s);
+    assert_eq!(kills_of(&report, swordsman), 1);
+    assert_eq!(kills_of(&report, bleeder), 0);
+}
+
+#[test]
+fn a_sword_blow_on_a_camp_scarecrow_shows_the_bleed_and_costs_nothing() {
+    let mut s = Scenario::camp(|_| {});
+    let swordsman = armed(&mut s, 11.5, 5.0, WeaponKind::Sword);
+    let scarecrow = s.sim.monsters().next().unwrap().id;
+    let full = hp_of(&s, scarecrow);
+
+    strike_once(&mut s, swordsman);
+    let struck = camp_of(&s.sim).struck().next().expect("the blow is noted");
+    assert!(effects_of(&s, scarecrow).is_bleeding());
+
+    s.run_ticks(s.ticks(3.5));
+
+    assert!(
+        !effects_of(&s, scarecrow).is_bleeding(),
+        "the bleed ran out"
+    );
+    assert_eq!(hp_of(&s, scarecrow), full, "no damage in the camp");
+    assert_eq!(
+        camp_of(&s.sim).struck().next(),
+        Some(struck),
+        "no number for the bleed"
+    );
+}
+
+#[test]
+fn a_watchtower_applies_the_effect_of_its_row_to_the_monster_it_shoots() {
+    let mut s = standing_still_with_a_tower(Some(STUN));
+
+    s.run_until(100, |sim| sim.monsters().any(|m| m.effects.is_stunned()));
+}
+
+#[test]
+fn a_watchtower_of_the_default_tuning_shoots_without_an_effect() {
+    let mut s = standing_still_with_a_tower(None);
+    let monster = s.sim.monsters().next().unwrap().id;
+    let full = hp_of(&s, monster);
+
+    s.run_until(100, |sim| {
+        sim.monsters().next().is_some_and(|m| m.hp < full)
+    });
+
+    let effects = effects_of(&s, monster);
+    assert!(!effects.is_slowed() && !effects.is_bleeding() && !effects.is_stunned());
+}
+
+/// 감시탑 하나가 제자리에 선 몬스터 하나를 쏘는 시나리오입니다. 감시탑의 행의 효과는 `on_hit`입니다.
+fn standing_still_with_a_tower(on_hit: Option<Debuff>) -> Scenario {
+    let mut s = Scenario::with_tuning(|t| {
+        t.monsters.grunt.max_hp = 1000;
+        t.monsters.grunt.speed = 0.0;
+        t.monsters.grunt.separation_speed = 0.0;
+        t.monsters.grunt.aggro_range = 0.0;
+        t.structures.watchtower.on_hit = on_hit;
+    });
+    s.tower_at(14, 3);
+    s.monster_at(14.5, 5.0);
+    s
 }
