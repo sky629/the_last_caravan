@@ -1,7 +1,7 @@
-//! 몬스터 300마리가 있고 감시탑이 상한만큼 서 있을 때 Tick 하나를 계산하는 데 걸리는 시간을 잽니다.
+//! 몬스터 300마리가 있고 포탑이 상한만큼 서 있을 때 Tick 하나를 계산하는 데 걸리는 시간을 잽니다.
 //!
 //! 시간의 한계는 릴리스 빌드에서만 확인합니다. 최적화하지 않은 빌드의 시간은 한계와 관계가 없기 때문입니다.
-//! 일반 테스트에서는 측정 상황이 말한 대로 만들어졌는지(몬스터 300마리, 감시탑 상한, 건설과 파괴가 실제로 일어남, 탄환이 실제로 날아다님, 석궁의 탄환이 몬스터를 꿰뚫음, 소총이 몬스터를 맞힘)만 확인합니다.
+//! 일반 테스트에서는 측정 상황이 말한 대로 만들어졌는지(몬스터 300마리, 포탑 상한, 건설과 파괴가 실제로 일어남, 탄환이 실제로 날아다님, 석궁의 탄환이 몬스터를 꿰뚫음, 소총이 몬스터를 맞힘, 감속 포탑과 스턴 포탑이 몬스터에게 효과를 검)만 확인합니다.
 //! 시간을 보려면 다음 명령을 실행합니다.
 //!
 //! ```text
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use super::support::{Scenario, nights, watchtower_shot};
 use crate::ids::{MonsterId, TowerId};
 use crate::input::{AimDir, PlayerInput};
-use crate::kind::WeaponKind;
+use crate::kind::{StructureKind, WeaponKind};
 use crate::math::Vec2;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{Debuff, Tuning};
@@ -195,7 +195,7 @@ fn perf_the_average_tick_with_300_monsters_under_every_effect_is_a_tenth_of_the_
     );
 }
 
-/// 한 Tick에 감시탑 모음에서 일어난 변화입니다.
+/// 한 Tick에 포탑 모음에서 일어난 변화입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Change {
     BuildStarted,
@@ -203,7 +203,7 @@ enum Change {
     Destroyed,
 }
 
-/// 감시탑의 번호와 서 있는지를 번호 순서로 적은 목록입니다. 두 시점의 목록을 비교해서 변화를 찾습니다.
+/// 포탑의 번호와 서 있는지를 번호 순서로 적은 목록입니다. 두 시점의 목록을 비교해서 변화를 찾습니다.
 fn towers_now(s: &Scenario) -> Vec<(TowerId, bool)> {
     s.sim
         .towers()
@@ -647,4 +647,108 @@ fn perf_the_tick_pair_around_opening_a_chest_with_the_tower_cap_and_300_monsters
         "{cap} towers and 300 monsters; one chest opened in 60 ticks; slowest of all 60 ticks: {slowest_of_all:?}"
     );
     check_limit("tick pair around the chest opening", pair, interval);
+}
+
+/// 마을의 포탑 자리 상한만큼 `kinds`의 종류를 번갈아 가며 포탑을 세운 포위 상황입니다. 포탑은 부서지지 않습니다.
+fn village_of(kinds: &[StructureKind]) -> Scenario {
+    let defaults = Tuning::default();
+    let sites = defaults.spread_tower_sites(defaults.village.tower_limit);
+    let mut s = village_under_siege_with(Vec::new(), u32::MAX, |t| {
+        t.structures.slow_tower.max_hp = u32::MAX;
+        t.structures.stun_tower.max_hp = u32::MAX;
+    });
+    for (index, tile) in sites.iter().enumerate() {
+        s.tower_of(kinds[index % kinds.len()], tile.x, tile.y);
+    }
+    s
+}
+
+/// 1000 Tick을 진행하고 한 Tick의 평균 시간을 돌려줍니다.
+fn average_of_1000_ticks(s: &mut Scenario) -> Duration {
+    let mut total = Duration::ZERO;
+    let mut slowest = Duration::ZERO;
+    for _ in 0..1000 {
+        let took = timed_tick(s);
+        total += took;
+        slowest = slowest.max(took);
+    }
+    println!("slowest of 1000 ticks: {slowest:?}");
+    total / 1000
+}
+
+#[test]
+fn perf_the_average_tick_with_40_slow_towers_and_300_monsters_is_a_tenth_of_the_interval_at_most() {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let mut s = village_of(&[StructureKind::SlowTower]);
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    let slowed = s
+        .sim
+        .monsters()
+        .filter(|monster| monster.effects.is_slowed())
+        .count();
+    println!("{slowed} of 300 monsters slowed");
+    assert!(slowed >= 50, "the crowd is in the slow fields: {slowed}");
+
+    let average = average_of_1000_ticks(&mut s);
+    assert_eq!(s.sim.monsters().count(), 300, "slow towers take no HP");
+    check_limit(
+        "average of 1000 ticks with 40 slow towers",
+        average,
+        Duration::from_secs_f32(defaults.dt()) / 10,
+    );
+}
+
+#[test]
+fn perf_the_average_tick_with_40_stun_towers_and_300_monsters_is_a_tenth_of_the_interval_at_most() {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let mut s = village_of(&[StructureKind::StunTower]);
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    let stunned = s
+        .sim
+        .monsters()
+        .filter(|monster| monster.effects.is_stunned())
+        .count();
+    println!("{stunned} of 300 monsters stunned");
+    assert!(stunned >= 1, "the stun towers reach the crowd: {stunned}");
+
+    let average = average_of_1000_ticks(&mut s);
+    assert_eq!(s.sim.monsters().count(), 300, "stun towers take no HP");
+    check_limit(
+        "average of 1000 ticks with 40 stun towers",
+        average,
+        Duration::from_secs_f32(defaults.dt()) / 10,
+    );
+}
+
+#[test]
+fn perf_the_average_tick_with_40_towers_of_every_kind_and_300_monsters_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let mut s = village_of(&StructureKind::ALL);
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    let kinds: std::collections::BTreeSet<_> = s.sim.towers().map(|tower| tower.kind).collect();
+    assert_eq!(kinds.len(), StructureKind::ALL.len(), "every kind stands");
+    let held = s
+        .sim
+        .monsters()
+        .filter(|monster| monster.effects.is_slowed() || monster.effects.is_stunned())
+        .count();
+    println!("{held} of 300 monsters slowed or stunned");
+    assert!(held >= 50, "the crowd is under the effects: {held}");
+
+    let average = average_of_1000_ticks(&mut s);
+    check_limit(
+        "average of 1000 ticks with 40 towers of every kind",
+        average,
+        Duration::from_secs_f32(defaults.dt()) / 10,
+    );
 }

@@ -14,7 +14,7 @@ pub struct WireReport {
     pub day: u32,
     /// 원정이 걸린 시간(초)입니다. 초 아래는 버립니다.
     pub elapsed_secs: u32,
-    /// 감시탑이 마지막 피해를 주어 처치한 몬스터의 수입니다.
+    /// 포탑이 마지막 피해를 주어 처치한 몬스터의 수입니다.
     pub tower_kills: u32,
     /// 원정이 끝날 때 방에 있던 플레이어의 기록입니다. 번호가 작은 플레이어부터이고, 자리를 비운 플레이어도 있습니다.
     pub rows: Vec<WireRecordRow>,

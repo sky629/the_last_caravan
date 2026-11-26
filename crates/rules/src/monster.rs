@@ -39,7 +39,7 @@ pub struct Monster {
 pub enum Order {
     /// `post`를 지킵니다. 자리에서 `chase_range` 안에 들어온 플레이어를 쫓고, 아무도 없으면 자리로 돌아갑니다.
     Guard { post: Tile },
-    /// 마차를 향합니다. 가는 길에 `aggro_range` 안에 들어온 플레이어나 감시탑을 쫓습니다.
+    /// 마차를 향합니다. 가는 길에 `aggro_range` 안에 들어온 플레이어나 포탑을 쫓습니다.
     Raid,
     /// 제자리에 서 있습니다. 아무것도 쫓지 않고 공격하지 않습니다. 야영지의 허수아비가 받는 명령입니다.
     Stand,
@@ -79,8 +79,8 @@ impl Monster {
     }
 }
 
-/// 쫓기는 플레이어가 서 있는 타일과 지키는 자리의 타일마다 만든 흐름장입니다. 플레이어는 움직이므로 마차와 감시탑처럼 한 번에 만들어 둘 수 없습니다.
-/// 마차와 감시탑을 향하는 흐름장은 모든 몬스터가 공유하는 `Paths`에 있으므로 여기에 없습니다.
+/// 쫓기는 플레이어가 서 있는 타일과 지키는 자리의 타일마다 만든 흐름장입니다. 플레이어는 움직이므로 마차와 포탑처럼 한 번에 만들어 둘 수 없습니다.
+/// 마차와 포탑을 향하는 흐름장은 모든 몬스터가 공유하는 `Paths`에 있으므로 여기에 없습니다.
 ///
 /// 표는 도착 타일을 키로 하므로, 같은 타일을 향하는 몬스터가 여럿이어도 표는 하나입니다.
 /// 세계의 배치(`layout_revision`)가 바뀌면 낡은 것으로 보고 다시 만들고, 이번 Tick에 필요 없는 표는 버립니다.
@@ -137,7 +137,7 @@ fn chase_tile(world: &World, player: PlayerId) -> Option<Tile> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Goal {
     Player(PlayerId),
-    /// 걸어서 가장 가까운 서 있는 감시탑입니다. 어느 감시탑을 공격할지는 공격이 닿는 거리에 들어온 뒤에 정합니다.
+    /// 걸어서 가장 가까운 서 있는 포탑입니다. 어느 포탑을 공격할지는 공격이 닿는 거리에 들어온 뒤에 정합니다.
     Tower,
     Wagon,
     /// 지키는 자리로 돌아갑니다. 공격할 대상이 없습니다.
@@ -220,7 +220,7 @@ pub(crate) fn monsters_act(
 
 /// 몬스터의 목표를 고릅니다. 몬스터는 목표를 기억하지 않고 Tick마다 새로 고릅니다.
 /// 이 한 함수가 「쫓다가 범위를 벗어나면 다시 마차로(밤) 또는 자리로(낮)」, 「쓰러지거나 사망했거나 자리를 비운 플레이어는 대상이 아님」,
-/// 「파괴된 감시탑은 대상이 아님」을 정합니다. 명령(`Order`)이 어느 쪽 규칙을 쓸지 정합니다.
+/// 「파괴된 포탑은 대상이 아님」을 정합니다. 명령(`Order`)이 어느 쪽 규칙을 쓸지 정합니다.
 fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
     match monster.order {
         Order::Raid => raid_goal(world, monster, ctx, paths),
@@ -251,9 +251,9 @@ fn guard_goal(world: &World, monster: &Monster, post: Tile, ctx: &Ctx) -> Goal {
 
 /// 마차를 향하는 몬스터의 목표입니다.
 ///
-/// 후보는 추적 거리(`aggro_range`) 안에 있고 몬스터와 적대하는 노릴 수 있는(`Player::is_targetable`) 플레이어와, 걸어서 추적 거리 안에 있는 서 있는 감시탑입니다.
-/// 플레이어까지의 거리는 직선으로 재고, 감시탑까지의 거리는 감시탑 흐름장의 걸음 수로 잽니다.
-/// 그래서 벽 너머에 있는 감시탑을 쫓아서 돌아가지 않습니다.
+/// 후보는 추적 거리(`aggro_range`) 안에 있고 몬스터와 적대하는 노릴 수 있는(`Player::is_targetable`) 플레이어와, 걸어서 추적 거리 안에 있는 서 있는 포탑입니다.
+/// 플레이어까지의 거리는 직선으로 재고, 포탑까지의 거리는 포탑 흐름장의 걸음 수로 잽니다.
+/// 그래서 벽 너머에 있는 포탑을 쫓아서 돌아가지 않습니다.
 /// 후보 가운데 가장 가까운 대상을 고르고, 후보가 없으면 마차를 고릅니다.
 fn raid_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
     let t = ctx.t;
@@ -282,7 +282,7 @@ fn raid_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal
 }
 
 /// 목표를 향해 걷거나, 가까이 있으면 멈춰서 공격하기로 결정합니다.
-/// 걷는 길은 목표에 따라 `Paths`의 마차 흐름장이나 감시탑 흐름장, 또는 `TileFields`의 표에서 읽고,
+/// 걷는 길은 목표에 따라 `Paths`의 마차 흐름장이나 포탑 흐름장, 또는 `TileFields`의 표에서 읽고,
 /// 길이 없으면 목표의 가장 가까운 점으로 곧바로 걷습니다.
 fn plan(
     index: usize,
@@ -374,8 +374,8 @@ fn walk_to_post(
 }
 
 /// 몬스터가 공격하려고 다가가는 대상과 그 모양입니다. 대상이 사라졌으면 `None`입니다.
-/// 감시탑을 향하는 몬스터는 직선으로 가장 가까운 서 있는 감시탑을 대상으로 삼습니다.
-/// 걸어서 닿는 감시탑은 흐름장이 안내하고, 공격할 감시탑은 닿는 거리에 들어온 뒤에야 의미가 있기 때문입니다.
+/// 포탑을 향하는 몬스터는 직선으로 가장 가까운 서 있는 포탑을 대상으로 삼습니다.
+/// 걸어서 닿는 포탑은 흐름장이 안내하고, 공격할 포탑은 닿는 거리에 들어온 뒤에야 의미가 있기 때문입니다.
 fn approached(goal: Goal, world: &World, monster: &Monster, t: &Tuning) -> Option<(Target, Body)> {
     let target = match goal {
         Goal::Player(id) => Target::Player(id),

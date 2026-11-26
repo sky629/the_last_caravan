@@ -381,7 +381,7 @@ fn the_report_is_variant_five_then_the_expedition_the_summary_and_a_row_for_each
             0x02, // 몇 번째 원정인지
             0x03, // 버틴 날
             0xE8, 0x06, // 걸린 시간 872초
-            0x29, // 감시탑의 처치 41
+            0x29, // 포탑의 처치 41
             0x02, // 목록: 길이 2
             0x04, b'K', b'A', b'N', b'G', 0x58, 0x02, 0x01,
             0x22, // 이름, 처치 88, 부활 2, 쓰러짐 1, 넣은 자원 34

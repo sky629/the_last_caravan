@@ -282,7 +282,7 @@ fn crowd_of_300() -> Scenario {
 
 #[test]
 fn a_wave_of_300_monsters_runs_to_victory() {
-    // 몬스터가 수백 마리여도 Tick이 끝까지 진행되는지 확인합니다. 근접 공격, 감시탑의 목표 선택, 몬스터 사이의 밀어내기가
+    // 몬스터가 수백 마리여도 Tick이 끝까지 진행되는지 확인합니다. 근접 공격, 포탑의 목표 선택, 몬스터 사이의 밀어내기가
     // 모두 격자 조회를 거치므로, 모든 쌍을 비교하는 방식이었다면 이 테스트는 눈에 띄게 느려집니다.
     let mut s = crowd_of_300();
     let mut most_alive = 0;

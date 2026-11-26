@@ -1,5 +1,5 @@
 //! 건설을 확인합니다: 시작과 진행, 취소와 환불, 거절의 이유 다섯 가지, 동시에 진행되는 두 건설, 길을 막는 배치.
-//! 테스트는 `&Sim`이 공개하는 값(감시탑 목록, 보관함, 플레이어의 거절 기록)만 확인합니다.
+//! 테스트는 `&Sim`이 공개하는 값(포탑 목록, 보관함, 플레이어의 거절 기록)만 확인합니다.
 //!
 //! 시나리오는 20 x 20 맵이고 마차는 (17, 17)에서 (19, 19)까지입니다. 마차 둘레의 타일에서 짓습니다.
 
@@ -282,7 +282,7 @@ fn the_f_key_comes_before_the_build_key_when_there_is_something_to_do() {
     assert_eq!(s.sim.towers().count(), 0, "nothing was built");
 }
 
-// 거절의 이유 다섯 가지. 어느 경우에도 보관함이 그대로이고 감시탑이 늘지 않으며, 거절은 놓으려던 타일과 함께 남습니다.
+// 거절의 이유 다섯 가지. 어느 경우에도 보관함이 그대로이고 포탑이 늘지 않으며, 거절은 놓으려던 타일과 함께 남습니다.
 
 fn assert_refused(s: &Scenario, id: PlayerId, tile: Tile, why: CannotBuild, stash: u32) {
     assert_eq!(refusal(s, id), Some(BuildRefusal { tile, why }));
