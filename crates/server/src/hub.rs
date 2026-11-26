@@ -46,7 +46,7 @@ enum LinkState {
 enum SeatFate {
     /// 입력이 오지 않는 접속입니다. 끊긴 접속처럼 자리를 유지하고, 사람이 돌아올 수 있습니다.
     Hold,
-    /// 약속을 어기거나 한도를 넘은 접속입니다. 자리를 곧바로 내놓습니다.
+    /// 약속을 어긴 접속입니다. 자리를 곧바로 내놓습니다.
     GiveUp,
 }
 
@@ -134,17 +134,11 @@ impl Hub {
                 Vec::new()
             }
             ServerEvent::Message(link, msg) => self.handle_message(link, msg, now),
-            // 접속 방식이 한도를 넘은 접속을 닫았습니다. 이 접속의 `Disconnected`가 바로 이어서 오지만, 자리는 지금 내놓습니다.
+            // 접속 방식이 한도를 넘은 접속을 닫았습니다. 이 접속의 `Disconnected`가 바로 이어서 오고, 자리는 그때 끊긴 접속처럼 유지합니다.
+            // 네트워크가 멈췄다가 풀려서 밀린 입력이 한꺼번에 도착한 사람도 메시지 수의 한도에 닿으므로, 자리를 내놓지 않습니다.
+            // 유지하는 자리의 수는 `hold_seat`의 두 한도가 묶습니다.
             ServerEvent::LimitReached(link, reason) => {
-                let mut outs = vec![Out::Notice(Notice::LinkClosed { link, reason })];
-                let state = self
-                    .links
-                    .get_mut(&link)
-                    .map(|state| std::mem::replace(state, LinkState::Closing));
-                if let Some(LinkState::InRoom { room, player, .. }) = state {
-                    outs.extend(self.give_up_seat(room, player));
-                }
-                outs
+                vec![Out::Notice(Notice::LinkClosed { link, reason })]
             }
             ServerEvent::Disconnected(link) => {
                 let outs = match self.links.remove(&link) {

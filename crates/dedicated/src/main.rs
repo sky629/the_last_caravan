@@ -243,6 +243,11 @@ fn main() -> ExitCode {
             .collect();
         eprintln!("wave sizes by night: {nights:?}");
     }
+    // 자리의 표식은 운영체제의 무작위로 만듭니다. 운영체제가 무작위를 주지 못하면 사람이 입장한 뒤에 멈추지 않고, 시작하지 않습니다.
+    if let Err(err) = getrandom::fill(&mut [0u8; 16]) {
+        eprintln!("cannot start the server: the operating system gives no random bytes: {err}");
+        return ExitCode::FAILURE;
+    }
     let started = Instant::now();
     let seeds = match options.seed {
         Some(seed) => RoomSeeds::Fixed(Seed(seed)),

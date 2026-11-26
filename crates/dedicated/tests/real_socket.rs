@@ -384,5 +384,6 @@ fn a_link_cut_by_the_message_rate_limit_is_reported_with_the_limit_it_broke() {
             ServerLimits::default().max_messages_per_sec
         )
     );
-    server.wait_for_notice(|notice| matches!(notice, Notice::Left { members: 0, .. }));
+    // 한도로 닫힌 접속의 자리는 끊긴 접속처럼 유지합니다.
+    server.wait_for_notice(|notice| matches!(notice, Notice::Held { .. }));
 }

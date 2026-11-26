@@ -86,8 +86,27 @@ mod desktop {
             std::fs::create_dir_all(parent)?;
         }
         let temp = temp_path(path, std::process::id());
-        std::fs::write(&temp, text)?;
+        write_private(&temp, text)?;
         std::fs::rename(&temp, path)
+    }
+
+    /// 파일에 자리의 표식이 들어 있으므로, 이 컴퓨터의 다른 사용자가 읽지 못하게 소유자만 읽고 쓰는 파일로 만듭니다.
+    #[cfg(unix)]
+    fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?
+            .write_all(text.as_bytes())
+    }
+
+    #[cfg(not(unix))]
+    fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+        std::fs::write(path, text)
     }
 }
 
@@ -155,6 +174,20 @@ mod tests {
     fn a_system_without_the_variable_has_no_folder() {
         assert_eq!(config_dir("macos", vars(&[])), None);
         assert_eq!(config_dir("windows", vars(&[("HOME", "/x")])), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_file_is_readable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("caravan-private-{}", std::process::id()));
+        let path = dir.join("memory.txt");
+
+        write_to(&path, "name\tKANG\n").expect("the file is written");
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

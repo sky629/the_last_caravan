@@ -287,6 +287,79 @@ fn standing_still_in_an_expedition_does_not_take_a_person_away() {
     ));
 }
 
+/// 결과 화면이 시간이 다 되어 닫힐 때까지 아무것도 누르지 않은 사람도, 야영지에 들어선 때부터 60초를 새로 셉니다.
+#[test]
+fn the_time_without_an_operation_is_counted_from_entering_the_camp() {
+    // 낮이 거의 없고 마차의 HP가 1이어서 원정이 곧바로 끝나고 결과 화면이 열립니다.
+    let mut tuning = Tuning::default();
+    tuning.cycle.day_secs = 0.05;
+    tuning.wagon.max_hp = 1;
+    let mut rig = common::rig_with(tuning);
+    let (mut kang, _) = rig.join_welcomed("night", "KANG", None);
+    let (mut miro, welcome) = rig.join_welcomed("night", "MIRO", None);
+    let miro_id = welcome.you;
+    kang.send(&press_ready(1));
+    miro.send(&press_ready(1));
+    rig.run_ticks(1);
+
+    // 명단은 바뀔 때만 오므로, 마지막으로 받은 명단의 값을 기억합니다.
+    let mut miro_here = true;
+    let note = |heard: &common::Heard, miro_here: &mut bool| {
+        if let Some(roster) = heard.rosters.last() {
+            *miro_here = roster
+                .members
+                .iter()
+                .any(|member| member.id == miro_id && member.here);
+        }
+    };
+    let mut seq = 2;
+    let mut seen_result = false;
+    let mut back_in_camp = false;
+    for _ in 0..400 {
+        seq = run(
+            &mut rig,
+            &mut [(&mut kang, Behavior::Still), (&mut miro, Behavior::Still)],
+            seq,
+            1.0,
+        );
+        let heard = hear(&mut kang);
+        note(&heard, &mut miro_here);
+        match heard.last_snapshot().phase {
+            WirePhase::Debrief { .. } => seen_result = true,
+            WirePhase::Camp { .. } if seen_result => {
+                back_in_camp = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(back_in_camp, "the result closed by its time limit");
+    assert!(miro_here, "the minute on the result screen does not count");
+
+    seq = run(
+        &mut rig,
+        &mut [
+            (&mut kang, Behavior::Wiggling),
+            (&mut miro, Behavior::Still),
+        ],
+        seq,
+        55.0,
+    );
+    note(&hear(&mut kang), &mut miro_here);
+    assert!(miro_here, "not a minute in the camp yet");
+    run(
+        &mut rig,
+        &mut [
+            (&mut kang, Behavior::Wiggling),
+            (&mut miro, Behavior::Still),
+        ],
+        seq,
+        7.0,
+    );
+    note(&hear(&mut kang), &mut miro_here);
+    assert!(!miro_here, "a minute in the camp");
+}
+
 #[test]
 fn a_server_refuses_a_camp_idle_time_of_less_than_one_tick() {
     let (transport, _connector) = caravan_protocol::loopback();

@@ -229,9 +229,10 @@ impl Room {
         RoomTick { outs, ended }
     }
 
-    /// 야영지이면 조작 없이 `camp_idle_ticks`가 지난 자리를 자리를 비운 것으로 하고, 그 Tick에 처음 그렇게 된 플레이어를 돌려줍니다.
+    /// 야영지가 아니면 조작이 없던 시간을 0으로 돌립니다. 야영지이면 조작 없이 `camp_idle_ticks`가 지난 자리를 자리를 비운 것으로 하고, 그 Tick에 처음 그렇게 된 플레이어를 돌려줍니다.
     fn doze_off_in_camp(&mut self) -> Vec<PlayerId> {
         if !matches!(self.sim.stage(), Stage::Camp(_)) {
+            self.seats.values_mut().for_each(Seat::outside_camp);
             return Vec::new();
         }
         let idle = self.times.camp_idle_ticks;

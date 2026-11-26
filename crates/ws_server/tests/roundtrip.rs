@@ -143,7 +143,7 @@ async fn an_undecodable_frame_closes_only_that_link() {
     assert!(matches!(good.next().await, Some(Ok(Message::Binary(_)))));
 }
 
-/// 프로토콜 7의 입장 요청입니다. 방 코드가 `Option`이 아니었고 이름이 없었으므로, 지금의 모양으로는 해석되지 않습니다.
+/// 버전 7을 적은 입장 요청입니다. 버전 뒤에 방 코드의 글자만 있고 이름이 없어서, 지금의 `Join`으로는 해석되지 않습니다.
 const PROTOCOL_7_JOIN: [u8; 7] = [0, 7, 4, b't', b'e', b's', b't'];
 
 #[tokio::test]

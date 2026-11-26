@@ -284,9 +284,9 @@ fn a_link_closed_for_breaking_the_rules_gives_up_its_seat_at_once() {
     );
 }
 
-/// 접속 방식이 한도를 넘었다고 닫은 접속(메시지 수, 크기, 읽을 수 없는 데이터)도 자리를 곧바로 내놓습니다.
+/// 접속 방식이 한도를 넘었다고 닫은 접속의 자리는 끊긴 접속처럼 유지합니다. 네트워크가 멈췄다가 풀려서 밀린 입력이 한꺼번에 도착한 사람도 이 한도에 닿기 때문입니다.
 #[test]
-fn a_link_the_transport_closed_for_passing_a_limit_gives_up_its_seat_at_once() {
+fn a_link_the_transport_closed_for_passing_a_limit_keeps_its_seat() {
     let events = Rc::new(RefCell::new(VecDeque::new()));
     let mut server = GameServer::new(
         Box::new(Scripted(Rc::clone(&events))),
@@ -315,16 +315,16 @@ fn a_link_the_transport_closed_for_passing_a_limit_gives_up_its_seat_at_once() {
     assert!(
         notices
             .iter()
-            .any(|notice| matches!(notice, Notice::Left { members: 0, .. })),
+            .any(|notice| matches!(notice, Notice::Held { .. })),
         "{notices:?}"
     );
     assert!(
         !notices
             .iter()
-            .any(|notice| matches!(notice, Notice::Held { .. })),
+            .any(|notice| matches!(notice, Notice::Left { .. })),
         "{notices:?}"
     );
-    assert_eq!(server.stats().rooms, 0);
+    assert_eq!(server.stats().members, 1);
 }
 
 /// 입력이 오지 않는 접속은 서버가 닫아도 자리를 유지합니다. 창이 멈춘 사람이 돌아올 수 있습니다.

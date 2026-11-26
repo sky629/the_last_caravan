@@ -29,7 +29,7 @@ pub struct ServerLimits {
     /// 서버는 시작할 때 이 값이 `max_held_seats_per_ip` 이상이고 `max_rooms`보다 작은지 확인합니다. 그래서 끊긴 자리만으로는 방의 한도를 채우지 못하고, 새 방을 만드는 입장은 막히지 않습니다.
     pub max_held_seats: usize,
     /// 서버가 한꺼번에 둘 수 있는 방의 수입니다. 접속이 열려 있는 방의 수는 `max_links`가, 접속자가 없는 방의 수는 `max_held_seats`가 묶으므로,
-    /// 정상적인 사용으로는 닿지 않는 값입니다. 그래도 서버의 메모리를 끝까지 지키는 마지막 한도입니다.
+    /// 기본 수치(64 + 128 < 256)에서는 정상적인 사용으로 닿지 않는 값입니다. 그래도 서버의 메모리를 끝까지 지키는 마지막 한도입니다.
     /// 넘으면 새 방을 만드는 입장을 거절하고(`RejectReason::ServerFull`), 있는 방에 들어가는 입장은 받습니다.
     /// 서버는 시작할 때 이 값이 한 상대가 차지할 수 있는 방의 수(`max_links_per_ip + max_held_seats_per_ip`)와 `max_held_seats`보다 큰지 확인합니다.
     pub max_rooms: usize,
