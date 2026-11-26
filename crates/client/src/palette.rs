@@ -8,7 +8,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use caravan_client_core::{TILE_HEIGHT_PX, TILE_WIDTH_PX};
+use caravan_client_core::{ShownEffect, TILE_HEIGHT_PX, TILE_WIDTH_PX};
 use caravan_protocol::WireWeaponKind;
 
 use crate::config;
@@ -49,6 +49,8 @@ pub struct Palette {
     pub dead: Handle<ColorMaterial>,
     pub monster: Handle<ColorMaterial>,
     pub scarecrow: Handle<ColorMaterial>,
+    /// 효과에 걸린 몬스터의 몸통입니다. 몬스터와 허수아비에게 같이 씁니다.
+    pub effects: EffectPaints,
     pub nose_player: Handle<ColorMaterial>,
     pub nose_monster: Handle<ColorMaterial>,
     pub bar_back: Handle<ColorMaterial>,
@@ -79,6 +81,24 @@ impl WeaponPaints {
             WireWeaponKind::Spear => self.spear.clone(),
             WireWeaponKind::Crossbow => self.crossbow.clone(),
             WireWeaponKind::Rifle => self.rifle.clone(),
+        }
+    }
+}
+
+/// 효과에 걸린 몬스터의 몸통 재질입니다. 효과마다 색이 다릅니다.
+pub struct EffectPaints {
+    stun: Handle<ColorMaterial>,
+    slow: Handle<ColorMaterial>,
+    bleed: Handle<ColorMaterial>,
+}
+
+impl EffectPaints {
+    /// `match`가 모든 효과를 다루므로, 보이는 효과를 추가하면 여기서 컴파일 오류가 납니다.
+    pub fn of(&self, effect: ShownEffect) -> &Handle<ColorMaterial> {
+        match effect {
+            ShownEffect::Stun => &self.stun,
+            ShownEffect::Slow => &self.slow,
+            ShownEffect::Bleed => &self.bleed,
         }
     }
 }
@@ -119,6 +139,11 @@ pub fn setup_palette(
         dead: paint(config::DEAD),
         monster: paint(config::MONSTER),
         scarecrow: paint(config::SCARECROW),
+        effects: EffectPaints {
+            stun: paint(config::EFFECT_STUN),
+            slow: paint(config::EFFECT_SLOW),
+            bleed: paint(config::EFFECT_BLEED),
+        },
         nose_player: paint(config::NOSE_PLAYER),
         nose_monster: paint(config::NOSE_MONSTER),
         bar_back: paint(config::BAR_BACK),

@@ -163,6 +163,7 @@ fn player_look(player: &PlayerView, scene: &Scene, palette: &Palette, away: bool
 
 /// 몬스터의 HP 막대는 피해를 입었을 때만 보입니다. 수백 마리가 막대를 모두 달고 있으면 화면이 복잡해집니다.
 /// 허수아비는 맞아도 HP가 줄지 않으므로 막대가 없고, 맞은 피해는 숫자로 보입니다(`camp::sync_strikes`).
+/// 효과에 걸린 몸통은 효과의 색입니다. 스냅샷이 알려 준 효과만 그리고, 효과가 끝나면 다음 프레임에 종류의 색으로 돌아갑니다.
 /// `match`가 모든 종류를 다루므로, 몬스터 종류를 추가하면 여기서 컴파일 오류가 납니다.
 fn monster_look(
     monster: &MonsterView,
@@ -178,6 +179,9 @@ fn monster_look(
         ),
         WireMonsterKind::Scarecrow => (&palette.scarecrow, config::SCARECROW_BODY, None),
     };
+    let body = monster
+        .shown_effect()
+        .map_or(body, |effect| palette.effects.of(effect));
     Look {
         foot: monster.pos,
         facing: monster.facing,
@@ -347,7 +351,7 @@ mod tests {
     use super::*;
     use crate::testing::{YOU, deliver_presence, deliver_roster, joined_flow};
     use crate::view;
-    use caravan_client_core::Frame;
+    use caravan_client_core::{Frame, ShownEffect};
     use caravan_protocol::{
         WireLoadout, WireMonsterEffects, WireMonsterKind, WirePhase, WireWagon, WireWeaponKind,
     };
@@ -900,6 +904,115 @@ mod tests {
             "a hurt grunt shows its bar"
         );
         assert_eq!(scarecrow_bar, Visibility::Hidden, "a scarecrow never does");
+    }
+
+    #[test]
+    fn a_monster_under_an_effect_wears_its_color_and_gets_its_own_back_when_it_ends() {
+        let mut app = app();
+        let afflicted = |kind, stunned, slowed, bleeding| MonsterView {
+            kind,
+            effects: WireMonsterEffects {
+                stunned,
+                slowed,
+                bleeding,
+            },
+            ..monster(1, 3.0, 3.0, 60)
+        };
+        let color_of = |app: &App| {
+            let parts = *app.world().get::<Parts>(monster_entity(app, 1)).unwrap();
+            app.world()
+                .get::<MeshMaterial2d<ColorMaterial>>(parts.body)
+                .unwrap()
+                .0
+                .clone()
+        };
+        let one_monster = |view: MonsterView| frame(vec![], vec![view]);
+        let (grunt, scarecrow) = (WireMonsterKind::Grunt, WireMonsterKind::Scarecrow);
+
+        show(&mut app, one_monster(afflicted(grunt, false, false, false)));
+        let palette = app.world().resource::<Palette>();
+        let (own, stun) = (
+            palette.monster.clone(),
+            palette.effects.of(ShownEffect::Stun).clone(),
+        );
+        let slow = palette.effects.of(ShownEffect::Slow).clone();
+        let bleed = palette.effects.of(ShownEffect::Bleed).clone();
+        let own_scarecrow = palette.scarecrow.clone();
+        assert_eq!(color_of(&app), own, "no effect, its own color");
+        let materials = app.world().resource::<Assets<ColorMaterial>>();
+        for (handle, expected) in [
+            (&stun, config::EFFECT_STUN),
+            (&slow, config::EFFECT_SLOW),
+            (&bleed, config::EFFECT_BLEED),
+        ] {
+            let painted = materials.get(handle).expect("the material exists").color;
+            assert_eq!(painted, expected);
+        }
+
+        show(&mut app, one_monster(afflicted(grunt, false, false, true)));
+        assert_eq!(color_of(&app), bleed);
+        show(&mut app, one_monster(afflicted(grunt, false, true, true)));
+        assert_eq!(color_of(&app), slow, "the slow before the bleed");
+        show(&mut app, one_monster(afflicted(grunt, true, true, true)));
+        assert_eq!(color_of(&app), stun, "the stun before all");
+        show(&mut app, one_monster(afflicted(grunt, false, false, false)));
+        assert_eq!(
+            color_of(&app),
+            own,
+            "the effect ended, its own color is back"
+        );
+
+        show(
+            &mut app,
+            one_monster(afflicted(scarecrow, false, false, true)),
+        );
+        assert_eq!(color_of(&app), bleed, "a scarecrow wears the same colors");
+        show(
+            &mut app,
+            one_monster(afflicted(scarecrow, false, false, false)),
+        );
+        assert_eq!(color_of(&app), own_scarecrow);
+        assert_eq!(
+            [&own, &own_scarecrow, &stun, &slow, &bleed]
+                .into_iter()
+                .collect::<HashSet<_>>()
+                .len(),
+            5,
+            "five different materials"
+        );
+    }
+
+    #[test]
+    fn an_effect_color_is_never_close_to_a_body_color_or_to_another_effect_color() {
+        let distance = |a: Color, b: Color| {
+            let (a, b) = (a.to_srgba(), b.to_srgba());
+            (a.red - b.red)
+                .hypot(a.green - b.green)
+                .hypot(a.blue - b.blue)
+        };
+        let effects = [
+            config::EFFECT_STUN,
+            config::EFFECT_SLOW,
+            config::EFFECT_BLEED,
+        ];
+        let bodies = [
+            config::MONSTER,
+            config::SCARECROW,
+            config::YOU,
+            config::ALLY,
+            config::HOSTILE_PLAYER,
+        ];
+        for (index, effect) in effects.into_iter().enumerate() {
+            for other in bodies
+                .into_iter()
+                .chain(effects.into_iter().skip(index + 1))
+            {
+                assert!(
+                    distance(effect, other) >= 0.2,
+                    "{effect:?} and {other:?} are too close to tell apart"
+                );
+            }
+        }
     }
 
     #[test]
