@@ -6,7 +6,7 @@
 //! 사수는 (3, 10)에 서서 동쪽을 조준하고, 몬스터는 한 번에 죽지 않게 HP를 크게 하고 제자리에 서 있게 합니다.
 //! 기대하는 피해량과 속도는 수치표의 활 행에서 구합니다.
 
-use super::support::{Scenario, close};
+use super::support::{Scenario, close, watchtower_shot};
 use crate::expedition::Outcome;
 use crate::ids::{MonsterId, PlayerId, ProjectileId};
 use crate::input::{AimDir, PlayerInput};
@@ -254,7 +254,7 @@ fn an_obstacle_stops_the_projectile() {
 #[test]
 fn a_tower_stops_the_projectile() {
     // 감시탑의 피해량을 0으로 해서 감시탑의 사격이 결과에 섞이지 않게 합니다.
-    let mut s = quiet_field(|t| t.structures.watchtower.damage = 0);
+    let mut s = quiet_field(|t| watchtower_shot(t).damage = 0);
     s.tower_at(8, 10);
 
     let x = shoot_at_a_blocker(s, Vec2::new(3.0, 10.5), Vec2::new(10.0, 10.5));

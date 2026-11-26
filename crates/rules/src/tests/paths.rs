@@ -1,6 +1,6 @@
 //! 몬스터의 이동 경로를 확인합니다: 폭이 1타일인 통로, 감시탑 쪽으로 가는 길.
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, nights, watchtower_shot};
 use crate::input::PlayerInput;
 use crate::math::{Rect, Vec2};
 use crate::world::{Tile, TileUse};
@@ -58,7 +58,7 @@ fn a_crowd_breaks_through_a_village_full_of_towers_and_reaches_the_wagon() {
         t.nights.spawn_interval_secs = t.dt();
         t.guards.per_node = 0;
         t.wagon.max_hp = u32::MAX;
-        t.structures.watchtower.damage = 0;
+        watchtower_shot(t).damage = 0;
         t.village.start_towers = t.spread_tower_sites(t.village.tower_limit);
     });
     let towers_at_start = s.sim.towers().count();

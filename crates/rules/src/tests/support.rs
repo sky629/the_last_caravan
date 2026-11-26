@@ -16,8 +16,8 @@ use crate::sim::Sim;
 use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
-    Buff, CampLayout, Debuff, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning,
-    WavePlan, WaveScaling,
+    Buff, CampLayout, Debuff, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning,
+    ShootTuning, TowerAction, Tuning, WavePlan, WaveScaling,
 };
 use crate::world::{Source, Tile};
 
@@ -411,6 +411,13 @@ pub(crate) fn chest_tuning(t: &mut Tuning, contents: WeaponKind, guards: u32) {
             WeaponKind::Crossbow => t.weapons.crossbow.chest_weight = weight,
             WeaponKind::Rifle => t.weapons.rifle.chest_weight = weight,
         }
+    }
+}
+
+/// 감시탑의 사격 수치입니다. 감시탑의 피해, 쿨다운, 효과를 바꾸는 테스트가 씁니다.
+pub(crate) fn watchtower_shot(t: &mut Tuning) -> &mut ShootTuning {
+    match &mut t.structures.watchtower.action {
+        TowerAction::Shoot(shoot) => shoot,
     }
 }
 

@@ -1,6 +1,6 @@
 //! 기본 수치가 규칙의 전제를 지키는지 확인합니다. 수치를 고치다가 전제가 깨지면 이 테스트가 실패합니다.
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, nights, watchtower_shot};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
 use crate::tuning::{
@@ -1032,10 +1032,38 @@ fn a_swift_that_does_not_speed_up_the_player_is_rejected_and_the_reason_names_it
 #[test]
 fn the_row_of_a_structure_is_checked_like_the_row_of_a_weapon() {
     let mut t = Tuning::default();
-    t.structures.watchtower.on_hit = Some(Debuff::Stun { secs: 0.0 });
+    watchtower_shot(&mut t).on_hit = Some(Debuff::Stun { secs: 0.0 });
     let why = t.validate().expect_err("a stun of no time");
     assert!(why.contains("Watchtower stun secs"), "{why}");
 
-    t.structures.watchtower.on_hit = Some(Debuff::Stun { secs: 0.5 });
+    watchtower_shot(&mut t).on_hit = Some(Debuff::Stun { secs: 0.5 });
     assert_eq!(t.validate(), Ok(()));
+}
+
+#[test]
+fn a_tower_needs_a_range_and_a_cost() {
+    for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.structures.watchtower.range = bad;
+        let why = t.validate().expect_err(&format!("a range of {bad}"));
+        assert!(why.contains("Watchtower range"), "{bad}: {why}");
+    }
+
+    let mut t = Tuning::default();
+    t.structures.watchtower.build_cost = 0;
+    let why = t.validate().expect_err("a tower that costs nothing");
+    assert!(why.contains("Watchtower build_cost"), "{why}");
+}
+
+#[test]
+fn the_cooldown_of_a_shot_is_finite_and_not_negative() {
+    for bad in [-0.1, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        watchtower_shot(&mut t).cooldown_secs = bad;
+        let why = t.validate().expect_err(&format!("a cooldown of {bad}"));
+        assert!(why.contains("Watchtower cooldown_secs"), "{bad}: {why}");
+    }
+    let mut t = Tuning::default();
+    watchtower_shot(&mut t).cooldown_secs = 0.0;
+    assert_eq!(t.validate(), Ok(()), "a tower that shoots every tick");
 }

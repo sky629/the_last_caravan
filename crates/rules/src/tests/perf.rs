@@ -12,7 +12,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, nights, watchtower_shot};
 use crate::ids::{MonsterId, TowerId};
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::WeaponKind;
@@ -45,7 +45,7 @@ fn village_under_siege_with(
         t.guards.per_chest = 0;
         t.village.start_towers = towers;
         t.structures.watchtower.max_hp = tower_hp;
-        t.structures.watchtower.damage = 0;
+        watchtower_shot(t).damage = 0;
         adjust(t);
     })
 }
@@ -592,7 +592,7 @@ fn perf_the_tick_pair_around_opening_a_chest_with_the_tower_cap_and_300_monsters
         t.guards.per_chest = 0;
         t.village.start_towers = t.spread_tower_sites(t.village.tower_limit);
         t.structures.watchtower.max_hp = u32::MAX;
-        t.structures.watchtower.damage = 0;
+        watchtower_shot(t).damage = 0;
         t.wagon.max_hp = u32::MAX;
         t.player.max_hp = u32::MAX;
     });

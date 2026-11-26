@@ -1,7 +1,7 @@
 //! 몬스터에게 걸리는 효과(감속, 출혈, 스턴)를 확인합니다. 효과의 시간은 `MonsterEffects`의 질문(`is_slowed`, `is_bleeding`, `is_stunned`)과
 //! 몬스터의 위치와 HP로 읽고, 남은 Tick을 직접 읽지 않습니다.
 
-use super::support::{Scenario, camp_of, close};
+use super::support::{Scenario, camp_of, close, watchtower_shot};
 use crate::debrief::Report;
 use crate::effect::MonsterEffects;
 use crate::expedition::Outcome;
@@ -122,8 +122,8 @@ fn every_weapon_carries_the_effect_of_its_row() {
 
 #[test]
 fn the_watchtower_does_not_apply_an_effect() {
-    let t = Tuning::default();
-    assert_eq!(t.structures.watchtower.on_hit, None);
+    let mut t = Tuning::default();
+    assert_eq!(watchtower_shot(&mut t).on_hit, None);
 }
 
 #[test]
@@ -704,7 +704,7 @@ fn standing_still_with_a_tower(on_hit: Option<Debuff>) -> Scenario {
         t.monsters.grunt.speed = 0.0;
         t.monsters.grunt.separation_speed = 0.0;
         t.monsters.grunt.aggro_range = 0.0;
-        t.structures.watchtower.on_hit = on_hit;
+        watchtower_shot(t).on_hit = on_hit;
     });
     s.tower_at(14, 3);
     s.monster_at(14.5, 5.0);
