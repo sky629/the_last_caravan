@@ -227,8 +227,9 @@ pub struct MonsterTuning {
     /// 피해와 효과를 받는 방식입니다.
     pub resist: Resist,
     pub speed: f32,
+    /// 근접 공격의 피해입니다. 0이면 근접 공격을 하지 않습니다(허수아비와 보스).
     pub attack_damage: u32,
-    /// 몬스터의 가장자리에서 대상의 가장자리까지 잰 근접 공격 거리입니다.
+    /// 몬스터의 가장자리에서 대상의 가장자리까지 잰 근접 공격 거리입니다. 근접 공격을 하지 않는 몬스터에게는 대상에게 다가가서 멈추는 거리입니다.
     pub attack_reach: f32,
     pub attack_cooldown_secs: f32,
     /// 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 포탑을 쫓습니다.
@@ -592,8 +593,10 @@ pub struct NightTuning {
     /// 한 방향에서 나란히 나타나는 줄의 수와 줄 사이의 간격입니다.
     pub spawn_lanes: u32,
     pub spawn_lane_spacing: f32,
-    /// 동시에 살아 있을 수 있는 몬스터의 수입니다. 이 수에 이르면 등장이 멈췄다가 몬스터가 줄면 이어집니다.
+    /// 동시에 살아 있을 수 있는 몬스터의 수입니다. 이 수에 이르면 등장이 멈췄다가 몬스터가 줄면 이어집니다. 보스도 셉니다.
     pub max_alive: u32,
+    /// 마지막 밤의 마지막 무리를 처치한 뒤에 일어나는 일입니다.
+    pub finale: Finale,
 }
 
 impl NightTuning {
@@ -611,14 +614,17 @@ impl NightTuning {
     /// `day`번째 밤의 `wave`번째 무리에 나올 몬스터의 수입니다. 방에 플레이어가 `party`명 있을 때의 크기이고, 없는 무리는 0입니다.
     /// 인원에 따라 달라지는 값은 이 함수 한 곳에서 정합니다. 있는 무리는 인원이 몇 명이어도 한 마리 이상입니다.
     pub fn wave_size(&self, day: u32, wave: u32, party: u32) -> u32 {
-        let Some(plan) = self.wave(day, wave) else {
-            return 0;
-        };
+        self.wave(day, wave)
+            .map_or(0, |plan| self.scaled(plan.count, party))
+    }
+
+    /// 기준 인원일 때의 수 `count`를 방에 플레이어가 `party`명 있을 때의 수로 바꿉니다. 무리의 크기와 보스의 HP가 모두 이 함수 하나를 거칩니다.
+    /// `count`가 1 이상이면 결과도 1 이상입니다.
+    pub fn scaled(&self, count: u32, party: u32) -> u32 {
         match self.scaling {
-            WaveScaling::Fixed => plan.count,
+            WaveScaling::Fixed => count,
             WaveScaling::ByParty { full_party } => {
-                let scaled =
-                    (u64::from(plan.count) * u64::from(party)).div_ceil(u64::from(full_party));
+                let scaled = (u64::from(count) * u64::from(party)).div_ceil(u64::from(full_party));
                 u32::try_from(scaled.max(1)).unwrap_or(u32::MAX)
             }
         }
@@ -638,6 +644,50 @@ impl NightTuning {
     fn plan(&self, day: u32) -> Option<&NightPlan> {
         self.plans.get((day as usize).checked_sub(1)?)
     }
+}
+
+/// 마지막 밤의 마지막 무리를 모두 처치한 뒤에 일어나는 일입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Finale {
+    /// 원정이 곧바로 성공으로 끝납니다. 부하 시험(`--stress`)과 원정의 흐름만 시험하는 테스트가 씁니다.
+    LastWave,
+    /// 경고가 이어진 뒤 보스가 나타나고, 보스를 처치하면 원정이 성공으로 끝납니다. 보스의 몸은 `MonsterTable::boss`에 있습니다.
+    Boss(BossTuning),
+}
+
+/// 보스의 행동 하나입니다. 행동마다 그 행동에서만 의미 있는 수치를 `BossTuning`의 필드 하나로 가집니다.
+/// 행동을 추가하려면 변형을 하나 더하고, `BossTuning`에 수치를 더하고, `boss::start`의 `match`에 갈래를 더합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Move {
+    /// 대상이 서 있던 자리에 원을 예고하고, 시간이 지나면 원 안의 모든 것에 피해를 줍니다.
+    Slam,
+}
+
+/// 내려찍기의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlamTuning {
+    /// 원이 보이기 시작해서 피해가 나기까지의 시간입니다.
+    pub windup_secs: f32,
+    /// 원의 반지름(타일)입니다. 대상이 서 있던 자리가 중심입니다.
+    pub radius: f32,
+    pub strike: StrikeTuning,
+}
+
+/// 마지막 밤의 보스에 관한 수치입니다. 보스의 몸과 HP와 걷는 속도는 몬스터 종류표(`MonsterTable::boss`)에 있습니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BossTuning {
+    /// 마지막 무리를 모두 처치한 뒤 보스가 나타나기까지의 시간입니다.
+    pub warning_secs: f32,
+    /// 행동의 순서입니다. 마지막 행동이 끝나면 처음부터 되풀이합니다. 비어 있지 않습니다.
+    pub script: Vec<Move>,
+    /// 한 행동이 끝난 뒤 다음 행동을 시작하기까지 걷는 시간입니다. 보스가 나타난 뒤 첫 행동까지도 같습니다.
+    pub rest_secs: f32,
+    /// 보스가 대상으로 삼을 수 있는 플레이어와 행동을 시작할 수 있는 대상까지의 가장 먼 거리(타일)입니다.
+    /// 플레이어는 보스의 중심에서 플레이어의 중심까지, 마차는 보스의 중심에서 마차의 가장자리까지 잽니다.
+    pub target_range: f32,
+    /// 보스가 가장 많이 맞은 플레이어를 고를 때 되돌아보는 시간입니다.
+    pub threat_secs: f32,
+    pub slam: SlamTuning,
 }
 
 /// 예고된 공격의 영역 안에 있던 대상이 한 번 맞을 때 받는 피해입니다. 대상의 종류마다 다릅니다.
@@ -837,6 +887,7 @@ impl Tuning {
         self.validate_weapons()?;
         self.validate_effects()?;
         self.validate_structures()?;
+        self.validate_finale()?;
 
         let sprint = &self.sprint;
         if !(sprint.speed_multiplier.is_finite() && sprint.speed_multiplier >= 1.0) {
@@ -1039,6 +1090,30 @@ impl Tuning {
         SpawnPlan::new(&tiles, self)?;
         self.validate_camp(bounds)?;
         Ok(())
+    }
+
+    /// 마지막 밤의 끝을 검사합니다. 보스가 없으면 검사할 것이 없습니다.
+    ///
+    /// - 행동의 순서는 비어 있지 않아야 합니다. 비어 있으면 보스가 아무것도 하지 않습니다.
+    /// - 경고와 되돌아보는 시간과 예고의 시간은 유한하고 0보다 길어야 하고, 걷는 시간은 유한하고 0 이상이어야 합니다. 예고가 0초이면 보고 피할 수 없습니다.
+    /// - 보스가 대상으로 삼는 거리와 원의 반지름은 유한하고 0보다 길어야 합니다.
+    fn validate_finale(&self) -> Result<(), String> {
+        let Finale::Boss(boss) = &self.nights.finale else {
+            return Ok(());
+        };
+        if boss.script.is_empty() {
+            return Err("the boss script needs at least one move".to_string());
+        }
+        for (name, value) in [
+            ("warning_secs", boss.warning_secs),
+            ("threat_secs", boss.threat_secs),
+            ("slam windup_secs", boss.slam.windup_secs),
+            ("target_range", boss.target_range),
+            ("slam radius", boss.slam.radius),
+        ] {
+            check_positive(&format!("boss {name}"), value)?;
+        }
+        check_not_negative("boss rest_secs", boss.rest_secs)
     }
 
     /// 야영지의 배치를 검사합니다. 허수아비와 진열대는 맵 안에 있고 장애물과 마차에 겹치지 않아야 합니다.
@@ -1691,6 +1766,23 @@ impl Default for Tuning {
                 spawn_lanes: 5,
                 spawn_lane_spacing: 0.9,
                 max_alive: 300,
+                // 예고는 걸어서 피할 수 있는 시간입니다. 원의 한가운데에서 걸어 나가는 데 0.65초가 걸리므로, 0.4초 늦게 움직여도 내려찍기를 피합니다.
+                finale: Finale::Boss(BossTuning {
+                    warning_secs: 5.0,
+                    script: vec![Move::Slam],
+                    rest_secs: 3.0,
+                    target_range: 8.0,
+                    threat_secs: 5.0,
+                    slam: SlamTuning {
+                        windup_secs: 1.5,
+                        radius: 2.5,
+                        strike: StrikeTuning {
+                            player: 50,
+                            tower: 100,
+                            wagon: 60,
+                        },
+                    },
+                }),
             },
             map: MapSpec::frontier(),
         }

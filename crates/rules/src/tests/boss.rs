@@ -1,14 +1,17 @@
-//! 마지막 밤의 보스: 포탑의 피해와 효과를 받는 방식, 맞는 몸의 크기, 일반 몬스터가 달라지지 않는 것.
+//! 마지막 밤의 보스: 인원에 따른 HP, 대상을 고르는 규칙, 예고된 내려찍기를 걸어서 피하는 것,
+//! 포탑의 피해와 효과를 받는 방식, 맞는 몸의 크기, 일반 몬스터가 달라지지 않는 것.
 
 use super::support::{Scenario, close, nights, watchtower_shot};
-use crate::ids::MonsterId;
+use crate::boss::{Act, Aim};
+use crate::ids::{MonsterId, PlayerId};
 use crate::input::{AimDir, MoveDir, PlayerInput};
 use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::math::Vec2;
 use crate::monster::Order;
-use crate::structures::TowerState;
+use crate::player::Presence;
+use crate::structures::{Tower, TowerState};
 use crate::telegraph::{self, Zone};
-use crate::tuning::{Debuff, StrikeTuning, Tuning};
+use crate::tuning::{BossTuning, Debuff, Finale, StrikeTuning, Tuning, WaveScaling};
 use crate::world::{Hit, Source, Target};
 
 /// 기본 수치에서 인원이 넷일 때 보스의 최대 HP입니다.
@@ -16,9 +19,26 @@ fn full_hp() -> u32 {
     Tuning::default().monsters.boss.max_hp
 }
 
-/// 보통 몬스터도 놓인 자리에 서 있기만 하는 20 x 20 빈 들판입니다.
+/// 보스의 수치를 켭니다. 원정을 시험하는 시나리오는 보스를 꺼 두고 시작하므로, 보스가 필요한 테스트가 부릅니다.
+fn with_boss(t: &mut Tuning) {
+    t.nights.finale = Tuning::default().nights.finale;
+}
+
+/// 시나리오의 수치에서 보스의 행동을 바꿉니다. 보스가 켜져 있어야 합니다.
+fn boss_tuning(t: &mut Tuning) -> &mut BossTuning {
+    match &mut t.nights.finale {
+        Finale::Boss(cfg) => cfg,
+        Finale::LastWave => panic!("the scenario has a boss"),
+    }
+}
+
+/// 보스와 보통 몬스터가 놓인 자리에 서 있기만 하는 20 x 20 빈 들판입니다. 보스의 행동만 시험할 때 씁니다.
 fn still_field() -> Scenario {
-    Scenario::with_tuning(|t| t.monsters.grunt.speed = 0.0)
+    Scenario::with_tuning(|t| {
+        with_boss(t);
+        t.monsters.boss.speed = 0.0;
+        t.monsters.grunt.speed = 0.0;
+    })
 }
 
 /// 보스의 몸을 `(x, y)`에 놓습니다. 몸은 서 있기만 하므로 몸이 맞고 효과를 받는 규칙만 시험할 수 있습니다.
@@ -29,8 +49,532 @@ fn put_boss_body(s: &mut Scenario, x: f32, y: f32) -> MonsterId {
         .spawn_monster(MonsterKind::Boss, Order::Stand, Vec2::new(x, y), &t)
 }
 
+/// 보스를 `(x, y)`에 놓습니다. 방에 `party`명이 있는 밤입니다.
+fn put_boss(s: &mut Scenario, x: f32, y: f32, party: u32) -> MonsterId {
+    let t = s.sim.tuning().clone();
+    let Finale::Boss(cfg) = &t.nights.finale else {
+        panic!("the scenario has a boss");
+    };
+    s.sim
+        .world_mut()
+        .spawn_boss(Vec2::new(x, y), party, cfg, &t)
+}
+
+fn move_boss(s: &mut Scenario, x: f32, y: f32) {
+    let id = s.sim.boss().expect("a boss").id;
+    s.sim
+        .world_mut()
+        .monsters
+        .iter_mut()
+        .find(|monster| monster.id == id)
+        .expect("the body")
+        .pos = Vec2::new(x, y);
+}
+
 fn hp_of(s: &Scenario, id: MonsterId) -> u32 {
     s.monster(id).expect("the monster is alive").hp
+}
+
+fn boss_hp(s: &Scenario) -> u32 {
+    hp_of(s, s.sim.boss().expect("a boss").id)
+}
+
+fn aim(s: &Scenario) -> Aim {
+    s.sim.boss().expect("a boss").aim
+}
+
+fn act(s: &Scenario) -> Act {
+    s.sim.boss().expect("a boss").act
+}
+
+/// 플레이어 `by`가 보스에게 `amount`의 피해를 준 것으로 만듭니다. 무기를 거치지 않고 대상을 고르는 규칙만 시험할 때 씁니다.
+fn hit_boss(s: &mut Scenario, by: PlayerId, amount: u32) {
+    let t = s.sim.tuning().clone();
+    let id = s.sim.boss().expect("a boss").id;
+    s.sim.world_mut().apply_hits(
+        &[Hit {
+            target: Target::Monster(id),
+            amount,
+            by: Source::Player(by),
+            debuff: None,
+        }],
+        &t,
+    );
+}
+
+/// 걷는 시간이 남지 않았다고 정해서 다음 Tick에 행동을 시작하게 합니다.
+fn skip_the_rest(s: &mut Scenario) {
+    let boss = s.sim.world_mut().boss.as_mut().expect("a boss");
+    boss.act = Act::Walking { ticks_left: 1 };
+}
+
+fn run_until_slamming(s: &mut Scenario) {
+    skip_the_rest(s);
+    s.run_until(5, |sim| {
+        matches!(sim.boss().map(|boss| boss.act), Some(Act::Slamming(_)))
+    });
+}
+
+fn slam_center(s: &Scenario) -> Vec2 {
+    match act(s) {
+        Act::Slamming(telegraph) => match telegraph.zone {
+            Zone::Circle { center, .. } => center,
+        },
+        other => panic!("the boss is not slamming: {other:?}"),
+    }
+}
+
+fn hp_of_player(s: &Scenario, id: PlayerId) -> u32 {
+    s.player(id).hp()
+}
+
+// ---------------------------------------------------------------------------------------------
+// 인원에 따른 HP
+
+#[test]
+fn the_boss_max_hp_is_proportional_to_the_party_of_that_night() {
+    for party in 1..=4 {
+        let hp = (full_hp() * party).div_ceil(4);
+        let mut s = Scenario::with_tuning(|t| {
+            with_boss(t);
+            t.nights.scaling = WaveScaling::ByParty { full_party: 4 };
+        });
+        put_boss(&mut s, 5.0, 5.0, party);
+
+        assert_eq!(boss_hp(&s), hp, "{party} players");
+        assert_eq!(s.sim.boss().expect("a boss").max_hp, hp);
+    }
+}
+
+#[test]
+fn a_boss_of_a_fixed_size_night_has_the_full_hp_whatever_the_party() {
+    let mut s = Scenario::with_tuning(with_boss);
+    put_boss(&mut s, 5.0, 5.0, 1);
+
+    assert_eq!(boss_hp(&s), full_hp());
+}
+
+// ---------------------------------------------------------------------------------------------
+// 대상
+
+#[test]
+fn the_boss_aims_at_the_player_who_hit_it_hardest_and_only_a_harder_hitter_takes_the_aim_over() {
+    let mut s = still_field();
+    let (a, b) = (s.player_at(5.0, 8.0), s.player_at(8.0, 5.0));
+    put_boss(&mut s, 5.0, 5.0, 4);
+
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Wagon, "nobody has hit it yet");
+
+    hit_boss(&mut s, a, 50);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Player(a));
+
+    hit_boss(&mut s, b, 30);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Player(a), "50 is more than 30");
+
+    hit_boss(&mut s, b, 30);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Player(b), "60 is more than 50");
+
+    hit_boss(&mut s, a, 10);
+    s.run_ticks(1);
+    assert_eq!(
+        aim(&s),
+        Aim::Player(b),
+        "60 and 60 are a tie, and the holder keeps it"
+    );
+
+    hit_boss(&mut s, a, 1);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Player(a), "61 is more than 60");
+}
+
+#[test]
+fn a_tie_between_two_players_who_do_not_hold_the_aim_goes_to_the_lower_number() {
+    let mut s = still_field();
+    let (a, b) = (s.player_at(5.0, 8.0), s.player_at(8.0, 5.0));
+    put_boss(&mut s, 5.0, 5.0, 4);
+
+    hit_boss(&mut s, b, 40);
+    hit_boss(&mut s, a, 40);
+    s.run_ticks(1);
+
+    assert_eq!(aim(&s), Aim::Player(a.min(b)));
+}
+
+#[test]
+fn a_player_who_goes_down_or_leaves_the_seat_is_skipped_and_with_nobody_left_the_boss_aims_at_the_wagon()
+ {
+    let mut s = still_field();
+    let (a, b) = (s.player_at(5.0, 8.0), s.player_at(8.0, 5.0));
+    // 때리지 않은 플레이어 하나가 멀리 서 있어야 앞의 둘이 모두 쓰러지거나 자리를 비워도 원정이 실패로 끝나지 않습니다.
+    s.player_at(15.0, 2.0);
+    put_boss(&mut s, 5.0, 5.0, 4);
+    hit_boss(&mut s, a, 50);
+    hit_boss(&mut s, b, 20);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Player(a));
+
+    s.knock_down(a);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Player(b), "the next one");
+
+    s.sim.set_presence(b, Presence::Away);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Wagon, "an absent player is not aimed at");
+
+    s.sim.set_presence(b, Presence::Here);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Player(b));
+    s.kill(b);
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Wagon);
+}
+
+#[test]
+fn a_player_farther_than_eight_tiles_is_not_aimed_at_however_hard_the_player_hits() {
+    let mut s = still_field();
+    let far = s.player_at(5.0, 13.0);
+    let near = s.player_at(5.0, 8.0);
+    put_boss(&mut s, 5.0, 5.0, 4);
+    hit_boss(&mut s, far, 500);
+    hit_boss(&mut s, near, 1);
+
+    s.run_ticks(1);
+    assert_eq!(
+        aim(&s),
+        Aim::Player(far),
+        "exactly 8 tiles away is in range"
+    );
+
+    s.move_player(far, Vec2::new(5.0, 13.01));
+    s.run_ticks(1);
+    assert_eq!(
+        aim(&s),
+        Aim::Player(near),
+        "beyond 8 tiles, the far one is out"
+    );
+
+    s.move_player(near, Vec2::new(5.0, 14.0));
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Wagon, "both are out of range");
+}
+
+#[test]
+fn damage_older_than_five_seconds_no_longer_counts_and_tower_damage_never_does() {
+    let mut s = still_field();
+    let a = s.player_at(5.0, 8.0);
+    put_boss(&mut s, 5.0, 5.0, 4);
+    hit_boss(&mut s, a, 50);
+    let window = s.ticks(5.0);
+
+    s.run_ticks(window);
+    assert_eq!(
+        aim(&s),
+        Aim::Player(a),
+        "exactly five seconds later it still counts"
+    );
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Wagon, "one tick later it does not");
+
+    // 포탑이 준 피해는 아무리 많아도 대상을 정하지 않습니다.
+    let t = s.sim.tuning().clone();
+    let id = s.sim.boss().expect("a boss").id;
+    s.sim.world_mut().apply_hits(
+        &[Hit {
+            target: Target::Monster(id),
+            amount: 100,
+            by: Source::Tower,
+            debuff: None,
+        }],
+        &t,
+    );
+    s.run_ticks(1);
+    assert_eq!(aim(&s), Aim::Wagon);
+}
+
+#[test]
+fn a_players_bleed_counts_for_the_aim() {
+    let mut s = still_field();
+    let owner = s.player_at(5.0, 8.0);
+    let boss = put_boss(&mut s, 5.0, 5.0, 4);
+    s.afflict(
+        boss,
+        Debuff::Bleed {
+            damage: 5,
+            secs: 3.0,
+        },
+        owner,
+    );
+
+    s.run_ticks(s.ticks(1.0));
+    assert_eq!(hp_of(&s, boss), full_hp() - 5);
+    // 대상은 피해를 적용하기 전에 정하므로 다음 Tick에 출혈의 피해가 반영됩니다.
+    s.run_ticks(1);
+
+    assert_eq!(
+        aim(&s),
+        Aim::Player(owner),
+        "the bleed is the player's damage"
+    );
+}
+
+#[test]
+fn the_boss_starts_a_move_only_when_its_aim_is_within_eight_tiles() {
+    let mut s = still_field();
+    put_boss(&mut s, 3.0, 3.0, 4);
+    skip_the_rest(&mut s);
+
+    s.run_ticks(60);
+    assert!(
+        matches!(act(&s), Act::Walking { ticks_left: 0 }),
+        "the wagon is too far, so the boss waits: {:?}",
+        act(&s)
+    );
+
+    // 마차의 사각형은 (17, 17)부터입니다. (10, 10)에서 가장자리까지 9.9타일, (12, 12)에서 7.07타일입니다.
+    move_boss(&mut s, 10.0, 10.0);
+    s.run_ticks(3);
+    assert!(matches!(act(&s), Act::Walking { .. }));
+    move_boss(&mut s, 12.0, 12.0);
+    s.run_ticks(1);
+    assert!(matches!(act(&s), Act::Slamming(_)), "{:?}", act(&s));
+}
+
+// ---------------------------------------------------------------------------------------------
+// 내려찍기
+
+/// 보스(6, 10)가 3타일 떨어진 플레이어를 노리고 막 내려찍기를 예고한 상황입니다.
+fn slam_at_a_player() -> (Scenario, PlayerId) {
+    let mut s = still_field();
+    let player = s.player_at(6.0, 13.0);
+    put_boss(&mut s, 6.0, 10.0, 4);
+    hit_boss(&mut s, player, 10);
+    s.run_ticks(1);
+    run_until_slamming(&mut s);
+    (s, player)
+}
+
+#[test]
+fn the_slam_is_telegraphed_for_one_point_five_seconds_where_the_aim_stood_and_does_not_follow() {
+    let (mut s, player) = slam_at_a_player();
+    let center = slam_center(&s);
+    assert_eq!(center, Vec2::new(6.0, 13.0), "where the aim stood");
+    let Act::Slamming(telegraph) = act(&s) else {
+        panic!("slamming");
+    };
+    assert_eq!(telegraph.ticks_left, 30, "one and a half seconds");
+
+    s.hold_move(player, 1.0, 0.0);
+    for _ in 0..telegraph.ticks_left - 1 {
+        s.run_ticks(1);
+        assert_eq!(slam_center(&s), center, "the circle stays");
+    }
+}
+
+#[test]
+fn a_player_who_stays_in_the_circle_takes_the_damage_and_one_who_leaves_takes_none() {
+    let (mut stay, stayer) = slam_at_a_player();
+    stay.run_ticks(30);
+    assert_eq!(hp_of_player(&stay, stayer), 100 - 50);
+    assert!(
+        matches!(act(&stay), Act::Walking { .. }),
+        "the slam is over"
+    );
+
+    let (mut leave, leaver) = slam_at_a_player();
+    leave.hold_move(leaver, 1.0, 0.0);
+    leave.run_ticks(30);
+    assert_eq!(hp_of_player(&leave, leaver), 100);
+}
+
+/// 원의 중심에 서 있는 플레이어가 걸어서 원 밖으로 나가는 데 필요한 Tick입니다. 반지름보다 멀어져야 원 밖입니다.
+fn ticks_to_walk_out(s: &Scenario) -> u32 {
+    let t = s.sim.tuning();
+    let Finale::Boss(cfg) = &t.nights.finale else {
+        panic!("a boss");
+    };
+    let step = t.player.speed * t.dt();
+    (cfg.slam.radius / step).floor() as u32 + 1
+}
+
+#[test]
+fn a_player_in_the_middle_who_starts_walking_four_tenths_of_a_second_late_gets_out() {
+    let (mut s, player) = slam_at_a_player();
+    let late = s.ticks(0.4);
+    assert_eq!(late, 8);
+
+    s.run_ticks(late);
+    s.hold_move(player, 1.0, 0.0);
+    s.run_ticks(30 - late);
+
+    assert_eq!(hp_of_player(&s, player), 100, "out of the circle in time");
+}
+
+#[test]
+fn the_latest_start_that_still_gets_out_by_walking_is_most_of_a_second() {
+    let (probe, _) = slam_at_a_player();
+    let windup = 30;
+    let needed = ticks_to_walk_out(&probe);
+    let latest = windup - needed;
+    println!(
+        "slam: {windup} ticks of warning, {needed} ticks to walk out, so the latest start is {latest} ticks late"
+    );
+    assert!(
+        latest >= probe.ticks(0.8),
+        "0.4 seconds late is well inside, and so is 0.8"
+    );
+
+    let (mut s, player) = slam_at_a_player();
+    s.run_ticks(latest);
+    s.hold_move(player, 1.0, 0.0);
+    s.run_ticks(windup - latest);
+    assert_eq!(
+        hp_of_player(&s, player),
+        100,
+        "{latest} ticks late is still enough"
+    );
+
+    let (mut s, player) = slam_at_a_player();
+    s.run_ticks(latest + 1);
+    s.hold_move(player, 1.0, 0.0);
+    s.run_ticks(windup - latest - 1);
+    assert_eq!(hp_of_player(&s, player), 50, "one tick later is not");
+}
+
+#[test]
+fn a_slam_hurts_the_towers_and_the_wagon_it_covers_and_spares_the_rest() {
+    let mut s = still_field();
+    let player = s.player_at(15.0, 15.0);
+    put_boss(&mut s, 12.0, 15.0, 4);
+    hit_boss(&mut s, player, 10);
+    let inside = s.tower_at(14, 15);
+    let outside = s.tower_at(2, 2);
+    s.run_ticks(1);
+    run_until_slamming(&mut s);
+    // 플레이어는 원의 중심에 선 채로 맞고, 마차(17, 17)는 중심에서 2.83타일이라 원 밖입니다.
+    s.run_ticks(30);
+
+    let full = s.sim.tuning().structures.watchtower.max_hp;
+    let hp = |id| s.sim.towers().find(|tower| tower.id == id).map(Tower::hp);
+    assert_eq!(hp(inside), Some(full - 100));
+    assert_eq!(hp(outside), Some(full));
+    assert_eq!(s.sim.wagon().hp, s.sim.tuning().wagon.max_hp);
+}
+
+#[test]
+fn a_slam_on_the_wagon_lands_on_the_middle_of_the_wagon() {
+    let mut s = still_field();
+    put_boss(&mut s, 12.0, 12.0, 4);
+    run_until_slamming(&mut s);
+
+    assert_eq!(slam_center(&s), s.sim.wagon().rect.center());
+    s.run_ticks(30);
+    assert_eq!(s.sim.wagon().hp, s.sim.tuning().wagon.max_hp - 60);
+}
+
+#[test]
+fn a_slam_does_not_hurt_the_boss_or_the_monsters_in_it() {
+    let mut s = still_field();
+    let boss = put_boss(&mut s, 12.0, 12.0, 4);
+    let grunt = s.monster_at(13.0, 12.0);
+    run_until_slamming(&mut s);
+
+    s.run_ticks(30);
+
+    assert_eq!(hp_of(&s, boss), full_hp());
+    assert_eq!(hp_of(&s, grunt), 60);
+}
+
+#[test]
+fn the_boss_walks_a_rest_between_slams_and_slams_again() {
+    let mut s = still_field();
+    put_boss(&mut s, 12.0, 12.0, 4);
+    let rest = s.ticks(3.0);
+    let mut starts = Vec::new();
+    let mut was_slamming = false;
+    for _ in 0..300 {
+        s.run_ticks(1);
+        let slamming = matches!(act(&s), Act::Slamming(_));
+        if slamming && !was_slamming {
+            starts.push(s.sim.tick());
+        }
+        was_slamming = slamming;
+    }
+
+    assert!(starts.len() >= 3, "{starts:?}");
+    assert_eq!(starts[0], u64::from(rest), "the first slam after the rest");
+    for pair in starts.windows(2) {
+        assert_eq!(pair[1] - pair[0], u64::from(30 + rest), "slam then rest");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 걷기
+
+/// 보스가 걷기만 하는 20 x 20 빈 들판입니다. 걷는 시간이 길어서 행동을 시작하지 않습니다.
+fn walking_field() -> Scenario {
+    Scenario::with_tuning(|t| {
+        with_boss(t);
+        boss_tuning(t).rest_secs = 1000.0;
+    })
+}
+
+fn body_of_boss(s: &Scenario) -> Vec2 {
+    s.monster(s.sim.boss().expect("a boss").id)
+        .expect("the body")
+        .pos
+}
+
+#[test]
+fn the_boss_walks_to_the_wagon_and_stops_at_its_edge_without_striking_it() {
+    let mut s = walking_field();
+    put_boss(&mut s, 5.0, 5.0, 4);
+    let wagon = s.sim.wagon().rect;
+    let reach = s.sim.tuning().monsters.longest_engage_distance();
+
+    s.run_ticks(600);
+
+    let gap = wagon.distance_to(body_of_boss(&s));
+    assert!(gap <= reach + 0.05, "the boss is at the wagon: {gap}");
+    assert!(gap > reach - 0.3, "and no closer than its reach: {gap}");
+    assert_eq!(s.sim.wagon().hp, s.sim.tuning().wagon.max_hp, "no melee");
+}
+
+#[test]
+fn the_boss_walks_to_the_player_it_aims_at_and_stops_beside_the_player_without_striking() {
+    let mut s = walking_field();
+    let player = s.player_at(5.0, 9.0);
+    put_boss(&mut s, 5.0, 5.0, 4);
+    hit_boss(&mut s, player, 10);
+
+    // 피해를 준 지 5초가 지나면 대상이 마차로 돌아가므로, 그 안에 닿을 거리에 세웁니다.
+    s.run_ticks(80);
+
+    let gap = body_of_boss(&s).distance(s.player(player).pos);
+    assert!(gap < 1.5, "the boss came to the player: {gap}");
+    assert_eq!(hp_of_player(&s, player), 100, "no melee");
+}
+
+#[test]
+fn the_boss_stands_still_while_it_telegraphs_a_slam() {
+    let mut s = Scenario::with_tuning(|t| {
+        with_boss(t);
+        t.monsters.grunt.speed = 0.0;
+    });
+    let player = s.player_at(10.0, 13.0);
+    put_boss(&mut s, 10.0, 9.0, 4);
+    hit_boss(&mut s, player, 10);
+    s.run_ticks(1);
+    run_until_slamming(&mut s);
+    let at = body_of_boss(&s);
+
+    s.run_ticks(29);
+
+    assert!(matches!(act(&s), Act::Slamming(_)), "still telegraphing");
+    assert_eq!(body_of_boss(&s), at);
 }
 
 // ---------------------------------------------------------------------------------------------
