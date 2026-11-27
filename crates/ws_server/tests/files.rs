@@ -549,6 +549,46 @@ async fn downloads_in_progress_hold_file_slots_but_no_game_seat() {
 }
 
 #[tokio::test]
+async fn a_download_that_keeps_reading_too_slowly_is_cut_at_the_time_its_size_allows() {
+    let dir = web_dir();
+    dir.write("big_bg.wasm", &vec![7u8; 32 * 1024 * 1024]);
+    // 32MiB를 초당 64MiB로 보내면 0.5초이므로, 응답 하나에 허락되는 시간은 0.7초입니다.
+    let limits = ServerLimits {
+        max_file_responses: 1,
+        write_timeout: Duration::from_secs(30),
+        file_response_grace: Duration::from_millis(200),
+        file_min_bytes_per_sec: 64 * 1024 * 1024,
+        ..ServerLimits::default()
+    };
+    let mut server = serving(&dir.0, limits);
+    let addr = server.local_addr();
+
+    let mut slow = start_download(addr, "big_bg.wasm");
+    let reader = std::thread::spawn(move || {
+        // 조각마다의 쓰기 시간 제한에는 걸리지 않을 만큼 계속 읽지만, 전체를 받기에는 너무 느립니다.
+        let mut received = 0usize;
+        let mut buffer = [0u8; 4096];
+        loop {
+            match slow.read(&mut buffer) {
+                Ok(0) | Err(_) => return received,
+                Ok(count) => received += count,
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+
+    assert!(
+        page_is_served_again(&mut server).await,
+        "the response that took longer than its size allows frees the slot"
+    );
+    let received = reader.join().expect("the slow reader");
+    assert!(
+        received < 32 * 1024 * 1024,
+        "the slow download is cut short, got {received} bytes"
+    );
+}
+
+#[tokio::test]
 async fn a_download_that_stops_reading_is_cut_at_the_write_timeout() {
     let dir = web_dir();
     dir.write("big_bg.wasm", &vec![7u8; 32 * 1024 * 1024]);

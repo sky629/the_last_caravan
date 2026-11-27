@@ -335,7 +335,7 @@ async fn serve_link(
         Ok(Some(Routed::Game(replayed))) => replayed,
         Ok(Some(Routed::File(web, stream, request))) => {
             drop(seat);
-            send_file(stream, &request, &web, limits.write_timeout).await;
+            send_file(stream, &request, &web, &limits).await;
             return;
         }
         _ => return,
@@ -541,21 +541,31 @@ fn parse_head(read: &[u8]) -> Head {
 }
 
 /// 파일 요청에 답하고 접속을 닫습니다. 파일 응답의 자리가 없으면 `503`으로 답합니다.
-/// 쓰기 하나(머리, 본문의 조각 하나)가 `write_timeout` 안에 끝나지 않으면 그대로 닫습니다.
-async fn send_file(mut stream: TcpStream, request: &Request, web: &Web, write_timeout: Duration) {
+/// 쓰기 하나(머리, 본문의 조각 하나)가 `write_timeout` 안에 끝나지 않거나, 응답 전체가 본문의 크기가 허락하는 시간
+/// (`file_response_grace`에 본문의 크기를 `file_min_bytes_per_sec`로 나눈 시간을 더한 값) 안에 끝나지 않으면 그대로 닫습니다.
+/// 그래서 읽기를 멈춘 상대도, 조금씩 계속 읽는 상대도 파일 응답의 자리를 정해진 시간보다 오래 차지하지 못합니다.
+async fn send_file(mut stream: TcpStream, request: &Request, web: &Web, limits: &ServerLimits) {
     // 자리는 이 함수가 끝날 때(접속을 닫을 때) 돌아갑니다.
     let slot = web.slots.try_acquire();
     let answer = match slot {
         Ok(_) => web.files.answer(&request.method, &request.target),
         Err(_) => Answer::busy(&request.method),
     };
-    for part in std::iter::once(&answer.head[..]).chain(answer.body.chunks(FILE_CHUNK)) {
-        let write = tokio::time::timeout(write_timeout, stream.write_all(part));
-        if !matches!(write.await, Ok(Ok(()))) {
-            return;
+    let allowed = limits.file_response_grace
+        + Duration::from_secs_f64(
+            answer.body.len() as f64 / limits.file_min_bytes_per_sec.max(1) as f64,
+        );
+    let write_timeout = limits.write_timeout;
+    let send = async {
+        for part in std::iter::once(&answer.head[..]).chain(answer.body.chunks(FILE_CHUNK)) {
+            let write = tokio::time::timeout(write_timeout, stream.write_all(part));
+            if !matches!(write.await, Ok(Ok(()))) {
+                return;
+            }
         }
-    }
-    let _ = tokio::time::timeout(write_timeout, stream.shutdown()).await;
+        let _ = tokio::time::timeout(write_timeout, stream.shutdown()).await;
+    };
+    let _ = tokio::time::timeout(allowed, send).await;
 }
 
 /// 접속 하나가 지금의 1초 구간에 보낸 메시지의 수를 셉니다.
