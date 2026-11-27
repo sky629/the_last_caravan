@@ -13,13 +13,15 @@
 use std::time::{Duration, Instant};
 
 use super::support::{Scenario, nights, watchtower_shot};
+use crate::boss::Act;
+use crate::expedition::{NightStep, Phase};
 use crate::ids::{MonsterId, PlayerId, TowerId};
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::{StructureKind, WeaponKind};
 use crate::math::Vec2;
 use crate::player::Life;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::{Debuff, Tuning};
+use crate::tuning::{Debuff, Finale, Tuning};
 use crate::world::Tile;
 
 /// 몬스터 300마리가 1 Tick마다 한 마리씩 나타나서 마차로 몰려드는 기본 맵입니다. 마차와 플레이어는 죽지 않습니다.
@@ -840,5 +842,85 @@ fn perf_the_average_tick_with_40_towers_of_every_kind_4_players_and_300_monsters
         "average of 1000 ticks with 40 towers of every kind and 4 players",
         average,
         Duration::from_secs_f32(defaults.dt()) / 10,
+    );
+}
+
+#[test]
+fn perf_the_average_tick_with_the_boss_in_a_crowd_of_300_the_tower_cap_and_four_archers_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    // 몬스터가 활에 맞아 죽으면 측정 상황이 달라지므로 HP를 가장 크게 하고, 보스도 죽지 않게 합니다.
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| {
+        t.monsters.grunt.max_hp = u32::MAX;
+        t.monsters.boss.max_hp = u32::MAX;
+        t.nights.finale = defaults.nights.finale.clone();
+    });
+    let aims = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
+    for (spawn, aim) in defaults.map.player_spawns.iter().zip(aims) {
+        add_shooter(&mut s, WeaponKind::Bow, *spawn, aim);
+    }
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+
+    // 마차에 가장 가까이 쌓인 몬스터 한 마리의 자리에 보스를 세워서 보스가 무리 한가운데에서 시작하게 합니다. 몬스터의 수는 300으로 그대로입니다.
+    let wagon = s.sim.wagon().rect;
+    let victim = s
+        .sim
+        .monsters()
+        .min_by(|a, b| {
+            wagon
+                .distance_to(a.pos)
+                .total_cmp(&wagon.distance_to(b.pos))
+        })
+        .map(|monster| (monster.id, monster.pos))
+        .expect("a crowd");
+    s.sim
+        .world_mut()
+        .monsters
+        .retain(|monster| monster.id != victim.0);
+    let t = s.sim.tuning().clone();
+    let Finale::Boss(cfg) = &t.nights.finale else {
+        panic!("the tuning has a boss");
+    };
+    s.sim.set_phase(Phase::Night {
+        day: 1,
+        party: 4,
+        step: NightStep::Boss,
+    });
+    s.sim.world_mut().spawn_boss(victim.1, 4, cfg, &t);
+    assert_eq!(s.sim.monsters().count(), 300, "the boss is the 300th");
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+
+    // 보스가 걷고 내려찍기를 거듭하는 동안을 잽니다.
+    let mut total = Duration::ZERO;
+    let mut slowest = Duration::ZERO;
+    let mut slams = 0;
+    let mut was_slamming = false;
+    for _ in 0..3000 {
+        let took = timed_tick(&mut s);
+        total += took;
+        slowest = slowest.max(took);
+        let slamming = matches!(s.sim.boss().map(|boss| &boss.act), Some(Act::Slamming(_)));
+        if slamming && !was_slamming {
+            slams += 1;
+        }
+        was_slamming = slamming;
+    }
+    assert!(s.sim.boss().is_some(), "the boss lived");
+    assert!(slams >= 5, "the boss slammed again and again: {slams}");
+    assert_eq!(
+        s.sim.monsters().count(),
+        300,
+        "300 monsters in every sampled tick"
+    );
+    println!("slowest of 3000 ticks: {slowest:?}; {slams} slams");
+    let interval = Duration::from_secs_f32(defaults.dt());
+    check_limit(
+        "average of 3000 ticks with the boss in the crowd",
+        total / 3000,
+        interval / 10,
     );
 }

@@ -1148,33 +1148,24 @@ fn a_strike_hurts_the_players_towers_and_wagon_the_circle_covers_and_spares_the_
 // ---------------------------------------------------------------------------------------------
 // 한 칸 폭의 길
 
-/// 마차에서 가까운 순서(`inner_first`)나 먼 순서로 타일을 하나씩 훑으면서, 건설의 규칙이 허락하는 타일마다 포탑을 세웁니다. 상한(40개)에 이르면 멈춥니다.
-/// 규칙이 허락하지 않는 타일(길을 끊거나 마을 밖인 타일)은 건너뜁니다. 세운 포탑의 수를 돌려줍니다.
-fn fill_the_village_as_densely_as_the_build_rule_allows(
-    s: &mut Scenario,
-    inner_first: bool,
-) -> usize {
-    let t = s.sim.tuning().clone();
-    let wagon = t.map.wagon;
-    let mut tiles: Vec<Tile> = Vec::new();
+/// 맵의 모든 타일입니다.
+fn all_tiles(t: &Tuning) -> Vec<Tile> {
+    let mut tiles = Vec::new();
     for x in 0..t.map.width as u16 {
         for y in 0..t.map.height as u16 {
             tiles.push(Tile::new(x, y));
         }
     }
-    tiles.sort_by(|a, b| {
-        let da = wagon.distance_to(a.center());
-        let db = wagon.distance_to(b.center());
-        let by_distance = if inner_first {
-            da.total_cmp(&db)
-        } else {
-            db.total_cmp(&da)
-        };
-        by_distance.then(a.cmp(b))
-    });
+    tiles
+}
+
+/// `tiles`의 차례대로 타일을 하나씩 훑으면서, 건설의 규칙이 허락하는 타일마다 감시탑을 세웁니다. `count`개를 세우면 멈춥니다.
+/// 규칙이 허락하지 않는 타일(길을 끊거나 마을 밖인 타일)은 건너뜁니다. 세운 포탑의 수를 돌려줍니다.
+fn place_watchtowers_in_order(s: &mut Scenario, tiles: Vec<Tile>, count: usize) -> usize {
+    let t = s.sim.tuning().clone();
     let mut placed = 0;
     for tile in tiles {
-        if placed >= t.village.tower_limit as usize {
+        if placed >= count {
             break;
         }
         let allowed = build::check_site(s.sim.world_mut(), &t, PlayerId(0), tile, None).is_ok();
@@ -1187,6 +1178,27 @@ fn fill_the_village_as_densely_as_the_build_rule_allows(
         }
     }
     placed
+}
+
+/// 마차에서 가까운 순서(`inner_first`)나 먼 순서로 건설의 규칙이 허락하는 만큼 빽빽하게 감시탑을 세웁니다.
+fn fill_the_village_as_densely_as_the_build_rule_allows(
+    s: &mut Scenario,
+    inner_first: bool,
+) -> usize {
+    let t = s.sim.tuning().clone();
+    let wagon = t.map.wagon;
+    let mut tiles = all_tiles(&t);
+    tiles.sort_by(|a, b| {
+        let da = wagon.distance_to(a.center());
+        let db = wagon.distance_to(b.center());
+        let by_distance = if inner_first {
+            da.total_cmp(&db)
+        } else {
+            db.total_cmp(&da)
+        };
+        by_distance.then(a.cmp(b))
+    });
+    place_watchtowers_in_order(s, tiles, t.village.tower_limit as usize)
 }
 
 /// 보스가 마차의 가장자리에서 걷는 몸으로 닿을 거리 안에 들어오는 Tick까지 진행하고 걸린 Tick을 돌려줍니다.
@@ -1235,5 +1247,107 @@ fn the_boss_reaches_the_wagon_through_the_densest_tower_layouts_the_build_rule_a
             40,
             "{order}: no tower was knocked down to make way"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 포탑만의 전투
+
+/// 플레이어 하나가 `waits_at`에 서 있기만 하는 기본 맵입니다. 마지막 밤은 아직 시작하지 않았습니다. 수치는 `adjust`로 더 바꿉니다.
+fn lone_player_before_the_last_night(waits_at: Vec2, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+    let mut s = Scenario::default_game(|t| {
+        with_boss(t);
+        t.nights.scaling = WaveScaling::ByParty { full_party: 4 };
+        t.guards.per_node = 0;
+        t.guards.per_chest = 0;
+        adjust(t);
+    });
+    s.player_at(waits_at.x, waits_at.y);
+    s
+}
+
+/// 기본 맵에서 플레이어가 등장하는 자리입니다. 마차에서 가깝습니다.
+fn spawn_spot() -> Vec2 {
+    Tuning::default().map.player_spawns[0]
+}
+
+/// 1명 방의 마지막 밤을 경고부터 시작하고, 보스가 나타난 Tick까지 진행합니다.
+fn start_the_last_night(s: &mut Scenario) {
+    s.sim.set_phase(Phase::Night {
+        day: 3,
+        party: 1,
+        step: NightStep::Warning { ticks_left: 1 },
+    });
+    s.run_ticks(1);
+}
+
+/// 보스가 나타나는 자리와 마차의 중심 사이를 이은 선 위에서 마차 쪽으로 `distance`타일 온 점입니다. 감시탑이 보스의 길 위에 모이는 자리를 잡는 데 씁니다.
+fn on_the_approach(distance: f32) -> Vec2 {
+    let mut s = lone_player_before_the_last_night(spawn_spot(), |_| {});
+    start_the_last_night(&mut s);
+    let id = s.sim.boss().expect("a boss").id;
+    let arrival = s.monster(id).expect("the body").pos;
+    let center = s.sim.wagon().rect.center();
+    center + (arrival - center).normalize_or_zero() * distance
+}
+
+/// 감시탑을 보스의 길 위에 상한까지 세우고, 플레이어가 `waits_at`에서 가만히 서 있는 1명 방의 마지막 밤을 원정이 끝나거나 보스가 쓰러질 때까지 진행합니다.
+/// 감시탑의 사격에 보스가 줄어든 정도와 끝난 모습을 한 줄로 출력하고 끝난 시나리오를 돌려줍니다.
+fn towers_alone(waits_at: Vec2, towers: usize, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
+    let anchor = on_the_approach(7.0);
+    let mut s = lone_player_before_the_last_night(waits_at, adjust);
+    let mut tiles = all_tiles(s.sim.tuning());
+    tiles.sort_by(|a, b| {
+        let da = a.center().distance(anchor);
+        let db = b.center().distance(anchor);
+        da.total_cmp(&db).then(a.cmp(b))
+    });
+    let placed = place_watchtowers_in_order(&mut s, tiles, towers);
+    assert_eq!(placed, towers, "the build rule lets the towers be placed");
+    start_the_last_night(&mut s);
+    let start_hp = boss_hp(&s);
+    s.run_until(s.ticks(300.0), |sim| {
+        sim.debrief().is_some() || sim.boss().is_none()
+    });
+    let hp_left = s
+        .sim
+        .boss()
+        .and_then(|boss| s.monster(boss.id))
+        .map_or(0, |body| body.hp);
+    println!(
+        "{towers} towers alone, the player waits at ({}, {}): {:?} at {:.0}s, boss HP {hp_left} of {start_hp}, wagon {}, towers standing {}, players alive {}",
+        waits_at.x,
+        waits_at.y,
+        outcome(&s.sim),
+        s.sim.tick() as f32 * s.sim.tuning().dt(),
+        s.sim.wagon().hp,
+        s.sim.towers().filter(|tower| tower.is_standing()).count(),
+        s.sim.players().filter(|player| player.is_alive()).count(),
+    );
+    s
+}
+
+#[test]
+fn forty_watchtowers_on_the_boss_path_cannot_win_the_expedition_for_a_room_that_does_nothing() {
+    // 포탑의 수가 상한(40개)이고 보스의 길 위에 빽빽이 모여 있어도, 아무도 싸우지 않으면 보스가 포탑에 죽지 않고 원정이 패배로 끝나야 합니다.
+    let s = towers_alone(spawn_spot(), 40, |_| {});
+
+    assert_eq!(outcome(&s.sim), Some(Outcome::Defeat));
+    assert!(
+        s.sim.boss().is_some(),
+        "the boss is alive when the expedition is lost"
+    );
+}
+
+#[test]
+fn measure_the_towers_alone_against_a_player_who_waits_far_from_the_wagon() {
+    // 측정만 합니다. 플레이어가 마차의 내려찍기에 쓰러지지 않는 먼 곳에서 가만히 있으면 포탑만으로 이기는지, 포탑의 피해 비율마다 출력합니다.
+    let far = Vec2::new(2.0, 2.0);
+    for percent in [10, 7, 5] {
+        for towers in [15, 40] {
+            towers_alone(far, towers, |t| {
+                t.monsters.boss.resist.tower_damage_percent = percent;
+            });
+        }
     }
 }
