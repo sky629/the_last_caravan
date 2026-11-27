@@ -306,6 +306,8 @@ fn phase_name(snapshot: &Snapshot) -> String {
             WireNightStep::Fighting { wave } => {
                 format!("night({day}) fighting({wave}/{wave_count})")
             }
+            WireNightStep::Warning { .. } => format!("night({day}) boss warning"),
+            WireNightStep::Boss(_) => format!("night({day}) boss"),
         },
         WirePhase::Dawn { next_day, .. } => format!("dawn(next {next_day})"),
         WirePhase::Debrief { outcome, .. } => format!("debrief({outcome:?})"),

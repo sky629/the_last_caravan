@@ -6,7 +6,7 @@
 //! 이 파일은 게임 상태가 아니라 고정된 설정을 전송 형식으로 바꿉니다. 게임 상태를 바꾸는 곳은 `Snapshot::from_sim` 하나입니다.
 
 use caravan_rules::{
-    Delivery, MonsterKind, Player, Sim, StructureKind, Vec2, WeaponKind, nodes_of,
+    Delivery, Finale, MonsterKind, Player, Sim, StructureKind, Vec2, WeaponKind, nodes_of,
 };
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +60,15 @@ pub struct WorldInfo {
     pub racks: Vec<RackInfo>,
     /// 포탑 종류마다 하나씩이고 `StructureKind::ALL`의 순서입니다. 스냅샷의 포탑에는 종류만 있으므로, 최대 HP와 범위와 비용은 여기서 읽습니다.
     pub structure_kinds: Vec<StructureKindInfo>,
+    /// 마지막 밤에 보스가 나오는 설정이면 보스의 영역을 그리는 데 필요한 수치입니다. 보스가 없는 설정(부하 시험)에서는 없습니다.
+    pub boss: Option<BossInfo>,
+}
+
+/// 보스의 영역이 화면에 나타나는 데 필요한 것입니다. 영역의 자리와 진행도는 스냅샷의 `WireBossAct`에 있습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BossInfo {
+    /// 내려찍기의 원의 반지름(타일)입니다.
+    pub slam_radius: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,7 +80,7 @@ pub struct NodeInfo {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MonsterKindInfo {
     pub kind: WireMonsterKind,
-    /// 몬스터를 그리는 원의 반지름(타일)입니다.
+    /// 몬스터를 그리는 원의 반지름(타일)입니다. 맞는 몸의 반지름입니다.
     pub radius: f32,
     pub max_hp: u32,
 }
@@ -173,7 +182,7 @@ impl Welcome {
                         let numbers = tuning.monsters.get(kind);
                         MonsterKindInfo {
                             kind: WireMonsterKind::of(kind),
-                            radius: numbers.radius,
+                            radius: numbers.hit_radius(),
                             max_hp: numbers.max_hp,
                         }
                     })
@@ -206,6 +215,12 @@ impl Welcome {
                         }
                     })
                     .collect(),
+                boss: match &tuning.nights.finale {
+                    Finale::Boss(boss) => Some(BossInfo {
+                        slam_radius: boss.slam.radius,
+                    }),
+                    Finale::LastWave => None,
+                },
             },
         }
     }

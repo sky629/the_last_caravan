@@ -9,7 +9,7 @@
 //! - `--stress`: 마차, 포탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
 //!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
 //!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다. 플레이어는 검과 활을 함께 가지고 시작합니다.
-//!   무리의 크기는 방에 있는 사람의 수와 관계없이 수치표 그대로입니다. 사람의 조작 없이 원정이 진행되어야 하므로 야영지를 건너뜁니다. 방은 만들어지자마자 첫날을 시작하고, 결과를 한 Tick만 보여 준 뒤 새 원정을 시작합니다.
+//!   무리의 크기는 방에 있는 사람의 수와 관계없이 수치표 그대로입니다. 마지막 무리를 처치하면 원정이 끝나도록 보스는 나오지 않습니다. 사람의 조작 없이 원정이 진행되어야 하므로 야영지를 건너뜁니다. 방은 만들어지자마자 첫날을 시작하고, 결과를 한 Tick만 보여 준 뒤 새 원정을 시작합니다.
 //! - `--web-dir DIR`: 같은 포트로 오는 HTTP 요청에 이 폴더(웹 빌드의 출력)의 파일을 내줍니다. 주지 않으면 파일을 내주지 않고, WebSocket 접속만 받습니다.
 //! - `--public-url https://HOST`: 이 서버로 들어오는 공개 주소입니다. `--web-dir`이 필요하고, `http(s)://호스트[:포트]`의 글자만 받습니다.
 //!   내주는 페이지가 이 주소를 알게 되어, 이 컴퓨터의 주소로 연 페이지에서도 초대 링크는 이 주소로 만들어집니다.
@@ -28,7 +28,7 @@ mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
 use caravan_rules::{
-    Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WaveScaling, WeaponKind,
+    Finale, Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WaveScaling, WeaponKind,
 };
 use caravan_server::{GameServer, RandomSource, RoomSeeds};
 use caravan_ws_server::{PublicUrl, WebFiles, WsServer};
@@ -189,6 +189,8 @@ fn tuning_from(options: &Options) -> Tuning {
         tuning.camp.debrief_secs = tuning.dt();
         // 부하의 크기는 접속한 클라이언트의 수로 정해지지 않고 수치표로 정해집니다.
         tuning.nights.scaling = WaveScaling::Fixed;
+        // 마지막 무리를 처치하면 원정이 끝나는 부하의 기준을 바꾸지 않습니다.
+        tuning.nights.finale = Finale::LastWave;
     }
     tuning
 }
@@ -523,6 +525,22 @@ mod tests {
             tuning.nights.plans,
             Tuning::default().nights.plans,
             "wave sizes stay"
+        );
+    }
+
+    #[test]
+    fn stress_has_no_boss_and_a_normal_server_has_one() {
+        let finale = |arguments: &[&str]| {
+            tuning_from(&parse_args(&args(arguments)).unwrap())
+                .nights
+                .finale
+        };
+
+        assert_eq!(finale(&["--stress"]), Finale::LastWave);
+        assert!(matches!(finale(&[]), Finale::Boss(_)));
+        assert!(
+            matches!(finale(&["--waves", "5,5"]), Finale::Boss(_)),
+            "custom waves keep the boss"
         );
     }
 
