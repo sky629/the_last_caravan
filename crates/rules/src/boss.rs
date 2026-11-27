@@ -23,6 +23,7 @@ use std::collections::VecDeque;
 
 use crate::ids::{MonsterId, PlayerId};
 use crate::math::Vec2;
+use crate::spawn::SpawnPlan;
 use crate::telegraph::{self, Telegraph, Zone};
 use crate::tuning::{BossTuning, Finale, Move, Tuning};
 use crate::world::{Ctx, Hit, World};
@@ -152,6 +153,11 @@ impl Boss {
             ticks_left: t.ticks(cfg.rest_secs),
         }
     }
+}
+
+/// 보스가 나타날 자리입니다. 밤의 무리가 나타나는 자리 가운데 마지막 무리 다음 순번의 방향에서 첫째 자리입니다.
+pub(crate) fn arrival_spot(spawns: &SpawnPlan, t: &Tuning) -> Vec2 {
+    spawns.night_spot(t.nights.wave_total(), 0)
 }
 
 /// Tick마다 보스의 한 걸음입니다. 대상을 다시 정하고, 하고 있는 일을 한 Tick 진행하고, 끝나는 일이 있으면 피해를 `hits`에 더합니다.

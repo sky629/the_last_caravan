@@ -1,8 +1,10 @@
 //! 마지막 밤의 보스: 인원에 따른 HP, 대상을 고르는 규칙, 예고된 내려찍기를 걸어서 피하는 것,
 //! 포탑의 피해와 효과를 받는 방식, 맞는 몸의 크기, 일반 몬스터가 달라지지 않는 것.
 
-use super::support::{Scenario, close, nights, watchtower_shot};
+use super::support::{Scenario, close, nights, outcome, phase, watchtower_shot};
 use crate::boss::{Act, Aim};
+use crate::build;
+use crate::expedition::{NightStep, Outcome, Phase};
 use crate::ids::{MonsterId, PlayerId};
 use crate::input::{AimDir, MoveDir, PlayerInput};
 use crate::kind::{MonsterKind, StructureKind, WeaponKind};
@@ -12,7 +14,7 @@ use crate::player::Presence;
 use crate::structures::{Tower, TowerState};
 use crate::telegraph::{self, Zone};
 use crate::tuning::{BossTuning, Debuff, Finale, StrikeTuning, Tuning, WaveScaling};
-use crate::world::{Hit, Source, Target};
+use crate::world::{Hit, Source, Target, Tile};
 
 /// 기본 수치에서 인원이 넷일 때 보스의 최대 HP입니다.
 fn full_hp() -> u32 {
@@ -49,12 +51,17 @@ fn put_boss_body(s: &mut Scenario, x: f32, y: f32) -> MonsterId {
         .spawn_monster(MonsterKind::Boss, Order::Stand, Vec2::new(x, y), &t)
 }
 
-/// 보스를 `(x, y)`에 놓습니다. 방에 `party`명이 있는 밤입니다.
+/// 보스를 `(x, y)`에 놓고 보스의 단계로 바꿉니다. 방에 `party`명이 있는 밤입니다.
 fn put_boss(s: &mut Scenario, x: f32, y: f32, party: u32) -> MonsterId {
     let t = s.sim.tuning().clone();
     let Finale::Boss(cfg) = &t.nights.finale else {
         panic!("the scenario has a boss");
     };
+    s.sim.set_phase(Phase::Night {
+        day: 1,
+        party,
+        step: NightStep::Boss,
+    });
     s.sim
         .world_mut()
         .spawn_boss(Vec2::new(x, y), party, cfg, &t)
@@ -126,6 +133,188 @@ fn slam_center(s: &Scenario) -> Vec2 {
 
 fn hp_of_player(s: &Scenario, id: PlayerId) -> u32 {
     s.player(id).hp()
+}
+
+// ---------------------------------------------------------------------------------------------
+// 등장과 성공과 실패
+
+/// 마지막 밤의 마지막 무리가 모두 나타나서 싸우는 단계까지 진행합니다. 몬스터가 모두 처치된 것으로 하려면 이어서 `clear_monsters`를 부릅니다.
+fn run_until_the_last_wave_is_out(s: &mut Scenario) {
+    s.run_until(2000, |sim| {
+        matches!(
+            phase(sim),
+            Phase::Night {
+                step: NightStep::Fighting { to_spawn: 0, .. },
+                ..
+            }
+        )
+    });
+}
+
+#[test]
+fn clearing_the_last_wave_of_the_last_night_brings_five_seconds_of_warning_and_then_the_boss() {
+    let mut s = Scenario::with_cycle(|t| {
+        with_boss(t);
+        t.cycle.day_secs = t.dt();
+        t.nights.plans = nights(&[&[2]]);
+    });
+    run_until_the_last_wave_is_out(&mut s);
+    s.clear_monsters();
+
+    s.run_ticks(1);
+    let warning = s.ticks(5.0);
+    assert_eq!(warning, 100);
+    assert!(matches!(
+        phase(&s.sim),
+        Phase::Night {
+            step: NightStep::Warning { ticks_left },
+            ..
+        } if ticks_left == warning
+    ));
+    assert_eq!(outcome(&s.sim), None, "the expedition goes on");
+    let waited = s.run_until(500, |sim| sim.boss().is_some());
+
+    assert_eq!(waited, warning, "five seconds of warning");
+    assert!(matches!(
+        phase(&s.sim),
+        Phase::Night {
+            step: NightStep::Boss,
+            ..
+        }
+    ));
+    assert_eq!(s.sim.monsters().count(), 1, "the boss alone");
+}
+
+#[test]
+fn the_boss_arrives_where_the_night_waves_arrive() {
+    let mut s = Scenario::default_game(|t| {
+        with_boss(t);
+        t.cycle.day_secs = t.dt();
+        t.nights.plans = nights(&[&[1]]);
+    });
+    run_until_the_last_wave_is_out(&mut s);
+    let wave_spot = s.sim.monsters().last().expect("the wave's monster").pos;
+    s.clear_monsters();
+    s.run_until(2000, |sim| sim.boss().is_some());
+
+    let id = s.sim.boss().expect("a boss").id;
+    let body = s.monster(id).expect("the body");
+    let wagon = s.sim.wagon().rect;
+    let gap = wagon.distance_to(body.pos);
+    assert!(
+        (gap - s.sim.tuning().nights.spawn_distance).abs() < 1.0,
+        "{gap} tiles from the wagon, like the waves"
+    );
+    assert!(
+        body.pos.distance(wave_spot) > 5.0,
+        "it comes from the direction that follows the last wave's, not from the same side"
+    );
+    assert_eq!(body.kind, MonsterKind::Boss);
+}
+
+#[test]
+fn a_night_that_is_not_the_last_has_no_boss() {
+    let mut s = Scenario::with_cycle(|t| {
+        with_boss(t);
+        t.cycle.day_secs = t.dt();
+        t.nights.plans = nights(&[&[1], &[1]]);
+    });
+    run_until_the_last_wave_is_out(&mut s);
+    s.clear_monsters();
+
+    s.run_ticks(1);
+
+    assert!(matches!(phase(&s.sim), Phase::Dawn { .. }));
+    s.run_ticks(2 * s.ticks(5.0));
+    assert!(s.sim.boss().is_none());
+}
+
+#[test]
+fn the_expedition_does_not_succeed_while_the_boss_lives_and_succeeds_the_moment_it_falls() {
+    let mut s = still_field();
+    let boss = put_boss(&mut s, 5.0, 5.0, 4);
+
+    s.run_ticks(200);
+    assert_eq!(outcome(&s.sim), None, "the boss still stands");
+
+    let slayer = s.player_at(5.0, 7.0);
+    s.sim
+        .world_mut()
+        .monsters
+        .iter_mut()
+        .find(|monster| monster.id == boss)
+        .expect("the body")
+        .hp = 1;
+    s.hold(
+        slayer,
+        PlayerInput {
+            attack: true,
+            aim: AimDir::new(0.0, -1.0),
+            ..PlayerInput::default()
+        },
+    );
+    s.run_ticks(1);
+
+    assert_eq!(outcome(&s.sim), Some(Outcome::Victory));
+}
+
+#[test]
+fn a_wagon_that_falls_or_a_party_that_goes_down_ends_the_boss_fight_in_defeat() {
+    let mut s = still_field();
+    put_boss(&mut s, 5.0, 5.0, 4);
+    s.player_at(5.0, 15.0);
+    s.set_wagon_hp(0);
+    s.run_ticks(1);
+    assert_eq!(outcome(&s.sim), Some(Outcome::Defeat));
+
+    let mut s = still_field();
+    put_boss(&mut s, 5.0, 5.0, 4);
+    let only = s.player_at(5.0, 15.0);
+    s.knock_down(only);
+    s.run_ticks(1);
+    assert_eq!(outcome(&s.sim), Some(Outcome::Defeat));
+}
+
+#[test]
+fn the_boss_that_comes_has_the_hp_of_the_party_that_began_the_night() {
+    for party in [1_u32, 2, 4] {
+        let mut s = Scenario::with_cycle(|t| {
+            with_boss(t);
+            t.nights.scaling = WaveScaling::ByParty { full_party: 4 };
+            t.cycle.day_secs = t.dt();
+            t.nights.plans = nights(&[&[1]]);
+            t.guards.per_node = 0;
+        });
+        for _ in 0..party {
+            s.player_at(10.0, 10.0);
+        }
+        run_until_the_last_wave_is_out(&mut s);
+        s.clear_monsters();
+
+        s.run_until(500, |sim| sim.boss().is_some());
+
+        let hp = (full_hp() * party).div_ceil(4);
+        assert_eq!(boss_hp(&s), hp, "{party} players");
+        assert_eq!(s.sim.boss().expect("a boss").max_hp, hp);
+    }
+}
+
+#[test]
+fn the_camp_never_has_a_boss_and_a_tuning_without_a_boss_ends_the_last_wave_in_victory() {
+    let mut s = Scenario::camp(|_| {});
+    s.run_ticks(200);
+    assert!(s.sim.boss().is_none());
+    assert!(s.sim.monsters().all(|m| m.kind == MonsterKind::Scarecrow));
+
+    let mut s = Scenario::with_cycle(|t| {
+        t.cycle.day_secs = t.dt();
+        t.nights.plans = nights(&[&[1]]);
+    });
+    assert_eq!(s.sim.tuning().nights.finale, Finale::LastWave);
+    run_until_the_last_wave_is_out(&mut s);
+    s.clear_monsters();
+    s.run_ticks(1);
+    assert_eq!(outcome(&s.sim), Some(Outcome::Victory));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -954,4 +1143,97 @@ fn a_strike_hurts_the_players_towers_and_wagon_the_circle_covers_and_spares_the_
     assert_eq!(hits.len(), 1, "only the wagon: {hits:?}");
     assert_eq!(hits[0].target, Target::Wagon);
     assert_eq!(hits[0].amount, 60);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 한 칸 폭의 길
+
+/// 마차에서 가까운 순서(`inner_first`)나 먼 순서로 타일을 하나씩 훑으면서, 건설의 규칙이 허락하는 타일마다 포탑을 세웁니다. 상한(40개)에 이르면 멈춥니다.
+/// 규칙이 허락하지 않는 타일(길을 끊거나 마을 밖인 타일)은 건너뜁니다. 세운 포탑의 수를 돌려줍니다.
+fn fill_the_village_as_densely_as_the_build_rule_allows(
+    s: &mut Scenario,
+    inner_first: bool,
+) -> usize {
+    let t = s.sim.tuning().clone();
+    let wagon = t.map.wagon;
+    let mut tiles: Vec<Tile> = Vec::new();
+    for x in 0..t.map.width as u16 {
+        for y in 0..t.map.height as u16 {
+            tiles.push(Tile::new(x, y));
+        }
+    }
+    tiles.sort_by(|a, b| {
+        let da = wagon.distance_to(a.center());
+        let db = wagon.distance_to(b.center());
+        let by_distance = if inner_first {
+            da.total_cmp(&db)
+        } else {
+            db.total_cmp(&da)
+        };
+        by_distance.then(a.cmp(b))
+    });
+    let mut placed = 0;
+    for tile in tiles {
+        if placed >= t.village.tower_limit as usize {
+            break;
+        }
+        let allowed = build::check_site(s.sim.world_mut(), &t, PlayerId(0), tile, None).is_ok();
+        if allowed {
+            let state = Tower::standing_state(StructureKind::Watchtower, &t);
+            s.sim
+                .world_mut()
+                .add_tower(StructureKind::Watchtower, tile, state);
+            placed += 1;
+        }
+    }
+    placed
+}
+
+/// 보스가 마차의 가장자리에서 걷는 몸으로 닿을 거리 안에 들어오는 Tick까지 진행하고 걸린 Tick을 돌려줍니다.
+fn walk_to_the_wagon(s: &mut Scenario) -> u32 {
+    let wagon = s.sim.wagon().rect;
+    let reach = s.sim.tuning().monsters.longest_engage_distance();
+    s.run_until(3000, |sim| {
+        let id = sim.boss().expect("a boss").id;
+        let body = sim.monsters().find(|m| m.id == id).expect("the body");
+        wagon.distance_to(body.pos) <= reach + 0.3
+    })
+}
+
+#[test]
+fn the_boss_reaches_the_wagon_through_the_densest_tower_layouts_the_build_rule_allows() {
+    for inner_first in [false, true] {
+        let mut s = Scenario::default_game(|t| {
+            with_boss(t);
+            // 포탑이 사격하지 않고 보스가 행동하지 않게 해서 길만 시험합니다. 보스가 포탑을 부수고 지나가지 않았다는 것은 아래에서 확인합니다.
+            watchtower_shot(t).damage = 0;
+            boss_tuning(t).rest_secs = 1000.0;
+            t.guards.per_node = 0;
+            t.guards.per_chest = 0;
+        });
+        let placed = fill_the_village_as_densely_as_the_build_rule_allows(&mut s, inner_first);
+        assert_eq!(placed, 40, "the build rule lets the cap be reached");
+        let spawn = s.sim.tuning().map.player_spawns[0];
+        s.player_at(spawn.x, spawn.y);
+        s.sim.set_phase(Phase::Night {
+            day: 3,
+            party: 1,
+            step: NightStep::Warning { ticks_left: 1 },
+        });
+        s.run_ticks(1);
+
+        let ticks = walk_to_the_wagon(&mut s);
+
+        let order = if inner_first {
+            "inner first"
+        } else {
+            "outer first"
+        };
+        println!("the boss reached the wagon through 40 towers placed {order} in {ticks} ticks");
+        assert_eq!(
+            s.sim.towers().filter(|tower| tower.is_standing()).count(),
+            40,
+            "{order}: no tower was knocked down to make way"
+        );
+    }
 }

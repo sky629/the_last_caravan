@@ -630,6 +630,11 @@ impl NightTuning {
         }
     }
 
+    /// 원정의 모든 밤의 무리를 합친 수입니다. 무리가 나타나는 방향은 첫 무리부터 센 순번으로 정해지므로, 보스는 이 수를 순번으로 받습니다.
+    pub fn wave_total(&self) -> u32 {
+        self.plans.iter().map(|plan| plan.waves.len() as u32).sum()
+    }
+
     /// 원정의 첫 무리부터 센 이 무리의 순번입니다(0부터 셉니다). 무리가 나타나는 방향이 이 순번으로 정해집니다.
     pub fn wave_serial(&self, day: u32, wave: u32) -> u32 {
         let earlier: usize = self
