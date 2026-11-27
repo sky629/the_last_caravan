@@ -17,6 +17,7 @@ use crate::camp::StrikeRegistry;
 use crate::characters::Spawned;
 use crate::config;
 use crate::convert;
+use crate::effects::ChosenKind;
 use crate::loot::LootRegistry;
 use crate::net::{ClientFlow, CurrentFrame};
 use crate::palette::Palette;
@@ -212,6 +213,7 @@ pub fn clear_world(
     commands.insert_resource(SupplyRegistry::default());
     commands.insert_resource(LootRegistry::default());
     commands.insert_resource(StrikeRegistry::default());
+    commands.insert_resource(ChosenKind::default());
 }
 
 #[cfg(test)]
@@ -374,6 +376,10 @@ mod tests {
             .id();
         app.world_mut()
             .insert_resource(FollowedSetting(Some(crowded_frame().setting())));
+        let mut chosen = ChosenKind::default();
+        chosen.secs_since_change(Some(WireStructureKind::Watchtower), 1.0);
+        chosen.secs_since_change(Some(WireStructureKind::SlowTower), 2.0);
+        app.world_mut().insert_resource(chosen);
 
         app.world_mut().resource_mut::<ClientFlow>().0.leave();
         // 같은 프레임에 이전 방의 스냅샷이 남아 있어도 그리지 않고 지웁니다.
@@ -390,6 +396,13 @@ mod tests {
         assert!(
             app.world().resource::<FollowedSetting>().0.is_none(),
             "the camera forgets the room it followed"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<ChosenKind>()
+                .secs_since_change(Some(WireStructureKind::Watchtower), 3.0),
+            None,
+            "the kind first seen in the next room is not a change of the kind chosen in this one"
         );
     }
 

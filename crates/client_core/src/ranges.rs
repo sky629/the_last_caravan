@@ -1,5 +1,5 @@
 //! 화면에 그릴 포탑의 범위입니다. 서 있는 범위형 포탑(범위 안의 모두에게 작용하는 포탑)마다 원 하나를 그리고,
-//! 건설 미리 보기가 있으면 그 타일에 고른 종류의 범위를 그립니다. 범위와 범위형인지는 `Welcome`의 종류표에서 읽습니다.
+//! 범위의 미리 보기가 있으면 그 자리에 그 종류의 범위를 그립니다. 범위와 범위형인지는 `Welcome`의 종류표에서 읽습니다.
 
 use caravan_protocol::{WireStructureKind, WireTowerState, WorldInfo};
 use caravan_rules::{Tile, Vec2};
@@ -18,7 +18,7 @@ pub struct RangeRing {
     pub preview: bool,
 }
 
-/// 이번 프레임에 그릴 범위입니다. `preview`는 건설 키를 누르면 포탑이 놓일 타일과 지을 종류입니다.
+/// 이번 프레임에 그릴 범위입니다. `preview`는 범위를 미리 보여 줄 자리와 종류입니다(`range_preview`가 정합니다).
 /// 미리 보기는 범위 안의 하나를 겨누는 종류에도 범위를 그려서, 어디까지 닿는 포탑을 고르는지 보여 줍니다.
 pub fn range_rings(
     frame: &Frame,

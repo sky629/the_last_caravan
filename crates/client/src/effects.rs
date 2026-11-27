@@ -7,9 +7,11 @@
 use bevy::prelude::*;
 use caravan_client_core::{
     Frame, PlayerView, ProjectileView, RangeRing, build_preview, circle_to_screen_radii,
-    effect_progress, range_rings,
+    effect_progress, range_preview, range_rings,
 };
-use caravan_protocol::{WireDelivery, WireLife, WirePhase, WireTowerState, WireWeaponKind};
+use caravan_protocol::{
+    WireDelivery, WireLife, WirePhase, WireStructureKind, WireTowerState, WireWeaponKind,
+};
 use caravan_rules::{Tile, Vec2 as Ground};
 
 use crate::config;
@@ -29,6 +31,8 @@ pub fn draw_effects(
     frame: Res<CurrentFrame>,
     flow: Res<ClientFlow>,
     scene: Res<Scene>,
+    time: Res<Time<Real>>,
+    mut chosen: ResMut<ChosenKind>,
     mut gizmos: Gizmos,
 ) {
     let (Some(frame), Some(joined)) = (&frame.0, flow.joined()) else {
@@ -58,11 +62,13 @@ pub fn draw_effects(
         frame.phase,
         WirePhase::Camp { .. } | WirePhase::Debrief { .. }
     );
-    // 미리 보기는 내가 지금 건설 키를 누르면 지을 종류의 범위를 보여 줍니다.
-    let preview = me
-        .filter(|_| in_expedition)
-        .and_then(|me| Some((build_preview(me, scene.map_size)?, me.build_kind)));
-    for ring in range_rings(frame, &joined.welcome.world, preview) {
+    let builder = me.filter(|_| in_expedition);
+    let since_kind_changed =
+        chosen.secs_since_change(builder.map(|me| me.build_kind), time.elapsed_secs());
+    // 범위의 미리 보기는 지을 종류를 바꾼 직후와 내가 짓는 동안에만 나옵니다. 포탑이 놓일 타일의 테두리는 종류를 바꾼 때와 관계없이 나옵니다.
+    let ranged =
+        builder.and_then(|me| range_preview(me, &frame.towers, scene.map_size, since_kind_changed));
+    for ring in range_rings(frame, &joined.welcome.world, ranged) {
         draw_range(&mut gizmos, ring);
     }
     let Some(me) = me else {
@@ -76,8 +82,35 @@ pub fn draw_effects(
     {
         draw_tile_outline(&mut gizmos, refusal.tile.to_tile(), config::REFUSAL);
     }
-    if let Some((tile, _)) = preview {
+    if let Some(tile) = builder.and_then(|me| build_preview(me, scene.map_size)) {
         draw_tile_outline(&mut gizmos, tile, config::PREVIEW);
+    }
+}
+
+/// 내 화면에서 지을 종류가 마지막으로 바뀐 때를 기억합니다. 처음 본 종류는 바뀐 것으로 세지 않습니다.
+/// 방을 떠나면 `view::clear_world`가 비우므로, 다음 방에서 처음 본 종류도 바뀐 것으로 세지 않습니다.
+#[derive(Resource, Default)]
+pub struct ChosenKind {
+    kind: Option<WireStructureKind>,
+    changed_at: Option<f32>,
+}
+
+impl ChosenKind {
+    /// 지금 고른 종류(`kind`, 원정 중이 아니면 `None`)를 받아서, 종류가 바뀐 뒤 지난 시간(초)을 돌려줍니다. 바뀐 적이 없으면 `None`입니다.
+    pub(crate) fn secs_since_change(
+        &mut self,
+        kind: Option<WireStructureKind>,
+        now: f32,
+    ) -> Option<f32> {
+        let Some(kind) = kind else {
+            *self = ChosenKind::default();
+            return None;
+        };
+        if self.kind.is_some_and(|before| before != kind) {
+            self.changed_at = Some(now);
+        }
+        self.kind = Some(kind);
+        self.changed_at.map(|at| now - at)
     }
 }
 
@@ -329,5 +362,30 @@ mod tests {
             );
             assert!(side.dot(to - from).abs() < 1e-2, "{end:?}: {side:?}");
         }
+    }
+
+    #[test]
+    fn the_first_kind_seen_is_not_a_change_and_a_later_change_starts_the_clock() {
+        let mut chosen = ChosenKind::default();
+        let watchtower = Some(WireStructureKind::Watchtower);
+        let slow = Some(WireStructureKind::SlowTower);
+
+        assert_eq!(chosen.secs_since_change(watchtower, 10.0), None);
+        assert_eq!(chosen.secs_since_change(watchtower, 11.0), None);
+        assert_eq!(chosen.secs_since_change(slow, 12.0), Some(0.0));
+        assert_eq!(chosen.secs_since_change(slow, 13.5), Some(1.5));
+    }
+
+    #[test]
+    fn leaving_the_expedition_forgets_the_change() {
+        let mut chosen = ChosenKind::default();
+        chosen.secs_since_change(Some(WireStructureKind::Watchtower), 1.0);
+        chosen.secs_since_change(Some(WireStructureKind::SlowTower), 2.0);
+
+        assert_eq!(chosen.secs_since_change(None, 3.0), None);
+        assert_eq!(
+            chosen.secs_since_change(Some(WireStructureKind::Watchtower), 4.0),
+            None
+        );
     }
 }
