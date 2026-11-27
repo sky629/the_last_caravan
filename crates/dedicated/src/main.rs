@@ -10,6 +10,9 @@
 //!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
 //!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다. 플레이어는 검과 활을 함께 가지고 시작합니다.
 //!   무리의 크기는 방에 있는 사람의 수와 관계없이 수치표 그대로입니다. 사람의 조작 없이 원정이 진행되어야 하므로 야영지를 건너뜁니다. 방은 만들어지자마자 첫날을 시작하고, 결과를 한 Tick만 보여 준 뒤 새 원정을 시작합니다.
+//! - `--web-dir DIR`: 같은 포트로 오는 HTTP 요청에 이 폴더(웹 빌드의 출력)의 파일을 내줍니다. 주지 않으면 파일을 내주지 않고, WebSocket 접속만 받습니다.
+//! - `--public-url https://HOST`: 이 서버로 들어오는 공개 주소입니다. `--web-dir`이 필요하고, `http(s)://호스트[:포트]`의 글자만 받습니다.
+//!   내주는 페이지가 이 주소를 알게 되어, 이 컴퓨터의 주소로 연 페이지에서도 초대 링크는 이 주소로 만들어집니다.
 //! - `--seed 42`: 모든 방의 무작위를 이 씨앗 하나로 정합니다. 씨앗을 주지 않으면 방마다, 서버를 실행할 때마다 다른 씨앗을 씁니다.
 //!   방을 만들 때 출력하는 씨앗을 이 옵션에 주면 같은 상태에서 다시 시작합니다.
 //!
@@ -17,6 +20,7 @@
 
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -27,17 +31,26 @@ use caravan_rules::{
     Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WaveScaling, WeaponKind,
 };
 use caravan_server::{GameServer, RandomSource, RoomSeeds};
-use caravan_ws_server::WsServer;
+use caravan_ws_server::{PublicUrl, WebFiles, WsServer};
 use report::TickTimer;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:7777";
 /// Tick 사이에도 이 간격으로 접속 방식을 확인합니다. 입장 요청에 답하는 지연의 상한입니다.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
-const USAGE: &str = "usage: caravan-dedicated [--addr HOST:PORT] [--debug-net] [--stats] [--waves SIZE,SIZE,.../SIZE,...] [--stress] [--seed N]";
+const USAGE: &str = "usage: caravan-dedicated [--addr HOST:PORT] [--web-dir DIR [--public-url https://HOST]] [--debug-net] [--stats] [--waves SIZE,SIZE,.../SIZE,...] [--stress] [--seed N]";
+
+/// 같은 포트로 웹 클라이언트의 파일을 내주는 설정입니다. 공개 주소는 폴더와 함께일 때만 있습니다.
+#[derive(Debug, PartialEq, Eq)]
+struct Web {
+    dir: PathBuf,
+    public_url: Option<PublicUrl>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
     addr: String,
+    /// 없으면 파일을 내주지 않습니다.
+    web: Option<Web>,
     debug_net: bool,
     /// 1초마다 서버의 규모와 Tick 시간을 한 줄로 출력합니다.
     stats: bool,
@@ -51,18 +64,40 @@ struct Options {
 fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut options = Options {
         addr: DEFAULT_ADDR.to_string(),
+        web: None,
         debug_net: false,
         stats: false,
         waves: None,
         stress: false,
         seed: None,
     };
+    let mut web_dir = None;
+    let mut public_url = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--addr" => match rest.next() {
                 Some(value) => options.addr = value.clone(),
                 None => return Err("--addr needs a value such as 127.0.0.1:7777".to_string()),
+            },
+            "--web-dir" => match rest.next() {
+                Some(value) => web_dir = Some(PathBuf::from(value)),
+                None => {
+                    return Err("--web-dir needs a folder such as target/playtest/web".to_string());
+                }
+            },
+            "--public-url" => match rest.next() {
+                Some(value) => {
+                    public_url = Some(
+                        PublicUrl::parse(value).map_err(|err| format!("--public-url: {err}"))?,
+                    );
+                }
+                None => {
+                    return Err(
+                        "--public-url needs an address such as https://quiet-river-1234.trycloudflare.com"
+                            .to_string(),
+                    );
+                }
             },
             "--debug-net" => options.debug_net = true,
             "--stats" => options.stats = true,
@@ -85,6 +120,11 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
             other => return Err(format!("unknown argument: {other}")),
         }
     }
+    options.web = match (web_dir, public_url) {
+        (Some(dir), public_url) => Some(Web { dir, public_url }),
+        (None, None) => None,
+        (None, Some(_)) => return Err("--public-url needs --web-dir".to_string()),
+    };
     Ok(options)
 }
 
@@ -225,7 +265,21 @@ fn main() -> ExitCode {
         }
     };
     let limits = ServerLimits::default();
-    let ws = match WsServer::bind(&options.addr, limits) {
+    let files = match &options.web {
+        Some(web) => match WebFiles::load(&web.dir, web.public_url.as_ref()) {
+            Ok(files) => Some(files),
+            Err(err) => {
+                eprintln!("cannot serve {}: {err}", web.dir.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    let bound = match files {
+        Some(files) => WsServer::bind_with_files(&options.addr, limits, files),
+        None => WsServer::bind(&options.addr, limits),
+    };
+    let ws = match bound {
         Ok(ws) => ws,
         Err(err) => {
             eprintln!("cannot listen on {}: {err}", options.addr);
@@ -233,6 +287,16 @@ fn main() -> ExitCode {
         }
     };
     eprintln!("listening on ws://{}", ws.local_addr());
+    if let Some(web) = &options.web {
+        eprintln!(
+            "serving the web client from {} at http://{}/",
+            web.dir.display(),
+            ws.local_addr()
+        );
+        if let Some(url) = &web.public_url {
+            eprintln!("invite links point to {}/", url.as_str());
+        }
+    }
 
     let transport: Box<dyn ServerTransport> = if options.debug_net {
         Box::new(DebugTransport {
@@ -329,6 +393,7 @@ mod tests {
             parse_args(&[]),
             Ok(Options {
                 addr: "127.0.0.1:7777".to_string(),
+                web: None,
                 debug_net: false,
                 stats: false,
                 waves: None,
@@ -340,6 +405,7 @@ mod tests {
             parse_args(&args(&["--debug-net", "--addr", "0.0.0.0:9000"])),
             Ok(Options {
                 addr: "0.0.0.0:9000".to_string(),
+                web: None,
                 debug_net: true,
                 stats: false,
                 waves: None,
@@ -347,6 +413,48 @@ mod tests {
                 seed: None
             })
         );
+    }
+
+    #[test]
+    fn a_web_folder_and_a_public_address_are_options_and_the_address_needs_the_folder() {
+        let tunnel = "https://quiet-river-1234.trycloudflare.com";
+        let options = parse_args(&args(&[
+            "--web-dir",
+            "target/playtest/web",
+            "--public-url",
+            tunnel,
+        ]))
+        .unwrap();
+        assert_eq!(
+            options.web,
+            Some(Web {
+                dir: PathBuf::from("target/playtest/web"),
+                public_url: Some(PublicUrl::parse(tunnel).unwrap()),
+            })
+        );
+        assert_eq!(
+            parse_args(&args(&["--web-dir", "web"])).unwrap().web,
+            Some(Web {
+                dir: PathBuf::from("web"),
+                public_url: None,
+            }),
+            "a folder alone is served with no public address"
+        );
+        assert_eq!(
+            parse_args(&[]).unwrap().web,
+            None,
+            "no folder serves no file"
+        );
+
+        for refused in [
+            &["--public-url", "https://host"][..],
+            &["--web-dir"],
+            &["--web-dir", "web", "--public-url"],
+            &["--web-dir", "web", "--public-url", "https://a\"b"],
+            &["--web-dir", "web", "--public-url", "https://host/path"],
+        ] {
+            assert!(parse_args(&args(refused)).is_err(), "{refused:?}");
+        }
     }
 
     #[test]

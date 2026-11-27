@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use caravan_protocol::{
     ClientMsg, PROTOCOL_VERSION, ServerEvent, ServerLimits, ServerTransport, encode_client,
 };
-use caravan_ws_server::{WebFiles, WsServer};
+use caravan_ws_server::{PublicUrl, WebFiles, WsServer};
 use futures_util::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -56,7 +56,7 @@ fn web_dir() -> TempDir {
 }
 
 fn serving(dir: &Path, limits: ServerLimits) -> WsServer {
-    let files = WebFiles::load(dir).expect("the folder has a page");
+    let files = WebFiles::load(dir, None).expect("the folder has a page");
     WsServer::bind_with_files("127.0.0.1:0", limits, files).expect("bind a free port")
 }
 
@@ -317,7 +317,75 @@ fn nothing_outside_the_folder_is_served() {
 fn a_folder_without_a_page_is_refused_at_start() {
     let dir = TempDir::new();
     dir.write("caravan-client-1a2b.js", SCRIPT.as_bytes());
-    assert!(WebFiles::load(&dir.0).is_err());
+    assert!(WebFiles::load(&dir.0, None).is_err());
+}
+
+#[test]
+fn the_page_carries_the_public_address_and_no_other_file_changes() {
+    let dir = TempDir::new();
+    let page = "<meta name=\"caravan-public-url\" content=\"{{public_url}}\"><title>t</title>";
+    let script = "const marker = '{{public_url}}';";
+    dir.write("index.html", page.as_bytes());
+    dir.write("caravan-client-1a2b.js", script.as_bytes());
+    let public = PublicUrl::parse("https://quiet-river-1234.trycloudflare.com").unwrap();
+
+    for (public_url, content) in [
+        (Some(&public), "https://quiet-river-1234.trycloudflare.com"),
+        (None, ""),
+    ] {
+        let files = WebFiles::load(&dir.0, public_url).unwrap();
+        let server =
+            WsServer::bind_with_files("127.0.0.1:0", ServerLimits::default(), files).unwrap();
+        let reply = request(server.local_addr(), "GET", "/");
+        let expected =
+            format!("<meta name=\"caravan-public-url\" content=\"{content}\"><title>t</title>");
+        assert_eq!(String::from_utf8_lossy(&reply.body), expected);
+        assert_eq!(
+            reply.header("content-length"),
+            Some(expected.len().to_string().as_str()),
+            "the length is the length of the page that was sent"
+        );
+        let script_reply = request(server.local_addr(), "GET", "/caravan-client-1a2b.js");
+        assert_eq!(script_reply.body, script.as_bytes());
+    }
+}
+
+#[test]
+fn only_a_plain_origin_is_accepted_as_a_public_address() {
+    for good in [
+        "https://quiet-river-1234.trycloudflare.com",
+        "http://192.168.0.5:7777",
+        "http://localhost",
+        "https://a.b-c.d:65535",
+    ] {
+        assert!(PublicUrl::parse(good).is_ok(), "{good}");
+    }
+    for bad in [
+        "",
+        "host",
+        "ftp://host",
+        "https://",
+        "https://host/",
+        "https://host/path",
+        "https://host?x=1",
+        "https://host#x",
+        "https://user@host",
+        "https://ho st",
+        "https://host\n",
+        "https://a\"b",
+        "https://a'b",
+        "https://a<b>",
+        "https://host\"><script>",
+        "https://host:",
+        "https://host:12a",
+        "https://host:+80",
+        "https://host:65536",
+        "https://host:80:80",
+        "https://[::1]:7777",
+        "https://호스트",
+    ] {
+        assert!(PublicUrl::parse(bad).is_err(), "{bad:?}");
+    }
 }
 
 #[tokio::test]

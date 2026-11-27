@@ -40,7 +40,7 @@ use tokio_tungstenite::tungstenite::{Error, Message};
 mod files;
 
 use files::Answer;
-pub use files::WebFiles;
+pub use files::{PublicUrl, PublicUrlError, WebFiles};
 
 /// 접속을 받지 못했을 때(예: 열린 파일이 너무 많음) 다시 시도하기 전에 쉬는 시간입니다.
 /// 쉬지 않으면 같은 오류가 반복되는 동안 네트워크 스레드가 CPU를 모두 씁니다.

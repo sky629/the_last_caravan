@@ -4,8 +4,12 @@
 //! 그래서 요청은 읽어 둔 파일 말고는 어떤 파일 시스템의 경로에도 닿지 않습니다. 하위 폴더, 심볼릭 링크, 이름이 `.`으로 시작하는 파일,
 //! 표에 없는 확장자의 파일은 읽지 않습니다. 경로의 퍼센트 인코딩은 풀지 않으므로, 인코딩한 경로는 어떤 이름과도 같지 않습니다.
 //! 폴더의 파일이 바뀌면 서버를 다시 켜야 합니다.
+//!
+//! 페이지(`index.html`)의 `{{public_url}}` 자리는 서버가 파일을 읽을 때 이 서버로 들어오는 공개 주소(`PublicUrl`)로 바꿉니다.
+//! 공개 주소가 없으면 빈 글자로 바꿉니다. 웹 클라이언트는 그 자리가 채워져 있는지로 게임 서버가 내준 페이지인지 알아봅니다.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
@@ -18,10 +22,64 @@ const TYPES: [(&str, &str); 3] = [
     ("js", "text/javascript; charset=utf-8"),
     ("wasm", "application/wasm"),
 ];
+/// 공개 주소의 호스트가 가질 수 있는 최대 길이입니다. DNS 이름의 최대 길이와 같습니다.
+const MAX_HOST_BYTES: usize = 253;
+/// 페이지 안에서 공개 주소로 바뀌는 자리입니다.
+const PUBLIC_URL_MARKER: &str = "{{public_url}}";
 /// 페이지는 매번 서버에 다시 묻습니다. 다른 파일은 한 시간 동안 다시 묻지 않습니다.
 /// trunk가 파일 이름에 넣는 해시는 최적화를 마친 내용을 반영하지 않을 수 있으므로, 이름이 같아도 내용이 바뀌는 경우를 위해 길게 간직하지 않게 합니다.
 const INDEX_CACHE: &str = "no-cache";
 const FILE_CACHE: &str = "public, max-age=3600";
+
+/// 이 서버로 들어오는 공개 주소입니다. `http(s)://호스트[:포트]`의 글자만 담습니다.
+/// 따옴표, 꺾쇠, 공백과 경로를 담을 수 없으므로 페이지의 속성 값 안에 그대로 넣어도 페이지를 깨뜨리지 못합니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicUrl(String);
+
+/// `PublicUrl`로 읽을 수 없는 글자입니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicUrlError(String);
+
+impl fmt::Display for PublicUrlError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:?} is not an address such as https://host or http://host:8080 (no path, and only letters, digits, - and .)",
+            self.0
+        )
+    }
+}
+
+impl PublicUrl {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn parse(text: &str) -> Result<PublicUrl, PublicUrlError> {
+        let refused = || PublicUrlError(text.to_string());
+        let rest = text
+            .strip_prefix("https://")
+            .or_else(|| text.strip_prefix("http://"))
+            .ok_or_else(refused)?;
+        let (host, port) = match rest.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (rest, None),
+        };
+        let host_fits = !host.is_empty()
+            && host.len() <= MAX_HOST_BYTES
+            && host
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.');
+        let port_fits = port.is_none_or(|port| {
+            port.bytes().all(|byte| byte.is_ascii_digit()) && port.parse::<u16>().is_ok()
+        });
+        if host_fits && port_fits {
+            Ok(PublicUrl(text.to_string()))
+        } else {
+            Err(refused())
+        }
+    }
+}
 
 /// 서버가 내주는 파일입니다. 내용은 시작할 때 읽고, 요청마다 복사하지 않고 함께 씁니다.
 #[derive(Debug)]
@@ -44,7 +102,8 @@ pub(crate) struct Answer {
 
 impl WebFiles {
     /// `dir` 바로 아래의 파일을 읽습니다. `index.html`이 없으면 오류입니다.
-    pub fn load(dir: &Path) -> io::Result<WebFiles> {
+    /// 페이지의 `{{public_url}}` 자리는 `public_url`로 바꾸고, 없으면 빈 글자로 바꿉니다.
+    pub fn load(dir: &Path, public_url: Option<&PublicUrl>) -> io::Result<WebFiles> {
         let mut files = HashMap::new();
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
@@ -63,11 +122,14 @@ impl WebFiles {
             } else {
                 FILE_CACHE
             };
-            let body = std::fs::read(entry.path())?.into();
+            let mut body = std::fs::read(entry.path())?;
+            if name == INDEX {
+                body = with_public_url(body, public_url)?;
+            }
             files.insert(
                 name,
                 WebFile {
-                    body,
+                    body: body.into(),
                     content_type,
                     cache_control,
                 },
@@ -152,6 +214,14 @@ fn head(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {content_length}\r\nCache-Control: {cache_control}\r\nX-Content-Type-Options: nosniff\r\n{extra_headers}Connection: close\r\n\r\n"
     )
     .into_bytes()
+}
+
+/// 페이지의 `{{public_url}}` 자리를 공개 주소로 바꿉니다. 없으면 빈 글자로 바꿉니다.
+fn with_public_url(page: Vec<u8>, public_url: Option<&PublicUrl>) -> io::Result<Vec<u8>> {
+    let page = String::from_utf8(page)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("{INDEX} is not UTF-8")))?;
+    let url = public_url.map_or("", PublicUrl::as_str);
+    Ok(page.replace(PUBLIC_URL_MARKER, url).into_bytes())
 }
 
 /// 이름이 `.`으로 시작하지 않고 확장자가 표에 있으면 그 `Content-Type`입니다.
