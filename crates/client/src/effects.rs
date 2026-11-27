@@ -1,16 +1,18 @@
 //! 짧게 보이는 효과입니다. 플레이어의 부채꼴 공격, 소총의 사격 선, 활과 석궁의 탄환, 포탑의 사격, 범위형 포탑의 범위, 포탑이 놓일 타일과 건설이 거절된 타일을 선으로 그립니다.
+//! 보스가 예고한 원과 보스가 노리는 플레이어의 표시도 선으로 그립니다.
 //!
 //! 효과는 이벤트가 아니라 상태에서 그립니다. 스냅샷에 마지막 공격 Tick(소총이면 사격 선이 끝난 자리도)과 마지막 사격이 들어 있으므로,
 //! 화면에 그리는 Tick이 그 직후이면 효과를 그립니다. 탄환은 스냅샷의 탄환 목록에서 그립니다.
+//! 보스의 예고는 스냅샷에 든 자리와 진행도를 그대로 그립니다.
 //! 그래서 모든 클라이언트가 같은 효과를 같은 때에 봅니다.
 
 use bevy::prelude::*;
 use caravan_client_core::{
-    Frame, PlayerView, ProjectileView, RangeRing, build_preview, circle_to_screen_radii,
-    effect_progress, range_preview, range_rings,
+    BossView, Danger, Frame, PlayerView, ProjectileView, RangeRing, boss_view, build_preview,
+    circle_to_screen_radii, effect_progress, range_preview, range_rings,
 };
 use caravan_protocol::{
-    WireDelivery, WireLife, WirePhase, WireStructureKind, WireTowerState, WireWeaponKind,
+    WireDelivery, WireLife, WirePhase, WireStructureKind, WireTowerState, WireWeaponKind, WorldInfo,
 };
 use caravan_rules::{Tile, Vec2 as Ground};
 
@@ -26,7 +28,7 @@ pub fn configure_gizmos(mut store: ResMut<GizmoConfigStore>) {
     config.line.width = config::EFFECT_LINE_WIDTH;
 }
 
-/// 공격과 사격 선과 탄환과 사격 효과, 포탑의 범위, 포탑이 놓일 타일, 내 건설이 거절된 타일을 그립니다.
+/// 공격과 사격 선과 탄환과 사격 효과, 보스의 예고, 포탑의 범위, 포탑이 놓일 타일, 내 건설이 거절된 타일을 그립니다.
 pub fn draw_effects(
     frame: Res<CurrentFrame>,
     flow: Res<ClientFlow>,
@@ -56,6 +58,9 @@ pub fn draw_effects(
         draw_projectile(&mut gizmos, projectile);
     }
     draw_tower_shots(&mut gizmos, frame);
+    if let Some(boss) = boss_view(frame) {
+        draw_boss(&mut gizmos, frame, &boss, &joined.welcome.world);
+    }
     let me = frame.player(scene.you);
     // 야영지에서는 건설이 거절되고 결과 화면에서는 세계가 멈춰 있으므로, 미리 보기는 원정 중에만 그립니다.
     let in_expedition = !matches!(
@@ -126,6 +131,47 @@ fn draw_range(gizmos: &mut Gizmos, ring: RangeRing) {
         convert::from_rules(circle_to_screen_radii(ring.radius)),
         tower_color(ring.kind).with_alpha(alpha),
     );
+}
+
+/// 보스가 예고한 원과 보스가 노리는 플레이어의 표시를 그립니다. 바깥 테두리는 예고가 시작될 때부터 끝까지 같고,
+/// 안쪽의 원이 테두리까지 차오르면 피해가 납니다. 원의 자리와 진행도는 서버가 정한 값을 그대로 씁니다.
+fn draw_boss(gizmos: &mut Gizmos, frame: &Frame, boss: &BossView, world: &WorldInfo) {
+    if let Some(Danger::Circle {
+        center,
+        radius,
+        fill,
+    }) = boss.danger(world)
+    {
+        let at = Isometry2d::from_translation(convert::screen_pos(center));
+        gizmos.ellipse_2d(
+            at,
+            convert::from_rules(circle_to_screen_radii(radius)),
+            config::DANGER,
+        );
+        gizmos.ellipse_2d(
+            at,
+            convert::from_rules(circle_to_screen_radii(radius * fill)),
+            config::DANGER_FILL,
+        );
+    }
+    let aimed = boss
+        .aimed_player()
+        .and_then(|id| frame.players.iter().find(|player| player.id == id));
+    if let Some(player) = aimed {
+        gizmos.linestrip_2d(aim_mark(player.pos), config::BOSS_TARGET);
+    }
+}
+
+/// 보스가 노리는 플레이어의 머리 위에서 아래를 가리키는 삼각형의 꼭짓점입니다(화면 좌표, 닫힌 선).
+fn aim_mark(player_at: Ground) -> [Vec2; 4] {
+    let tip = convert::screen_pos(player_at) + Vec2::new(0.0, config::BOSS_TARGET_LIFT_PX);
+    let size = config::BOSS_TARGET_SIZE_PX;
+    [
+        tip,
+        tip + Vec2::new(-size, size * 1.6),
+        tip + Vec2::new(size, size * 1.6),
+        tip,
+    ]
 }
 
 /// 타일의 테두리를 지면에 그립니다.
@@ -362,6 +408,22 @@ mod tests {
             );
             assert!(side.dot(to - from).abs() < 1e-2, "{end:?}: {side:?}");
         }
+    }
+
+    #[test]
+    fn the_aim_mark_hangs_above_the_aimed_player_and_points_down_at_them() {
+        let feet = convert::screen_pos(Ground::new(10.0, 8.0));
+
+        let [tip, left, right, closed] = aim_mark(Ground::new(10.0, 8.0));
+
+        assert_eq!(tip, feet + Vec2::new(0.0, config::BOSS_TARGET_LIFT_PX));
+        assert_eq!(closed, tip, "the line is closed");
+        assert!(
+            left.y > tip.y && right.y > tip.y,
+            "the tip is the lowest point"
+        );
+        assert_eq!(left.x, tip.x - config::BOSS_TARGET_SIZE_PX);
+        assert_eq!(right.x, tip.x + config::BOSS_TARGET_SIZE_PX);
     }
 
     #[test]

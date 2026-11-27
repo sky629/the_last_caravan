@@ -163,6 +163,7 @@ fn player_look(player: &PlayerView, scene: &Scene, palette: &Palette, away: bool
 
 /// 몬스터의 HP 막대는 피해를 입었을 때만 보입니다. 수백 마리가 막대를 모두 달고 있으면 화면이 복잡해집니다.
 /// 허수아비는 맞아도 HP가 줄지 않으므로 막대가 없고, 맞은 피해는 숫자로 보입니다(`camp::sync_strikes`).
+/// 보스의 HP는 화면 위쪽 가운데의 큰 막대(`Hud::boss`)에 있으므로, 몸 위에는 막대를 달지 않습니다.
 /// 효과에 걸린 몸통은 효과의 색입니다. 스냅샷이 알려 준 효과만 그리고, 효과가 끝나면 다음 프레임에 종류의 색으로 돌아갑니다.
 /// `match`가 모든 종류를 다루므로, 몬스터 종류를 추가하면 여기서 컴파일 오류가 납니다.
 fn monster_look(
@@ -178,6 +179,7 @@ fn monster_look(
             (monster.hp < max_hp).then(|| bar_fraction(monster.hp, max_hp)),
         ),
         WireMonsterKind::Scarecrow => (&palette.scarecrow, config::SCARECROW_BODY, None),
+        WireMonsterKind::Boss => (&palette.boss, config::BOSS_BODY, None),
     };
     let body = monster
         .shown_effect()
