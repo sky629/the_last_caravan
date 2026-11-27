@@ -169,7 +169,8 @@ fn swing(
 ) {
     let t = ctx.t;
     let cos = arc_cos(arc.half_angle_deg);
-    let search_radius = t.player.radius + arc.reach + t.monsters.largest_radius();
+    let search_radius =
+        t.player.radius + arc.reach + t.monsters.largest_radius() + ctx.grid.hit_margin();
     ctx.grid.query(attack.origin, search_radius, candidates);
     for &index in candidates.iter() {
         let monster = &monsters[index];
@@ -178,7 +179,7 @@ fn swing(
         }
         let body = Body::Circle {
             center: monster.pos,
-            radius: t.monsters.get(monster.kind).radius,
+            radius: t.monsters.get(monster.kind).hit_radius(),
         };
         let in_reach = body.gap_from(attack.origin, t.player.radius) <= arc.reach;
         if in_reach && in_arc(attack.origin, attack.facing, monster.pos, cos) {

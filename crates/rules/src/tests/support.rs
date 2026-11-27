@@ -149,7 +149,10 @@ impl Scenario {
             .iter_mut()
             .find(|monster| monster.id == id)
             .expect("the monster exists");
-        monster.effects.apply(debuff, Source::Player(owner), &t);
+        let resist = t.monsters.get(monster.kind).resist;
+        monster
+            .effects
+            .apply(debuff, Source::Player(owner), &resist, &t);
     }
 
     /// 플레이어에게 버프를 줍니다. 버프 포탑이 하는 것과 같이 `Player::grant`를 부릅니다. 버프의 규칙을 버프 포탑 없이 시험할 때 이 함수로 줍니다.

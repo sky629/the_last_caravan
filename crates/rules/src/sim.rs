@@ -188,7 +188,8 @@ impl Sim {
             self.begin_expedition();
             return;
         }
-        self.monster_grid.rebuild(&self.world.monsters);
+        self.monster_grid
+            .rebuild(&self.world.monsters, &self.tuning.monsters);
         let ctx = Ctx {
             t: &self.tuning,
             inputs,
@@ -240,7 +241,8 @@ impl Sim {
         );
 
         self.paths.sync(&self.world, &self.tuning);
-        self.monster_grid.rebuild(&self.world.monsters);
+        self.monster_grid
+            .rebuild(&self.world.monsters, &self.tuning.monsters);
         let ctx = Ctx {
             t: &self.tuning,
             inputs,

@@ -340,6 +340,7 @@ pub(crate) struct Affliction {
 impl World {
     /// 모든 피해를 적용하는 유일한 곳입니다. 몬스터의 HP를 0으로 만든 피해가 있으면 그 피해를 준 쪽이 처치를 가져갑니다.
     /// 같은 Tick에 여럿이 같은 몬스터를 맞히면 `hits`의 순서(플레이어의 공격, 탄환, 포탑, 몬스터, 출혈)에서 HP를 0으로 만든 피해가 주인입니다.
+    /// 포탑이 몬스터에게 준 피해(포탑이 건 출혈 포함)는 그 몬스터의 종류가 받는 비율(`Resist::tower_damage_percent`)만 들어갑니다.
     /// 피해를 모두 적용하고 죽은 몬스터를 제거한 뒤에, 살아남은 몬스터에게 `Hit`이 싣고 온 효과를 겁니다.
     pub fn apply_hits(&mut self, hits: &[Hit], t: &Tuning) {
         for hit in hits {
@@ -356,7 +357,12 @@ impl World {
                     if let Ok(index) = self.monsters.binary_search_by_key(&id, |m| m.id) {
                         let monster = &mut self.monsters[index];
                         let was_alive = monster.hp > 0;
-                        monster.hp = monster.hp.saturating_sub(hit.amount);
+                        let dealt = t
+                            .monsters
+                            .get(monster.kind)
+                            .resist
+                            .damage_from(hit.by, hit.amount);
+                        monster.hp = monster.hp.saturating_sub(dealt);
                         if was_alive && monster.hp == 0 {
                             self.credit_kill(hit.by);
                         }

@@ -13,7 +13,7 @@ use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::loadout::Loadout;
 use crate::math::{Rect, Vec2};
 use crate::spawn::SpawnPlan;
-use crate::world::{Layout, Tile, TileMap, World};
+use crate::world::{Layout, Source, Tile, TileMap, World};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tuning {
@@ -213,10 +213,19 @@ pub struct ReviveTuning {
 }
 
 /// 몬스터 한 종류의 수치입니다.
+///
+/// 몸은 둘입니다. 걷는 몸(`radius`)은 길을 걷고, 지형과 포탑과 다른 몬스터에 부딪히고, 몬스터끼리 밀어내고, 나타날 자리를 고르고,
+/// 근접 공격의 거리를 재는 원입니다. 맞는 몸(`hit_radius`)은 걷는 몸에 `hit_margin`을 더한 원이고, 플레이어의 공격과 탄환과 포탑의 사거리가 겨누고 화면이 그립니다.
+/// 걷는 몸은 0.5보다 작아야 한 칸 폭의 길을 걷지만, 맞는 몸은 얼마든지 커도 길과 충돌에 영향을 주지 않습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MonsterTuning {
     pub max_hp: u32,
+    /// 걷는 몸의 반지름입니다.
     pub radius: f32,
+    /// 맞는 몸이 걷는 몸 밖으로 더 나온 거리(타일)입니다. 0 이상이고, 0이면 두 몸이 같습니다.
+    pub hit_margin: f32,
+    /// 피해와 효과를 받는 방식입니다.
+    pub resist: Resist,
     pub speed: f32,
     pub attack_damage: u32,
     /// 몬스터의 가장자리에서 대상의 가장자리까지 잰 근접 공격 거리입니다.
@@ -230,13 +239,69 @@ pub struct MonsterTuning {
     pub separation_speed: f32,
 }
 
+impl MonsterTuning {
+    /// 맞는 몸의 반지름입니다. 걷는 몸의 반지름에 `hit_margin`을 더한 값입니다.
+    pub fn hit_radius(&self) -> f32 {
+        self.radius + self.hit_margin
+    }
+}
+
+/// 몬스터 종류가 피해와 효과를 받는 방식입니다. 보통 몬스터는 모두 받으므로 `Resist::NONE`입니다.
+/// 이 값을 읽는 곳은 `World::apply_hits`(피해)와 `MonsterEffects`의 `would_take`와 `apply`(효과) 셋이고, 규칙의 다른 곳은 종류를 보고 갈라지지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Resist {
+    /// 포탑이 준 피해(포탑이 건 출혈의 피해 포함)에서 받는 백분율입니다. 100이면 그대로이고, 올림하므로 피해가 1 이상이면 1 이상이 들어갑니다. 100 이하입니다.
+    pub tower_damage_percent: u32,
+    /// 참이면 스턴에 걸리지 않습니다. 스턴 포탑은 이런 몬스터를 대상으로 고르지 않고 쿨다운도 쓰지 않습니다.
+    pub stun_immune: bool,
+    /// 감속의 세기 가운데 받는 백분율입니다. 100이면 그대로이고, 50이면 느려지는 정도(1에서 비율을 뺀 값)가 절반입니다. 100 이하입니다.
+    pub slow_percent: u32,
+}
+
+impl Resist {
+    /// 아무것도 줄이지 않습니다.
+    pub const NONE: Resist = Resist {
+        tower_damage_percent: 100,
+        stun_immune: false,
+        slow_percent: 100,
+    };
+
+    /// `by`가 준 피해 `amount` 가운데 몬스터가 받는 피해입니다. 포탑의 피해만 줄입니다.
+    pub(crate) fn damage_from(&self, by: Source, amount: u32) -> u32 {
+        match by {
+            Source::Tower => {
+                let received =
+                    (u64::from(amount) * u64::from(self.tower_damage_percent)).div_ceil(100);
+                u32::try_from(received).unwrap_or(u32::MAX)
+            }
+            Source::Player(_) | Source::Monster => amount,
+        }
+    }
+
+    /// 효과가 이 종류에게 걸릴 때의 모습입니다. 걸리지 않는 효과는 `None`이고, 감속은 비율이 1에 가까워집니다.
+    /// 효과를 거는 길과 걸릴지 묻는 길이 모두 이 함수를 거치므로, 두 곳의 판단이 어긋나지 않습니다.
+    pub(crate) fn filter(&self, debuff: Debuff) -> Option<Debuff> {
+        match debuff {
+            Debuff::Stun { .. } if self.stun_immune => None,
+            Debuff::Slow { factor, secs } => Some(Debuff::Slow {
+                factor: factor + (1.0 - factor) * (1.0 - self.slow_percent as f32 / 100.0),
+                secs,
+            }),
+            Debuff::Bleed { .. } | Debuff::Stun { .. } => Some(debuff),
+        }
+    }
+}
+
 /// 몬스터 종류별 수치표입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MonsterTable {
     pub grunt: MonsterTuning,
     /// 야영지의 허수아비입니다. 움직이지 않고 공격하지 않으므로 속도와 공격의 수치는 쓰이지 않습니다.
-    /// 반지름은 몬스터가 걷는 길의 격자를 정하는 `largest_radius`에 들어가므로 `grunt`보다 크게 하지 않습니다.
+    /// 걷는 몸의 반지름은 `largest_radius`에 들어가므로 `grunt`보다 크게 하지 않습니다.
     pub scarecrow: MonsterTuning,
+    /// 마지막 밤의 보스입니다. 걷는 몸은 `grunt`와 같아서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않고, 맞는 몸만 큽니다.
+    /// `max_hp`는 밤의 무리와 같은 기준 인원(`WaveScaling`)일 때의 값입니다.
+    pub boss: MonsterTuning,
 }
 
 impl MonsterTable {
@@ -244,10 +309,13 @@ impl MonsterTable {
         match kind {
             MonsterKind::Grunt => &self.grunt,
             MonsterKind::Scarecrow => &self.scarecrow,
+            MonsterKind::Boss => &self.boss,
         }
     }
 
-    /// 모든 종류 가운데 가장 큰 반지름입니다. 이동 경로 격자는 이 크기를 기준으로 막힌 칸을 정합니다.
+    /// 모든 종류 가운데 가장 큰 걷는 몸의 반지름입니다. 밤의 몬스터가 나타날 자리의 지형 검사(`SpawnPlan`), 몬스터끼리 밀어내는 이웃 검색(`crowd_step`),
+    /// 부채꼴 무기와 탄환과 소총의 후보 검색이 읽습니다. 맞는 몸의 여유(`hit_margin`)는 들어가지 않으므로 맞는 몸이 큰 종류가 있어도 이 값은 커지지 않습니다.
+    /// 후보 검색은 지금 있는 몬스터의 가장 큰 `hit_margin`을 격자(`MonsterGrid::hit_margin`)에서 따로 더합니다.
     pub fn largest_radius(&self) -> f32 {
         MonsterKind::ALL
             .iter()
@@ -255,8 +323,8 @@ impl MonsterTable {
             .fold(0.0, f32::max)
     }
 
-    /// 몬스터의 중심에서 대상의 가장자리까지 잰 공격 거리(반지름 더하기 공격 거리) 가운데 가장 긴 값입니다.
-    /// 이동 경로의 도착 칸을 정할 때 씁니다.
+    /// 몬스터의 중심에서 대상의 가장자리까지 잰 공격 거리(걷는 몸의 반지름 더하기 공격 거리) 가운데 가장 긴 값입니다.
+    /// 마차와 포탑으로 가는 흐름장의 도착 타일, 건설의 길 막힘 검사, 수치 검사의 연결 검사가 읽습니다.
     pub fn longest_engage_distance(&self) -> f32 {
         MonsterKind::ALL
             .iter()
@@ -723,6 +791,12 @@ impl Tuning {
                     "the scarecrow stands only in the camp, not in waves or as a guard".to_string(),
                 );
             }
+            if kind == MonsterKind::Boss {
+                return Err(
+                    "the boss comes only after the last wave, not in waves or as a guard"
+                        .to_string(),
+                );
+            }
         }
         // HP가 0인 개체는 만들어지는 순간 쓰러지거나 제거되므로, 모든 최대 HP는 1 이상이어야 합니다.
         let all_hp = [self.player.max_hp, self.wagon.max_hp]
@@ -744,6 +818,13 @@ impl Tuning {
                 &format!("{kind:?} separation_speed"),
                 monster.separation_speed,
             )?;
+            check_not_negative(&format!("{kind:?} hit_margin"), monster.hit_margin)?;
+            if monster.resist.tower_damage_percent > 100 {
+                return Err(format!("{kind:?} tower_damage_percent must be at most 100"));
+            }
+            if monster.resist.slow_percent > 100 {
+                return Err(format!("{kind:?} slow_percent must be at most 100"));
+            }
         }
         self.validate_weapons()?;
         self.validate_effects()?;
@@ -1441,6 +1522,8 @@ impl Default for Tuning {
                 grunt: MonsterTuning {
                     max_hp: 60,
                     radius: 0.4,
+                    hit_margin: 0.0,
+                    resist: Resist::NONE,
                     speed: 2.2,
                     attack_damage: 10,
                     attack_reach: 0.5,
@@ -1451,12 +1534,32 @@ impl Default for Tuning {
                 scarecrow: MonsterTuning {
                     max_hp: 60,
                     radius: 0.4,
+                    hit_margin: 0.0,
+                    resist: Resist::NONE,
                     speed: 0.0,
                     attack_damage: 0,
                     attack_reach: 0.0,
                     attack_cooldown_secs: 1.0,
                     aggro_range: 0.0,
                     separation_speed: 0.0,
+                },
+                // 걷는 몸은 `grunt`와 같고 맞는 몸의 반지름은 1타일입니다. 포탑의 피해는 10%만 받고, 스턴에 걸리지 않고, 감속은 절반만 받습니다.
+                // 근접 공격은 하지 않고(`attack_damage`가 0), 대상에게 `attack_reach`까지 다가가서 멈춥니다. 12000은 네 명일 때의 HP입니다.
+                boss: MonsterTuning {
+                    max_hp: 12000,
+                    radius: 0.4,
+                    hit_margin: 0.6,
+                    resist: Resist {
+                        tower_damage_percent: 10,
+                        stun_immune: true,
+                        slow_percent: 50,
+                    },
+                    speed: 1.2,
+                    attack_damage: 0,
+                    attack_reach: 0.5,
+                    attack_cooldown_secs: 1.0,
+                    aggro_range: 0.0,
+                    separation_speed: 1.0,
                 },
             },
             wagon: WagonTuning {

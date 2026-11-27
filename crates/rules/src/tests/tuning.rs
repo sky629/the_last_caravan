@@ -1175,3 +1175,44 @@ fn the_buff_of_a_buff_tower_lasts_longer_than_zero() {
     t.structures.swift_tower.action = aura(Buff::Swift { secs: 0.05 });
     assert_eq!(t.validate(), Ok(()), "a buff of one tick");
 }
+
+#[test]
+fn a_monster_row_that_takes_more_than_the_whole_tower_damage_or_slow_is_rejected() {
+    let mut t = Tuning::default();
+    t.monsters.boss.resist.tower_damage_percent = 101;
+    let why = t.validate().expect_err("more than all of the damage");
+    assert!(why.contains("tower_damage_percent"), "{why}");
+
+    let mut t = Tuning::default();
+    t.monsters.boss.resist.slow_percent = 101;
+    let why = t.validate().expect_err("more than all of the slow");
+    assert!(why.contains("slow_percent"), "{why}");
+
+    let mut t = Tuning::default();
+    t.monsters.boss.resist.tower_damage_percent = 0;
+    t.monsters.boss.resist.slow_percent = 0;
+    assert_eq!(t.validate(), Ok(()), "a monster that takes none of them");
+}
+
+#[test]
+fn a_hit_body_smaller_than_nothing_is_rejected() {
+    let mut t = Tuning::default();
+    for bad in [-0.1, f32::NAN, f32::INFINITY] {
+        t.monsters.boss.hit_margin = bad;
+        let why = t.validate().expect_err(&format!("a margin of {bad}"));
+        assert!(why.contains("hit_margin"), "{bad}: {why}");
+    }
+    t.monsters.boss.hit_margin = 0.0;
+    assert_eq!(t.validate(), Ok(()), "both bodies the same");
+}
+
+#[test]
+fn the_boss_cannot_come_in_a_wave_or_as_a_guard() {
+    let mut t = Tuning::default();
+    t.nights.plans[0].waves[0].kind = crate::kind::MonsterKind::Boss;
+    assert!(t.validate().is_err(), "a boss in a wave");
+
+    let mut t = Tuning::default();
+    t.guards.kind = crate::kind::MonsterKind::Boss;
+    assert!(t.validate().is_err(), "a boss as a guard");
+}
