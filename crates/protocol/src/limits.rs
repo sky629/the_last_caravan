@@ -18,6 +18,10 @@ pub struct ServerLimits {
     /// 리버스 프록시 뒤에 서버를 두면 모든 접속이 프록시의 IP 주소 하나로 보이므로, 이 값을 올리거나 프록시가 전달한 주소로 세도록 바꿔야 합니다.
     /// 같은 열쇠(IPv6는 같은 /64 대역을 하나로 본 주소)로 끊긴 자리의 수(`max_held_seats_per_ip`)도 셉니다.
     pub max_links_per_ip: usize,
+    /// 웹 클라이언트의 파일을 동시에 보낼 수 있는 응답의 수입니다. 파일을 내주는 서버(`caravan_ws_server`의 `bind_with_files`)만 읽습니다.
+    /// 파일 요청은 요청의 머리를 읽는 동안만 접속의 자리(`max_links`, `max_links_per_ip`)를 차지하고, 파일을 보내는 동안에는 이 자리를 차지합니다.
+    /// 그래서 느리게 받는 다운로드가 많아도 게임 접속의 자리는 줄지 않습니다. 이 자리가 모두 차 있으면 새 파일 요청에 `503`으로 답하고 닫습니다.
+    pub max_file_responses: usize,
     /// 접속이 끊겨서 자리를 유지하는 동안, 같은 상대(`max_links_per_ip`와 같은 열쇠)가 유지시킬 수 있는 자리의 수입니다.
     /// 끊긴 자리는 접속 수의 한도에 들지 않으므로, 입장과 끊기를 되풀이해서 접속자가 없는 방을 쌓는 상대를 이 값으로 묶습니다.
     /// 한 집에서 방 하나의 사람들이 함께 끊기는 경우를 받도록 방의 정원 이상이어야 하고, 서버가 시작할 때 확인합니다.
@@ -78,6 +82,7 @@ impl Default for ServerLimits {
             handshake_timeout: Duration::from_secs(5),
             max_links: 64,
             max_links_per_ip: 16,
+            max_file_responses: 16,
             max_held_seats_per_ip: 8,
             max_held_seats: 128,
             max_rooms: 256,

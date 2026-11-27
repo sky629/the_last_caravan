@@ -2171,6 +2171,7 @@ version = "0.1.0"
 dependencies = [
  "caravan_protocol",
  "futures-util",
+ "httparse",
  "tokio",
  "tokio-tungstenite",
 ]
