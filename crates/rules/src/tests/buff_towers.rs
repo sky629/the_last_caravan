@@ -265,11 +265,16 @@ fn a_player_just_inside_three_tiles_has_the_buff_and_one_just_outside_has_none()
     s.tower_of(StructureKind::HasteTower, 5, 5);
     let inside = s.player_at(5.5 + 2.95, 5.5);
     let outside = s.player_at(5.5, 5.5 + 3.05);
+    // 범위는 원이므로 대각선으로도 3타일입니다. 두 점은 포탑에서 2.97타일과 3.11타일 떨어져 있습니다.
+    let inside_diagonal = s.player_at(5.5 + 2.1, 5.5 + 2.1);
+    let outside_diagonal = s.player_at(5.5 - 2.2, 5.5 + 2.2);
 
     s.run_ticks(1);
 
     assert_eq!(buffs_of(&s, inside), (true, false));
     assert_eq!(buffs_of(&s, outside), (false, false));
+    assert_eq!(buffs_of(&s, inside_diagonal), (true, false));
+    assert_eq!(buffs_of(&s, outside_diagonal), (false, false));
 }
 
 #[test]

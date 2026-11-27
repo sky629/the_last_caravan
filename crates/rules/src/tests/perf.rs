@@ -667,7 +667,7 @@ fn village_of(kinds: &[StructureKind]) -> Scenario {
 }
 
 /// 마을의 포탑 자리 둘(`Tuning::spread_tower_sites`가 돌려주는 목록의 번호 `first`와 `second`, 번호는 0부터 셉니다) 사이에 플레이어 넷을 세웁니다.
-/// 한 명은 두 자리의 한가운데에, 나머지는 거기서 0.1타일 떨어진 곳에 섭니다. 두 자리가 범위의 두 배(6타일)보다 가까우면 넷 모두 두 포탑의 범위 안에 있습니다.
+/// 한 명은 두 자리의 한가운데에, 나머지는 거기서 0.1타일 떨어진 곳에 섭니다. 두 자리 사이가 5.8타일 이하이면 한가운데에서 0.1타일 떨어진 플레이어도 두 포탑의 범위(3타일) 안에 있습니다.
 /// 플레이어는 죽지 않습니다(`village_under_siege_with`).
 fn four_players_between_sites(s: &mut Scenario, first: usize, second: usize) -> Vec<PlayerId> {
     let t = s.sim.tuning();
