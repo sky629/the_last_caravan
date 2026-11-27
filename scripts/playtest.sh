@@ -37,7 +37,9 @@ alive() {
 # 나갈 때(정상, 오류, Ctrl+C) 서버와 터널을 모두 끕니다. 5초 안에 끝나지 않으면 강제로 끝냅니다.
 # shellcheck disable=SC2329 # 아래의 trap이 부릅니다.
 cleanup() {
-    trap - EXIT INT TERM HUP
+    # 정리하는 동안 Ctrl+C를 한 번 더 눌러도 정리를 끝까지 합니다.
+    trap '' INT TERM HUP
+    trap - EXIT
     for pid in "$SERVER_PID" "$TUNNEL_PID"; do
         if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi
     done
@@ -77,7 +79,6 @@ require_free_port() {
 require cloudflared "Install it with: brew install cloudflared"
 require trunk "Install it with: cargo install trunk --locked"
 require cargo "Install Rust from https://rustup.rs"
-require curl "Install curl with your package manager."
 require nc "Install netcat with your package manager."
 require_free_port
 
@@ -119,8 +120,9 @@ done
 "$TARGET/release/caravan-dedicated" --addr "127.0.0.1:$PORT" --web-dir "$WEB" --public-url "$URL" >"$OUT/server.log" 2>&1 &
 SERVER_PID=$!
 
+# 서버가 포트를 잡았다고 알릴 때까지 기다립니다. 다른 프로그램이 그 포트를 먼저 잡았으면 서버가 끝나므로, 링크를 출력하지 않고 끝냅니다.
 tries=0
-until curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/" 2>/dev/null; do
+until grep -q "listening on" "$OUT/server.log" 2>/dev/null && alive "$SERVER_PID"; do
     if ! alive "$SERVER_PID" || [ "$tries" -ge 100 ]; then
         echo "the server did not start. Its output (more in $OUT/server.log):" >&2
         tail -n 15 "$OUT/server.log" >&2

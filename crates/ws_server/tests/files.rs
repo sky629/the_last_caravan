@@ -198,6 +198,11 @@ fn the_page_the_script_and_the_wasm_come_over_http_on_the_game_port() {
         ),
     ] {
         let reply = request(addr, "GET", target);
+        assert_eq!(
+            reply.header("X-Content-Type-Options"),
+            Some("nosniff"),
+            "{target}"
+        );
         assert_eq!(reply.status, "HTTP/1.1 200 OK", "{target}");
         assert_eq!(reply.header("content-type"), Some(content_type), "{target}");
         assert_eq!(reply.header("cache-control"), Some(cache), "{target}");
@@ -585,6 +590,47 @@ async fn a_download_that_keeps_reading_too_slowly_is_cut_at_the_time_its_size_al
     assert!(
         received < 32 * 1024 * 1024,
         "the slow download is cut short, got {received} bytes"
+    );
+}
+
+#[test]
+fn a_download_that_is_fast_enough_for_its_size_finishes_after_the_grace_has_passed() {
+    const SIZE: usize = 8 * 1024 * 1024;
+    let dir = web_dir();
+    dir.write("big_bg.wasm", &vec![7u8; SIZE]);
+    // 8MiB를 초당 4MiB로 보내면 2초이므로, 응답 하나에 허락되는 시간은 2.2초입니다.
+    let limits = ServerLimits {
+        write_timeout: Duration::from_secs(30),
+        file_response_grace: Duration::from_millis(200),
+        file_min_bytes_per_sec: 4 * 1024 * 1024,
+        ..ServerLimits::default()
+    };
+    let server = serving(&dir.0, limits);
+
+    // 초당 약 8MiB로 읽으므로 1초쯤 걸립니다. 유예 시간(0.2초)보다 길고 허락된 시간(2.2초)보다 짧습니다.
+    let mut stream = start_download(server.local_addr(), "big_bg.wasm");
+    let started = Instant::now();
+    let mut received = 0usize;
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => received += count,
+        }
+        let due = Duration::from_secs_f64(received as f64 / (8.0 * 1024.0 * 1024.0));
+        if let Some(wait) = due.checked_sub(started.elapsed()) {
+            std::thread::sleep(wait);
+        }
+    }
+
+    assert!(
+        received >= SIZE,
+        "the whole file arrives, got {received} bytes of {SIZE}"
+    );
+    assert!(
+        started.elapsed() > Duration::from_millis(400),
+        "the download took longer than the grace, {:?}",
+        started.elapsed()
     );
 }
 

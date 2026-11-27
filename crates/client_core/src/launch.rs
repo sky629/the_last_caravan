@@ -218,7 +218,7 @@ mod tests {
                 .unwrap()
                 .server_url,
             DEFAULT_SERVER,
-            "a page from trunk serve connects as before"
+            "a page from trunk serve connects to the default server"
         );
     }
 
