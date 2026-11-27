@@ -6,13 +6,13 @@
 mod common;
 
 use caravan_protocol::{
-    ClientMsg, ClientTransport, InputMsg, ServerLimits, Snapshot, WireLife, WirePhase, WireVec2,
-    WireWeaponKind,
+    ClientMsg, ClientTransport, InputMsg, ServerLimits, Snapshot, WireLife, WirePhase,
+    WireStructureKind, WireVec2, WireWeaponKind,
 };
 use caravan_rules::{Loadout, Tuning, WeaponKind as RulesWeapon};
 use common::{
-    assert_near, input_with, last_snapshot, player, position, press_ready, rig, rig_with,
-    rig_with_limits,
+    assert_near, input_with, last_snapshot, player, position, press_ready, rig, rig_in_expedition,
+    rig_with, rig_with_limits,
 };
 
 /// 한 Tick에 움직이는 거리(타일)입니다.
@@ -250,6 +250,7 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
         switch_weapon: false,
         toggle_ready: false,
         confirm: false,
+        cycle_tower: false,
     }));
     rig.run_ticks(3);
 
@@ -344,6 +345,76 @@ fn a_late_or_repeated_input_with_q_does_not_switch_the_weapon() {
     assert_eq!(
         player(&last_snapshot(&mut a), a_id).loadout.held,
         WireWeaponKind::Sword
+    );
+}
+
+/// 종류는 원정 중에만 바뀌므로, 이 시험들은 야영지를 거치지 않고 원정으로 시작하는 서버를 씁니다.
+fn press_e(seq: u32) -> ClientMsg {
+    ClientMsg::Input(InputMsg {
+        seq,
+        cycle_tower: true,
+        ..InputMsg::default()
+    })
+}
+
+#[test]
+fn one_press_of_e_chooses_the_next_tower_kind_once_and_the_ticks_without_a_message_do_not_choose_again()
+ {
+    let mut rig = rig_in_expedition(Tuning::default());
+    let (mut a, a_id) = rig.join_ok("test");
+    let (mut b, _) = rig.join_ok("test");
+    a.send(&input_with(1, (0.0, 0.0), false));
+    rig.run_ticks(1);
+    assert_eq!(
+        player(&last_snapshot(&mut b), a_id).build_kind,
+        WireStructureKind::Watchtower
+    );
+
+    a.send(&press_e(2));
+    rig.run_ticks(1);
+    assert_eq!(
+        player(&last_snapshot(&mut b), a_id).build_kind,
+        WireStructureKind::SlowTower
+    );
+
+    // 입력이 없는 Tick은 마지막 입력을 다시 쓰지만, 누른 순간은 다시 쓰지 않습니다.
+    rig.run_ticks(5);
+    assert_eq!(
+        player(&last_snapshot(&mut b), a_id).build_kind,
+        WireStructureKind::SlowTower,
+        "the held input did not press E again"
+    );
+}
+
+#[test]
+fn an_e_pressed_and_released_between_two_ticks_still_chooses_the_next_tower_kind() {
+    let mut rig = rig_in_expedition(Tuning::default());
+    let (mut a, a_id) = rig.join_ok("test");
+
+    a.send(&press_e(1));
+    a.send(&input_with(2, (0.0, 0.0), false));
+    rig.run_ticks(1);
+
+    assert_eq!(
+        player(&last_snapshot(&mut a), a_id).build_kind,
+        WireStructureKind::SlowTower
+    );
+}
+
+#[test]
+fn a_late_or_repeated_input_with_e_does_not_choose_the_next_tower_kind() {
+    let mut rig = rig_in_expedition(Tuning::default());
+    let (mut a, a_id) = rig.join_ok("test");
+    a.send(&input_with(5, (0.0, 0.0), false));
+    rig.run_ticks(1);
+
+    a.send(&press_e(3));
+    a.send(&press_e(5));
+    rig.run_ticks(1);
+
+    assert_eq!(
+        player(&last_snapshot(&mut a), a_id).build_kind,
+        WireStructureKind::Watchtower
     );
 }
 

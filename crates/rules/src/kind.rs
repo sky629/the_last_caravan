@@ -16,14 +16,33 @@ impl MonsterKind {
     pub const ALL: [MonsterKind; 2] = [MonsterKind::Grunt, MonsterKind::Scarecrow];
 }
 
+/// 플레이어가 짓는 포탑의 종류입니다. 종류마다 하는 일(`TowerAction`)과 수치는 `StructureTable`의 한 행에 있습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StructureKind {
-    /// 범위 안의 가장 가까운 몬스터를 자동으로 공격하는 시설입니다.
+    /// 범위 안의 가장 가까운 몬스터를 쏴서 피해를 줍니다.
     Watchtower,
+    /// 범위 안의 모든 몬스터에게 감속을 겁니다. 피해는 없습니다.
+    SlowTower,
+    /// 범위 안에서 스턴에 걸릴 수 있는 가장 가까운 몬스터 한 마리에게 스턴을 겁니다. 피해는 없습니다.
+    StunTower,
 }
 
 impl StructureKind {
-    pub const ALL: [StructureKind; 1] = [StructureKind::Watchtower];
+    /// 종류를 바꾸는 키(E)가 고르는 순서입니다.
+    pub const ALL: [StructureKind; 3] = [
+        StructureKind::Watchtower,
+        StructureKind::SlowTower,
+        StructureKind::StunTower,
+    ];
+
+    /// 종류를 바꾸는 키(E)를 눌렀을 때 고르는 다음 종류입니다. `ALL`의 순서를 따르고, 마지막 다음은 처음입니다.
+    pub fn next(self) -> StructureKind {
+        match self {
+            StructureKind::Watchtower => StructureKind::SlowTower,
+            StructureKind::SlowTower => StructureKind::StunTower,
+            StructureKind::StunTower => StructureKind::Watchtower,
+        }
+    }
 }
 
 /// 플레이어가 드는 무기의 종류입니다. 종류마다 수치와 공격이 전달되는 방식은 `WeaponTable`에 있습니다.

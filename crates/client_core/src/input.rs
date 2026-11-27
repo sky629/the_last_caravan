@@ -24,7 +24,7 @@ pub struct Controls {
     pub interact: bool,
     /// F 키를 누르기 시작한 프레임에서만 참입니다. 바닥의 무기를 줍는 일은 누른 순간에 한 번만 일어나므로, 키를 누르고 있어도 계속 줍지 않습니다.
     pub interact_pressed: bool,
-    /// B 키입니다. 누르고 있는 동안 바라보는 쪽 타일에 감시탑을 짓습니다.
+    /// B 키입니다. 누르고 있는 동안 바라보는 쪽 타일에 고른 종류의 포탑을 짓습니다.
     pub build: bool,
     /// Shift 키(왼쪽과 오른쪽)입니다. 누르고 움직이는 동안 게이지가 남아 있으면 달립니다.
     pub sprint: bool,
@@ -34,6 +34,8 @@ pub struct Controls {
     pub toggle_ready: bool,
     /// Enter 키를 누르기 시작한 프레임에서만 참입니다. 결과 화면에서 확인을 켭니다.
     pub confirm: bool,
+    /// E 키를 누르기 시작한 프레임에서만 참입니다. 누르고 있는 상태가 아니라 누른 순간이고, 키를 누르고 있어도 지을 포탑의 종류가 계속 바뀌지 않습니다.
+    pub cycle_tower: bool,
 }
 
 impl Controls {
@@ -58,6 +60,7 @@ impl Controls {
             switch_weapon: self.switch_weapon,
             toggle_ready: self.toggle_ready,
             confirm: self.confirm,
+            cycle_tower: self.cycle_tower,
         }
     }
 }
@@ -85,6 +88,8 @@ pub struct InputSender {
     ready_latched: bool,
     /// Enter 키를 누른 프레임이 있었는데 아직 입력에 싣지 않았는지 기억합니다. 입력에 한 번 실으면 지웁니다.
     confirm_latched: bool,
+    /// E 키를 누른 프레임이 있었는데 아직 입력에 싣지 않았는지 기억합니다. 입력에 한 번 실으면 지웁니다.
+    cycle_latched: bool,
 }
 
 impl InputSender {
@@ -98,13 +103,14 @@ impl InputSender {
             interact_latched: false,
             ready_latched: false,
             confirm_latched: false,
+            cycle_latched: false,
         }
     }
 
     /// 프레임마다 부릅니다. 보낼 때가 되었으면 입력 메시지를 돌려줍니다.
     ///
     /// 프레임은 입력보다 자주 돌므로, 두 입력 사이에 눌렸다가 떼어진 클릭도 다음 입력에 공격으로 실어서 잃지 않게 합니다.
-    /// 무기 전환 키와 F와 R과 Enter를 누른 프레임도 같은 방식으로 기억해서 다음 입력에 한 번만 싣습니다.
+    /// 무기 전환 키와 F와 R과 Enter와 E를 누른 프레임도 같은 방식으로 기억해서 다음 입력에 한 번만 싣습니다.
     pub fn poll(
         &mut self,
         now_secs: f64,
@@ -116,6 +122,7 @@ impl InputSender {
         self.interact_latched |= controls.interact_pressed;
         self.ready_latched |= controls.toggle_ready;
         self.confirm_latched |= controls.confirm;
+        self.cycle_latched |= controls.cycle_tower;
         if now_secs < self.next_at {
             return None;
         }
@@ -131,6 +138,7 @@ impl InputSender {
             interact_pressed: self.interact_latched,
             toggle_ready: self.ready_latched,
             confirm: self.confirm_latched,
+            cycle_tower: self.cycle_latched,
             ..*controls
         };
         let input = held.to_input(self.next_seq, me);
@@ -140,6 +148,7 @@ impl InputSender {
         self.interact_latched = false;
         self.ready_latched = false;
         self.confirm_latched = false;
+        self.cycle_latched = false;
         Some(input)
     }
 }
@@ -210,12 +219,13 @@ mod tests {
             interact_pressed: true,
             toggle_ready: true,
             confirm: true,
+            cycle_tower: true,
             ..Controls::default()
         };
         let input = controls.to_input(1, None);
         assert!(input.attack && input.interact && input.build && input.sprint);
         assert!(input.switch_weapon && input.interact_pressed);
-        assert!(input.toggle_ready && input.confirm);
+        assert!(input.toggle_ready && input.confirm && input.cycle_tower);
     }
 
     #[test]
@@ -304,6 +314,25 @@ mod tests {
         );
         let next = sender.poll(1.12, &idle, None).unwrap();
         assert!(!next.switch_weapon, "and it is sent only once");
+    }
+
+    #[test]
+    fn a_press_of_e_that_ended_between_two_inputs_is_sent_once_and_does_not_switch_the_weapon() {
+        let mut sender = InputSender::new(20);
+        let idle = Controls::default();
+        let press = Controls {
+            cycle_tower: true,
+            ..Controls::default()
+        };
+        sender.poll(1.00, &idle, None);
+
+        assert_eq!(sender.poll(1.01, &press, None), None);
+        assert_eq!(sender.poll(1.02, &idle, None), None);
+        let sent = sender.poll(1.06, &idle, None).unwrap();
+        assert!(sent.cycle_tower, "the press that already ended is not lost");
+        assert!(!sent.switch_weapon);
+        let next = sender.poll(1.12, &idle, None).unwrap();
+        assert!(!next.cycle_tower, "and it is sent only once");
     }
 
     #[test]

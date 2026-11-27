@@ -26,7 +26,7 @@ pub const TOWER_HEIGHT: f32 = 64.0;
 pub const NODE_HEIGHT: f32 = 22.0;
 /// 무기 상자입니다. 채집 지점보다 낮고 작은 상자처럼 보입니다.
 pub const CHEST_HEIGHT: f32 = 16.0;
-/// 짓는 중인 감시탑(공사터)입니다.
+/// 짓는 중인 포탑(공사터)입니다. 서 있는 포탑보다 낮은 상자이고, 색은 같은 종류의 포탑과 같습니다.
 pub const SITE_HEIGHT: f32 = 24.0;
 /// 야영지의 무기 진열대입니다. 무기 상자보다 높아서 서 있는 선반처럼 보입니다.
 pub const RACK_HEIGHT: f32 = 26.0;
@@ -92,12 +92,18 @@ pub const GROUND_A: Color = Color::srgb(0.20, 0.27, 0.18);
 pub const GROUND_B: Color = Color::srgb(0.23, 0.31, 0.21);
 pub const OBSTACLE: Color = Color::srgb(0.58, 0.58, 0.62);
 pub const WAGON: Color = Color::srgb(0.68, 0.44, 0.22);
-pub const TOWER: Color = Color::srgb(0.38, 0.58, 0.90);
-pub const SITE: Color = Color::srgb(0.62, 0.55, 0.38);
+/// 포탑의 색입니다. 종류마다 다르고, 짓는 중인 포탑도 종류의 색을 씁니다. 감속 포탑과 스턴 포탑은 그 포탑이 몬스터에게 거는 효과의 색(`EFFECT_SLOW`, `EFFECT_STUN`)과 같은 계열입니다.
+/// 같은 상자 모양으로 그리는 장애물, 마차, 채집 지점, 무기 상자와도 색으로 구분됩니다(테스트가 확인합니다).
+pub const WATCHTOWER: Color = Color::srgb(0.38, 0.58, 0.90);
+pub const SLOW_TOWER: Color = Color::srgb(0.50, 0.88, 1.00);
+pub const STUN_TOWER: Color = Color::srgb(0.92, 0.93, 0.98);
+/// 범위형 포탑의 범위를 그리는 원의 불투명도입니다. 건설 미리 보기의 원은 조금 더 진합니다.
+pub const RANGE_ALPHA: f32 = 0.30;
+pub const PREVIEW_RANGE_ALPHA: f32 = 0.65;
 /// 채집 지점입니다. 자원이 다 떨어지면 어두운 색이 됩니다.
 pub const NODE: Color = Color::srgb(0.25, 0.72, 0.66);
 pub const NODE_EMPTY: Color = Color::srgb(0.30, 0.34, 0.34);
-/// 무기 상자입니다. 채집 지점(청록)과 감시탑(파랑)과 구분되는 황금색입니다.
+/// 무기 상자입니다. 채집 지점(청록)과 포탑(파랑, 하늘색, 흰색)과 구분되는 황금색입니다.
 pub const CHEST: Color = Color::srgb(0.86, 0.64, 0.16);
 /// 땅에 떨어진 자원입니다.
 pub const PILE: Color = Color::srgb(1.00, 0.85, 0.30);
@@ -144,7 +150,41 @@ pub const TRACE_SPREAD_PX: f32 = 2.0;
 pub const TRACE: Color = Color::srgb(1.00, 1.00, 1.00);
 /// 건설이 거절된 타일의 테두리입니다.
 pub const REFUSAL: Color = Color::srgb(1.00, 0.35, 0.30);
-/// 건설 키를 누르면 감시탑이 놓일 타일의 테두리입니다.
+/// 건설 키를 누르면 포탑이 놓일 타일의 테두리입니다.
 pub const PREVIEW: Color = Color::srgb(0.80, 0.95, 1.00);
 /// 효과 선의 굵기(픽셀)입니다.
 pub const EFFECT_LINE_WIDTH: f32 = 3.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// sRGB 공간의 거리입니다. 0.25 이상이면 화면에서 한눈에 다른 색입니다.
+    fn apart(a: Color, b: Color) -> f32 {
+        let (a, b) = (a.to_srgba(), b.to_srgba());
+        ((a.red - b.red).powi(2) + (a.green - b.green).powi(2) + (a.blue - b.blue).powi(2)).sqrt()
+    }
+
+    #[test]
+    fn every_tower_colour_stands_apart_from_the_other_towers_and_from_every_block_and_the_ground() {
+        let towers = [WATCHTOWER, SLOW_TOWER, STUN_TOWER];
+        let others = [OBSTACLE, WAGON, NODE, NODE_EMPTY, CHEST, GROUND_A, GROUND_B];
+        for (i, tower) in towers.iter().enumerate() {
+            for other in towers.iter().skip(i + 1).chain(others.iter()) {
+                assert!(apart(*tower, *other) >= 0.25, "{tower:?} and {other:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_colours_of_the_new_kinds_stand_apart_from_the_bodies_that_stand_beside_them() {
+        let new_kinds = [SLOW_TOWER, STUN_TOWER];
+        // 같은 편 플레이어(파랑)는 몸통이 작고 서 있는 모양이 달라서 포탑의 파랑 계열과 같은 계열이어도 헷갈리지 않으므로 뺍니다.
+        let bodies = [YOU, HOSTILE_PLAYER, DOWNED, DEAD, MONSTER, SCARECROW];
+        for tower in new_kinds {
+            for body in bodies {
+                assert!(apart(tower, body) >= 0.25, "{tower:?} and {body:?}");
+            }
+        }
+    }
+}

@@ -10,7 +10,8 @@
 //! - `iso`: 지면 좌표를 쿼터뷰 화면 좌표로 바꾸는 투영과 그리는 순서입니다.
 //! - `camera`: 카메라가 내 캐릭터를 따라가는 방식과, 화면 밖에 있는 마차를 가리키는 표시의 자리입니다.
 //! - `interp`: 스냅샷을 보관하고 100ms 이전의 방 모습을 보간해서 `Frame`으로 만듭니다.
-//! - `preview`: 건설 키를 누르면 감시탑이 놓일 타일을 서버와 같은 함수로 구합니다.
+//! - `preview`: 건설 키를 누르면 포탑이 놓일 타일을 서버와 같은 함수로 구합니다.
+//! - `ranges`: 화면에 그릴 포탑의 범위를 정합니다. 범위형 포탑의 원과 건설 미리 보기의 원입니다.
 
 pub mod camera;
 mod flow;
@@ -22,6 +23,7 @@ mod iso;
 mod launch;
 mod memory;
 mod preview;
+mod ranges;
 mod session;
 mod start;
 
@@ -29,7 +31,7 @@ pub use flow::{Command, Flow, Screen};
 pub use fps::FpsMeter;
 pub use hud::{
     Banner, BannerTone, CampPanel, DebriefPanel, Hud, Invite, InviteKind, Meter, Tone,
-    bar_fraction, reject_text, weapon_name,
+    bar_fraction, reject_text, structure_name, weapon_name,
 };
 pub use input::Controls;
 pub use interp::{
@@ -42,5 +44,6 @@ pub use iso::{
 pub use launch::{DEFAULT_SERVER, LaunchError, LaunchOptions};
 pub use memory::Memory;
 pub use preview::build_preview;
+pub use ranges::{RangeRing, range_rings};
 pub use session::{Joined, Problem, Session};
 pub use start::{Field, FormKey, JoinRequest, StartForm, TextField};

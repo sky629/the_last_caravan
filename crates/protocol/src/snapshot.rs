@@ -11,7 +11,7 @@
 use caravan_rules::{
     BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life, Loadout,
     Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, PlayerBuffs, Projectile, Prompt,
-    RepairTarget, Sim, Stage, Tower, TowerState, Tuning, WeaponKind,
+    RepairTarget, Sim, Stage, StructureKind, Tower, TowerState, Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub struct Snapshot {
     pub wagon: WireWagon,
     /// 마차의 보관함에 있는 자원입니다. 모든 플레이어가 함께 씁니다.
     pub stash: u32,
-    /// 짓는 중인 감시탑을 포함하고, 번호가 작은 감시탑부터입니다. 파괴된 감시탑은 없습니다.
+    /// 짓는 중인 포탑을 포함하고, 번호가 작은 포탑부터입니다. 파괴된 포탑은 없습니다.
     pub towers: Vec<WireTower>,
     /// 번호가 작은 채집 지점부터입니다. 위치는 `Welcome`에 있고 여기에는 남은 양만 있습니다.
     pub nodes: Vec<WireNode>,
@@ -138,15 +138,34 @@ pub struct WireGroundWeapon {
     pub kind: WireWeaponKind,
 }
 
+/// 포탑 하나입니다. 최대 HP와 범위는 종류마다 정해져 있으므로 싣지 않고, 클라이언트가 `Welcome`의 종류표(`StructureKindInfo`)에서 읽습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WireTower {
     pub id: u32,
     pub tile: WireTile,
-    pub max_hp: u32,
+    pub kind: WireStructureKind,
     pub state: WireTowerState,
 }
 
-/// 짓는 중인 감시탑에는 HP와 사격 대상이 없고, 서 있는 감시탑에는 건설의 진행도가 없습니다.
+/// 포탑의 종류입니다. `match`가 모든 종류를 다루므로, 규칙에 종류를 추가하면 `of`에서 컴파일 오류가 납니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireStructureKind {
+    Watchtower,
+    SlowTower,
+    StunTower,
+}
+
+impl WireStructureKind {
+    pub fn of(kind: StructureKind) -> WireStructureKind {
+        match kind {
+            StructureKind::Watchtower => WireStructureKind::Watchtower,
+            StructureKind::SlowTower => WireStructureKind::SlowTower,
+            StructureKind::StunTower => WireStructureKind::StunTower,
+        }
+    }
+}
+
+/// 짓는 중인 포탑에는 HP와 사격 대상이 없고, 서 있는 포탑에는 건설의 진행도가 없습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WireTowerState {
     Building {
@@ -159,7 +178,8 @@ pub enum WireTowerState {
     },
 }
 
-/// 감시탑의 마지막 사격입니다. 클라이언트는 `tick`이 최근일 때만 `target`을 향한 사격 선을 그립니다.
+/// 포탑의 마지막 사격입니다. 감시탑이 쏜 몬스터와 스턴 포탑이 스턴을 건 몬스터가 같은 값에 담깁니다.
+/// 클라이언트는 `tick`이 최근일 때만 `target`을 향한 사격 선을 그립니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireShot {
     /// 맞은 몬스터의 번호입니다. 그 몬스터가 이미 사라졌을 수 있습니다.
@@ -193,6 +213,8 @@ pub struct WirePlayer {
     pub loadout: WireLoadout,
     /// F를 누르면 하게 되는 일 가운데 화면에 안내할 것입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
     pub prompt: Option<WirePrompt>,
+    /// 건설 키(B)가 지을 포탑의 종류입니다. 모든 클라이언트가 받고, 화면은 자기 것만 표시합니다.
+    pub build_kind: WireStructureKind,
 }
 
 /// F를 누르면 하게 되는 일입니다. 부활, 수리, 채집은 안내하지 않습니다.
@@ -315,7 +337,7 @@ pub enum WireInteraction {
         stash_short: bool,
     },
     Building {
-        /// 짓고 있는 감시탑의 번호입니다. 진행도는 스냅샷의 그 감시탑에 있습니다.
+        /// 짓고 있는 포탑의 번호입니다. 진행도는 스냅샷의 그 포탑에 있습니다.
         tower: u32,
     },
     Gathering {
@@ -334,7 +356,7 @@ pub enum WireInteraction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WireRepairTarget {
     Tower {
-        /// 수리하는 감시탑의 번호입니다.
+        /// 수리하는 포탑의 번호입니다.
         tower: u32,
     },
     Wagon,
@@ -544,7 +566,7 @@ fn wire_tower(tower: &Tower, tuning: &Tuning) -> WireTower {
     WireTower {
         id: tower.id.0,
         tile: WireTile::from_tile(tower.tile),
-        max_hp: tuning.structures.get(tower.kind).max_hp,
+        kind: WireStructureKind::of(tower.kind),
         state,
     }
 }
@@ -622,6 +644,7 @@ fn wire_player(sim: &Sim, player: &Player) -> WirePlayer {
         }),
         loadout: WireLoadout::of(&player.loadout),
         prompt: sim.prompt(player.id).map(WirePrompt::of),
+        build_kind: WireStructureKind::of(player.build_kind),
     }
 }
 

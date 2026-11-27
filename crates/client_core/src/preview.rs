@@ -1,4 +1,4 @@
-//! 건설 키를 누르기 전에 감시탑이 놓일 타일을 알려 주는 계산입니다.
+//! 건설 키를 누르기 전에 포탑이 놓일 타일을 알려 주는 계산입니다.
 //!
 //! 타일을 정하는 함수는 서버가 건설을 시작할 때 쓰는 `caravan_rules::front_tile` 하나이고, 여기서도 같은 함수를 부릅니다.
 //! 놓을 수 있는지는 판정하지 않습니다. 판정은 서버만 하고, 거절되면 이유와 타일이 스냅샷으로 옵니다.
@@ -12,7 +12,7 @@ use caravan_rules::{Tile, front_tile};
 
 use crate::interp::PlayerView;
 
-/// `me`가 지금 건설 키를 누르면 감시탑이 놓일 타일입니다. 맵의 크기는 `map_size`(타일 수)입니다.
+/// `me`가 지금 건설 키를 누르면 포탑이 놓일 타일입니다. 맵의 크기는 `map_size`(타일 수)입니다.
 /// 이미 무언가를 하고 있거나 거절 이유가 화면에 있는 플레이어와 쓰러진 플레이어에게는 보여 주지 않습니다.
 pub fn build_preview(me: &PlayerView, map_size: (u16, u16)) -> Option<Tile> {
     match me.life {
@@ -29,8 +29,8 @@ pub fn build_preview(me: &PlayerView, map_size: (u16, u16)) -> Option<Tile> {
 mod tests {
     use super::*;
     use caravan_protocol::{
-        WireBuffs, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLoadout, WireTile,
-        WireWeaponKind,
+        WireBuffs, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLoadout,
+        WireStructureKind, WireTile, WireWeaponKind,
     };
     use caravan_rules::{AimDir, PlayerInput, PlayerInputs, Seed, Sim, Start, Team, Tuning, Vec2};
 
@@ -49,6 +49,7 @@ mod tests {
                 spare: None,
             },
             prompt: None,
+            build_kind: WireStructureKind::Watchtower,
         }
     }
 

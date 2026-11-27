@@ -13,7 +13,7 @@ use std::f32::consts::TAU;
 use caravan_protocol::{
     Snapshot, WireAngle, WireAttack, WireChest, WireGroundWeapon, WireLife, WireLoadout,
     WireMonster, WireMonsterEffects, WireMonsterKind, WireNode, WirePhase, WirePile, WirePlayer,
-    WireProjectile, WirePrompt, WireTower, WireWagon,
+    WireProjectile, WirePrompt, WireStructureKind, WireTower, WireWagon,
 };
 use caravan_rules::{Team, Vec2};
 
@@ -53,7 +53,7 @@ pub struct Frame {
     pub wagon: WireWagon,
     /// 모든 플레이어가 함께 쓰는 보관함의 자원입니다.
     pub stash: u32,
-    /// 서 있는 감시탑과 짓는 중인 감시탑입니다. 위치는 타일이라서 섞지 않습니다.
+    /// 서 있는 포탑과 짓는 중인 포탑입니다. 위치는 타일이라서 섞지 않습니다.
     pub towers: Vec<WireTower>,
     /// 채집 지점의 남은 자원입니다. 위치는 입장 안내에 있습니다.
     pub nodes: Vec<WireNode>,
@@ -91,6 +91,8 @@ pub struct PlayerView {
     pub loadout: WireLoadout,
     /// F를 누르면 하게 되는 일 가운데 화면에 안내할 것입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
     pub prompt: Option<WirePrompt>,
+    /// 건설 키가 지을 포탑의 종류입니다. 보간하지 않고 앞쪽 스냅샷의 값을 씁니다.
+    pub build_kind: WireStructureKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -310,6 +312,7 @@ fn player_view(a: &WirePlayer, b: Option<&WirePlayer>, alpha: f32) -> PlayerView
         last_attack: a.last_attack,
         loadout: a.loadout,
         prompt: a.prompt,
+        build_kind: a.build_kind,
     }
 }
 
@@ -425,6 +428,7 @@ mod tests {
                 spare: None,
             },
             prompt: None,
+            build_kind: WireStructureKind::Watchtower,
         }
     }
 

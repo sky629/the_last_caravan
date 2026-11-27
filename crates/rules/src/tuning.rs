@@ -26,7 +26,7 @@ pub struct Tuning {
     pub weapons: WeaponTable,
     pub sprint: SprintTuning,
     pub revive: ReviveTuning,
-    /// 효과(감속, 출혈, 스턴)의 규칙에 공통으로 쓰이는 수치입니다. 효과마다 다른 수치는 무기와 시설의 행(`on_hit`)에 있습니다.
+    /// 효과(감속, 출혈, 스턴)의 규칙에 공통으로 쓰이는 수치입니다. 효과마다 다른 수치는 무기의 행(`on_hit`)과 포탑의 동작(`TowerAction`)에 있습니다.
     pub effects: EffectTuning,
     pub monsters: MonsterTable,
     pub wagon: WagonTuning,
@@ -68,8 +68,9 @@ pub struct WeaponTuning {
     pub chest_weight: u32,
 }
 
-/// 맞은 몬스터에게 거는 효과입니다. 무기의 행과 시설의 행이 `on_hit`으로 가지고, 같은 값이 `Hit`에 실려서 몬스터에게 닿습니다.
-/// 효과를 추가하려면 변형을 하나 더하고, `effect::MonsterEffects::apply`의 `match`에 갈래를 하나 더합니다.
+/// 몬스터에게 거는 효과입니다. 무기의 행과 포탑의 사격(`ShootTuning`)은 `on_hit`으로 가지고, 같은 값이 `Hit`에 실려서 맞은 몬스터에게 닿습니다.
+/// 피해 없이 효과만 거는 포탑의 동작(`AfflictTuning`, `PulseTuning`)은 `debuff`로 가지고, 같은 값이 `Affliction`에 실려서 닿습니다.
+/// 효과를 추가하려면 변형을 하나 더하고, `effect::MonsterEffects`의 `would_take`와 `apply`, `Tuning::validate`의 `match`에 갈래를 하나씩 더합니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Debuff {
     /// `secs`초 동안 몬스터가 스스로 걷는 속도에 `factor`를 곱합니다. `factor`는 0보다 크고 1 이하입니다.
@@ -221,7 +222,7 @@ pub struct MonsterTuning {
     /// 몬스터의 가장자리에서 대상의 가장자리까지 잰 근접 공격 거리입니다.
     pub attack_reach: f32,
     pub attack_cooldown_secs: f32,
-    /// 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 감시탑을 쫓습니다.
+    /// 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 포탑을 쫓습니다.
     /// 몬스터의 중심에서 대상의 가장자리까지 잰 거리입니다.
     pub aggro_range: f32,
     /// 몬스터끼리 겹쳤을 때 서로 밀려나는 최대 속도입니다. 걷는 속도와 더한 값으로 한 Tick에 움직이는 거리가
@@ -300,7 +301,7 @@ pub struct RepairTuning {
 pub struct VillageTuning {
     /// 마차의 가장자리에서 건설할 타일의 중심까지 잰, 건설할 수 있는 거리입니다.
     pub build_range: f32,
-    /// 서 있는 감시탑과 짓는 중인 감시탑을 합친 수의 상한입니다.
+    /// 서 있는 포탑과 짓는 중인 포탑을 합친 수의 상한입니다. 모든 종류를 합친 수입니다.
     pub tower_limit: u32,
     /// 원정이 시작될 때 이미 서 있는 감시탑의 타일입니다. 기본 수치에서는 비어 있고, 부하 시험(`--stress`)과 테스트가
     /// 감시탑이 많은 상황을 만들 때 씁니다. 건설과 같은 조건(마을 안의 빈 타일, 상한, 마차로 가는 길)을 지켜야 합니다.
@@ -352,34 +353,88 @@ pub struct LootTuning {
     pub take_reach: f32,
 }
 
-/// 시설 한 종류의 수치입니다.
+/// 포탑 한 종류의 수치입니다. 모든 종류에 공통인 수치(HP, 범위, 수리, 건설)와 종류마다 다른 동작(`action`)으로 나뉩니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructureTuning {
     pub max_hp: u32,
-    /// 시설의 중심에서 몬스터의 중심까지 잰 사격 거리입니다.
+    /// 포탑의 중심에서 몬스터의 중심까지 잰, 포탑이 작용하는 거리입니다. 유한하고 0보다 깁니다.
     pub range: f32,
-    pub damage: u32,
-    pub cooldown_secs: f32,
-    /// 맞힌 몬스터마다 거는 효과입니다. 감시탑은 걸지 않습니다.
-    pub on_hit: Option<Debuff>,
-    /// 플레이어가 F를 눌러서 시설의 HP를 수리하는 속도와 비용입니다. 거리는 플레이어의 가장자리에서 시설의 가장자리까지 잽니다.
+    /// 서 있는 동안 하는 일입니다.
+    pub action: TowerAction,
+    /// 플레이어가 F를 눌러서 포탑의 HP를 수리하는 속도와 비용입니다. 거리는 플레이어의 가장자리에서 포탑의 가장자리까지 잽니다.
     pub repair: RepairTuning,
-    /// 건설을 시작할 때 보관함에서 내는 자원의 양입니다.
+    /// 건설을 시작할 때 보관함에서 내는 자원의 양입니다. 1 이상입니다.
     pub build_cost: u32,
     /// 건설 키를 끊지 않고 눌러야 하는 시간입니다.
     pub build_secs: f32,
 }
 
-/// 시설 종류별 수치표입니다.
+/// 서 있는 포탑이 하는 일입니다. 동작마다 그 동작에서만 의미가 있는 수치를 한 구조체로 가집니다.
+/// 동작을 추가하려면 변형을 하나 더하고, `structures::towers_act`와 `Tuning::validate_structures`와 `Tuning::validate_effects`의 `match`에 갈래를 하나 더합니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TowerAction {
+    /// 쿨다운마다 범위 안의 가장 가까운 적대적 몬스터 한 마리에게 피해를 줍니다.
+    Shoot(ShootTuning),
+    /// 쿨다운마다 범위 안에서 `debuff`가 걸릴 가장 가까운 적대적 몬스터 한 마리에게 그 효과를 겁니다. 피해는 없습니다.
+    Afflict(AfflictTuning),
+    /// 간격마다 범위 안의 모든 적대적 몬스터에게 `debuff`를 겁니다. 피해는 없습니다.
+    Pulse(PulseTuning),
+}
+
+impl TowerAction {
+    /// 범위 안의 모두에게 작용하는 동작이면 참이고, 한 마리만 노리는 동작이면 거짓입니다. 화면은 참인 포탑이 서 있는 동안 범위를 원으로 그립니다.
+    pub fn covers_area(&self) -> bool {
+        match self {
+            TowerAction::Shoot(_) | TowerAction::Afflict(_) => false,
+            TowerAction::Pulse(_) => true,
+        }
+    }
+}
+
+/// 몬스터 한 마리에게 피해를 주는 동작의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShootTuning {
+    pub damage: u32,
+    /// 쏜 뒤 다음 사격까지의 시간입니다. 쏠 대상이 없으면 쿨다운을 쓰지 않습니다.
+    pub cooldown_secs: f32,
+    /// 맞힌 몬스터에게 피해와 함께 거는 효과입니다. 그 피해로 죽은 몬스터에게는 걸리지 않습니다. 감시탑은 걸지 않습니다.
+    pub on_hit: Option<Debuff>,
+}
+
+/// 몬스터 한 마리에게 효과만 거는 동작의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AfflictTuning {
+    /// 건 뒤 다음에 걸기까지의 시간입니다. 0보다 길어야 합니다. 걸 대상이 없으면 쿨다운을 쓰지 않습니다.
+    pub cooldown_secs: f32,
+    /// 출혈은 피해를 주므로 쓸 수 없습니다(`Tuning::validate`).
+    pub debuff: Debuff,
+}
+
+/// 범위 안의 모든 몬스터에게 효과를 거는 동작의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PulseTuning {
+    /// 효과를 거는 간격입니다. 범위에 몬스터가 없으면 간격을 쓰지 않으므로, 마지막으로 건 뒤 이 간격이 지난 포탑은 몬스터가 들어온 Tick에 곧바로 겁니다.
+    /// 간격은 포탑마다 하나이므로, 두 펄스 사이에 범위에 들어온 몬스터는 다음 펄스에 효과를 받습니다.
+    /// 효과의 시간 이하여야 범위 안의 몬스터에게 효과가 끊기지 않습니다(`Tuning::validate`).
+    pub pulse_secs: f32,
+    /// 출혈은 피해를 주고 스턴은 무리를 통째로 멈추므로 쓸 수 없습니다(`Tuning::validate`).
+    pub debuff: Debuff,
+}
+
+/// 포탑 종류별 수치표입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructureTable {
     pub watchtower: StructureTuning,
+    pub slow_tower: StructureTuning,
+    pub stun_tower: StructureTuning,
 }
 
 impl StructureTable {
     pub fn get(&self, kind: StructureKind) -> &StructureTuning {
         match kind {
             StructureKind::Watchtower => &self.watchtower,
+            StructureKind::SlowTower => &self.slow_tower,
+            StructureKind::StunTower => &self.stun_tower,
         }
     }
 }
@@ -557,9 +612,9 @@ impl Tuning {
         if secs > 0.0 { ticks.max(1) } else { 0 }
     }
 
-    /// 마을 안에서 감시탑 `count`개를 놓을 자리를 마차에 가까운 순서로 돌려줍니다. 가로와 세로 모두 짝수인 타일만 고르므로
-    /// 감시탑 사이에 빈 타일이 한 칸씩 남고, 마차로 가는 길이 막히지 않습니다. 장애물, 마차, 플레이어의 등장 지점과 겹치는 타일은 건너뜁니다.
-    /// 자리가 모자라면 있는 만큼만 돌려줍니다. 부하 시험과 테스트가 감시탑이 상한만큼 서 있는 상황을 만들 때 씁니다.
+    /// 마을 안에서 포탑 `count`개를 놓을 자리를 마차에 가까운 순서로 돌려줍니다. 가로와 세로 모두 짝수인 타일만 고르므로
+    /// 포탑 사이에 빈 타일이 한 칸씩 남고, 마차로 가는 길이 막히지 않습니다. 장애물, 마차, 플레이어의 등장 지점과 겹치는 타일은 건너뜁니다.
+    /// 자리가 모자라면 있는 만큼만 돌려줍니다. 부하 시험과 테스트가 포탑이 상한만큼 서 있는 상황을 만들 때 씁니다.
     pub fn spread_tower_sites(&self, count: u32) -> Vec<Tile> {
         let map = &self.map;
         let center = map.wagon.center();
@@ -677,6 +732,7 @@ impl Tuning {
         }
         self.validate_weapons()?;
         self.validate_effects()?;
+        self.validate_structures()?;
 
         let sprint = &self.sprint;
         if !(sprint.speed_multiplier.is_finite() && sprint.speed_multiplier >= 1.0) {
@@ -912,7 +968,7 @@ impl Tuning {
     /// - 후보 자리는 맵 안의 빈 타일이고, 서로 겹치지 않고, 마을의 범위 밖에 있습니다. 마을 안에 상자가 놓이면 싸우지 않고 열 수 있기 때문입니다.
     /// - 후보 자리가 모두 막혀도 비어 있는 타일이 모두 마차에 이어집니다. 어느 날 어느 자리에 상자가 놓여도 길이 끊기지 않습니다.
     /// - 후보 자리마다 마을의 범위 밖에 상하좌우로 이웃한 빈 타일이 하나 이상 있고, 그 타일은 다른 후보 자리가 아닙니다.
-    ///   플레이어가 그 타일에 서서 상자를 열 수 있고, 감시탑이 그 타일을 막을 수 없으므로 상자가 사라진 뒤의 타일도 길에 이어집니다.
+    ///   플레이어가 그 타일에 서서 상자를 열 수 있고, 포탑이 그 타일을 막을 수 없으므로 상자가 사라진 뒤의 타일도 길에 이어집니다.
     /// - 상자는 후보 자리의 수보다 많이 놓이지 않고, 상자가 놓이는 맵이면 상자에서 나오는 무기의 비중을 더한 값이 1 이상입니다.
     /// - 상자가 놓이는 맵이면 무기를 줍는 거리가 상자를 여는 거리에 타일 절반의 대각선을 더한 값 이상입니다. 무기는 상자가 있던 타일의 중심에 놓이고,
     ///   상자를 열 수 있는 가장 먼 자리는 상자의 모서리에서 대각선으로 떨어진 자리이므로, 이 값이면 연 플레이어가 어느 방향에서 열었든 걷지 않고 무기를 줍습니다.
@@ -981,7 +1037,7 @@ impl Tuning {
         Ok(())
     }
 
-    /// 효과의 수치를 검사합니다. 공통 수치(`EffectTuning`)와, 무기와 시설의 행이 가진 효과(`on_hit`)를 모두 봅니다.
+    /// 효과의 수치를 검사합니다. 공통 수치(`EffectTuning`)와, 무기의 행과 포탑의 동작이 가진 효과를 모두 봅니다.
     ///
     /// - 시간은 유한하고 0보다 길어야 합니다. 0초 효과는 아무것도 하지 않고, 스턴이 끝난 뒤의 면역이 0초이면 스턴을 끝없이 이을 수 있습니다.
     /// - 감속의 비율은 0보다 크고 1 이하입니다. 0이면 스턴이고, 1보다 크면 빨라집니다.
@@ -1007,10 +1063,14 @@ impl Tuning {
         let rows = WeaponKind::ALL
             .map(|kind| (format!("{kind:?}"), self.weapons.get(kind).on_hit))
             .into_iter()
-            .chain(
-                StructureKind::ALL
-                    .map(|kind| (format!("{kind:?}"), self.structures.get(kind).on_hit)),
-            );
+            .chain(StructureKind::ALL.map(|kind| {
+                let on_hit = match self.structures.get(kind).action {
+                    TowerAction::Shoot(shoot) => shoot.on_hit,
+                    TowerAction::Afflict(afflict) => Some(afflict.debuff),
+                    TowerAction::Pulse(pulse) => Some(pulse.debuff),
+                };
+                (format!("{kind:?}"), on_hit)
+            }));
         for (name, on_hit) in rows {
             match on_hit {
                 None => {}
@@ -1036,6 +1096,63 @@ impl Tuning {
                 }
                 Some(Debuff::Stun { secs }) => {
                     check_positive(&format!("{name} stun secs"), secs)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 모든 포탑의 수치를 검사합니다. 효과의 수치는 `validate_effects`가 먼저 검사하므로, 여기서는 효과가 올바른 수치라고 봅니다.
+    ///
+    /// - 범위는 유한하고 0보다 깁니다. 0 이하이면 포탑이 아무것에도 작용하지 못하고, NaN이면 범위의 비교가 모두 거짓이 됩니다.
+    /// - 건설 비용은 1 이상입니다. 0이면 자원 없이 포탑을 상한까지 지을 수 있습니다.
+    /// - 사격의 쿨다운은 유한하고 0 이상입니다. 음수나 NaN이면 Tick 수로 바꾸는 계산이 깨집니다.
+    /// - 몬스터 한 마리에게 효과를 거는 동작(`Afflict`)의 쿨다운은 유한하고 0보다 깁니다. 0이면 포탑 하나가 Tick마다 한 마리씩 효과를 겁니다.
+    /// - 범위의 모든 몬스터에게 거는 동작(`Pulse`)의 간격은 유한하고 0보다 길며, Tick으로 바꾼 값이 효과의 시간 이하입니다.
+    ///   간격이 효과보다 길면 범위 안에서도 효과가 끊깁니다.
+    /// - 피해를 주지 않는 동작(`Afflict`, `Pulse`)은 출혈을 걸 수 없습니다. 범위의 모든 몬스터에게 거는 동작은 스턴도 걸 수 없습니다. 무리가 통째로 멈추기 때문입니다.
+    ///
+    /// `match`에 `_` 갈래가 없으므로 동작을 추가하면 컴파일러가 이 검사를 더하라고 알려 줍니다.
+    fn validate_structures(&self) -> Result<(), String> {
+        for kind in StructureKind::ALL {
+            let tower = self.structures.get(kind);
+            check_positive(&format!("{kind:?} range"), tower.range)?;
+            if tower.build_cost == 0 {
+                return Err(format!("{kind:?} build_cost must be at least 1"));
+            }
+            match tower.action {
+                TowerAction::Shoot(shoot) => {
+                    check_not_negative(&format!("{kind:?} cooldown_secs"), shoot.cooldown_secs)?;
+                }
+                TowerAction::Afflict(afflict) => {
+                    check_positive(&format!("{kind:?} cooldown_secs"), afflict.cooldown_secs)?;
+                    if matches!(afflict.debuff, Debuff::Bleed { .. }) {
+                        return Err(format!(
+                            "{kind:?} deals no damage, so it cannot apply a bleed"
+                        ));
+                    }
+                }
+                TowerAction::Pulse(pulse) => {
+                    check_positive(&format!("{kind:?} pulse_secs"), pulse.pulse_secs)?;
+                    let lasts = match pulse.debuff {
+                        Debuff::Slow { secs, .. } => secs,
+                        Debuff::Bleed { .. } => {
+                            return Err(format!(
+                                "{kind:?} deals no damage, so it cannot apply a bleed"
+                            ));
+                        }
+                        Debuff::Stun { .. } => {
+                            return Err(format!(
+                                "{kind:?} reaches every monster in range, so it cannot stun"
+                            ));
+                        }
+                    };
+                    if self.ticks(pulse.pulse_secs) > self.ticks(lasts) {
+                        return Err(format!(
+                            "{kind:?} pulses every {} s, longer than its effect of {lasts} s, so the effect would lapse inside the range",
+                            pulse.pulse_secs
+                        ));
+                    }
                 }
             }
         }
@@ -1181,6 +1298,22 @@ impl Default for Tuning {
             kind: MonsterKind::Grunt,
             count,
         };
+        // 포탑은 종류와 관계없이 HP, 수리, 건설 시간이 같습니다. 1초에 20 HP를 수리하고, HP가 거의 없는 감시탑을 가득 수리하면 건설 비용(10)과 같은 자원이 듭니다.
+        let tower = |range, build_cost, action| StructureTuning {
+            max_hp: 300,
+            range,
+            action,
+            repair: RepairTuning {
+                heal: HealTuning {
+                    hp_per_pulse: 30,
+                    pulse_secs: 1.5,
+                    range: 1.0,
+                },
+                cost_per_pulse: 1,
+            },
+            build_cost,
+            build_secs: 3.0,
+        };
         Tuning {
             tick_hz: 20,
             max_players: 4,
@@ -1324,24 +1457,36 @@ impl Default for Tuning {
                 },
             },
             structures: StructureTable {
-                watchtower: StructureTuning {
-                    max_hp: 300,
-                    range: 6.0,
-                    damage: 15,
-                    cooldown_secs: 0.8,
-                    on_hit: None,
-                    // 1초에 20 HP이고, 감시탑을 최대 HP까지 모두 수리하면 건설 비용(10)과 같은 자원이 듭니다.
-                    repair: RepairTuning {
-                        heal: HealTuning {
-                            hp_per_pulse: 30,
-                            pulse_secs: 1.5,
-                            range: 1.0,
+                watchtower: tower(
+                    6.0,
+                    10,
+                    TowerAction::Shoot(ShootTuning {
+                        damage: 15,
+                        cooldown_secs: 0.8,
+                        on_hit: None,
+                    }),
+                ),
+                // 1초짜리 감속을 0.5초마다 걸므로 범위 안에서는 끊기지 않고, 범위를 나가면 1초 안에 끝납니다.
+                slow_tower: tower(
+                    4.0,
+                    15,
+                    TowerAction::Pulse(PulseTuning {
+                        pulse_secs: 0.5,
+                        debuff: Debuff::Slow {
+                            factor: 0.7,
+                            secs: 1.0,
                         },
-                        cost_per_pulse: 1,
-                    },
-                    build_cost: 10,
-                    build_secs: 3.0,
-                },
+                    }),
+                ),
+                // 포탑 하나가 멈추는 시간의 비율은 0.8 / 2.0 = 40%이고, 스턴 뒤의 면역 때문에 한 마리를 계속 멈추지 못합니다.
+                stun_tower: tower(
+                    5.0,
+                    20,
+                    TowerAction::Afflict(AfflictTuning {
+                        cooldown_secs: 2.0,
+                        debuff: Debuff::Stun { secs: 0.8 },
+                    }),
+                ),
             },
             village: VillageTuning {
                 build_range: 10.0,

@@ -5,12 +5,14 @@
 //!
 //! 이 파일은 게임 상태가 아니라 고정된 설정을 전송 형식으로 바꿉니다. 게임 상태를 바꾸는 곳은 `Snapshot::from_sim` 하나입니다.
 
-use caravan_rules::{Delivery, MonsterKind, Player, Sim, Vec2, WeaponKind, nodes_of};
+use caravan_rules::{
+    Delivery, MonsterKind, Player, Sim, StructureKind, Vec2, WeaponKind, nodes_of,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::RoomCode;
 use crate::seat_token::SeatToken;
-use crate::snapshot::{WireMonsterKind, WireWeaponKind};
+use crate::snapshot::{WireMonsterKind, WireStructureKind, WireWeaponKind};
 use crate::units::{WirePos, WireRect, WireTile};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -39,7 +41,7 @@ pub struct WorldInfo {
     pub wagon: WireRect,
     /// 원정의 날 수입니다. 「날 2 / 3」 같은 표시에 씁니다.
     pub day_count: u32,
-    /// 서 있는 감시탑과 짓는 중인 감시탑을 합친 수의 상한입니다. 감시탑의 위치는 스냅샷에 실립니다.
+    /// 서 있는 포탑과 짓는 중인 포탑을 합친 수의 상한입니다. 포탑의 위치는 스냅샷에 실립니다.
     pub tower_limit: u32,
     /// 플레이어가 한 번에 들 수 있는 자원의 양입니다. 「들고 있는 양 / 상한」 표시에 씁니다.
     pub carry_capacity: u32,
@@ -56,6 +58,8 @@ pub struct WorldInfo {
     pub weapons: Vec<WeaponInfo>,
     /// 야영지의 무기 진열대입니다. 무기 종류마다 하나이고, `WeaponKind::ALL`의 순서입니다. 진열대는 야영지에만 서 있으므로 클라이언트는 스냅샷이 야영지일 때만 그립니다.
     pub racks: Vec<RackInfo>,
+    /// 포탑 종류마다 하나씩이고 `StructureKind::ALL`의 순서입니다. 스냅샷의 포탑에는 종류만 있으므로, 최대 HP와 범위와 비용은 여기서 읽습니다.
+    pub structure_kinds: Vec<StructureKindInfo>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +74,19 @@ pub struct MonsterKindInfo {
     /// 몬스터를 그리는 원의 반지름(타일)입니다.
     pub radius: f32,
     pub max_hp: u32,
+}
+
+/// 포탑 한 종류가 화면에 나타나는 데 필요한 것입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StructureKindInfo {
+    pub kind: WireStructureKind,
+    pub max_hp: u32,
+    /// 건설을 시작할 때 보관함에서 내는 자원입니다. HUD의 `BUILD` 줄이 보여 줍니다.
+    pub build_cost: u32,
+    /// 포탑의 중심에서 대상의 중심까지 잰, 포탑이 작용하는 거리(타일)입니다.
+    pub range: f32,
+    /// 범위 안의 모두에게 작용하는 포탑이면 참입니다. 화면은 이런 포탑이 서 있는 동안 범위를 옅은 원으로 그립니다.
+    pub covers_area: bool,
 }
 
 /// 진열대 하나의 자리와 진열한 무기입니다.
@@ -108,6 +125,13 @@ impl WireDelivery {
             Delivery::Projectile(_) => WireDelivery::Projectile,
             Delivery::Hitscan(_) => WireDelivery::Hitscan,
         }
+    }
+}
+
+impl WorldInfo {
+    /// `kind` 포탑의 수치입니다. 서버가 보내지 않은 종류이면 없습니다.
+    pub fn structure(&self, kind: WireStructureKind) -> Option<&StructureKindInfo> {
+        self.structure_kinds.iter().find(|info| info.kind == kind)
     }
 }
 
@@ -167,6 +191,19 @@ impl Welcome {
                     .map(|(kind, pos)| RackInfo {
                         kind: WireWeaponKind::of(kind),
                         pos: WirePos::from_tiles(pos),
+                    })
+                    .collect(),
+                structure_kinds: StructureKind::ALL
+                    .iter()
+                    .map(|&kind| {
+                        let row = tuning.structures.get(kind);
+                        StructureKindInfo {
+                            kind: WireStructureKind::of(kind),
+                            max_hp: row.max_hp,
+                            build_cost: row.build_cost,
+                            range: row.range,
+                            covers_area: row.action.covers_area(),
+                        }
                     })
                     .collect(),
             },

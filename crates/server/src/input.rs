@@ -13,7 +13,7 @@ pub(crate) struct MemberInput {
     newest_seq: Option<u32>,
     /// 지난 Tick 이후 받아들인 입력을 하나로 합친 값입니다. 새 입력이 없었으면 `None`입니다.
     merged: Option<PlayerInput>,
-    /// 가장 최근에 받아들인 입력에서 누른 순간(`switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`)을 지운 것입니다. 새 입력이 없는 Tick에 다시 사용합니다.
+    /// 가장 최근에 받아들인 입력에서 누른 순간(`switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`, `cycle_tower`)을 지운 것입니다. 새 입력이 없는 Tick에 다시 사용합니다.
     held: PlayerInput,
     /// 새 입력 없이 지나간 Tick의 수입니다.
     silent_ticks: u32,
@@ -95,12 +95,13 @@ fn to_rules(msg: &InputMsg) -> PlayerInput {
         switch_weapon: msg.switch_weapon,
         toggle_ready: msg.toggle_ready,
         confirm: msg.confirm,
+        cycle_tower: msg.cycle_tower,
     }
 }
 
 /// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동, 조준, `interact`, `build`, `sprint`는 더 새로운 입력을 따릅니다.
 /// `interact`와 `build`와 `sprint`는 누르고 있는 동안 이어지는 상태이므로, Tick 안에서 눌렀다 뗐다면 뗀 것으로 봅니다.
-/// `attack`, `switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`은 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭과 키가 사라지지 않게 합니다.
+/// `attack`, `switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`, `cycle_tower`는 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭과 키가 사라지지 않게 합니다.
 /// 누른 순간인 조작을 더하면 `PlayerInput::held`가 그 값을 지우게 하고, 여기에도 `||`를 한 줄 더합니다.
 fn merge(older: PlayerInput, newer: PlayerInput) -> PlayerInput {
     PlayerInput {
@@ -109,6 +110,7 @@ fn merge(older: PlayerInput, newer: PlayerInput) -> PlayerInput {
         interact_pressed: older.interact_pressed || newer.interact_pressed,
         toggle_ready: older.toggle_ready || newer.toggle_ready,
         confirm: older.confirm || newer.confirm,
+        cycle_tower: older.cycle_tower || newer.cycle_tower,
         ..newer
     }
 }
@@ -427,5 +429,25 @@ mod tests {
 
         assert!(input.for_tick(10).switch_weapon);
         assert!(!input.for_tick(10).switch_weapon);
+    }
+
+    #[test]
+    fn a_press_of_e_reaches_the_rules_in_exactly_one_tick_even_when_another_input_follows_it() {
+        let mut input = MemberInput::new();
+        input.accept(&InputMsg {
+            seq: 1,
+            cycle_tower: true,
+            ..InputMsg::default()
+        });
+        input.accept(&msg(2, false, false));
+
+        assert!(
+            input.for_tick(10).cycle_tower,
+            "the press reaches the rules"
+        );
+        assert!(
+            !input.for_tick(10).cycle_tower,
+            "a tick without a message does not press it again"
+        );
     }
 }

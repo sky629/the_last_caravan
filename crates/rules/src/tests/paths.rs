@@ -1,6 +1,6 @@
-//! 몬스터의 이동 경로를 확인합니다: 폭이 1타일인 통로, 감시탑 쪽으로 가는 길.
+//! 몬스터의 이동 경로를 확인합니다: 폭이 1타일인 통로, 포탑 쪽으로 가는 길.
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, nights, watchtower_shot};
 use crate::input::PlayerInput;
 use crate::math::{Rect, Vec2};
 use crate::world::{Tile, TileUse};
@@ -58,7 +58,7 @@ fn a_crowd_breaks_through_a_village_full_of_towers_and_reaches_the_wagon() {
         t.nights.spawn_interval_secs = t.dt();
         t.guards.per_node = 0;
         t.wagon.max_hp = u32::MAX;
-        t.structures.watchtower.damage = 0;
+        watchtower_shot(t).damage = 0;
         t.village.start_towers = t.spread_tower_sites(t.village.tower_limit);
     });
     let towers_at_start = s.sim.towers().count();
@@ -92,8 +92,8 @@ impl Lcg {
     }
 }
 
-/// 타일 지도의 감시탑 타일이 감시탑 목록과 같고, 비어 있는 타일이 모두 마차에 이어져 있는지 세계를 직접 읽어서 확인합니다.
-/// 이 파일에서 `&Sim`이 공개하지 않는 값을 읽는 유일한 곳입니다. 감시탑을 놓고 지우는 함수가 셋뿐이라는 약속을 이 테스트가 지킵니다.
+/// 타일 지도의 포탑 타일이 포탑 목록과 같고, 비어 있는 타일이 모두 마차에 이어져 있는지 세계를 직접 읽어서 확인합니다.
+/// 이 파일에서 `&Sim`이 공개하지 않는 값을 읽는 유일한 곳입니다. 포탑을 놓고 지우는 함수가 셋뿐이라는 약속을 이 테스트가 지킵니다.
 fn assert_layout_matches_towers(s: &mut Scenario) {
     let reach = s.sim.tuning().monsters.longest_engage_distance();
     let world = s.sim.world_mut();

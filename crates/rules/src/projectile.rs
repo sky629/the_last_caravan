@@ -106,7 +106,7 @@ pub(crate) fn remove_landed(world: &mut World) {
 /// 맞힌 수가 `pierce`에 이르면 그 몬스터에서 끝납니다. 같은 거리에 닿으면 몬스터가 먼저입니다. 벽에 붙어 선 몬스터를 맞힐 수 있어야 하기 때문입니다.
 ///
 /// 몬스터는 이번 Tick에 아직 움직이지 않았으므로, 몬스터의 격자는 탄환이 닿는 위치와 같습니다.
-/// 같은 Tick에 부채꼴 공격이나 감시탑이 쓰러뜨릴 몬스터도 아직 피해를 적용하기 전이라서 탄환이 맞힐 수 있고, 두 피해가 모두 적용됩니다.
+/// 같은 Tick에 부채꼴 공격이나 포탑이 쓰러뜨릴 몬스터도 아직 피해를 적용하기 전이라서 탄환이 맞힐 수 있고, 두 피해가 모두 적용됩니다.
 pub(crate) fn advance_projectiles(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
     remove_landed(world);
 

@@ -1,5 +1,6 @@
 //! `Sim`은 방 하나의 게임 상태 전체이며, 규칙 크레이트의 공개 진입점입니다.
 
+use crate::build;
 use crate::camp::Camp;
 use crate::debrief::{Debrief, Report};
 use crate::effect;
@@ -35,7 +36,7 @@ pub struct Sim {
     expedition_began_at: u64,
     stage: Stage,
     world: World,
-    /// 마차와 감시탑으로 가는 공유 이동 경로입니다. 세계의 배치가 바뀌면 다음 `sync`가 다시 만듭니다.
+    /// 마차와 포탑으로 가는 공유 이동 경로입니다. 세계의 배치가 바뀌면 다음 `sync`가 다시 만듭니다.
     paths: Paths,
     /// 몬스터의 위치를 담은 격자입니다. Tick마다 다시 만듭니다.
     monster_grid: MonsterGrid,
@@ -109,7 +110,7 @@ impl Sim {
     }
 
     /// 플레이어의 몸이 막힌 타일에 걸치지 않고 설 수 있는 자리입니다. `wanted`에 설 수 있으면 `wanted`이고,
-    /// 원정 도중에 그 자리에 감시탑이 세워졌으면 가장 가까운 빈 타일의 중심입니다.
+    /// 원정 도중에 그 자리에 포탑이 세워졌으면 가장 가까운 빈 타일의 중심입니다.
     fn clear_spot_near(&self, wanted: Vec2) -> Vec2 {
         let radius = self.tuning.player.radius;
         let mut near = Vec::new();
@@ -178,7 +179,7 @@ impl Sim {
 
     /// 야영지의 Tick입니다. 준비와 카운트다운을 먼저 정하고, 원정이 시작되지 않으면 플레이어가 움직이고 무기를 써 봅니다.
     /// 야영지에서는 아무것도 피해를 받지 않습니다. 공격이 허수아비에 닿은 피해는 화면에 보여 주려고 적기만 합니다.
-    /// 몬스터(허수아비)와 감시탑은 행동하지 않고, 건설은 거절됩니다.
+    /// 몬스터(허수아비)와 포탑은 행동하지 않고, 건설은 거절됩니다.
     fn practice(&mut self, inputs: &PlayerInputs) {
         let Stage::Camp(camp) = &mut self.stage else {
             return;
@@ -248,6 +249,8 @@ impl Sim {
             practice: false,
         };
         let mut hits = Vec::new();
+        let mut afflictions = Vec::new();
+        build::cycle_kinds(&mut self.world, &ctx);
         player::update_interactions(&mut self.world, &ctx);
         structures::advance_construction(&mut self.world, &ctx);
         self.paths.sync(&self.world, &self.tuning);
@@ -256,7 +259,7 @@ impl Sim {
         resources::deposit_and_pickup(&mut self.world, &ctx);
         weapon::use_weapons(&mut self.world, &ctx, &mut hits);
         projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
-        structures::towers_fire(&mut self.world, &ctx, &mut hits);
+        structures::towers_act(&mut self.world, &ctx, &mut hits, &mut afflictions);
         monster::monsters_act(
             &mut self.world,
             &ctx,
@@ -266,6 +269,7 @@ impl Sim {
         );
         effect::advance_effects(&mut self.world, &ctx, &mut hits);
         self.world.apply_hits(&hits, &self.tuning);
+        effect::apply_afflictions(&mut self.world, &afflictions, &self.tuning);
         player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);
         loot::finish_openings(&mut self.world, &self.tuning);
@@ -411,7 +415,7 @@ impl Sim {
         self.world.projectiles.iter()
     }
 
-    /// 번호가 작은 시설부터 차례로 돌려줍니다. 짓는 중인 감시탑도 포함합니다.
+    /// 번호가 작은 시설부터 차례로 돌려줍니다. 짓는 중인 포탑도 포함합니다.
     pub fn towers(&self) -> impl Iterator<Item = &Tower> {
         self.world.towers.values()
     }

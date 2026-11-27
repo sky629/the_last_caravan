@@ -66,10 +66,11 @@ pub use stage::Stage;
 pub use stamina::Stamina;
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use tuning::{
-    ArcTuning, Buff, CampLayout, CampTuning, CycleTuning, Debuff, Delivery, EffectTuning,
-    GuardTuning, HealTuning, HitscanTuning, LootTuning, MapSpec, MonsterTable, MonsterTuning,
-    NightPlan, NightTuning, PlayerTuning, ProjectileTuning, RepairTuning, ResourceTuning,
-    ReviveTuning, SprintTuning, Start, StructureTable, StructureTuning, Tuning, VillageTuning,
-    WagonTuning, WavePlan, WaveScaling, WeaponTable, WeaponTuning,
+    AfflictTuning, ArcTuning, Buff, CampLayout, CampTuning, CycleTuning, Debuff, Delivery,
+    EffectTuning, GuardTuning, HealTuning, HitscanTuning, LootTuning, MapSpec, MonsterTable,
+    MonsterTuning, NightPlan, NightTuning, PlayerTuning, ProjectileTuning, PulseTuning,
+    RepairTuning, ResourceTuning, ReviveTuning, ShootTuning, SprintTuning, Start, StructureTable,
+    StructureTuning, TowerAction, Tuning, VillageTuning, WagonTuning, WavePlan, WaveScaling,
+    WeaponTable, WeaponTuning,
 };
 pub use world::Tile;

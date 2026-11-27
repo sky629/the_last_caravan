@@ -16,8 +16,8 @@ use crate::sim::Sim;
 use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
-    Buff, CampLayout, Debuff, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning, Tuning,
-    WavePlan, WaveScaling,
+    Buff, CampLayout, Debuff, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning,
+    ShootTuning, TowerAction, Tuning, WavePlan, WaveScaling,
 };
 use crate::world::{Source, Tile};
 
@@ -30,7 +30,7 @@ pub(crate) struct Scenario {
 }
 
 impl Scenario {
-    /// 장애물과 채집 지점이 없는 20 x 20 맵입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
+    /// 장애물과 채집 지점이 없는 20 x 20 맵입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 포탑은 없습니다.
     /// 낮이 끝나지 않으므로 무리가 저절로 나타나지 않고, 몬스터는 테스트가 `monster_at`으로 놓은 것뿐입니다.
     /// 채집 지점을 더해도 낮의 몬스터는 없고(`with_cycle`), 무기 상자도 없습니다. 낮의 몬스터를 시험하는 테스트가 `guards.per_node`를 직접 정하고,
     /// 상자를 시험하는 테스트가 `chest_sites`와 `loot.chests_per_day`를 직접 정합니다.
@@ -174,7 +174,11 @@ impl Scenario {
 
     /// 타일 (`x`, `y`)에 서 있는 감시탑을 하나 놓습니다. 건설의 조건은 거치지 않으므로, 다른 규칙을 시험할 상황을 만들 때만 씁니다.
     pub fn tower_at(&mut self, x: u16, y: u16) -> TowerId {
-        let kind = StructureKind::Watchtower;
+        self.tower_of(StructureKind::Watchtower, x, y)
+    }
+
+    /// 타일 (`x`, `y`)에 서 있는 `kind` 포탑을 하나 놓습니다. 건설의 조건은 거치지 않으므로, 다른 규칙을 시험할 상황을 만들 때만 씁니다.
+    pub fn tower_of(&mut self, kind: StructureKind, x: u16, y: u16) -> TowerId {
         let state = Tower::standing_state(kind, self.sim.tuning());
         self.sim.world_mut().add_tower(kind, Tile::new(x, y), state)
     }
@@ -286,6 +290,13 @@ impl Scenario {
     pub fn tap_switch_key(&mut self, id: PlayerId) {
         let mut inputs = self.held.clone();
         inputs.entry(id).or_default().switch_weapon = true;
+        self.sim.step(&inputs);
+    }
+
+    /// 지금 누르고 있는 입력은 그대로 두고, 포탑의 종류를 바꾸는 키(E)를 한 Tick 동안 눌렀다 뗍니다. 이 함수가 한 Tick을 진행합니다.
+    pub fn tap_tower_key(&mut self, id: PlayerId) {
+        let mut inputs = self.held.clone();
+        inputs.entry(id).or_default().cycle_tower = true;
         self.sim.step(&inputs);
     }
 
@@ -414,7 +425,15 @@ pub(crate) fn chest_tuning(t: &mut Tuning, contents: WeaponKind, guards: u32) {
     }
 }
 
-/// 장애물과 채집 지점이 없는 20 x 20 맵의 수치입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 감시탑은 없습니다.
+/// 감시탑의 사격 수치입니다. 감시탑의 피해, 쿨다운, 효과를 바꾸는 테스트가 씁니다.
+pub(crate) fn watchtower_shot(t: &mut Tuning) -> &mut ShootTuning {
+    match &mut t.structures.watchtower.action {
+        TowerAction::Shoot(shoot) => shoot,
+        other => panic!("the watchtower shoots, but its action is {other:?}"),
+    }
+}
+
+/// 장애물과 채집 지점이 없는 20 x 20 맵의 수치입니다. 마차는 오른쪽 위 구석에 있어서 테스트하는 동작과 겹치지 않고, 포탑은 없습니다.
 /// 낮의 몬스터와 무기 상자도 없고, 밤의 몬스터는 마차에서 12타일 떨어진 곳에 나타납니다.
 fn open_field_tuning() -> Tuning {
     let defaults = Tuning::default();
@@ -455,8 +474,8 @@ fn without_camp(spot: Vec2) -> CampLayout {
     }
 }
 
-/// 자원이 있는 모든 곳의 합입니다. 보관함, 플레이어가 든 자원, 떨어진 자원, 짓는 중인 감시탑에 낸 자원, 서 있는 감시탑을 짓는 데 쓴 자원을 더합니다.
-/// 서 있는 감시탑은 하나당 건설 비용이 들었다고 셉니다(파괴된 감시탑이 없고 수리가 없는 상황에서만 맞습니다. 수리에 쓴 자원은 사라집니다).
+/// 자원이 있는 모든 곳의 합입니다. 보관함, 플레이어가 든 자원, 떨어진 자원, 짓는 중인 포탑에 낸 자원, 서 있는 포탑을 짓는 데 쓴 자원을 더합니다.
+/// 서 있는 포탑은 하나당 건설 비용이 들었다고 셉니다(파괴된 포탑이 없고 수리가 없는 상황에서만 맞습니다. 수리에 쓴 자원은 사라집니다).
 pub(crate) fn resource_total(sim: &Sim) -> u32 {
     let t = sim.tuning();
     let carried: u32 = sim.players().map(Player::carried).sum();

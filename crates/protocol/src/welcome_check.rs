@@ -2,7 +2,7 @@
 //!
 //! 이 값들은 터무니없는 값을 보내는 서버(고장 났거나 악의가 있는 서버)가 클라이언트의 메모리와 시간을 끝없이 쓰지 못하게 막는 점검용 상한이고,
 //! 게임 수치가 아닙니다. 실제 정원, Tick 속도, 맵의 크기는 언제나 서버의 `Tuning`이 정하며 클라이언트에는 어떤 값도 고정되어 있지 않습니다.
-//! 상한은 지금의 값(정원 4, 20Hz, 64 x 64 맵, 감시탑 40개, 채집 지점 8곳)보다 훨씬 크게 잡았으므로, 정상적인 서버가 수치를 바꿔도 걸리지 않습니다.
+//! 상한은 지금의 값(정원 4, 20Hz, 64 x 64 맵, 포탑 40개, 채집 지점 8곳)보다 훨씬 크게 잡았으므로, 정상적인 서버가 수치를 바꿔도 걸리지 않습니다.
 //!
 //! 클라이언트는 `Welcome`을 받아서 처음 믿기 전에 한 번 확인합니다. 서버는 시작할 때 자기 설정으로 보낼 `Welcome`에 같은 확인을 해 보므로,
 //! 모든 클라이언트가 거절할 설정으로는 서버가 시작되지 않습니다.
@@ -24,8 +24,10 @@ const _: () = assert!(MAX_MAP_SIDE_TILES <= WirePos::MAX_TILES);
 // 타일의 좌표(`WireTile`)는 한 축이 `u8`이므로, 상한이 `u8`의 범위 안에 있어야 합니다.
 const _: () = assert!(MAX_MAP_SIDE_TILES <= 256.0);
 const MAX_OBSTACLES: usize = 256;
-/// 감시탑의 수의 상한입니다. 스냅샷이 감시탑 하나당 10바이트 안팎이므로 이 값이 스냅샷 크기의 상한이기도 합니다.
+/// 포탑의 수의 상한입니다. 스냅샷이 포탑 하나당 10바이트 안팎이므로 이 값이 스냅샷 크기의 상한이기도 합니다.
 const MAX_TOWER_LIMIT: u32 = 256;
+/// 포탑 종류의 수의 상한입니다. 클라이언트가 종류마다 표의 항목과 색을 하나씩 가집니다.
+const MAX_STRUCTURE_KINDS: usize = 16;
 /// 무기 종류의 수의 상한입니다. 클라이언트가 무기마다 표의 항목 하나를 가집니다.
 const MAX_WEAPON_KINDS: usize = 16;
 /// 채집 지점의 수의 상한입니다. 스냅샷이 지점 하나당 몇 바이트이고, 클라이언트가 지점마다 상자와 막대를 하나씩 만듭니다.
@@ -34,6 +36,8 @@ const MAX_GATHER_NODES: usize = 64;
 const MAX_SOLID_TILES: usize = 4096;
 /// 캐릭터를 그리는 원의 반지름(타일)입니다.
 const MAX_RADIUS_TILES: f32 = 8.0;
+/// 포탑이 작용하는 거리(타일)의 상한입니다. 맵 한 변보다 길면 범위의 원이 맵을 모두 덮습니다.
+const MAX_TOWER_RANGE_TILES: f32 = MAX_MAP_SIDE_TILES;
 
 /// 상한을 넘거나 말이 되지 않는 값이 있으면 그 이유를 영어 문장으로 돌려줍니다. 클라이언트는 이 문장을 화면에 그대로 표시하고, 서버는 시작 오류로 그대로 출력합니다.
 pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
@@ -51,10 +55,28 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
     )?;
     check_count("weapon kinds", world.weapons.len(), MAX_WEAPON_KINDS)?;
     check_count("weapon racks", world.racks.len(), MAX_WEAPON_KINDS)?;
+    check_count(
+        "tower kinds",
+        world.structure_kinds.len(),
+        MAX_STRUCTURE_KINDS,
+    )?;
 
     // 최대 HP가 0이면 막대의 비율을 정할 수 없으므로, 몬스터 종류는 최대 HP가 1 이상이어야 합니다.
     if world.monster_kinds.iter().any(|kind| kind.max_hp == 0) {
         return Err("a monster kind has a max HP of 0".to_string());
+    }
+
+    // 최대 HP가 0이면 막대의 비율을 정할 수 없으므로, 포탑 종류도 최대 HP가 1 이상이어야 합니다.
+    if world.structure_kinds.iter().any(|kind| kind.max_hp == 0) {
+        return Err("a tower kind has a max HP of 0".to_string());
+    }
+    for kind in &world.structure_kinds {
+        if !(kind.range > 0.0 && kind.range <= MAX_TOWER_RANGE_TILES) {
+            return Err(format!(
+                "a tower range of {} tiles is outside 0 to {MAX_TOWER_RANGE_TILES} tiles",
+                kind.range
+            ));
+        }
     }
 
     for weapon in &world.weapons {
@@ -143,7 +165,7 @@ fn check_count(name: &str, value: usize, max: usize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MonsterKindInfo, WireRect};
+    use crate::{MonsterKindInfo, StructureKindInfo, WireRect};
     use caravan_rules::{Seed, Sim, Tuning};
 
     /// 기본 수치에서 서버가 보내는 입장 안내입니다.
@@ -343,6 +365,48 @@ mod tests {
             ..welcome.world.monster_kinds[0]
         };
         assert!(refused(&welcome).contains("max HP"));
+    }
+
+    #[test]
+    fn too_many_tower_kinds_are_refused() {
+        let mut welcome = normal();
+        let kind = welcome.world.structure_kinds[0];
+        welcome.world.structure_kinds = vec![kind; MAX_STRUCTURE_KINDS];
+        assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
+
+        welcome.world.structure_kinds = vec![kind; MAX_STRUCTURE_KINDS + 1];
+        assert!(refused(&welcome).contains("tower kinds"));
+    }
+
+    #[test]
+    fn a_tower_kind_with_zero_max_hp_is_refused() {
+        let mut welcome = normal();
+        welcome.world.structure_kinds[0] = StructureKindInfo {
+            max_hp: 0,
+            ..welcome.world.structure_kinds[0]
+        };
+        assert!(refused(&welcome).contains("tower kind has a max HP"));
+    }
+
+    #[test]
+    fn a_tower_range_that_is_not_a_positive_number_within_the_map_is_refused() {
+        for bad in [
+            0.0,
+            -1.0,
+            f32::NAN,
+            f32::INFINITY,
+            MAX_TOWER_RANGE_TILES + 1.0,
+        ] {
+            let mut welcome = normal();
+            welcome.world.structure_kinds[1] = StructureKindInfo {
+                range: bad,
+                ..welcome.world.structure_kinds[1]
+            };
+            assert!(refused(&welcome).contains("tower range"), "range {bad}");
+        }
+        let mut welcome = normal();
+        welcome.world.structure_kinds[1].range = MAX_TOWER_RANGE_TILES;
+        assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! 번호는 종류마다 별도의 타입으로 감쌉니다. 몬스터 번호를 플레이어 번호 자리에 넣는 실수를 컴파일러가 막습니다.
 //! `Sim`은 번호를 하나씩 늘려서 나누어 주고 다시 사용하지 않습니다.
-//! 그래서 이미 사라진 개체를 가리키는 번호(부활 대상, 감시탑의 사격 대상)가 새 개체를 가리킬 수 없습니다.
+//! 그래서 이미 사라진 개체를 가리키는 번호(부활 대상, 포탑의 사격 대상)가 새 개체를 가리킬 수 없습니다.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PlayerId(pub u32);
@@ -42,7 +42,7 @@ pub struct GroundWeaponId(pub u32);
 pub struct Team(pub u8);
 
 impl Team {
-    /// 협동 모드의 플레이어, 마차, 감시탑이 속한 진영입니다.
+    /// 협동 모드의 플레이어, 마차, 포탑이 속한 진영입니다.
     pub const CARAVAN: Team = Team(0);
     /// 몬스터가 속한 진영입니다.
     pub const HORDE: Team = Team(1);

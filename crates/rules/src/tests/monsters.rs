@@ -1,6 +1,6 @@
 //! 몬스터의 목표 선택, 이동, 공격을 확인합니다.
 
-use super::support::{Scenario, nights, outcome};
+use super::support::{Scenario, nights, outcome, watchtower_shot};
 use crate::expedition::Outcome;
 use crate::math::{Rect, Vec2};
 
@@ -268,11 +268,13 @@ fn crowd_of_300() -> Scenario {
         t.nights.first_wave_delay_secs = 0.05;
         t.nights.spawn_interval_secs = 0.05;
         t.wagon.max_hp = u32::MAX;
+        let damage = t.monsters.grunt.max_hp;
         let tower = &mut t.structures.watchtower;
         tower.max_hp = u32::MAX;
         tower.range = 40.0;
-        tower.damage = t.monsters.grunt.max_hp;
-        tower.cooldown_secs = 0.1;
+        let shot = watchtower_shot(t);
+        shot.damage = damage;
+        shot.cooldown_secs = 0.1;
     });
     s.tower_at(35, 31);
     s
@@ -280,7 +282,7 @@ fn crowd_of_300() -> Scenario {
 
 #[test]
 fn a_wave_of_300_monsters_runs_to_victory() {
-    // 몬스터가 수백 마리여도 Tick이 끝까지 진행되는지 확인합니다. 근접 공격, 감시탑의 목표 선택, 몬스터 사이의 밀어내기가
+    // 몬스터가 수백 마리여도 Tick이 끝까지 진행되는지 확인합니다. 근접 공격, 포탑의 목표 선택, 몬스터 사이의 밀어내기가
     // 모두 격자 조회를 거치므로, 모든 쌍을 비교하는 방식이었다면 이 테스트는 눈에 띄게 느려집니다.
     let mut s = crowd_of_300();
     let mut most_alive = 0;
@@ -311,7 +313,7 @@ fn tick_time_with(count: u32) -> (std::time::Duration, std::time::Duration) {
         t.nights.max_alive = count;
         t.wagon.max_hp = u32::MAX;
         t.structures.watchtower.max_hp = u32::MAX;
-        t.structures.watchtower.damage = 0;
+        watchtower_shot(t).damage = 0;
         t.guards.per_node = 0;
     });
     s.tower_at(35, 31);

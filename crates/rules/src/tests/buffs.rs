@@ -296,3 +296,16 @@ fn the_time_of_a_buff_runs_in_the_camp_too() {
 
     assert_eq!(buffs_of(&s, a), (false, false));
 }
+
+#[test]
+fn a_shorter_buff_does_not_cut_a_longer_one() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(2.0, 5.0);
+    s.grant(a, Buff::Haste { secs: 3.0 });
+    s.grant(a, Buff::Haste { secs: 1.0 });
+
+    s.run_ticks(s.ticks(3.0) - 1);
+    assert_eq!(buffs_of(&s, a), (true, false), "three seconds, not one");
+    s.run_ticks(1);
+    assert_eq!(buffs_of(&s, a), (false, false));
+}

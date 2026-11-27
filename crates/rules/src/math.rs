@@ -83,7 +83,7 @@ impl Mul<f32> for Vec2 {
     }
 }
 
-/// 축에 정렬된 사각형입니다. 장애물, 마차, 감시탑, 맵 경계가 모두 이 타입입니다.
+/// 축에 정렬된 사각형입니다. 장애물, 마차, 포탑, 맵 경계가 모두 이 타입입니다.
 /// `min.x <= max.x`이고 `min.y <= max.y`여야 합니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {

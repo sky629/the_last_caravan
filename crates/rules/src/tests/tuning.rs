@@ -1,10 +1,11 @@
 //! 기본 수치가 규칙의 전제를 지키는지 확인합니다. 수치를 고치다가 전제가 깨지면 이 테스트가 실패합니다.
 
-use super::support::{Scenario, nights};
+use super::support::{Scenario, nights, watchtower_shot};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
 use crate::tuning::{
-    ArcTuning, Debuff, Delivery, HitscanTuning, ProjectileTuning, Tuning, WaveScaling,
+    AfflictTuning, ArcTuning, Debuff, Delivery, HitscanTuning, ProjectileTuning, PulseTuning,
+    TowerAction, Tuning, WaveScaling,
 };
 use crate::world::Tile;
 
@@ -1032,10 +1033,125 @@ fn a_swift_that_does_not_speed_up_the_player_is_rejected_and_the_reason_names_it
 #[test]
 fn the_row_of_a_structure_is_checked_like_the_row_of_a_weapon() {
     let mut t = Tuning::default();
-    t.structures.watchtower.on_hit = Some(Debuff::Stun { secs: 0.0 });
+    watchtower_shot(&mut t).on_hit = Some(Debuff::Stun { secs: 0.0 });
     let why = t.validate().expect_err("a stun of no time");
     assert!(why.contains("Watchtower stun secs"), "{why}");
 
-    t.structures.watchtower.on_hit = Some(Debuff::Stun { secs: 0.5 });
+    watchtower_shot(&mut t).on_hit = Some(Debuff::Stun { secs: 0.5 });
     assert_eq!(t.validate(), Ok(()));
+}
+
+#[test]
+fn a_tower_needs_a_range_and_a_cost() {
+    for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        t.structures.watchtower.range = bad;
+        let why = t.validate().expect_err(&format!("a range of {bad}"));
+        assert!(why.contains("Watchtower range"), "{bad}: {why}");
+    }
+
+    let mut t = Tuning::default();
+    t.structures.watchtower.build_cost = 0;
+    let why = t.validate().expect_err("a tower that costs nothing");
+    assert!(why.contains("Watchtower build_cost"), "{why}");
+}
+
+#[test]
+fn the_cooldown_of_a_shot_is_finite_and_not_negative() {
+    for bad in [-0.1, f32::NAN, f32::INFINITY] {
+        let mut t = Tuning::default();
+        watchtower_shot(&mut t).cooldown_secs = bad;
+        let why = t.validate().expect_err(&format!("a cooldown of {bad}"));
+        assert!(why.contains("Watchtower cooldown_secs"), "{bad}: {why}");
+    }
+    let mut t = Tuning::default();
+    watchtower_shot(&mut t).cooldown_secs = 0.0;
+    assert_eq!(t.validate(), Ok(()), "a tower that shoots every tick");
+}
+
+#[test]
+fn a_pulse_longer_than_its_effect_is_rejected_and_one_as_long_is_accepted() {
+    let slow = |pulse_secs| {
+        TowerAction::Pulse(PulseTuning {
+            pulse_secs,
+            debuff: Debuff::Slow {
+                factor: 0.7,
+                secs: 1.0,
+            },
+        })
+    };
+    let mut t = Tuning::default();
+    t.structures.slow_tower.action = slow(1.05);
+    let why = t.validate().expect_err("a pulse that lets the slow lapse");
+    assert!(why.contains("SlowTower pulses every"), "{why}");
+
+    t.structures.slow_tower.action = slow(1.0);
+    assert_eq!(t.validate(), Ok(()), "a pulse as long as the effect");
+
+    for bad in [0.0, -0.5, f32::NAN, f32::INFINITY] {
+        t.structures.slow_tower.action = slow(bad);
+        let why = t.validate().expect_err(&format!("a pulse of {bad}"));
+        assert!(why.contains("SlowTower pulse_secs"), "{bad}: {why}");
+    }
+}
+
+#[test]
+fn a_tower_on_every_monster_cannot_bleed_or_stun() {
+    let mut t = Tuning::default();
+    for (debuff, said) in [
+        (
+            Debuff::Bleed {
+                damage: 5,
+                secs: 3.0,
+            },
+            "cannot apply a bleed",
+        ),
+        (Debuff::Stun { secs: 0.8 }, "cannot stun"),
+    ] {
+        t.structures.slow_tower.action = TowerAction::Pulse(PulseTuning {
+            pulse_secs: 0.5,
+            debuff,
+        });
+        let why = t.validate().expect_err(&format!("{debuff:?}"));
+        assert!(why.contains("SlowTower") && why.contains(said), "{why}");
+    }
+}
+
+#[test]
+fn a_tower_on_one_monster_needs_a_cooldown_and_cannot_bleed() {
+    let afflict = |cooldown_secs, debuff| {
+        TowerAction::Afflict(AfflictTuning {
+            cooldown_secs,
+            debuff,
+        })
+    };
+    let stun = Debuff::Stun { secs: 0.8 };
+    let mut t = Tuning::default();
+    for bad in [0.0, -2.0, f32::NAN, f32::INFINITY] {
+        t.structures.stun_tower.action = afflict(bad, stun);
+        let why = t.validate().expect_err(&format!("a cooldown of {bad}"));
+        assert!(why.contains("StunTower cooldown_secs"), "{bad}: {why}");
+    }
+
+    t.structures.stun_tower.action = afflict(
+        2.0,
+        Debuff::Bleed {
+            damage: 5,
+            secs: 3.0,
+        },
+    );
+    let why = t.validate().expect_err("a tower that bleeds");
+    assert!(
+        why.contains("StunTower") && why.contains("cannot apply a bleed"),
+        "{why}"
+    );
+
+    t.structures.stun_tower.action = afflict(
+        2.0,
+        Debuff::Slow {
+            factor: 0.5,
+            secs: 2.0,
+        },
+    );
+    assert_eq!(t.validate(), Ok(()), "one monster at a time may be slowed");
 }

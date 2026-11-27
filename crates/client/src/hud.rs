@@ -64,6 +64,8 @@ pub struct HudNodes {
     stash: Entity,
     carry: Entity,
     weapon: Entity,
+    /// 건설 키가 지을 포탑의 종류와 비용입니다.
+    build: Entity,
     /// 내가 받은 버프의 이름입니다.
     buffs: Entity,
     /// 야영지의 방 코드와 `C` 안내입니다.
@@ -174,13 +176,14 @@ pub fn setup(mut commands: Commands) {
         }))
         .add_children(&[me, stamina, wagon, allies_panel]);
 
-    // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함, 내가 든 자원, 내가 든 무기, 내가 받은 버프.
+    // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함, 내가 든 자원, 내가 든 무기, 지을 포탑, 내가 받은 버프.
     let day = text_node(&mut commands, 30.0, TEXT);
     let timer = text_node(&mut commands, 20.0, TEXT);
     let expedition = text_node(&mut commands, 16.0, TEXT_DIM);
     let stash = text_node(&mut commands, 22.0, TEXT);
     let carry = text_node(&mut commands, 22.0, TEXT);
     let weapon = text_node(&mut commands, 22.0, TEXT);
+    let build = text_node(&mut commands, 22.0, TEXT);
     let buffs = text_node(&mut commands, 22.0, TEXT);
     // 야영지에서는 이 아래에 방 코드와 준비 목록이 나옵니다.
     let camp_room = text_node(&mut commands, 20.0, TEXT);
@@ -209,6 +212,7 @@ pub fn setup(mut commands: Commands) {
             stash,
             carry,
             weapon,
+            build,
             buffs,
             camp_room,
             camp_rows_box,
@@ -302,6 +306,7 @@ pub fn setup(mut commands: Commands) {
         stash,
         carry,
         weapon,
+        build,
         buffs,
         camp_room,
         camp_rows_box,
@@ -440,6 +445,7 @@ pub fn update(
         nodes.weapon,
         hud.weapon.as_deref().unwrap_or(""),
     );
+    set_text(&mut texts, nodes.build, hud.build.as_deref().unwrap_or(""));
     set_text(&mut texts, nodes.buffs, hud.buffs.as_deref().unwrap_or(""));
     let camp = hud.camp.as_ref();
     set_text(
