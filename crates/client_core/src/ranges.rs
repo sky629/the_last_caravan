@@ -111,9 +111,16 @@ mod tests {
             tower(1, WireStructureKind::Watchtower, standing()),
             tower(2, WireStructureKind::SlowTower, standing()),
             tower(3, WireStructureKind::StunTower, standing()),
+            tower(4, WireStructureKind::HasteTower, standing()),
+            tower(5, WireStructureKind::SwiftTower, standing()),
             tower(
-                4,
+                6,
                 WireStructureKind::SlowTower,
+                WireTowerState::Building { progress: 0.5 },
+            ),
+            tower(
+                7,
+                WireStructureKind::HasteTower,
                 WireTowerState::Building { progress: 0.5 },
             ),
         ];
@@ -122,7 +129,14 @@ mod tests {
 
         let shown: Vec<(WireStructureKind, f32)> =
             rings.iter().map(|ring| (ring.kind, ring.radius)).collect();
-        assert_eq!(shown, [(WireStructureKind::SlowTower, 4.0)]);
+        assert_eq!(
+            shown,
+            [
+                (WireStructureKind::SlowTower, 4.0),
+                (WireStructureKind::HasteTower, 3.0),
+                (WireStructureKind::SwiftTower, 3.0),
+            ]
+        );
         assert!(rings.iter().all(|ring| !ring.preview));
     }
 

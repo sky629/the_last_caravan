@@ -90,6 +90,8 @@ pub struct TowerPaints {
     watchtower: Handle<ColorMaterial>,
     slow_tower: Handle<ColorMaterial>,
     stun_tower: Handle<ColorMaterial>,
+    haste_tower: Handle<ColorMaterial>,
+    swift_tower: Handle<ColorMaterial>,
 }
 
 impl TowerPaints {
@@ -99,6 +101,8 @@ impl TowerPaints {
             WireStructureKind::Watchtower => &self.watchtower,
             WireStructureKind::SlowTower => &self.slow_tower,
             WireStructureKind::StunTower => &self.stun_tower,
+            WireStructureKind::HasteTower => &self.haste_tower,
+            WireStructureKind::SwiftTower => &self.swift_tower,
         }
     }
 }
@@ -109,6 +113,8 @@ pub fn tower_color(kind: WireStructureKind) -> Color {
         WireStructureKind::Watchtower => config::WATCHTOWER,
         WireStructureKind::SlowTower => config::SLOW_TOWER,
         WireStructureKind::StunTower => config::STUN_TOWER,
+        WireStructureKind::HasteTower => config::HASTE_TOWER,
+        WireStructureKind::SwiftTower => config::SWIFT_TOWER,
     }
 }
 
@@ -145,6 +151,8 @@ pub fn setup_palette(
             watchtower: paint(tower_color(WireStructureKind::Watchtower)),
             slow_tower: paint(tower_color(WireStructureKind::SlowTower)),
             stun_tower: paint(tower_color(WireStructureKind::StunTower)),
+            haste_tower: paint(tower_color(WireStructureKind::HasteTower)),
+            swift_tower: paint(tower_color(WireStructureKind::SwiftTower)),
         },
         node: paint(config::NODE),
         node_empty: paint(config::NODE_EMPTY),

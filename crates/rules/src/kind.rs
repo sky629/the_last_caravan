@@ -25,14 +25,20 @@ pub enum StructureKind {
     SlowTower,
     /// 범위 안에서 스턴에 걸릴 수 있는 가장 가까운 몬스터 한 마리에게 스턴을 겁니다. 피해는 없습니다.
     StunTower,
+    /// 범위 안에 있는 살아 있는 플레이어에게 공격 속도 버프를 유지합니다.
+    HasteTower,
+    /// 범위 안에 있는 살아 있는 플레이어에게 이동 속도 버프를 유지합니다.
+    SwiftTower,
 }
 
 impl StructureKind {
     /// 종류를 바꾸는 키(E)가 고르는 순서입니다.
-    pub const ALL: [StructureKind; 3] = [
+    pub const ALL: [StructureKind; 5] = [
         StructureKind::Watchtower,
         StructureKind::SlowTower,
         StructureKind::StunTower,
+        StructureKind::HasteTower,
+        StructureKind::SwiftTower,
     ];
 
     /// 종류를 바꾸는 키(E)를 눌렀을 때 고르는 다음 종류입니다. `ALL`의 순서를 따르고, 마지막 다음은 처음입니다.
@@ -40,7 +46,9 @@ impl StructureKind {
         match self {
             StructureKind::Watchtower => StructureKind::SlowTower,
             StructureKind::SlowTower => StructureKind::StunTower,
-            StructureKind::StunTower => StructureKind::Watchtower,
+            StructureKind::StunTower => StructureKind::HasteTower,
+            StructureKind::HasteTower => StructureKind::SwiftTower,
+            StructureKind::SwiftTower => StructureKind::Watchtower,
         }
     }
 }

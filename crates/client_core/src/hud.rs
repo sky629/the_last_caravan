@@ -668,6 +668,8 @@ pub fn structure_name(kind: WireStructureKind) -> &'static str {
         WireStructureKind::Watchtower => "WATCHTOWER",
         WireStructureKind::SlowTower => "SLOW TOWER",
         WireStructureKind::StunTower => "STUN TOWER",
+        WireStructureKind::HasteTower => "HASTE TOWER",
+        WireStructureKind::SwiftTower => "SWIFT TOWER",
     }
 }
 
@@ -2106,8 +2108,16 @@ mod tests {
         assert_eq!(hud.build.as_deref(), Some("BUILD  SLOW TOWER  15"));
 
         me.build_kind = WireStructureKind::StunTower;
-        let hud = Hud::of(&session, Some(&frame(vec![me])), INVITE);
+        let hud = Hud::of(&session, Some(&frame(vec![me.clone()])), INVITE);
         assert_eq!(hud.build.as_deref(), Some("BUILD  STUN TOWER  20"));
+
+        me.build_kind = WireStructureKind::HasteTower;
+        let hud = Hud::of(&session, Some(&frame(vec![me.clone()])), INVITE);
+        assert_eq!(hud.build.as_deref(), Some("BUILD  HASTE TOWER  15"));
+
+        me.build_kind = WireStructureKind::SwiftTower;
+        let hud = Hud::of(&session, Some(&frame(vec![me])), INVITE);
+        assert_eq!(hud.build.as_deref(), Some("BUILD  SWIFT TOWER  15"));
     }
 
     #[test]
@@ -2143,11 +2153,13 @@ mod tests {
             WireStructureKind::Watchtower,
             WireStructureKind::SlowTower,
             WireStructureKind::StunTower,
+            WireStructureKind::HasteTower,
+            WireStructureKind::SwiftTower,
         ]
         .into_iter()
         .map(structure_name)
         .collect();
-        assert_eq!(names.len(), 3);
+        assert_eq!(names.len(), 5);
     }
 
     #[test]

@@ -97,13 +97,16 @@ pub const WAGON: Color = Color::srgb(0.68, 0.44, 0.22);
 pub const WATCHTOWER: Color = Color::srgb(0.38, 0.58, 0.90);
 pub const SLOW_TOWER: Color = Color::srgb(0.50, 0.88, 1.00);
 pub const STUN_TOWER: Color = Color::srgb(0.92, 0.93, 0.98);
+/// 버프 포탑의 색입니다. 공격 속도 포탑은 장미색이고 이동 속도 포탑은 연두색이며, 다른 포탑과 플레이어와 몬스터의 몸통 색과도 구분됩니다(테스트가 확인합니다).
+pub const HASTE_TOWER: Color = Color::srgb(0.90, 0.35, 0.55);
+pub const SWIFT_TOWER: Color = Color::srgb(0.65, 0.92, 0.30);
 /// 범위형 포탑의 범위를 그리는 원의 불투명도입니다. 건설 미리 보기의 원은 조금 더 진합니다.
 pub const RANGE_ALPHA: f32 = 0.30;
 pub const PREVIEW_RANGE_ALPHA: f32 = 0.65;
 /// 채집 지점입니다. 자원이 다 떨어지면 어두운 색이 됩니다.
 pub const NODE: Color = Color::srgb(0.25, 0.72, 0.66);
 pub const NODE_EMPTY: Color = Color::srgb(0.30, 0.34, 0.34);
-/// 무기 상자입니다. 채집 지점(청록)과 포탑(파랑, 하늘색, 흰색)과 구분되는 황금색입니다.
+/// 무기 상자입니다. 채집 지점(청록)과 포탑(파랑, 하늘색, 흰색, 장미색, 연두색)과 구분되는 황금색입니다.
 pub const CHEST: Color = Color::srgb(0.86, 0.64, 0.16);
 /// 땅에 떨어진 자원입니다.
 pub const PILE: Color = Color::srgb(1.00, 0.85, 0.30);
@@ -167,7 +170,7 @@ mod tests {
 
     #[test]
     fn every_tower_colour_stands_apart_from_the_other_towers_and_from_every_block_and_the_ground() {
-        let towers = [WATCHTOWER, SLOW_TOWER, STUN_TOWER];
+        let towers = [WATCHTOWER, SLOW_TOWER, STUN_TOWER, HASTE_TOWER, SWIFT_TOWER];
         let others = [OBSTACLE, WAGON, NODE, NODE_EMPTY, CHEST, GROUND_A, GROUND_B];
         for (i, tower) in towers.iter().enumerate() {
             for other in towers.iter().skip(i + 1).chain(others.iter()) {
@@ -178,7 +181,7 @@ mod tests {
 
     #[test]
     fn the_colours_of_the_new_kinds_stand_apart_from_the_bodies_that_stand_beside_them() {
-        let new_kinds = [SLOW_TOWER, STUN_TOWER];
+        let new_kinds = [SLOW_TOWER, STUN_TOWER, HASTE_TOWER, SWIFT_TOWER];
         // 같은 편 플레이어(파랑)는 몸통이 작고 서 있는 모양이 달라서 포탑의 파랑 계열과 같은 계열이어도 헷갈리지 않으므로 뺍니다.
         let bodies = [YOU, HOSTILE_PLAYER, DOWNED, DEAD, MONSTER, SCARECROW];
         for tower in new_kinds {

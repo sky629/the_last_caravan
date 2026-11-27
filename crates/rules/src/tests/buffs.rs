@@ -1,4 +1,4 @@
-//! 플레이어의 버프(공격 속도, 이동 속도)를 확인합니다. 이 게임에는 버프를 거는 곳이 없으므로 테스트가 `Scenario::grant`로 줍니다.
+//! 플레이어의 버프(공격 속도, 이동 속도)를 확인합니다. 버프의 규칙을 버프 포탑 없이 시험하므로 테스트가 `Scenario::grant`로 줍니다.
 //! 버프는 플레이어의 공격이 나가는 Tick과 이동한 거리, 그리고 버프가 걸려 있는지의 질문(`PlayerBuffs::has_haste`, `has_swift`)으로 읽습니다.
 
 use super::support::{Scenario, close, in_camp, nights, phase};

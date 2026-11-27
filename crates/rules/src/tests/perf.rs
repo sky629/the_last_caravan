@@ -656,6 +656,8 @@ fn village_of(kinds: &[StructureKind]) -> Scenario {
     let mut s = village_under_siege_with(Vec::new(), u32::MAX, |t| {
         t.structures.slow_tower.max_hp = u32::MAX;
         t.structures.stun_tower.max_hp = u32::MAX;
+        t.structures.haste_tower.max_hp = u32::MAX;
+        t.structures.swift_tower.max_hp = u32::MAX;
     });
     for (index, tile) in sites.iter().enumerate() {
         s.tower_of(kinds[index % kinds.len()], tile.x, tile.y);

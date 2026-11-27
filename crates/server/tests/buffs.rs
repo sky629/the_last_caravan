@@ -1,7 +1,7 @@
-//! 기본 서버에서는 어떤 플레이어도 버프를 받지 않는 것을 공개 API(`GameServer`)로만 확인합니다. 클라이언트가 받는 스냅샷만 봅니다.
+//! 버프 포탑이 없으면 아무도 버프를 받지 않는 것을 공개 API(`GameServer`)로만 확인합니다. 클라이언트가 받는 스냅샷만 봅니다.
 //! 프로세스 내부 전달과 가짜 시각을 사용하므로 소켓, 스레드, 대기가 없습니다.
 //!
-//! 두 사람이 야영지에서 준비한 뒤 원정의 첫날과 첫 밤을 지나면서 걷고, 달리고, 공격하고, 건설하고, 상호작용합니다.
+//! 두 사람이 야영지에서 준비한 뒤 원정의 첫날과 첫 밤을 지나면서 걷고, 달리고, 공격하고, 건설하고, 상호작용합니다. 종류를 바꾸지 않으므로 짓는 포탑은 감시탑뿐입니다.
 //! 그동안 두 사람이 받은 모든 스냅샷에서 살아 있는 플레이어의 버프가 비어 있어야 합니다.
 
 mod common;
@@ -34,7 +34,8 @@ fn input_of(person: usize, seq: u32) -> ClientMsg {
 }
 
 #[test]
-fn nobody_has_a_buff_in_any_snapshot_of_the_camp_the_first_day_and_the_first_night() {
+fn nobody_has_a_buff_without_a_buff_tower_in_any_snapshot_of_the_camp_the_first_day_and_the_first_night()
+ {
     let mut rig = rig();
     let (mut first, _) = rig.join_ok("buffs");
     let (mut second, _) = rig.join_ok("buffs");
