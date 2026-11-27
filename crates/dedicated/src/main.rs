@@ -138,6 +138,8 @@ fn tuning_from(options: &Options) -> Tuning {
         tuning.structures.watchtower.max_hp = u32::MAX;
         tuning.structures.slow_tower.max_hp = u32::MAX;
         tuning.structures.stun_tower.max_hp = u32::MAX;
+        tuning.structures.haste_tower.max_hp = u32::MAX;
+        tuning.structures.swift_tower.max_hp = u32::MAX;
         tuning.village.start_towers = tuning.spread_tower_sites(tuning.village.tower_limit);
         // 부하 시험용 클라이언트(`--bow`)가 Q로 활을 들 수 있게 검과 활을 함께 가지고 시작합니다.
         tuning.player.start_loadout = Loadout::new(WeaponKind::Sword, Some(WeaponKind::Bow));

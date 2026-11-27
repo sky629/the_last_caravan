@@ -42,7 +42,7 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
         },
         // 네 명이 모두 바닥의 무기 곁에 서 있는 경우입니다.
         prompt: Some(WirePrompt::TakeWeapon(WireWeaponKind::Spear)),
-        build_kind: WireStructureKind::StunTower,
+        build_kind: WireStructureKind::SwiftTower,
     };
     Snapshot {
         tick: 100_000,
@@ -69,7 +69,9 @@ fn crowded_snapshot(first_id: u32, monsters: u32, projectiles: u32) -> Snapshot 
                     WireStructureKind::Watchtower,
                     WireStructureKind::SlowTower,
                     WireStructureKind::StunTower,
-                ][id as usize % 3],
+                    WireStructureKind::HasteTower,
+                    WireStructureKind::SwiftTower,
+                ][id as usize % 5],
                 state: WireTowerState::Standing {
                     hp: 120,
                     last_shot: Some(WireShot {

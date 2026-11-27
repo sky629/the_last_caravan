@@ -273,6 +273,7 @@ impl Sim {
         player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);
         loot::finish_openings(&mut self.world, &self.tuning);
+        structures::hold_auras(&mut self.world, &self.tuning);
         let Stage::Expedition(phase) = &mut self.stage else {
             return;
         };

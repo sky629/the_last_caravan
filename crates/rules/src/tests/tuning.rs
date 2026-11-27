@@ -4,8 +4,8 @@ use super::support::{Scenario, nights, watchtower_shot};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
 use crate::tuning::{
-    AfflictTuning, ArcTuning, Debuff, Delivery, HitscanTuning, ProjectileTuning, PulseTuning,
-    TowerAction, Tuning, WaveScaling,
+    AfflictTuning, ArcTuning, AuraTuning, Buff, Debuff, Delivery, HitscanTuning, ProjectileTuning,
+    PulseTuning, TowerAction, Tuning, WaveScaling,
 };
 use crate::world::Tile;
 
@@ -1154,4 +1154,24 @@ fn a_tower_on_one_monster_needs_a_cooldown_and_cannot_bleed() {
         },
     );
     assert_eq!(t.validate(), Ok(()), "one monster at a time may be slowed");
+}
+
+#[test]
+fn the_buff_of_a_buff_tower_lasts_longer_than_zero() {
+    let aura = |buff| TowerAction::Aura(AuraTuning { buff });
+    let mut t = Tuning::default();
+    for bad in [0.0, -2.0, f32::NAN, f32::INFINITY] {
+        t.structures.haste_tower.action = aura(Buff::Haste { secs: bad });
+        let why = t.validate().expect_err(&format!("a haste of {bad}"));
+        assert!(why.contains("HasteTower buff secs"), "{bad}: {why}");
+    }
+    t.structures.haste_tower.action = aura(Buff::Haste { secs: 2.0 });
+    for bad in [0.0, -2.0, f32::NAN, f32::INFINITY] {
+        t.structures.swift_tower.action = aura(Buff::Swift { secs: bad });
+        let why = t.validate().expect_err(&format!("a swift of {bad}"));
+        assert!(why.contains("SwiftTower buff secs"), "{bad}: {why}");
+    }
+
+    t.structures.swift_tower.action = aura(Buff::Swift { secs: 0.05 });
+    assert_eq!(t.validate(), Ok(()), "a buff of one tick");
 }

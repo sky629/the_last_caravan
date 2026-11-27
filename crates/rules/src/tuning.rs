@@ -357,7 +357,7 @@ pub struct LootTuning {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructureTuning {
     pub max_hp: u32,
-    /// 포탑의 중심에서 몬스터의 중심까지 잰, 포탑이 작용하는 거리입니다. 유한하고 0보다 깁니다.
+    /// 포탑의 중심에서 대상(몬스터나 플레이어)의 중심까지 잰, 포탑이 작용하는 거리입니다. 유한하고 0보다 깁니다.
     pub range: f32,
     /// 서 있는 동안 하는 일입니다.
     pub action: TowerAction,
@@ -371,6 +371,7 @@ pub struct StructureTuning {
 
 /// 서 있는 포탑이 하는 일입니다. 동작마다 그 동작에서만 의미가 있는 수치를 한 구조체로 가집니다.
 /// 동작을 추가하려면 변형을 하나 더하고, `structures::towers_act`와 `Tuning::validate_structures`와 `Tuning::validate_effects`의 `match`에 갈래를 하나 더합니다.
+/// 플레이어에게 작용하는 동작(`Aura`)은 `towers_act`가 아니라 `structures::hold_auras`가 하므로, `towers_act`의 `match`에서는 건너뜁니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TowerAction {
     /// 쿨다운마다 범위 안의 가장 가까운 적대적 몬스터 한 마리에게 피해를 줍니다.
@@ -379,6 +380,8 @@ pub enum TowerAction {
     Afflict(AfflictTuning),
     /// 간격마다 범위 안의 모든 적대적 몬스터에게 `debuff`를 겁니다. 피해는 없습니다.
     Pulse(PulseTuning),
+    /// 범위 안에 있는 살아 있는 플레이어가 `buff`를 가지게 합니다. 몬스터에게는 작용하지 않습니다.
+    Aura(AuraTuning),
 }
 
 impl TowerAction {
@@ -386,7 +389,7 @@ impl TowerAction {
     pub fn covers_area(&self) -> bool {
         match self {
             TowerAction::Shoot(_) | TowerAction::Afflict(_) => false,
-            TowerAction::Pulse(_) => true,
+            TowerAction::Pulse(_) | TowerAction::Aura(_) => true,
         }
     }
 }
@@ -421,12 +424,22 @@ pub struct PulseTuning {
     pub debuff: Debuff,
 }
 
+/// 범위 안의 플레이어에게 버프를 유지하는 동작의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AuraTuning {
+    /// 범위 안에 있는 플레이어가 Tick마다 받는 버프입니다. 범위를 나간 플레이어는 이 버프의 길이(`secs`)만큼 더 가지고 있다가 잃습니다.
+    /// 길이는 0보다 길어야 합니다(`Tuning::validate`).
+    pub buff: Buff,
+}
+
 /// 포탑 종류별 수치표입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructureTable {
     pub watchtower: StructureTuning,
     pub slow_tower: StructureTuning,
     pub stun_tower: StructureTuning,
+    pub haste_tower: StructureTuning,
+    pub swift_tower: StructureTuning,
 }
 
 impl StructureTable {
@@ -435,6 +448,8 @@ impl StructureTable {
             StructureKind::Watchtower => &self.watchtower,
             StructureKind::SlowTower => &self.slow_tower,
             StructureKind::StunTower => &self.stun_tower,
+            StructureKind::HasteTower => &self.haste_tower,
+            StructureKind::SwiftTower => &self.swift_tower,
         }
     }
 }
@@ -1068,6 +1083,7 @@ impl Tuning {
                     TowerAction::Shoot(shoot) => shoot.on_hit,
                     TowerAction::Afflict(afflict) => Some(afflict.debuff),
                     TowerAction::Pulse(pulse) => Some(pulse.debuff),
+                    TowerAction::Aura(_) => None,
                 };
                 (format!("{kind:?}"), on_hit)
             }));
@@ -1111,6 +1127,7 @@ impl Tuning {
     /// - 범위의 모든 몬스터에게 거는 동작(`Pulse`)의 간격은 유한하고 0보다 길며, Tick으로 바꾼 값이 효과의 시간 이하입니다.
     ///   간격이 효과보다 길면 범위 안에서도 효과가 끊깁니다.
     /// - 피해를 주지 않는 동작(`Afflict`, `Pulse`)은 출혈을 걸 수 없습니다. 범위의 모든 몬스터에게 거는 동작은 스턴도 걸 수 없습니다. 무리가 통째로 멈추기 때문입니다.
+    /// - 버프를 유지하는 동작(`Aura`)의 버프 길이는 유한하고 0보다 깁니다. 0 이하이면 플레이어가 버프를 받지 못합니다.
     ///
     /// `match`에 `_` 갈래가 없으므로 동작을 추가하면 컴파일러가 이 검사를 더하라고 알려 줍니다.
     fn validate_structures(&self) -> Result<(), String> {
@@ -1153,6 +1170,10 @@ impl Tuning {
                             pulse.pulse_secs
                         ));
                     }
+                }
+                TowerAction::Aura(aura) => {
+                    let (Buff::Haste { secs } | Buff::Swift { secs }) = aura.buff;
+                    check_positive(&format!("{kind:?} buff secs"), secs)?;
                 }
             }
         }
@@ -1485,6 +1506,21 @@ impl Default for Tuning {
                     TowerAction::Afflict(AfflictTuning {
                         cooldown_secs: 2.0,
                         debuff: Debuff::Stun { secs: 0.8 },
+                    }),
+                ),
+                // 범위를 나간 뒤에도 버프가 2초 남습니다. 버프의 세기는 `effects`에 있습니다.
+                haste_tower: tower(
+                    3.0,
+                    15,
+                    TowerAction::Aura(AuraTuning {
+                        buff: Buff::Haste { secs: 2.0 },
+                    }),
+                ),
+                swift_tower: tower(
+                    3.0,
+                    15,
+                    TowerAction::Aura(AuraTuning {
+                        buff: Buff::Swift { secs: 2.0 },
                     }),
                 ),
             },

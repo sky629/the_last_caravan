@@ -153,6 +153,8 @@ pub enum WireStructureKind {
     Watchtower,
     SlowTower,
     StunTower,
+    HasteTower,
+    SwiftTower,
 }
 
 impl WireStructureKind {
@@ -161,6 +163,8 @@ impl WireStructureKind {
             StructureKind::Watchtower => WireStructureKind::Watchtower,
             StructureKind::SlowTower => WireStructureKind::SlowTower,
             StructureKind::StunTower => WireStructureKind::StunTower,
+            StructureKind::HasteTower => WireStructureKind::HasteTower,
+            StructureKind::SwiftTower => WireStructureKind::SwiftTower,
         }
     }
 }

@@ -332,6 +332,8 @@ mod tests {
             WireStructureKind::Watchtower,
             WireStructureKind::SlowTower,
             WireStructureKind::StunTower,
+            WireStructureKind::HasteTower,
+            WireStructureKind::SwiftTower,
         ];
         let towers = kinds
             .iter()
@@ -358,14 +360,17 @@ mod tests {
             let materials = app.world().resource::<Assets<ColorMaterial>>();
             materials.get(&paint).expect("the paint exists").color
         };
-        let standing: Vec<Color> = (0..3).map(|i| colour_of(&app, 1 + 2 * i)).collect();
-        let building: Vec<Color> = (0..3).map(|i| colour_of(&app, 2 + 2 * i)).collect();
+        let count = kinds.len() as u32;
+        let standing: Vec<Color> = (0..count).map(|i| colour_of(&app, 1 + 2 * i)).collect();
+        let building: Vec<Color> = (0..count).map(|i| colour_of(&app, 2 + 2 * i)).collect();
         assert_eq!(standing, building, "a site has the colour of its kind");
         let expected = kinds.map(crate::palette::tower_color);
         assert_eq!(standing, expected, "the colour is the one of its kind");
-        assert!(
-            standing[0] != standing[1] && standing[1] != standing[2] && standing[0] != standing[2],
-            "each kind has its own colour"
-        );
+        for (i, colour) in standing.iter().enumerate() {
+            assert!(
+                standing[i + 1..].iter().all(|other| other != colour),
+                "each kind has its own colour"
+            );
+        }
     }
 }

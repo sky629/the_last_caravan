@@ -152,7 +152,7 @@ impl Scenario {
         monster.effects.apply(debuff, Source::Player(owner), &t);
     }
 
-    /// 플레이어에게 버프를 줍니다. 버프를 거는 쪽이 하는 것과 같이 `Player::grant`를 부릅니다. 이 게임에는 버프를 거는 곳이 없으므로 테스트가 이 함수로 줍니다.
+    /// 플레이어에게 버프를 줍니다. 버프 포탑이 하는 것과 같이 `Player::grant`를 부릅니다. 버프의 규칙을 버프 포탑 없이 시험할 때 이 함수로 줍니다.
     pub fn grant(&mut self, id: PlayerId, buff: Buff) {
         let t = self.sim.tuning().clone();
         self.player_mut(id).grant(buff, &t);

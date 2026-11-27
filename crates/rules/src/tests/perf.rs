@@ -1,7 +1,7 @@
 //! 몬스터 300마리가 있고 포탑이 상한만큼 서 있을 때 Tick 하나를 계산하는 데 걸리는 시간을 잽니다.
 //!
 //! 시간의 한계는 릴리스 빌드에서만 확인합니다. 최적화하지 않은 빌드의 시간은 한계와 관계가 없기 때문입니다.
-//! 일반 테스트에서는 측정 상황이 말한 대로 만들어졌는지(몬스터 300마리, 포탑 상한, 건설과 파괴가 실제로 일어남, 탄환이 실제로 날아다님, 석궁의 탄환이 몬스터를 꿰뚫음, 소총이 몬스터를 맞힘, 감속 포탑과 스턴 포탑이 몬스터에게 효과를 검)만 확인합니다.
+//! 일반 테스트에서는 측정 상황이 말한 대로 만들어졌는지(몬스터 300마리, 포탑 상한, 건설과 파괴가 실제로 일어남, 탄환이 실제로 날아다님, 석궁의 탄환이 몬스터를 꿰뚫음, 소총이 몬스터를 맞힘, 감속 포탑과 스턴 포탑이 몬스터에게 효과를 걸고 버프 포탑이 플레이어에게 버프를 줌)만 확인합니다.
 //! 시간을 보려면 다음 명령을 실행합니다.
 //!
 //! ```text
@@ -13,10 +13,11 @@
 use std::time::{Duration, Instant};
 
 use super::support::{Scenario, nights, watchtower_shot};
-use crate::ids::{MonsterId, TowerId};
+use crate::ids::{MonsterId, PlayerId, TowerId};
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::{StructureKind, WeaponKind};
 use crate::math::Vec2;
+use crate::player::Life;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{Debuff, Tuning};
 use crate::world::Tile;
@@ -656,11 +657,35 @@ fn village_of(kinds: &[StructureKind]) -> Scenario {
     let mut s = village_under_siege_with(Vec::new(), u32::MAX, |t| {
         t.structures.slow_tower.max_hp = u32::MAX;
         t.structures.stun_tower.max_hp = u32::MAX;
+        t.structures.haste_tower.max_hp = u32::MAX;
+        t.structures.swift_tower.max_hp = u32::MAX;
     });
     for (index, tile) in sites.iter().enumerate() {
         s.tower_of(kinds[index % kinds.len()], tile.x, tile.y);
     }
     s
+}
+
+/// 마을의 포탑 자리 둘(`Tuning::spread_tower_sites`가 돌려주는 목록의 번호 `first`와 `second`, 번호는 0부터 셉니다) 사이에 플레이어 넷을 세웁니다.
+/// 한 명은 두 자리의 한가운데에, 나머지는 거기서 0.1타일 떨어진 곳에 섭니다. 두 자리 사이가 5.8타일 이하이면 한가운데에서 0.1타일 떨어진 플레이어도 두 포탑의 범위(3타일) 안에 있습니다.
+/// 플레이어는 죽지 않습니다(`village_under_siege_with`).
+fn four_players_between_sites(s: &mut Scenario, first: usize, second: usize) -> Vec<PlayerId> {
+    let t = s.sim.tuning();
+    let sites = t.spread_tower_sites(t.village.tower_limit);
+    let (a, b) = (sites[first].center(), sites[second].center());
+    let middle = Vec2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+    [(0.0, 0.0), (0.1, 0.0), (-0.1, 0.0), (0.0, 0.1)]
+        .into_iter()
+        .map(|(dx, dy)| s.player_at(middle.x + dx, middle.y + dy))
+        .collect()
+}
+
+/// 플레이어가 지금 가진 버프입니다. 앞이 공격 속도, 뒤가 이동 속도입니다.
+fn buffs_of(s: &Scenario, id: PlayerId) -> (bool, bool) {
+    match &s.player(id).life {
+        Life::Alive { buffs, .. } => (buffs.has_haste(), buffs.has_swift()),
+        Life::Downed { .. } | Life::Dead => (false, false),
+    }
 }
 
 /// 1000 Tick을 진행하고 한 Tick의 평균 시간을 돌려줍니다.
@@ -748,6 +773,71 @@ fn perf_the_average_tick_with_40_towers_of_every_kind_and_300_monsters_is_a_tent
     let average = average_of_1000_ticks(&mut s);
     check_limit(
         "average of 1000 ticks with 40 towers of every kind",
+        average,
+        Duration::from_secs_f32(defaults.dt()) / 10,
+    );
+}
+
+#[test]
+fn perf_the_average_tick_with_40_buff_towers_4_players_and_300_monsters_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let mut s = village_of(&[StructureKind::HasteTower, StructureKind::SwiftTower]);
+    let players = four_players_between_sites(&mut s, 0, 1);
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    for id in &players {
+        assert_eq!(
+            buffs_of(&s, *id),
+            (true, true),
+            "{id:?} stands in both fields"
+        );
+    }
+
+    let average = average_of_1000_ticks(&mut s);
+    for id in &players {
+        assert_eq!(buffs_of(&s, *id), (true, true), "{id:?} held both buffs");
+    }
+    check_limit(
+        "average of 1000 ticks with 40 buff towers and 4 players",
+        average,
+        Duration::from_secs_f32(defaults.dt()) / 10,
+    );
+}
+
+#[test]
+fn perf_the_average_tick_with_40_towers_of_every_kind_4_players_and_300_monsters_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let mut s = village_of(&StructureKind::ALL);
+    // 자리는 종류의 순서대로 채워지므로 번호 3과 4의 자리(네 번째와 다섯 번째)가 공격 속도 포탑과 이동 속도 포탑입니다.
+    let players = four_players_between_sites(&mut s, 3, 4);
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    let kinds: std::collections::BTreeSet<_> = s.sim.towers().map(|tower| tower.kind).collect();
+    assert_eq!(kinds.len(), StructureKind::ALL.len(), "every kind stands");
+    let held = s
+        .sim
+        .monsters()
+        .filter(|monster| monster.effects.is_slowed() || monster.effects.is_stunned())
+        .count();
+    println!("{held} of 300 monsters slowed or stunned");
+    assert!(held >= 50, "the crowd is under the effects: {held}");
+    for id in &players {
+        assert_eq!(
+            buffs_of(&s, *id),
+            (true, true),
+            "{id:?} stands in both fields"
+        );
+    }
+
+    let average = average_of_1000_ticks(&mut s);
+    check_limit(
+        "average of 1000 ticks with 40 towers of every kind and 4 players",
         average,
         Duration::from_secs_f32(defaults.dt()) / 10,
     );

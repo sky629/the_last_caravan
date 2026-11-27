@@ -621,6 +621,8 @@ fn a_tower_carries_its_kind_and_the_welcome_carries_its_max_hp_range_and_cost() 
             (WireStructureKind::Watchtower, 300, 10, 6.0, false),
             (WireStructureKind::SlowTower, 300, 15, 4.0, true),
             (WireStructureKind::StunTower, 300, 20, 5.0, false),
+            (WireStructureKind::HasteTower, 300, 15, 3.0, true),
+            (WireStructureKind::SwiftTower, 300, 15, 3.0, true),
         ],
         "one row for each kind in the order of choosing"
     );

@@ -684,6 +684,8 @@ fn the_kinds_are_chosen_in_the_order_of_all_and_the_last_is_followed_by_the_firs
             StructureKind::Watchtower,
             StructureKind::SlowTower,
             StructureKind::StunTower,
+            StructureKind::HasteTower,
+            StructureKind::SwiftTower,
         ]
     );
     for (index, kind) in StructureKind::ALL.into_iter().enumerate() {
@@ -709,6 +711,8 @@ fn each_press_of_e_moves_the_choice_to_the_next_kind_and_the_last_goes_back_to_t
         [
             StructureKind::SlowTower,
             StructureKind::StunTower,
+            StructureKind::HasteTower,
+            StructureKind::SwiftTower,
             StructureKind::Watchtower,
         ]
     );
@@ -898,8 +902,8 @@ fn e_changes_nothing_in_the_camp() {
 }
 
 #[test]
-fn the_default_costs_of_the_kinds_are_10_15_and_20() {
+fn the_default_costs_of_the_kinds_are_10_15_20_15_and_15() {
     let t = crate::tuning::Tuning::default();
     let costs = StructureKind::ALL.map(|kind| t.structures.get(kind).build_cost);
-    assert_eq!(costs, [10, 15, 20]);
+    assert_eq!(costs, [10, 15, 20, 15, 15]);
 }

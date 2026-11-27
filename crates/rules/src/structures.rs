@@ -134,7 +134,7 @@ impl Tower {
     }
 }
 
-/// 서 있는 포탑의 이번 Tick의 동작을 정합니다. 피해는 `hits`에, 피해 없이 거는 효과는 `afflictions`에 모으고,
+/// 서 있는 포탑 가운데 몬스터에게 작용하는 포탑의 이번 Tick의 동작을 정합니다. 피해는 `hits`에, 피해 없이 거는 효과는 `afflictions`에 모으고,
 /// `World::apply_hits`와 `effect::apply_afflictions`가 한꺼번에 적용합니다. 그래서 같은 Tick에 몬스터가 보는 상태는 모두 이전 Tick까지의 상태입니다.
 ///
 /// 포탑은 쿨다운(감속 포탑은 펄스의 간격)을 Tick마다 줄이고, 0이 되면 대상을 찾아서 찾았을 때만 동작하고 쿨다운을 다시 채웁니다.
@@ -144,6 +144,8 @@ impl Tower {
 ///   효과는 Tick의 끝에 걸리므로, 고른 몬스터를 기억하지 않으면 두 포탑이 한 번만 걸릴 스턴을 같은 몬스터에게 두 번 씁니다.
 ///   고른 몬스터가 같은 Tick에 죽거나 다른 곳에서 같은 효과를 먼저 받으면, 포탑의 효과는 버려지고 쿨다운은 쓰입니다.
 /// - 범위에 효과: 범위 안의 모든 적대적 몬스터입니다. 이미 더 센 효과가 걸린 몬스터에게는 `MonsterEffects::apply`가 걸지 않습니다.
+///
+/// 플레이어에게 작용하는 버프 포탑은 쿨다운이 없고 Tick의 끝에서 `hold_auras`가 동작시키므로, 여기서는 건너뜁니다.
 pub(crate) fn towers_act(
     world: &mut World,
     ctx: &Ctx,
@@ -168,6 +170,8 @@ pub(crate) fn towers_act(
             TowerAction::Shoot(shoot) => shoot.cooldown_secs,
             TowerAction::Afflict(afflict) => afflict.cooldown_secs,
             TowerAction::Pulse(pulse) => pulse.pulse_secs,
+            // 버프 포탑입니다.
+            TowerAction::Aura(_) => continue,
         };
         *cooldown_ticks = cooldown_ticks.saturating_sub(1);
         if *cooldown_ticks > 0 {
@@ -232,6 +236,8 @@ pub(crate) fn towers_act(
                 }
                 afflictions.len() > before
             }
+            // 위에서 건너뛰었으므로 오지 않는 갈래입니다.
+            TowerAction::Aura(_) => false,
         };
         if acted {
             *cooldown_ticks = t.ticks(period_secs);
@@ -266,6 +272,33 @@ fn nearest(
         }
     }
     best.map(|(_, index)| monsters[index].id)
+}
+
+/// 서 있는 버프 포탑마다 범위 안에 있는 살아 있는 플레이어에게 버프를 줍니다. 짓는 중인 포탑은 주지 않고, 부서진 포탑은 모음에서 지워지므로 주지 않습니다.
+/// Tick마다 주므로 범위 안에 있는 동안 버프가 끊기지 않고, 범위를 나간 플레이어는 마지막으로 받은 버프의 길이만큼 더 가지고 있다가 잃습니다.
+/// 같은 버프는 칸이 하나이므로 같은 종류의 포탑 둘의 범위가 겹쳐도 세기는 하나이고, 남은 시간이 더 긴 버프는 줄지 않습니다(`PlayerBuffs::grant`).
+///
+/// 버프의 시간이 줄어든(`effect::advance_effects`) 뒤에 부르므로, `secs`초짜리 버프는 범위를 나간 뒤 정확히 `secs`초만큼의 Tick 동안 플레이어의 행동을 바꿉니다.
+/// 플레이어가 쓰러지는 일(`World::apply_hits`)과 부활하는 일(`player::advance_life_timers`)도 끝난 뒤에 부르므로, Tick이 끝났을 때 범위 안에 살아 있는 플레이어는 언제나 버프를 가집니다.
+pub(crate) fn hold_auras(world: &mut World, t: &Tuning) {
+    for tower in world.towers.values() {
+        let spec = t.structures.get(tower.kind);
+        let TowerAction::Aura(aura) = spec.action else {
+            continue;
+        };
+        if !tower.is_standing() {
+            continue;
+        }
+        let center = tower.tile.center();
+        let range_squared = spec.range * spec.range;
+        for player in world.players.values_mut() {
+            if tower.team.is_allied_with(player.team)
+                && (player.pos - center).length_squared() <= range_squared
+            {
+                player.grant(aura.buff, t);
+            }
+        }
+    }
 }
 
 /// 짓는 중인 포탑의 한 Tick입니다. 건설의 진행, 완료, 취소를 정하는 유일한 곳입니다.

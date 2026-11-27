@@ -322,13 +322,8 @@ impl Player {
         }
     }
 
-    /// 버프를 받습니다. 플레이어에게 버프를 거는 길은 이 함수 하나이고, 버프를 거는 쪽이 부릅니다.
+    /// 버프를 받습니다. 플레이어에게 버프를 거는 길은 이 함수 하나이고, 버프 포탑(`structures::hold_auras`)이 부릅니다.
     /// 쓰러졌거나 사망한 플레이어는 버프를 가질 수 없으므로 아무 일도 하지 않습니다.
-    /// 아래 `expect` 속성은 게임 코드가 이 함수를 부르면 컴파일러가 경고하게 합니다. 그래서 게임 코드가 플레이어에게 버프를 거는지를 컴파일러가 확인합니다.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no game code calls this function")
-    )]
     pub(crate) fn grant(&mut self, buff: Buff, t: &Tuning) {
         if let Life::Alive { buffs, .. } = &mut self.life {
             buffs.grant(buff, t);

@@ -34,7 +34,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 13);
+    assert_eq!(PROTOCOL_VERSION, 14);
 }
 
 /// 값이 눈에 띄도록 0x10부터 이어지는 바이트로 만든 표식입니다.
@@ -54,7 +54,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
         },
         &[
             0x00, // Join 변형
-            0x0D, // version
+            0x0E, // version
             0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
             0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
             0x00, // token: 없음
@@ -68,7 +68,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
             token: Some(TOKEN),
         },
         &[
-            0x00, 0x0D, 0x00, 0x04, b'K', b'A', b'N', b'G', //
+            0x00, 0x0E, 0x00, 0x04, b'K', b'A', b'N', b'G', //
             0x01, // token: 있음
             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 길이 없이 16바이트
             0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -595,6 +595,51 @@ fn quiet_bytes(phase: &[u8]) -> Vec<u8> {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ]); // wagon 0/0, stash 0, 빈 목록 여덟 개
     bytes
+}
+
+#[test]
+fn the_five_tower_kinds_are_the_bytes_zero_to_four_in_the_order_of_choosing() {
+    let mut snapshot = quiet_snapshot(WirePhase::Day {
+        day: 1,
+        secs_left: 3.0,
+    });
+    snapshot.towers = [
+        WireStructureKind::Watchtower,
+        WireStructureKind::SlowTower,
+        WireStructureKind::StunTower,
+        WireStructureKind::HasteTower,
+        WireStructureKind::SwiftTower,
+    ]
+    .into_iter()
+    .zip(1..)
+    .map(|(kind, id)| WireTower {
+        id,
+        tile: WireTile { x: 2, y: 3 },
+        kind,
+        state: WireTowerState::Building { progress: 0.5 },
+    })
+    .collect();
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(snapshot)),
+        &[
+            0x02, 0x01, 0x01, // Snapshot, tick 1, expedition 1
+            0x00, 0x01, 0x00, 0x00, 0x40, 0x40, // phase: Day, day 1, 3.0초
+            0x00, 0x00, // wagon
+            0x00, // stash
+            0x05, // towers: 길이 5
+            0x01, 0x02, 0x03, 0x00, // id 1, tile 2 3, Watchtower
+            0x00, 0x00, 0x00, 0x00, 0x3F, // Building, progress 0.5
+            0x02, 0x02, 0x03, 0x01, // id 2, tile 2 3, SlowTower
+            0x00, 0x00, 0x00, 0x00, 0x3F, //
+            0x03, 0x02, 0x03, 0x02, // id 3, tile 2 3, StunTower
+            0x00, 0x00, 0x00, 0x00, 0x3F, //
+            0x04, 0x02, 0x03, 0x03, // id 4, tile 2 3, HasteTower
+            0x00, 0x00, 0x00, 0x00, 0x3F, //
+            0x05, 0x02, 0x03, 0x04, // id 5, tile 2 3, SwiftTower
+            0x00, 0x00, 0x00, 0x00, 0x3F, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 빈 목록 일곱 개
+        ],
+    );
 }
 
 #[test]
