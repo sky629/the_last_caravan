@@ -640,6 +640,14 @@ impl NightTuning {
     }
 }
 
+/// 예고된 공격의 영역 안에 있던 대상이 한 번 맞을 때 받는 피해입니다. 대상의 종류마다 다릅니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StrikeTuning {
+    pub player: u32,
+    pub tower: u32,
+    pub wagon: u32,
+}
+
 /// 고정된 맵 하나입니다. 좌표는 타일 단위입니다.
 /// 맵의 크기, 장애물, 마차는 정수 좌표에 놓아서 타일에 꼭 맞습니다(`Tuning::validate`가 검사합니다).
 /// 채집 지점과 상자의 후보 자리는 타일을 가리키므로 처음부터 타일에 맞습니다.

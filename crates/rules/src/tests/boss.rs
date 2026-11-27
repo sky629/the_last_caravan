@@ -7,7 +7,8 @@ use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::math::Vec2;
 use crate::monster::Order;
 use crate::structures::TowerState;
-use crate::tuning::{Debuff, Tuning};
+use crate::telegraph::{self, Zone};
+use crate::tuning::{Debuff, StrikeTuning, Tuning};
 use crate::world::{Hit, Source, Target};
 
 /// 기본 수치에서 인원이 넷일 때 보스의 최대 HP입니다.
@@ -361,4 +362,52 @@ fn the_boss_row_leaves_the_walking_bounds_of_the_grunts_as_they_were() {
         "the hit body is big enough that a single tile cannot hold it"
     );
     assert!(t.monsters.boss.radius < 0.5, "the walking body is small");
+}
+
+// ---------------------------------------------------------------------------------------------
+// 예고된 공격이 맞히는 것
+
+#[test]
+fn a_strike_hurts_the_players_towers_and_wagon_the_circle_covers_and_spares_the_rest() {
+    let mut s = still_field();
+    let inside = s.player_at(5.0, 5.0);
+    let outside = s.player_at(8.1, 5.0);
+    let downed = s.player_at(5.5, 5.0);
+    s.knock_down(downed);
+    let near_tower = s.tower_at(6, 5);
+    let far_tower = s.tower_at(9, 9);
+    // 마차는 (17, 17)에서 (19, 19)이므로 원의 중심을 마차의 모서리 곁으로 옮긴 두 번째 영역으로 시험합니다.
+    let circle = |x: f32, y: f32| Zone::Circle {
+        center: Vec2::new(x, y),
+        radius: 2.5,
+    };
+    let damage = StrikeTuning {
+        player: 50,
+        tower: 100,
+        wagon: 60,
+    };
+
+    let mut hits = Vec::new();
+    telegraph::strike(s.sim.world_mut(), &circle(5.0, 5.0), &damage, &mut hits);
+
+    let hit_of = |target: Target| hits.iter().find(|hit| hit.target == target);
+    assert_eq!(
+        hit_of(Target::Player(inside)).map(|hit| hit.amount),
+        Some(50)
+    );
+    assert_eq!(hit_of(Target::Player(outside)).map(|hit| hit.amount), None);
+    assert_eq!(hit_of(Target::Player(downed)).map(|hit| hit.amount), None);
+    assert_eq!(
+        hit_of(Target::Tower(near_tower)).map(|hit| hit.amount),
+        Some(100)
+    );
+    assert_eq!(hit_of(Target::Tower(far_tower)).map(|hit| hit.amount), None);
+    assert_eq!(hit_of(Target::Wagon).map(|hit| hit.amount), None);
+    assert!(hits.iter().all(|hit| hit.by == Source::Monster));
+
+    let mut hits = Vec::new();
+    telegraph::strike(s.sim.world_mut(), &circle(15.5, 17.0), &damage, &mut hits);
+    assert_eq!(hits.len(), 1, "only the wagon: {hits:?}");
+    assert_eq!(hits[0].target, Target::Wagon);
+    assert_eq!(hits[0].amount, 60);
 }
