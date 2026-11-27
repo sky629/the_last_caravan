@@ -31,12 +31,11 @@ pub fn draw_effects(
     frame: Res<CurrentFrame>,
     flow: Res<ClientFlow>,
     scene: Res<Scene>,
-    time: Res<Time>,
-    mut chosen: Local<ChosenKind>,
+    time: Res<Time<Real>>,
+    mut chosen: ResMut<ChosenKind>,
     mut gizmos: Gizmos,
 ) {
     let (Some(frame), Some(joined)) = (&frame.0, flow.joined()) else {
-        *chosen = ChosenKind::default();
         return;
     };
     for player in &frame.players {
@@ -66,7 +65,7 @@ pub fn draw_effects(
     let builder = me.filter(|_| in_expedition);
     let since_kind_changed =
         chosen.secs_since_change(builder.map(|me| me.build_kind), time.elapsed_secs());
-    // 범위의 미리 보기는 지을 종류를 바꾼 직후와 내가 짓는 동안에만 나옵니다. 포탑이 놓일 타일의 테두리는 언제나 나옵니다.
+    // 범위의 미리 보기는 지을 종류를 바꾼 직후와 내가 짓는 동안에만 나옵니다. 포탑이 놓일 타일의 테두리는 종류를 바꾼 때와 관계없이 나옵니다.
     let ranged =
         builder.and_then(|me| range_preview(me, &frame.towers, scene.map_size, since_kind_changed));
     for ring in range_rings(frame, &joined.welcome.world, ranged) {
@@ -89,7 +88,8 @@ pub fn draw_effects(
 }
 
 /// 내 화면에서 지을 종류가 마지막으로 바뀐 때를 기억합니다. 처음 본 종류는 바뀐 것으로 세지 않습니다.
-#[derive(Default)]
+/// 방을 떠나면 `view::clear_world`가 비우므로, 다음 방에서 처음 본 종류도 바뀐 것으로 세지 않습니다.
+#[derive(Resource, Default)]
 pub struct ChosenKind {
     kind: Option<WireStructureKind>,
     changed_at: Option<f32>,
@@ -97,7 +97,11 @@ pub struct ChosenKind {
 
 impl ChosenKind {
     /// 지금 고른 종류(`kind`, 원정 중이 아니면 `None`)를 받아서, 종류가 바뀐 뒤 지난 시간(초)을 돌려줍니다. 바뀐 적이 없으면 `None`입니다.
-    fn secs_since_change(&mut self, kind: Option<WireStructureKind>, now: f32) -> Option<f32> {
+    pub(crate) fn secs_since_change(
+        &mut self,
+        kind: Option<WireStructureKind>,
+        now: f32,
+    ) -> Option<f32> {
         let Some(kind) = kind else {
             *self = ChosenKind::default();
             return None;

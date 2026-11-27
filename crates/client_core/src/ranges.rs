@@ -1,5 +1,5 @@
 //! 화면에 그릴 포탑의 범위입니다. 서 있는 범위형 포탑(범위 안의 모두에게 작용하는 포탑)마다 원 하나를 그리고,
-//! 건설 미리 보기가 있으면 그 타일에 고른 종류의 범위를 그립니다. 범위와 범위형인지는 `Welcome`의 종류표에서 읽습니다.
+//! 범위의 미리 보기가 있으면 그 자리에 그 종류의 범위를 그립니다. 범위와 범위형인지는 `Welcome`의 종류표에서 읽습니다.
 
 use caravan_protocol::{WireStructureKind, WireTowerState, WorldInfo};
 use caravan_rules::{Tile, Vec2};

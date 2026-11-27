@@ -63,6 +63,7 @@ fn main() {
         .init_resource::<supplies::SupplyRegistry>()
         .init_resource::<loot::LootRegistry>()
         .init_resource::<camp::StrikeRegistry>()
+        .init_resource::<effects::ChosenKind>()
         .init_resource::<camera::FollowedSetting>()
         .add_systems(
             Startup,
