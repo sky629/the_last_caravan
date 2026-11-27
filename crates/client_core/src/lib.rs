@@ -1,6 +1,7 @@
 //! 클라이언트에서 Bevy가 필요하지 않은 로직입니다. 이 크레이트의 테스트는 Bevy를 컴파일하지 않고 실행됩니다.
 //!
 //! - `launch`: 실행 인자(PC)나 페이지 주소의 값(웹)을 `LaunchOptions`로 해석합니다.
+//! - `page`: 웹 페이지가 열린 곳에서 기본 서버의 주소와 초대 링크의 앞부분을 정합니다.
 //! - `start`: 시작 화면의 입력 칸과 키 처리입니다. `memory`: 이 기기가 기억하는 이름과 마지막 방 코드입니다.
 //! - `flow`: 시작 화면과 방 안의 접속 상태 가운데 어느 쪽인지, 그리고 접속, 저장, 복사처럼 클라이언트가 해야 할 일(`Command`)을 정합니다.
 //! - `session`: 접속 방식의 이벤트에 따라 바뀌는 접속 상태입니다. 입장한 뒤에는 명단, 스냅샷 보관, 입력 순서 번호를 가집니다.
@@ -22,6 +23,7 @@ mod interp;
 mod iso;
 mod launch;
 mod memory;
+mod page;
 mod preview;
 mod ranges;
 mod session;
@@ -43,6 +45,7 @@ pub use iso::{
 };
 pub use launch::{DEFAULT_SERVER, LaunchError, LaunchOptions};
 pub use memory::Memory;
+pub use page::Page;
 pub use preview::build_preview;
 pub use ranges::{RangeRing, range_rings};
 pub use session::{Joined, Problem, Session};

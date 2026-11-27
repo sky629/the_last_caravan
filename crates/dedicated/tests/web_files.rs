@@ -140,6 +140,32 @@ fn a_page_without_a_public_address_leaves_the_place_empty() {
 }
 
 #[test]
+fn the_page_of_the_web_client_has_the_place_the_server_fills() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("web_files_of_the_web_client");
+    std::fs::create_dir_all(&dir).expect("make the web folder");
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../client/index.html"),
+        dir.join("index.html"),
+    )
+    .expect("copy the page of the web client");
+    let server = Server::start(&[
+        "--web-dir",
+        dir.to_str().expect("the path is UTF-8"),
+        "--public-url",
+        PUBLIC_URL,
+    ]);
+
+    let answer = get_root(server.addr);
+    assert!(
+        answer.contains(&format!(
+            "<meta name=\"caravan-public-url\" content=\"{PUBLIC_URL}\" />"
+        )),
+        "{answer}"
+    );
+    assert!(!answer.contains("{{public_url}}"), "{answer}");
+}
+
+#[test]
 fn a_player_joins_over_a_websocket_on_the_port_that_serves_the_web_folder() {
     let dir = web_folder("web_files_with_a_player");
     let server = Server::start(&["--web-dir", dir.to_str().expect("the path is UTF-8")]);

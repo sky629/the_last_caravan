@@ -2,12 +2,14 @@
 //!
 //! PC: `caravan-client --name KANG --room k7m2q --server ws://127.0.0.1:7777 --debug-net --profile two`
 //! 웹: `http://127.0.0.1:8080/?room=k7m2q&name=KANG&server=ws://127.0.0.1:7777&debug-net`
-//! 두 방식 모두 `from_values`에서 같은 규칙으로 검사합니다. 이름과 방 코드는 시작 화면의 칸을 미리 채우고,
+//! 두 방식 모두 `from_values`에서 같은 규칙으로 검사합니다. 서버 주소가 없을 때 PC는 `DEFAULT_SERVER`를, 웹은 페이지가 정한 서버(`from_page`)를 씁니다. 이름과 방 코드는 시작 화면의 칸을 미리 채우고,
 //! 둘 다 있으면 시작 화면 없이 입장합니다. 값이 없으면 마지막으로 입장한 방과 이름을 기기에서 불러오고, 그것도 없으면 칸이 빕니다.
 
 use std::fmt;
 
 use caravan_protocol::{RoomCode, RoomCodeError};
+
+use crate::page::Page;
 
 pub const DEFAULT_SERVER: &str = "ws://127.0.0.1:7777";
 
@@ -103,6 +105,18 @@ impl LaunchOptions {
         Ok(options)
     }
 
+    /// 웹 페이지 주소의 값을 해석합니다. 서버 주소가 없으면 `page`가 정한 서버를 씁니다.
+    pub fn from_page(
+        room: Option<String>,
+        name: Option<String>,
+        server: Option<String>,
+        debug_net: bool,
+        page: &Page,
+    ) -> Result<LaunchOptions, LaunchError> {
+        let server = present(server).unwrap_or_else(|| page.default_server.clone());
+        LaunchOptions::from_values(room, name, Some(server), debug_net)
+    }
+
     /// 서버 주소가 없으면 기본값을 사용하고, 방 코드와 서버 주소가 있으면 검사합니다. 비어 있는 값은 없는 것으로 봅니다.
     pub fn from_values(
         room: Option<String>,
@@ -176,6 +190,36 @@ mod tests {
         assert_eq!(options.room, None);
         assert_eq!(options.name, None);
         assert_eq!(options.server_url, "ws://127.0.0.1:7777");
+    }
+
+    #[test]
+    fn the_web_takes_the_pages_server_unless_the_link_names_one() {
+        let page = Page::open(
+            "https://quiet-river-1234.trycloudflare.com",
+            "/",
+            Some("https://quiet-river-1234.trycloudflare.com"),
+        );
+        let from = |server: Option<&str>| {
+            LaunchOptions::from_page(None, None, server.map(str::to_string), false, &page)
+                .unwrap()
+                .server_url
+        };
+        assert_eq!(from(None), "wss://quiet-river-1234.trycloudflare.com");
+        assert_eq!(from(Some("  ")), "wss://quiet-river-1234.trycloudflare.com");
+        assert_eq!(from(Some("ws://10.0.0.5:9000")), "ws://10.0.0.5:9000");
+        assert_eq!(
+            LaunchOptions::from_page(None, None, Some("http://x".to_string()), false, &page),
+            Err(LaunchError::BadServerUrl("http://x".to_string())),
+            "the same check as the desktop"
+        );
+        let dev = Page::open("http://127.0.0.1:8080", "/", None);
+        assert_eq!(
+            LaunchOptions::from_page(None, None, None, false, &dev)
+                .unwrap()
+                .server_url,
+            DEFAULT_SERVER,
+            "a page from trunk serve connects as before"
+        );
     }
 
     #[test]
