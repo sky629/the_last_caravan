@@ -180,11 +180,12 @@ mod tests {
     }
 
     #[test]
-    fn the_colours_of_the_new_kinds_stand_apart_from_the_bodies_that_stand_beside_them() {
-        let new_kinds = [SLOW_TOWER, STUN_TOWER, HASTE_TOWER, SWIFT_TOWER];
+    fn the_colours_of_the_kinds_other_than_the_watchtower_stand_apart_from_the_bodies_that_stand_beside_them()
+     {
+        let other_kinds = [SLOW_TOWER, STUN_TOWER, HASTE_TOWER, SWIFT_TOWER];
         // 같은 편 플레이어(파랑)는 몸통이 작고 서 있는 모양이 달라서 포탑의 파랑 계열과 같은 계열이어도 헷갈리지 않으므로 뺍니다.
         let bodies = [YOU, HOSTILE_PLAYER, DOWNED, DEAD, MONSTER, SCARECROW];
-        for tower in new_kinds {
+        for tower in other_kinds {
             for body in bodies {
                 assert!(apart(tower, body) >= 0.25, "{tower:?} and {body:?}");
             }

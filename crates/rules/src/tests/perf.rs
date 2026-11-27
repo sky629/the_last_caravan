@@ -666,7 +666,7 @@ fn village_of(kinds: &[StructureKind]) -> Scenario {
     s
 }
 
-/// 마을의 포탑 자리 둘(`Tuning::spread_tower_sites`의 `first`번째와 `second`번째) 사이에 플레이어 넷을 세웁니다.
+/// 마을의 포탑 자리 둘(`Tuning::spread_tower_sites`가 돌려주는 목록의 번호 `first`와 `second`, 번호는 0부터 셉니다) 사이에 플레이어 넷을 세웁니다.
 /// 한 명은 두 자리의 한가운데에, 나머지는 거기서 0.1타일 떨어진 곳에 섭니다. 두 자리가 범위의 두 배(6타일)보다 가까우면 넷 모두 두 포탑의 범위 안에 있습니다.
 /// 플레이어는 죽지 않습니다(`village_under_siege_with`).
 fn four_players_between_sites(s: &mut Scenario, first: usize, second: usize) -> Vec<PlayerId> {
@@ -813,7 +813,7 @@ fn perf_the_average_tick_with_40_towers_of_every_kind_4_players_and_300_monsters
     let defaults = Tuning::default();
     let cap = defaults.village.tower_limit as usize;
     let mut s = village_of(&StructureKind::ALL);
-    // 자리는 종류의 순서대로 채워지므로 세 번째와 네 번째 자리가 공격 속도 포탑과 이동 속도 포탑입니다.
+    // 자리는 종류의 순서대로 채워지므로 번호 3과 4의 자리(네 번째와 다섯 번째)가 공격 속도 포탑과 이동 속도 포탑입니다.
     let players = four_players_between_sites(&mut s, 3, 4);
     until_the_crowd_is_there(&mut s);
     s.run_ticks(600);

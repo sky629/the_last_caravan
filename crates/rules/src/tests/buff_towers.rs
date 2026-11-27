@@ -246,20 +246,30 @@ fn a_haste_tower_does_not_shorten_a_swift_buff_and_the_two_are_held_together() {
 }
 
 #[test]
-fn a_downed_player_in_the_range_has_no_buff_and_a_dead_one_neither() {
+fn a_player_revived_in_the_range_has_the_buff_at_the_end_of_the_tick_of_the_revive() {
     let mut s = Scenario::open_field();
     s.tower_of(StructureKind::HasteTower, 5, 5);
     let downed = s.player_at(IN_RANGE.x, IN_RANGE.y);
-    let dead = s.player_at(IN_RANGE.x, 4.5);
-    s.run_ticks(1);
-    assert_eq!(buffs_of(&s, downed), (true, false));
+    let helper = s.player_at(IN_RANGE.x, 6.0);
     s.knock_down(downed);
-    s.kill(dead);
+    s.hold_interact(helper);
 
-    s.run_ticks(5);
+    s.run_until(200, |sim| sim.player(downed).is_some_and(|p| p.is_alive()));
 
-    assert_eq!(buffs_of(&s, downed), (false, false));
-    assert_eq!(buffs_of(&s, dead), (false, false));
+    assert_eq!(buffs_of(&s, downed), (true, false));
+}
+
+#[test]
+fn a_player_just_inside_three_tiles_has_the_buff_and_one_just_outside_has_none() {
+    let mut s = Scenario::open_field();
+    s.tower_of(StructureKind::HasteTower, 5, 5);
+    let inside = s.player_at(5.5 + 2.95, 5.5);
+    let outside = s.player_at(5.5, 5.5 + 3.05);
+
+    s.run_ticks(1);
+
+    assert_eq!(buffs_of(&s, inside), (true, false));
+    assert_eq!(buffs_of(&s, outside), (false, false));
 }
 
 #[test]

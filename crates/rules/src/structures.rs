@@ -279,7 +279,7 @@ fn nearest(
 /// 같은 버프는 칸이 하나이므로 같은 종류의 포탑 둘의 범위가 겹쳐도 세기는 하나이고, 남은 시간이 더 긴 버프는 줄지 않습니다(`PlayerBuffs::grant`).
 ///
 /// 버프의 시간이 줄어든(`effect::advance_effects`) 뒤에 부르므로, `secs`초짜리 버프는 범위를 나간 뒤 정확히 `secs`초만큼의 Tick 동안 플레이어의 행동을 바꿉니다.
-/// 플레이어가 쓰러지거나 부활하는 일(`player::advance_life_timers`)도 끝난 뒤에 부르므로, Tick이 끝났을 때 범위 안에 살아 있는 플레이어는 언제나 버프를 가집니다.
+/// 플레이어가 쓰러지는 일(`World::apply_hits`)과 부활하는 일(`player::advance_life_timers`)도 끝난 뒤에 부르므로, Tick이 끝났을 때 범위 안에 살아 있는 플레이어는 언제나 버프를 가집니다.
 pub(crate) fn hold_auras(world: &mut World, t: &Tuning) {
     for tower in world.towers.values() {
         let spec = t.structures.get(tower.kind);
