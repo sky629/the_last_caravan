@@ -11,6 +11,7 @@ use caravan_protocol::{
 };
 use caravan_rules::Team;
 
+use crate::boss;
 use crate::interp::{Frame, PlayerView};
 use crate::session::Session;
 
@@ -48,6 +49,8 @@ pub struct Hud {
     /// 내 달리기 게이지입니다. 살아 있을 때만 있습니다.
     pub stamina: Option<Meter>,
     pub wagon: Option<Meter>,
+    /// 보스와 싸우는 동안 화면 위쪽 가운데에 띄우는 보스의 HP 막대입니다. 몸이 있는 동안만 있습니다.
+    pub boss: Option<Meter>,
     pub allies: Vec<Meter>,
     /// 부활, 수리, 건설이 진행되는 동안 화면 아래에 띄우는 진행 막대입니다.
     pub action: Option<Meter>,
@@ -113,6 +116,8 @@ pub enum Tone {
     Downed,
     /// 사망해서 더 이상 채울 것이 없는 상태입니다.
     Gone,
+    /// 보스의 HP 막대입니다.
+    Boss,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +176,7 @@ impl Hud {
             me: None,
             stamina: None,
             wagon: None,
+            boss: None,
             allies: Vec::new(),
             action: None,
             bleed: None,
@@ -241,6 +247,9 @@ impl Hud {
             fraction: bar_fraction(frame.wagon.hp, frame.wagon.max_hp),
             tone: Tone::Wagon,
         });
+        hud.boss = boss::boss_view(frame).map(|view| view.meter());
+        // 보스가 나타나기를 기다리는 동안 화면 가운데에 크게 위험을 알립니다. 방에 들어간 뒤에는 접속 안내가 없으므로 겹치지 않습니다.
+        hud.banner = warning_banner(frame);
         hud.allies = frame
             .players
             .iter()
@@ -293,6 +302,14 @@ impl Hud {
         }
         hud
     }
+}
+
+/// 마지막 무리를 모두 처치하고 보스가 나타나기를 기다리는 동안의 경고입니다. 남은 시간은 올림한 초입니다.
+fn warning_banner(frame: &Frame) -> Option<Banner> {
+    boss::warning_secs(frame).map(|secs| Banner {
+        title: format!("THE BOSS IS COMING  {secs}"),
+        tone: BannerTone::Bad,
+    })
 }
 
 /// 방에 들어가기 전과 첫 스냅샷을 기다리는 동안 화면 가운데에 띄울 안내입니다.
@@ -461,6 +478,10 @@ fn phase_text(phase: &WirePhase, day_count: u32) -> (Option<String>, Option<Stri
                     whole_secs(secs_left)
                 ),
                 WireNightStep::Fighting { wave } => format!("WAVE {wave} / {wave_count}"),
+                WireNightStep::Warning { secs_left } => {
+                    format!("BOSS IN {}s", whole_secs(secs_left))
+                }
+                WireNightStep::Boss(_) => "BOSS".to_string(),
             },
         ),
         WirePhase::Dawn {
@@ -763,12 +784,13 @@ fn whole_secs(secs: f32) -> u32 {
 mod tests {
     use super::*;
     use caravan_protocol::{
-        ClientEvent, PlayerName, RejectReason, RoomCode, SeatToken, ServerMsg, Welcome, WireBuffs,
-        WireNode, WireRoster, WireShot, WireTile, WireTower, WireWagon,
+        ClientEvent, PlayerName, RejectReason, RoomCode, SeatToken, ServerMsg, Welcome, WireAim,
+        WireBoss, WireBossAct, WireBuffs, WireMonsterEffects, WireMonsterKind, WireNode,
+        WireRoster, WireShot, WireTile, WireTower, WireWagon,
     };
     use caravan_rules::{Seed, Sim, Team, Tuning, Vec2};
 
-    use crate::interp::PlayerView;
+    use crate::interp::{MonsterView, PlayerView};
     use crate::launch::DEFAULT_SERVER;
     use crate::start::JoinRequest;
 
@@ -2225,5 +2247,91 @@ mod tests {
         let in_room = session_in_room();
         let waiting = Hud::of(&in_room, None, INVITE).banner.unwrap();
         assert_eq!(waiting.title, "Waiting for the first snapshot...");
+    }
+
+    fn boss_frame(hp: u32, step: WireNightStep) -> Frame {
+        let mut frame = frame(vec![player(YOU, alive(100))]);
+        frame.phase = WirePhase::Night {
+            day: 3,
+            wave_count: 3,
+            step,
+        };
+        frame.monsters = vec![MonsterView {
+            id: 9,
+            kind: WireMonsterKind::Boss,
+            effects: WireMonsterEffects::NONE,
+            pos: Vec2::new(30.0, 40.0),
+            facing: Vec2::new(1.0, 0.0),
+            hp,
+        }];
+        frame
+    }
+
+    fn boss_step() -> WireNightStep {
+        WireNightStep::Boss(WireBoss {
+            max_hp: 12_000,
+            aim: WireAim::Wagon,
+            act: WireBossAct::Walking,
+        })
+    }
+
+    #[test]
+    fn while_the_boss_is_coming_the_screen_warns_with_the_seconds_left() {
+        let session = session_in_room();
+        let mut frame = frame(vec![player(YOU, alive(100))]);
+        frame.phase = WirePhase::Night {
+            day: 3,
+            wave_count: 3,
+            step: WireNightStep::Warning { secs_left: 4.2 },
+        };
+
+        let hud = Hud::of(&session, Some(&frame), INVITE);
+
+        let banner = hud.banner.expect("a warning");
+        assert_eq!(banner.title, "THE BOSS IS COMING  5");
+        assert_eq!(banner.tone, BannerTone::Bad);
+        assert_eq!(hud.timer.as_deref(), Some("BOSS IN 5s"));
+        assert_eq!(hud.boss, None, "no body yet");
+    }
+
+    #[test]
+    fn an_ordinary_wave_has_no_warning_and_no_boss_bar() {
+        let session = session_in_room();
+
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100))])),
+            INVITE,
+        );
+
+        assert_eq!(hud.banner, None);
+        assert_eq!(hud.boss, None);
+    }
+
+    #[test]
+    fn with_the_boss_on_the_field_a_bar_at_the_top_shows_its_hp_and_the_warning_is_gone() {
+        let session = session_in_room();
+
+        let hud = Hud::of(&session, Some(&boss_frame(9_000, boss_step())), INVITE);
+
+        let meter = hud.boss.expect("the boss bar");
+        assert_eq!(meter.label, "BOSS  9000 / 12000");
+        assert!((meter.fraction - 0.75).abs() < 1e-6);
+        assert_eq!(meter.tone, Tone::Boss);
+        assert_eq!(hud.banner, None);
+        assert_eq!(hud.timer.as_deref(), Some("BOSS"));
+    }
+
+    #[test]
+    fn without_the_boss_step_there_is_no_boss_bar_even_if_a_boss_body_lingers() {
+        let session = session_in_room();
+
+        let hud = Hud::of(
+            &session,
+            Some(&boss_frame(9_000, WireNightStep::Fighting { wave: 3 })),
+            INVITE,
+        );
+
+        assert_eq!(hud.boss, None);
     }
 }

@@ -1,6 +1,6 @@
-//! 카메라가 내 캐릭터를 따라가는 방식과, 화면 밖에 있는 마차를 가리키는 표시입니다. Bevy 없이 화면 좌표(픽셀)로 계산합니다.
+//! 카메라가 내 캐릭터를 따라가는 방식과, 화면 밖에 있는 마차나 보스를 가리키는 표시입니다. Bevy 없이 화면 좌표(픽셀)로 계산합니다.
 //!
-//! 맵은 64 x 64 타일이라서 한 화면에 담기지 않으므로, 카메라는 내 캐릭터를 따라가고 마차가 화면 밖이면 마차가 있는 쪽의 가장자리에 표시를 둡니다.
+//! 맵은 64 x 64 타일이라서 한 화면에 담기지 않으므로, 카메라는 내 캐릭터를 따라가고 마차와 보스가 화면 밖이면 그것이 있는 쪽의 가장자리에 표시를 둡니다.
 //! 화면 좌표는 `iso`의 쿼터뷰 화면 좌표(픽셀)이고 y가 위쪽입니다.
 
 use caravan_rules::Vec2;
@@ -30,26 +30,26 @@ pub struct ViewRect {
     pub size: Vec2,
 }
 
-/// 화면 가장자리에서 마차를 가리키는 표시입니다.
+/// 화면 가장자리에서 화면 밖의 한 지점(마차나 보스)을 가리키는 표시입니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct WagonMarker {
+pub struct EdgeMarker {
     /// 창 안의 위치입니다. 가로와 세로가 0.0에서 1.0 사이이고 (0, 0)이 왼쪽 위입니다. UI 노드의 `left`와 `top`을 백분율로 정하는 값입니다.
     pub anchor: Vec2,
-    /// 내 캐릭터에서 마차의 중심까지의 지면 거리(타일)를 반올림한 값입니다.
+    /// 내 캐릭터에서 그 지점까지의 지면 거리(타일)를 반올림한 값입니다.
     pub distance_tiles: u32,
 }
 
-/// 마차의 화면 위치(`wagon_screen`)가 `view`를 `inset_px`만큼 안쪽으로 줄인 범위 밖이면 표시를 돌려주고, 안이면 `None`입니다.
-/// 표시는 화면의 중심에서 마차로 그은 반직선이 안쪽으로 줄인 범위의 테두리와 만나는 점에 놓이므로, 마차가 있는 쪽을 가리킵니다.
-pub fn wagon_marker(
+/// 지점의 화면 위치(`point_screen`)가 `view`를 `inset_px`만큼 안쪽으로 줄인 범위 밖이면 표시를 돌려주고, 안이면 `None`입니다.
+/// 표시는 화면의 중심에서 지점으로 그은 반직선이 안쪽으로 줄인 범위의 테두리와 만나는 점에 놓이므로, 지점이 있는 쪽을 가리킵니다.
+pub fn edge_marker(
     view: ViewRect,
-    wagon_screen: Vec2,
+    point_screen: Vec2,
     me_ground: Vec2,
-    wagon_ground: Vec2,
+    point_ground: Vec2,
     inset_px: f32,
-) -> Option<WagonMarker> {
+) -> Option<EdgeMarker> {
     let inner = Vec2::new(view.size.x * 0.5 - inset_px, view.size.y * 0.5 - inset_px);
-    let offset = wagon_screen - view.center;
+    let offset = point_screen - view.center;
     if offset.x.abs() <= inner.x && offset.y.abs() <= inner.y {
         return None;
     }
@@ -63,12 +63,12 @@ pub fn wagon_marker(
     };
     let scale = reach(inner.x, offset.x).min(reach(inner.y, offset.y));
     let edge = offset * scale;
-    Some(WagonMarker {
+    Some(EdgeMarker {
         anchor: Vec2::new(
             (edge.x + view.size.x * 0.5) / view.size.x,
             (view.size.y * 0.5 - edge.y) / view.size.y,
         ),
-        distance_tiles: me_ground.distance(wagon_ground).round() as u32,
+        distance_tiles: me_ground.distance(point_ground).round() as u32,
     })
 }
 
@@ -126,8 +126,8 @@ mod tests {
         }
     }
 
-    fn marker(wagon_screen: Vec2) -> Option<WagonMarker> {
-        wagon_marker(view(), wagon_screen, Vec2::ZERO, Vec2::new(3.0, 4.0), 80.0)
+    fn marker(wagon_screen: Vec2) -> Option<EdgeMarker> {
+        edge_marker(view(), wagon_screen, Vec2::ZERO, Vec2::new(3.0, 4.0), 80.0)
     }
 
     #[test]
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn the_marker_tells_how_many_tiles_away_the_wagon_is() {
-        let far = wagon_marker(
+        let far = edge_marker(
             view(),
             Vec2::new(2000.0, 20.0),
             Vec2::new(10.0, 10.0),
