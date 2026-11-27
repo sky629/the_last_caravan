@@ -10,10 +10,16 @@
 //!
 //! 해석할 수 없는 메시지를 보낸 접속은 닫습니다. 다만 다른 `version`의 입장 요청(`DecodeError::foreign_join_version`)은 게임 스레드를 거치지 않고
 //! 여기서 `VersionMismatch`로 답합니다. 형식이 바뀐 이전 클라이언트가 이유 없이 끊기지 않게 하려는 것입니다.
+//!
+//! `bind_with_files`로 만든 서버는 같은 포트로 웹 클라이언트의 파일도 내줍니다(`files`). 접속마다 요청의 머리를 먼저 읽고,
+//! `Upgrade: websocket` 머리가 있으면 읽은 바이트를 그대로 tungstenite에 다시 읽혀서 게임 접속으로 받고, 없으면 파일 요청으로 답한 뒤 닫습니다.
+//! 파일 요청은 머리를 읽는 동안만 접속의 자리를 차지하고, 파일을 보내는 동안에는 파일 응답의 자리(`max_file_responses`)를 차지합니다.
+//! `bind`로 만든 서버는 머리를 미리 읽지 않고 모든 접속을 WebSocket으로 받습니다.
 
 use std::collections::{HashMap, VecDeque};
-use std::io;
+use std::io::{self, Cursor};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -22,18 +28,30 @@ use caravan_protocol::{
     ServerMsg, ServerTransport, decode_client, encode_server,
 };
 use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, Chain, Join};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{Error, Message};
+
+mod files;
+
+use files::Answer;
+pub use files::{PublicUrl, PublicUrlError, WebFiles};
 
 /// 접속을 받지 못했을 때(예: 열린 파일이 너무 많음) 다시 시도하기 전에 쉬는 시간입니다.
 /// 쉬지 않으면 같은 오류가 반복되는 동안 네트워크 스레드가 CPU를 모두 씁니다.
 const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
 /// 메시지 빈도를 세는 구간의 길이입니다.
 const RATE_WINDOW: Duration = Duration::from_secs(1);
+/// 요청의 머리(요청 줄과 머리 줄)의 최대 크기와 머리 줄의 최대 수입니다. 넘으면 답하지 않고 닫습니다.
+const MAX_HEAD_BYTES: usize = 16 * 1024;
+const MAX_HEAD_LINES: usize = 64;
+/// 파일의 본문을 이 크기로 나누어 씁니다. 조각마다 `write_timeout` 안에 써져야 합니다.
+const FILE_CHUNK: usize = 64 * 1024;
 
 pub struct WsServer {
     inbound: mpsc::Receiver<Inbound>,
@@ -68,6 +86,23 @@ impl WsServer {
     /// 주소를 바로 점유하므로, 이미 사용 중인 주소는 여기서 오류가 됩니다.
     /// `"127.0.0.1:0"`을 넘기면 운영체제가 빈 포트를 고르고, `local_addr`가 그 포트를 알려 줍니다.
     pub fn bind(addr: &str, limits: ServerLimits) -> io::Result<WsServer> {
+        WsServer::start(addr, limits, None)
+    }
+
+    /// `bind`와 같고, 같은 포트로 오는 HTTP 요청(`Upgrade: websocket` 머리가 없는 요청)에 `files`를 내줍니다.
+    pub fn bind_with_files(
+        addr: &str,
+        limits: ServerLimits,
+        files: WebFiles,
+    ) -> io::Result<WsServer> {
+        let web = Web {
+            files,
+            slots: Semaphore::new(limits.max_file_responses),
+        };
+        WsServer::start(addr, limits, Some(Arc::new(web)))
+    }
+
+    fn start(addr: &str, limits: ServerLimits, web: Option<Arc<Web>>) -> io::Result<WsServer> {
         let std_listener = std::net::TcpListener::bind(addr)?;
         std_listener.set_nonblocking(true)?;
         let local_addr = std_listener.local_addr()?;
@@ -85,7 +120,13 @@ impl WsServer {
         let network_thread = std::thread::Builder::new()
             .name("caravan-ws".to_string())
             .spawn(move || {
-                runtime.block_on(accept_loop(listener, inbound_tx, limits, shutdown_signal));
+                runtime.block_on(accept_loop(
+                    listener,
+                    inbound_tx,
+                    limits,
+                    web,
+                    shutdown_signal,
+                ));
             })?;
 
         Ok(WsServer {
@@ -175,6 +216,7 @@ async fn accept_loop(
     listener: TcpListener,
     inbound: mpsc::Sender<Inbound>,
     limits: ServerLimits,
+    web: Option<Arc<Web>>,
     mut shutdown: oneshot::Receiver<()>,
 ) {
     let mut seats = Seats::new(limits);
@@ -209,7 +251,14 @@ async fn accept_loop(
         };
         let link = LinkId(next_link);
         next_link += 1;
-        tokio::spawn(serve_link(stream, link, inbound.clone(), limits, seat));
+        tokio::spawn(serve_link(
+            stream,
+            link,
+            inbound.clone(),
+            limits,
+            seat,
+            web.clone(),
+        ));
     }
 }
 
@@ -268,18 +317,31 @@ impl Drop for Seat {
 
 /// 접속 하나를 처리합니다. 받은 프레임을 해석해서 게임 스레드에 넘기고, 송신 대기열의 메시지를 소켓에 씁니다.
 /// 게임 스레드가 보내는 끝을 버리면, 대기열에 남은 메시지를 모두 쓴 뒤 닫기 프레임을 보내고 끝납니다.
+/// 파일 요청이면 접속의 자리를 내놓고 파일을 보낸 뒤 끝납니다. 게임 스레드는 그 접속을 모릅니다.
 async fn serve_link(
     stream: TcpStream,
     link: LinkId,
     inbound: mpsc::Sender<Inbound>,
     limits: ServerLimits,
     seat: Seat,
+    web: Option<Arc<Web>>,
 ) {
     let config = WebSocketConfig::default()
         .max_message_size(Some(limits.max_message_bytes))
         .max_frame_size(Some(limits.max_message_bytes));
-    let handshake = tokio_tungstenite::accept_async_with_config(stream, Some(config));
-    let Ok(Ok(mut ws)) = tokio::time::timeout(limits.handshake_timeout, handshake).await else {
+    // 요청의 머리를 읽는 시간과 WebSocket 연결 절차를 합쳐서 `handshake_timeout` 안에 끝나야 합니다.
+    let deadline = Instant::now() + limits.handshake_timeout;
+    let replayed = match tokio::time::timeout_at(deadline, route(stream, web.as_ref())).await {
+        Ok(Some(Routed::Game(replayed))) => replayed,
+        Ok(Some(Routed::File(web, stream, request))) => {
+            drop(seat);
+            send_file(stream, &request, &web, &limits).await;
+            return;
+        }
+        _ => return,
+    };
+    let handshake = tokio_tungstenite::accept_async_with_config(replayed, Some(config));
+    let Ok(Ok(mut ws)) = tokio::time::timeout_at(deadline, handshake).await else {
         return;
     };
     let (outbox, mut outgoing) = mpsc::channel::<Vec<u8>>(limits.outbox_capacity);
@@ -384,6 +446,126 @@ async fn serve_link(
         let _ = inbound.send(Inbound::LimitReached(link, reason)).await;
     }
     let _ = inbound.send(Inbound::Closed(link)).await;
+}
+
+/// 파일을 내주는 서버의 접속 작업이 함께 쓰는 것입니다.
+struct Web {
+    files: WebFiles,
+    /// 동시에 보내는 파일 응답의 자리입니다(`max_file_responses`).
+    slots: Semaphore,
+}
+
+/// 이미 읽은 요청의 머리를 먼저 돌려주고, 그다음부터는 소켓에서 읽는 스트림입니다.
+/// tungstenite는 접속을 한 바이트도 읽지 않은 것처럼 요청을 처음부터 읽고 검사합니다.
+type Replayed = Join<Chain<Cursor<Vec<u8>>, OwnedReadHalf>, OwnedWriteHalf>;
+
+/// 첫 요청의 머리로 가른 접속입니다.
+enum Routed {
+    Game(Replayed),
+    File(Arc<Web>, TcpStream, Request),
+}
+
+/// 파일 요청에 답하는 데 필요한 요청 줄입니다.
+struct Request {
+    method: String,
+    target: String,
+}
+
+/// 요청의 머리를 읽은 결과입니다.
+enum Head {
+    /// 머리가 아직 끝나지 않았습니다.
+    Incomplete,
+    /// 머리를 끝까지 읽었고, `Upgrade: websocket` 머리가 있었는지를 함께 가집니다.
+    Complete(Request, bool),
+    /// HTTP 요청이 아니거나 머리 줄의 수가 한도를 넘었습니다.
+    Refused,
+}
+
+/// 파일을 내주는 서버(`web`)는 요청의 머리를 읽어서 `Upgrade: websocket` 머리가 없으면 파일 요청으로 돌려줍니다.
+/// 파일을 내주지 않는 서버는 머리를 읽지 않고, 모든 접속을 게임 접속으로 넘깁니다.
+/// 읽을 수 없는 요청과 한도를 넘는 머리는 `None`입니다.
+async fn route(mut stream: TcpStream, web: Option<&Arc<Web>>) -> Option<Routed> {
+    let Some(web) = web else {
+        return Some(Routed::Game(replay(Vec::new(), stream)));
+    };
+    let mut read = Vec::new();
+    loop {
+        let mut chunk = [0u8; 2048];
+        let room = (MAX_HEAD_BYTES - read.len()).min(chunk.len());
+        let n = stream.read(&mut chunk[..room]).await.ok()?;
+        if n == 0 {
+            return None;
+        }
+        read.extend_from_slice(&chunk[..n]);
+        match parse_head(&read) {
+            Head::Complete(_, true) => return Some(Routed::Game(replay(read, stream))),
+            Head::Complete(request, false) => {
+                return Some(Routed::File(Arc::clone(web), stream, request));
+            }
+            Head::Incomplete if read.len() < MAX_HEAD_BYTES => {}
+            Head::Incomplete | Head::Refused => return None,
+        }
+    }
+}
+
+fn replay(read: Vec<u8>, stream: TcpStream) -> Replayed {
+    let (reader, writer) = stream.into_split();
+    tokio::io::join(Cursor::new(read).chain(reader), writer)
+}
+
+fn parse_head(read: &[u8]) -> Head {
+    let mut lines = [httparse::EMPTY_HEADER; MAX_HEAD_LINES];
+    let mut parsed = httparse::Request::new(&mut lines);
+    match parsed.parse(read) {
+        Ok(httparse::Status::Complete(_)) => {
+            let (Some(method), Some(target)) = (parsed.method, parsed.path) else {
+                return Head::Refused;
+            };
+            let websocket = parsed.headers.iter().any(|line| {
+                line.name.eq_ignore_ascii_case("upgrade")
+                    && std::str::from_utf8(line.value).is_ok_and(|value| {
+                        value
+                            .split(',')
+                            .any(|token| token.trim().eq_ignore_ascii_case("websocket"))
+                    })
+            });
+            let request = Request {
+                method: method.to_string(),
+                target: target.to_string(),
+            };
+            Head::Complete(request, websocket)
+        }
+        Ok(httparse::Status::Partial) => Head::Incomplete,
+        Err(_) => Head::Refused,
+    }
+}
+
+/// 파일 요청에 답하고 접속을 닫습니다. 파일 응답의 자리가 없으면 `503`으로 답합니다.
+/// 쓰기 하나(머리, 본문의 조각 하나)가 `write_timeout` 안에 끝나지 않거나, 응답 전체가 본문의 크기가 허락하는 시간
+/// (`file_response_grace`에 본문의 크기를 `file_min_bytes_per_sec`로 나눈 시간을 더한 값) 안에 끝나지 않으면 그대로 닫습니다.
+/// 그래서 읽기를 멈춘 상대도, 조금씩 계속 읽는 상대도 파일 응답의 자리를 정해진 시간보다 오래 차지하지 못합니다.
+async fn send_file(mut stream: TcpStream, request: &Request, web: &Web, limits: &ServerLimits) {
+    // 자리는 이 함수가 끝날 때(접속을 닫을 때) 돌아갑니다.
+    let slot = web.slots.try_acquire();
+    let answer = match slot {
+        Ok(_) => web.files.answer(&request.method, &request.target),
+        Err(_) => Answer::busy(&request.method),
+    };
+    let allowed = limits.file_response_grace
+        + Duration::from_secs_f64(
+            answer.body.len() as f64 / limits.file_min_bytes_per_sec.max(1) as f64,
+        );
+    let write_timeout = limits.write_timeout;
+    let send = async {
+        for part in std::iter::once(&answer.head[..]).chain(answer.body.chunks(FILE_CHUNK)) {
+            let write = tokio::time::timeout(write_timeout, stream.write_all(part));
+            if !matches!(write.await, Ok(Ok(()))) {
+                return;
+            }
+        }
+        let _ = tokio::time::timeout(write_timeout, stream.shutdown()).await;
+    };
+    let _ = tokio::time::timeout(allowed, send).await;
 }
 
 /// 접속 하나가 지금의 1초 구간에 보낸 메시지의 수를 셉니다.

@@ -20,6 +20,7 @@ use caravan_protocol::{ClientEvent, ClientMsg, PlayerName, RejectReason};
 use crate::hud::{InviteKind, reject_text};
 use crate::launch::{DEFAULT_SERVER, LaunchError, LaunchOptions};
 use crate::memory::Memory;
+use crate::page::Page;
 use crate::session::Session;
 use crate::start::{Field, FormKey, JoinRequest, StartForm};
 
@@ -51,8 +52,9 @@ pub struct Flow {
     server: String,
     /// 실행 인자가 틀렸으면 그 이유입니다. 틀린 인자로 다른 서버에 접속하지 않으므로, 이유가 있으면 입장하지 않습니다.
     launch_error: Option<String>,
-    /// 웹에서 친구에게 보낼 링크의 앞부분(쿼리 없는 페이지 주소)입니다. PC에서는 없고, 방 코드만 복사합니다.
-    page_url: Option<String>,
+    /// 웹 페이지가 열린 곳입니다. 친구에게 보낼 링크의 앞부분과, 그 링크를 여는 사람이 기본으로 접속할 서버가 여기서 나옵니다.
+    /// PC에서는 없고, 방 코드만 복사합니다.
+    page: Option<Page>,
     memory: Memory,
     /// 마지막으로 입장을 요청한 값입니다. 입장하면 방 코드가 서버가 정한 코드로 바뀝니다. 시작 화면으로 돌아올 때 칸을 다시 채웁니다.
     attempt: Option<JoinRequest>,
@@ -66,7 +68,7 @@ impl Flow {
     pub fn new(
         launch: Result<LaunchOptions, LaunchError>,
         memory: Memory,
-        page_url: Option<String>,
+        page: Option<Page>,
     ) -> (Flow, Vec<Command>) {
         let (launch, launch_error) = match launch {
             Ok(launch) => (launch, None),
@@ -109,7 +111,7 @@ impl Flow {
             screen: Screen::Start(form),
             server: launch.server_url,
             launch_error,
-            page_url,
+            page,
             memory,
             attempt: None,
         };
@@ -235,20 +237,20 @@ impl Flow {
 
     /// C로 복사하는 것의 종류입니다. 페이지 주소가 있는 웹은 링크이고, PC는 방 코드입니다.
     pub fn invite_kind(&self) -> InviteKind {
-        match self.page_url {
+        match self.page {
             Some(_) => InviteKind::Link,
             None => InviteKind::Code,
         }
     }
 
-    /// 야영지에서 C입니다. 웹은 `page_url?room=<코드>`를, PC는 방 코드를 복사합니다. 서버 주소가 기본값이 아니면 `&server=`를 붙입니다.
+    /// 야영지에서 C입니다. 웹은 `<페이지 주소>?room=<코드>`를, PC는 방 코드를 복사합니다. 접속한 서버가 그 페이지의 기본 서버와 다르면 `&server=`를 붙입니다.
     /// 방에 들어가 있지 않으면 없습니다.
     pub fn copy_invite(&self) -> Option<Command> {
         let joined = self.session()?.joined()?;
-        let text = match &self.page_url {
-            Some(page_url) => {
-                let mut link = format!("{page_url}?room={}", joined.room);
-                if self.server != DEFAULT_SERVER {
+        let text = match &self.page {
+            Some(page) => {
+                let mut link = format!("{}?room={}", page.invite_url, joined.room);
+                if self.server != page.default_server {
                     link.push_str("&server=");
                     link.push_str(&encode_query_value(&self.server));
                 }
@@ -931,7 +933,7 @@ mod tests {
         let (mut flow, _) = Flow::new(
             launch(None, None),
             Memory::default(),
-            Some("http://127.0.0.1:8080/".to_string()),
+            Some(Page::open("http://127.0.0.1:8080", "/", None)),
         );
         connected(&mut flow, "KANG", "");
         flow.on_event(ClientEvent::Message(welcome("k7m2q")));
@@ -956,7 +958,7 @@ mod tests {
         let (mut flow, _) = Flow::new(
             options,
             Memory::default(),
-            Some("https://game.example/".to_string()),
+            Some(Page::open("https://game.example", "/", None)),
         );
         connected(&mut flow, "KANG", "");
         flow.on_event(ClientEvent::Message(welcome("k7m2q")));
@@ -966,6 +968,54 @@ mod tests {
             Some(Command::Copy(
                 "https://game.example/?room=k7m2q&server=ws://10.0.0.5:9000/play%3Fx%3D1%26y%3D2"
                     .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn the_invite_of_a_page_the_game_server_served_names_no_server() {
+        // 주인은 이 컴퓨터의 주소로 열었고 서버는 터널의 공개 주소를 압니다. 링크는 공개 주소의 페이지이고, 그 페이지는 자기 주소의 서버에 접속하므로 서버 주소가 없습니다.
+        let public = "https://quiet-river-1234.trycloudflare.com";
+        let page = Page::open("http://127.0.0.1:7777", "/", Some(public));
+        let options = LaunchOptions::from_page(None, None, None, false, &page);
+        let (mut flow, _) = Flow::new(options, Memory::default(), Some(page));
+        connected(&mut flow, "KANG", "");
+        flow.on_event(ClientEvent::Message(welcome("k7m2q")));
+        assert_eq!(
+            flow.copy_invite(),
+            Some(Command::Copy(format!("{public}/?room=k7m2q")))
+        );
+
+        // 친구가 공개 주소로 연 페이지에서도 같은 링크입니다.
+        let page = Page::open(public, "/", Some(public));
+        let options = LaunchOptions::from_page(None, None, None, false, &page);
+        let (mut flow, commands) = Flow::new(options, Memory::default(), Some(page));
+        assert!(commands.is_empty());
+        connected(&mut flow, "MIRO", "");
+        flow.on_event(ClientEvent::Message(welcome("k7m2q")));
+        assert_eq!(
+            flow.copy_invite(),
+            Some(Command::Copy(format!("{public}/?room=k7m2q")))
+        );
+    }
+
+    #[test]
+    fn a_server_named_by_the_link_is_carried_even_on_a_page_the_game_server_served() {
+        let page = Page::open("http://127.0.0.1:7777", "/", Some(""));
+        let options = LaunchOptions::from_page(
+            None,
+            None,
+            Some("ws://10.0.0.5:9000".to_string()),
+            false,
+            &page,
+        );
+        let (mut flow, _) = Flow::new(options, Memory::default(), Some(page));
+        connected(&mut flow, "KANG", "");
+        flow.on_event(ClientEvent::Message(welcome("k7m2q")));
+        assert_eq!(
+            flow.copy_invite(),
+            Some(Command::Copy(
+                "http://127.0.0.1:7777/?room=k7m2q&server=ws://10.0.0.5:9000".to_string()
             ))
         );
     }

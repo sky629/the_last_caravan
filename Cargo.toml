@@ -40,9 +40,10 @@ caravan_ws_client = { path = "crates/ws_client" }
 
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1.2", default-features = false, features = ["alloc"] }
-tokio = { version = "1", features = ["rt", "net", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt", "net", "sync", "time", "macros", "io-util"] }
 tokio-tungstenite = "0.30"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+httparse = "1.10"
 ewebsock = "0.8"
 bevy = { version = "0.20", default-features = false, features = ["2d", "ui"] }
 web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Storage"] }

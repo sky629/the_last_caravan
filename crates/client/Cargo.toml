@@ -22,7 +22,7 @@ bevy = { workspace = true, features = ["system_clipboard"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { workspace = true, features = ["web"] }
-web-sys.workspace = true
+web-sys = { workspace = true, features = ["Document", "Element"] }
 
 [lints]
 workspace = true
