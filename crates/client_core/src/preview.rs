@@ -7,7 +7,7 @@
 //! 화면의 캐릭터는 서버보다 조금 늦은 위치(보간 지연)에 그려지고, 미리 보기도 그 위치에서 계산합니다.
 //! 그래서 걸으면서 건설 키를 누르면 서버가 정한 타일이 미리 보기보다 한 칸 앞일 수 있습니다. 멈춰 서면 둘이 같습니다.
 
-use caravan_protocol::WireLife;
+use caravan_protocol::{WireInteraction, WireLife, WireStructureKind, WireTower};
 use caravan_rules::{Tile, front_tile};
 
 use crate::interp::PlayerView;
@@ -25,12 +25,41 @@ pub fn build_preview(me: &PlayerView, map_size: (u16, u16)) -> Option<Tile> {
     }
 }
 
+/// 지을 종류를 바꾼 뒤 미리 보기의 범위를 보여 주는 시간(초)입니다.
+pub const PREVIEW_RANGE_SECS: f32 = 2.0;
+
+/// 지금 범위를 미리 보여 줄 자리와 종류입니다. 범위의 원은 크고 캐릭터를 따라다니므로 필요할 때만 보여 줍니다.
+/// - 내가 포탑을 짓는 동안에는 그 포탑의 자리와 종류입니다.
+/// - 지을 종류를 바꾼 뒤 `PREVIEW_RANGE_SECS` 동안에는 건설 키를 누르면 포탑이 놓일 타일과 고른 종류입니다.
+///   `secs_since_kind_changed`는 내 화면에서 고른 종류가 바뀐 뒤 지난 시간이고, 바뀐 적이 없으면 `None`입니다.
+/// - 그 밖에는 보여 주지 않습니다.
+pub fn range_preview(
+    me: &PlayerView,
+    towers: &[WireTower],
+    map_size: (u16, u16),
+    secs_since_kind_changed: Option<f32>,
+) -> Option<(Tile, WireStructureKind)> {
+    if let WireLife::Alive {
+        interaction: Some(WireInteraction::Building { tower }),
+        ..
+    } = me.life
+    {
+        let site = towers.iter().find(|candidate| candidate.id == tower)?;
+        return Some((site.tile.to_tile(), site.kind));
+    }
+    let just_chosen = secs_since_kind_changed.is_some_and(|secs| secs < PREVIEW_RANGE_SECS);
+    just_chosen
+        .then(|| build_preview(me, map_size))
+        .flatten()
+        .map(|tile| (tile, me.build_kind))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use caravan_protocol::{
-        WireBuffs, WireBuildRefusal, WireCannotBuild, WireInteraction, WireLoadout,
-        WireStructureKind, WireTile, WireWeaponKind,
+        WireBuffs, WireBuildRefusal, WireCannotBuild, WireLoadout, WireTile, WireTowerState,
+        WireWeaponKind,
     };
     use caravan_rules::{AimDir, PlayerInput, PlayerInputs, Seed, Sim, Start, Team, Tuning, Vec2};
 
@@ -63,6 +92,70 @@ mod tests {
             build_refusal: refusal,
             buffs: WireBuffs::NONE,
         }
+    }
+
+    fn choosing(kind: WireStructureKind) -> PlayerView {
+        PlayerView {
+            build_kind: kind,
+            ..view(alive(None, None))
+        }
+    }
+
+    #[test]
+    fn the_range_is_previewed_for_two_seconds_after_the_kind_changes_and_not_before_or_after() {
+        let me = choosing(WireStructureKind::StunTower);
+        let shown = Some((Tile::new(11, 10), WireStructureKind::StunTower));
+
+        assert_eq!(range_preview(&me, &[], MAP, None), None);
+        assert_eq!(range_preview(&me, &[], MAP, Some(0.0)), shown);
+        assert_eq!(range_preview(&me, &[], MAP, Some(1.9)), shown);
+        assert_eq!(range_preview(&me, &[], MAP, Some(2.0)), None);
+        assert_eq!(range_preview(&me, &[], MAP, Some(60.0)), None);
+    }
+
+    #[test]
+    fn the_range_of_the_tower_i_am_building_is_previewed_at_its_tile_for_as_long_as_i_build() {
+        let site = WireTower {
+            id: 7,
+            tile: WireTile { x: 20, y: 21 },
+            kind: WireStructureKind::SlowTower,
+            state: WireTowerState::Building { progress: 0.5 },
+        };
+        let other = WireTower {
+            id: 8,
+            tile: WireTile { x: 30, y: 30 },
+            kind: WireStructureKind::HasteTower,
+            state: WireTowerState::Building { progress: 0.5 },
+        };
+        let me = PlayerView {
+            // 짓는 동안 E를 눌러도 짓고 있는 포탑의 종류는 바뀌지 않으므로, 고른 종류가 아니라 그 포탑의 종류를 보여 줍니다.
+            build_kind: WireStructureKind::StunTower,
+            ..view(alive(Some(WireInteraction::Building { tower: 7 }), None))
+        };
+
+        for since in [None, Some(0.5), Some(60.0)] {
+            assert_eq!(
+                range_preview(&me, &[other, site], MAP, since),
+                Some((Tile::new(20, 21), WireStructureKind::SlowTower)),
+                "{since:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_previewed_for_a_player_who_cannot_build_now() {
+        let reviving = view(alive(
+            Some(WireInteraction::Reviving {
+                target: 2,
+                progress: 0.5,
+            }),
+            None,
+        ));
+        assert_eq!(range_preview(&reviving, &[], MAP, Some(0.5)), None);
+        assert_eq!(
+            range_preview(&view(WireLife::Dead), &[], MAP, Some(0.5)),
+            None
+        );
     }
 
     #[test]

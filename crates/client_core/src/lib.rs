@@ -46,7 +46,7 @@ pub use iso::{
 pub use launch::{DEFAULT_SERVER, LaunchError, LaunchOptions};
 pub use memory::Memory;
 pub use page::Page;
-pub use preview::build_preview;
+pub use preview::{build_preview, range_preview};
 pub use ranges::{RangeRing, range_rings};
 pub use session::{Joined, Problem, Session};
 pub use start::{Field, FormKey, JoinRequest, StartForm, TextField};
