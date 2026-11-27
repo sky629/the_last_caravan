@@ -634,6 +634,42 @@ fn a_download_that_is_fast_enough_for_its_size_finishes_after_the_grace_has_pass
     );
 }
 
+#[test]
+fn a_download_that_takes_longer_than_its_size_allows_still_finishes_within_the_grace() {
+    const SIZE: usize = 16 * 1024 * 1024;
+    let dir = web_dir();
+    dir.write("big_bg.wasm", &vec![7u8; SIZE]);
+    // 16MiB를 초당 1GiB로 보내면 0.016초이므로, 응답 하나에 허락되는 시간의 거의 전부가 유예 시간(3초)입니다.
+    let limits = ServerLimits {
+        write_timeout: Duration::from_secs(30),
+        file_response_grace: Duration::from_secs(3),
+        file_min_bytes_per_sec: 1024 * 1024 * 1024,
+        ..ServerLimits::default()
+    };
+    let server = serving(&dir.0, limits);
+
+    // 초당 약 16MiB로 읽으므로 1초쯤 걸립니다. 크기가 허락하는 시간(0.016초)보다 길고 유예 시간보다 짧습니다.
+    let mut stream = start_download(server.local_addr(), "big_bg.wasm");
+    let started = Instant::now();
+    let mut received = 0usize;
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => received += count,
+        }
+        let due = Duration::from_secs_f64(received as f64 / (16.0 * 1024.0 * 1024.0));
+        if let Some(wait) = due.checked_sub(started.elapsed()) {
+            std::thread::sleep(wait);
+        }
+    }
+
+    assert!(
+        received >= SIZE,
+        "the whole file arrives, got {received} bytes of {SIZE}"
+    );
+}
+
 #[tokio::test]
 async fn a_download_that_stops_reading_is_cut_at_the_write_timeout() {
     let dir = web_dir();
