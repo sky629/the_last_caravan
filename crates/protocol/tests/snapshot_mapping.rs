@@ -1313,3 +1313,116 @@ fn the_warning_the_boss_its_max_hp_its_aim_and_its_slam_reach_the_wire_in_order(
     );
     assert!((0.0..=1.0).contains(&progress), "{progress}");
 }
+
+#[test]
+fn a_charge_its_dash_the_push_it_causes_and_the_roar_reach_the_wire_in_order() {
+    // 마지막 밤의 무리가 한 마리씩 둘이고 감시탑 하나가 처치합니다. 보스는 두 무리 다음 방향(마차의 북쪽)에서 나타나 마차를 향해 걷다가
+    // 내려찍기, 돌진, 내려찍기, 포효의 차례로 행동합니다. 플레이어는 마차 북쪽의 등장 지점에서 돌진의 띠에 서서 맞고, 쓰러지지 않게 HP를 크게 둡니다.
+    let mut sim = sim_with(|t| {
+        t.cycle.day_secs = 0.1;
+        t.nights.plans = vec![NightPlan {
+            waves: vec![
+                WavePlan {
+                    kind: MonsterKind::Grunt,
+                    count: 1,
+                };
+                2
+            ],
+        }];
+        t.nights.first_wave_delay_secs = 0.05;
+        t.guards.per_node = 0;
+        t.guards.per_chest = 0;
+        t.player.max_hp = 5000;
+    });
+    let me = sim.add_player().unwrap();
+    let building = PlayerInputs::from([(
+        me,
+        PlayerInput {
+            build: true,
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &building, 60);
+
+    let mut lane = None;
+    let mut dash = None;
+    let mut roar_seen = false;
+    let mut pushed: Vec<Vec2> = Vec::new();
+    let mut inputs = PlayerInputs::new();
+    for _ in 0..4000 {
+        sim.step(&inputs);
+        let snapshot = Snapshot::from_sim(&sim);
+        let WirePhase::Night {
+            step: WireNightStep::Boss(boss),
+            ..
+        } = &snapshot.phase
+        else {
+            continue;
+        };
+        let player = snapshot.players.iter().find(|player| player.id == me.0);
+        match boss.act {
+            WireBossAct::Charge { from, to, progress } => {
+                assert!((0.0..=1.0).contains(&progress), "{progress}");
+                lane = Some((from, to));
+                let (from, to) = (from.to_tiles(), to.to_tiles());
+                let middle = (from + to) * 0.5;
+                let me_at = player.map_or(from, |player| player.pos.to_tiles());
+                let toward = (middle - me_at).normalize_or_zero();
+                let arrived = me_at.distance(middle) < 0.15;
+                inputs = PlayerInputs::from([(
+                    me,
+                    PlayerInput {
+                        move_dir: if arrived {
+                            MoveDir::new(0.0, 0.0)
+                        } else {
+                            MoveDir::new(toward.x, toward.y)
+                        },
+                        ..PlayerInput::default()
+                    },
+                )]);
+            }
+            WireBossAct::Dash { from, to } => {
+                dash = Some((from, to));
+                inputs = PlayerInputs::new();
+            }
+            WireBossAct::Roar { progress } => {
+                assert!((0.0..=1.0).contains(&progress), "{progress}");
+                roar_seen = true;
+            }
+            WireBossAct::Walking | WireBossAct::Slam { .. } => {}
+        }
+        if let Some(player) = player
+            && matches!(
+                player.life,
+                WireLife::Alive {
+                    interaction: Some(WireInteraction::Knocked),
+                    ..
+                }
+            )
+        {
+            pushed.push(player.pos.to_tiles());
+        }
+        if roar_seen {
+            break;
+        }
+    }
+
+    assert_eq!(
+        dash, lane,
+        "the lane is shown and then run exactly as shown"
+    );
+    assert!(roar_seen, "the fourth act is the roar");
+    assert!(
+        pushed.len() >= 6,
+        "the player was pushed for 0.3 seconds: {pushed:?}"
+    );
+    let steps: Vec<f32> = pushed
+        .windows(2)
+        .map(|pair| pair[0].distance(pair[1]))
+        .collect();
+    assert!(
+        steps.iter().all(|step| *step < 0.7),
+        "the push is a slide in small steps, not one jump: {steps:?}"
+    );
+}

@@ -34,7 +34,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 15);
+    assert_eq!(PROTOCOL_VERSION, 16);
 }
 
 /// 값이 눈에 띄도록 0x10부터 이어지는 바이트로 만든 표식입니다.
@@ -54,7 +54,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
         },
         &[
             0x00, // Join 변형
-            0x0F, // version
+            0x10, // version
             0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
             0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
             0x00, // token: 없음
@@ -68,7 +68,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
             token: Some(TOKEN),
         },
         &[
-            0x00, 0x0F, 0x00, 0x04, b'K', b'A', b'N', b'G', //
+            0x00, 0x10, 0x00, 0x04, b'K', b'A', b'N', b'G', //
             0x01, // token: 있음
             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 길이 없이 16바이트
             0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -222,7 +222,10 @@ fn welcome_carries_the_fixed_world() {
                     covers_area: true,
                 },
             ],
-            boss: Some(BossInfo { slam_radius: 2.5 }),
+            boss: Some(BossInfo {
+                slam_radius: 2.5,
+                charge_width: 2.0,
+            }),
         },
     };
     let bytes: &[u8] = &[
@@ -284,13 +287,14 @@ fn welcome_carries_the_fixed_world() {
         0x01, // covers_area 참
         0x01, // boss: 있음
         0x00, 0x00, 0x20, 0x40, // slam_radius 2.5
+        0x00, 0x00, 0x00, 0x40, // charge_width 2.0
     ];
     assert_server_wire(ServerMsg::Welcome(Box::new(welcome.clone())), bytes);
 
     // 보스가 없는 설정은 마지막 한 바이트만 0이고 나머지는 같습니다.
     let mut without = welcome;
     without.world.boss = None;
-    let mut shorter = bytes[..bytes.len() - 5].to_vec();
+    let mut shorter = bytes[..bytes.len() - 9].to_vec();
     shorter.push(0x00);
     assert_server_wire(ServerMsg::Welcome(Box::new(without)), &shorter);
 }
@@ -967,6 +971,109 @@ fn the_boss_warning_and_the_boss_step_match_golden_bytes() {
         }))),
         // 최대 HP 3000, 노리는 대상 마차, 걷는 중
         &quiet_bytes(&[0x01, 0x03, 0x03, 0x03, 0xB8, 0x17, 0x01, 0x00]),
+    );
+}
+
+#[test]
+fn a_charge_a_dash_and_a_roar_are_boss_act_variants_two_three_and_four() {
+    let boss_snapshot = |act| {
+        quiet_snapshot(WirePhase::Night {
+            day: 3,
+            wave_count: 3,
+            step: WireNightStep::Boss(WireBoss {
+                max_hp: 3_000,
+                aim: WireAim::Wagon,
+                act,
+            }),
+        })
+    };
+    // Night, 날 3, 무리 3개, 단계 Boss, 최대 HP 3000, 노리는 대상 마차
+    let head = [0x01, 0x03, 0x03, 0x03, 0xB8, 0x17, 0x01];
+    let with_act = |act: &[u8]| quiet_bytes(&[&head[..], act].concat());
+
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(boss_snapshot(WireBossAct::Charge {
+            from: WirePos { x: 128, y: 1280 },
+            to: WirePos { x: 1408, y: 1280 },
+            progress: 0.5,
+        }))),
+        // 돌진 예고(시작 128 1280, 끝 1408 1280, 진행도 0.5)
+        &with_act(&[
+            0x02, 0x80, 0x01, 0x80, 0x0A, 0x80, 0x0B, 0x80, 0x0A, 0x00, 0x00, 0x00, 0x3F,
+        ]),
+    );
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(boss_snapshot(WireBossAct::Dash {
+            from: WirePos { x: 128, y: 1280 },
+            to: WirePos { x: 1408, y: 1280 },
+        }))),
+        // 달리는 중(시작 128 1280, 끝 1408 1280)
+        &with_act(&[0x03, 0x80, 0x01, 0x80, 0x0A, 0x80, 0x0B, 0x80, 0x0A]),
+    );
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(boss_snapshot(WireBossAct::Roar {
+            progress: 0.25,
+        }))),
+        // 포효(진행도 0.25)
+        &with_act(&[0x04, 0x00, 0x00, 0x80, 0x3E]),
+    );
+}
+
+#[test]
+fn a_pushed_player_is_interaction_variant_five_and_nothing_else() {
+    let mut snapshot = quiet_snapshot(WirePhase::Night {
+        day: 1,
+        wave_count: 3,
+        step: WireNightStep::Fighting { wave: 1 },
+    });
+    snapshot.players = vec![WirePlayer {
+        id: 3,
+        team: 0,
+        pos: WirePos { x: 0, y: 0 },
+        facing: WireAngle(0),
+        life: WireLife::Alive {
+            hp: 100,
+            max_hp: 100,
+            carried: 3,
+            stamina: 100,
+            interaction: Some(WireInteraction::Knocked),
+            build_refusal: None,
+            buffs: WireBuffs::NONE,
+        },
+        last_input_seq: 0,
+        last_attack: None,
+        loadout: WireLoadout {
+            held: WireWeaponKind::Sword,
+            spare: None,
+        },
+        prompt: None,
+        build_kind: WireStructureKind::Watchtower,
+    }];
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(snapshot)),
+        &[
+            0x02, 0x01, 0x01, // Snapshot, tick 1, expedition 1
+            0x01, 0x01, 0x03, 0x01, 0x01, // phase: Night, day 1, 3 waves, Fighting, wave 1
+            0x00, 0x00, // wagon
+            0x00, // stash
+            0x00, // towers: 길이 0
+            0x00, // nodes: 길이 0
+            0x00, // piles: 길이 0
+            0x01, // players: 길이 1
+            0x03, 0x00, 0x00, 0x00, 0x00, // id 3, team, pos 0 0, facing 0
+            0x00, 0x64, 0x64, 0x03, 0x64, // Alive, hp 100, max_hp 100, carried 3, stamina 100
+            0x01, 0x05, // interaction: 있음, Knocked
+            0x00, // build_refusal: 없음
+            0x00, 0x00, // buffs: 없음
+            0x00, 0x00, // last_input_seq 0, last_attack 없음
+            0x00, 0x00, // loadout: 든 무기 Sword, 다른 칸 없음
+            0x00, // prompt: 없음
+            0x00, // build_kind: Watchtower
+            0x00, // monsters: 길이 0
+            0x00, // chests: 길이 0
+            0x00, // ground_weapons: 길이 0
+            0x00, // projectiles: 길이 0
+        ],
     );
 }
 

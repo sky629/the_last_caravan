@@ -370,7 +370,9 @@ pub fn effect_progress(playback_tick: f64, event_tick: u64, duration_ticks: f64)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_protocol::{WireBuffs, WireMonsterStatus, WirePos, WireWeaponKind};
+    use caravan_protocol::{
+        WireBuffs, WireInteraction, WireMonsterStatus, WirePos, WireWeaponKind,
+    };
 
     fn snapshot(tick: u64) -> Snapshot {
         Snapshot {
@@ -456,6 +458,31 @@ mod tests {
 
         assert!(close(frame.monsters[0].pos, Vec2::new(4.5, 5.0)));
         assert!((frame.tick - 10.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_pushed_player_slides_between_snapshots_in_proportion_to_the_time_instead_of_jumping() {
+        let pushed = |x| {
+            let mut pushed = player(1, x, 10.0, 60);
+            if let WireLife::Alive { interaction, .. } = &mut pushed.life {
+                *interaction = Some(WireInteraction::Knocked);
+            }
+            pushed
+        };
+        let mut older = snapshot(10);
+        older.players = vec![pushed(8.0)];
+        let mut newer = snapshot(11);
+        newer.players = vec![pushed(8.5)];
+        let buffer = buffer_with(vec![older, newer]);
+
+        for (tick, x) in [(10.0, 8.0), (10.25, 8.125), (10.5, 8.25), (10.75, 8.375)] {
+            let frame = buffer.sample_at(tick).unwrap();
+            assert!(
+                close(frame.players[0].pos, Vec2::new(x, 10.0)),
+                "{tick}: {:?}",
+                frame.players[0].pos
+            );
+        }
     }
 
     #[test]

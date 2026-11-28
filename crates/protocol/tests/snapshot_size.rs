@@ -447,7 +447,7 @@ fn with_the_boss(mut snapshot: Snapshot, act: WireBossAct) -> Snapshot {
 }
 
 /// 보스가 하는 일의 모든 경우입니다. 위치는 두 축이 모두 2바이트로 기록되는 크기(128 이상)입니다.
-fn every_boss_act() -> [(&'static str, WireBossAct); 2] {
+fn every_boss_act() -> [(&'static str, WireBossAct); 5] {
     [
         ("walking", WireBossAct::Walking),
         (
@@ -457,11 +457,27 @@ fn every_boss_act() -> [(&'static str, WireBossAct); 2] {
                 progress: 0.5,
             },
         ),
+        (
+            "charge",
+            WireBossAct::Charge {
+                from: WirePos { x: 1500, y: 1200 },
+                to: WirePos { x: 2900, y: 1300 },
+                progress: 0.5,
+            },
+        ),
+        (
+            "dash",
+            WireBossAct::Dash {
+                from: WirePos { x: 1500, y: 1200 },
+                to: WirePos { x: 2900, y: 1300 },
+            },
+        ),
+        ("roar", WireBossAct::Roar { progress: 0.5 }),
     ]
 }
 
 #[test]
-fn the_boss_step_costs_at_most_sixteen_bytes_more_than_a_fight_and_stays_under_the_bound() {
+fn the_boss_step_costs_at_most_seventeen_bytes_more_than_a_fight_and_stays_under_the_bound() {
     let fight = encoded_len(crowded_snapshot(10_000, 300, 0));
     for (name, act) in every_boss_act() {
         let boss = encoded_len(with_the_boss(crowded_snapshot(10_000, 300, 0), act));
@@ -469,7 +485,7 @@ fn the_boss_step_costs_at_most_sixteen_bytes_more_than_a_fight_and_stays_under_t
             "boss {name}: {boss} bytes, {} more than a fight",
             boss - fight
         );
-        assert!(boss - fight <= 16, "{name}: {} more bytes", boss - fight);
+        assert!(boss - fight <= 17, "{name}: {} more bytes", boss - fight);
         assert!(boss < BOUND_BYTES, "{name}: {boss} bytes");
     }
 }
@@ -517,13 +533,19 @@ fn large_ids_with_the_boss_and_every_other_worst_case_at_once_stay_under_the_lar
         })
         .collect();
     make_all_four_alive_with_both_buffs(&mut snapshot);
-    let mut snapshot = with_the_boss(
-        snapshot,
-        WireBossAct::Slam {
-            center: WirePos { x: 1500, y: 1200 },
-            progress: 0.5,
-        },
-    );
+    // 네 명이 모두 돌진에 맞아 밀려나는 중이고, 플레이어의 번호도 세 바이트가 되는 크기입니다.
+    for (i, player) in snapshot.players.iter_mut().enumerate() {
+        player.id = 20_000 + i as u32;
+        if let WireLife::Alive { interaction, .. } = &mut player.life {
+            *interaction = Some(WireInteraction::Knocked);
+        }
+    }
+    let act = WireBossAct::Charge {
+        from: WirePos { x: 1500, y: 1200 },
+        to: WirePos { x: 2900, y: 1300 },
+        progress: 0.5,
+    };
+    let mut snapshot = with_the_boss(snapshot, act);
     // 대상의 번호와 보스의 HP도 한 바이트씩 더 드는 크기입니다.
     snapshot.monsters[0].hp = 48_000;
     snapshot.phase = WirePhase::Night {
@@ -531,17 +553,14 @@ fn large_ids_with_the_boss_and_every_other_worst_case_at_once_stay_under_the_lar
         wave_count: 3,
         step: WireNightStep::Boss(WireBoss {
             max_hp: 48_000,
-            aim: WireAim::Player(200),
-            act: WireBossAct::Slam {
-                center: WirePos { x: 1500, y: 1200 },
-                progress: 0.5,
-            },
+            aim: WireAim::Player(20_000),
+            act,
         }),
     };
 
     let size = encoded_len(snapshot);
     println!(
-        "boss slam, 3-byte ids, 4 rifle traces, 9 weapons, 8 arrows, both buffs: {size} bytes"
+        "boss charge, 3-byte ids, 4 pushed players, 4 rifle traces, 9 weapons, 8 arrows, both buffs: {size} bytes"
     );
     assert!(size < BOUND_BYTES_WITH_LARGE_IDS, "{size} bytes");
 }

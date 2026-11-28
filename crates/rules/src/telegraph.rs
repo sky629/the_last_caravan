@@ -136,11 +136,17 @@ impl Telegraph {
     /// 터지는 Tick에는 예고가 사라지므로, 화면은 가득 찬 영역을 한 번 본 뒤에 피해를 봅니다.
     /// 예고가 1 Tick이면 보이는 Tick이 하나뿐이므로 처음부터 1.0입니다.
     pub fn progress(&self) -> f32 {
-        let steps = self.total_ticks.saturating_sub(1);
+        Telegraph::progress_at(self.ticks_left, self.total_ticks)
+    }
+
+    /// `total_ticks` Tick이 걸리는 일이 `ticks_left` Tick 남았을 때의 진행도입니다(0.0 이상 1.0 이하).
+    /// 영역이 없는 시간(보스의 포효)도 같은 식으로 진행도를 구합니다.
+    pub fn progress_at(ticks_left: u32, total_ticks: u32) -> f32 {
+        let steps = total_ticks.saturating_sub(1);
         if steps == 0 {
             return 1.0;
         }
-        ((self.total_ticks - self.ticks_left) as f32 / steps as f32).min(1.0)
+        (total_ticks.saturating_sub(ticks_left) as f32 / steps as f32).min(1.0)
     }
 
     /// 한 Tick 지나갑니다. 이번 Tick에 터지면 참입니다.
@@ -355,6 +361,25 @@ mod tests {
         );
         assert!(telegraph.tick(), "the fourth tick");
         assert_eq!(telegraph.progress(), 1.0);
+    }
+
+    #[test]
+    fn a_countdown_without_a_zone_reports_its_progress_the_same_way() {
+        assert_eq!(
+            Telegraph::progress_at(4, 4),
+            0.0,
+            "the first tick it is shown"
+        );
+        assert_eq!(
+            Telegraph::progress_at(1, 4),
+            1.0,
+            "the last tick it is shown"
+        );
+        assert_eq!(
+            Telegraph::progress_at(1, 1),
+            1.0,
+            "one tick is full from the start"
+        );
     }
 
     #[test]

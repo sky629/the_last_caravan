@@ -17,7 +17,7 @@ pub struct BossView {
     pub state: WireBoss,
 }
 
-/// 위험한 영역입니다. `fill`은 0.0에서 1.0으로 차오르는 진행도이고, 1.0이 된 다음 Tick에 피해가 납니다.
+/// 위험한 영역입니다. `fill`은 0.0에서 1.0으로 차오르는 진행도이고, 1.0이 된 다음 Tick에 피해가 나거나 행동이 시작됩니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Danger {
     /// 내려찍기의 원입니다. 지면 좌표(타일)입니다.
@@ -26,6 +26,24 @@ pub enum Danger {
         radius: f32,
         fill: f32,
     },
+    /// 돌진의 띠입니다. `from`에서 `to`까지의 선분이고 폭은 `width`입니다. 보스가 달리는 동안에는 `fill`이 1.0입니다.
+    /// 네 모서리는 `lane_corners`가 구합니다.
+    Lane {
+        from: Vec2,
+        to: Vec2,
+        width: f32,
+        fill: f32,
+    },
+    /// 졸개를 부르는 포효입니다. 보스가 선 자리(`center`)에서 퍼져 나가는 고리를 그립니다. 영역이 아니고 피해가 없습니다.
+    Roar { center: Vec2, fill: f32 },
+}
+
+/// 띠의 네 모서리(지면 좌표)입니다. `from`에서 `to`로 가는 선의 양옆으로 폭의 절반씩 벗어난 점이고, 순서대로 이으면 띠의 테두리가 됩니다.
+/// 차오르는 안쪽은 `to` 대신 `from`과 `to` 사이의 점을 넣어 같은 모양으로 구합니다.
+pub fn lane_corners(from: Vec2, to: Vec2, width: f32) -> [Vec2; 4] {
+    let along = (to - from).normalize_or_zero();
+    let side = Vec2::new(-along.y, along.x) * (width * 0.5);
+    [from + side, to + side, to - side, from - side]
 }
 
 /// 지금 프레임에 보스와 싸우는 중이고 보스의 몸이 있으면 그 보스입니다.
@@ -84,6 +102,22 @@ impl BossView {
             WireBossAct::Slam { center, progress } => Some(Danger::Circle {
                 center: center.to_tiles(),
                 radius: info.slam_radius,
+                fill: progress,
+            }),
+            WireBossAct::Charge { from, to, progress } => Some(Danger::Lane {
+                from: from.to_tiles(),
+                to: to.to_tiles(),
+                width: info.charge_width,
+                fill: progress,
+            }),
+            WireBossAct::Dash { from, to } => Some(Danger::Lane {
+                from: from.to_tiles(),
+                to: to.to_tiles(),
+                width: info.charge_width,
+                fill: 1.0,
+            }),
+            WireBossAct::Roar { progress } => Some(Danger::Roar {
+                center: self.body.pos,
                 fill: progress,
             }),
         }
@@ -215,6 +249,73 @@ mod tests {
     }
 
     #[test]
+    fn a_charge_is_a_lane_that_fills_while_winding_up_and_is_full_while_the_boss_runs() {
+        let (from, to) = (WirePos { x: 128, y: 128 }, WirePos { x: 1408, y: 128 });
+        let winding = boss_view(&boss_frame(
+            WireBossAct::Charge {
+                from,
+                to,
+                progress: 0.5,
+            },
+            3000,
+        ))
+        .unwrap();
+        let running = boss_view(&boss_frame(WireBossAct::Dash { from, to }, 3000)).unwrap();
+
+        let lane = |fill| {
+            Some(Danger::Lane {
+                from: Vec2::new(1.0, 1.0),
+                to: Vec2::new(11.0, 1.0),
+                width: 2.0,
+                fill,
+            })
+        };
+        assert_eq!(winding.danger(&world()), lane(0.5));
+        assert_eq!(running.danger(&world()), lane(1.0));
+    }
+
+    #[test]
+    fn the_four_corners_of_a_lane_are_half_its_width_to_either_side_of_its_line() {
+        let corners = lane_corners(Vec2::new(2.0, 3.0), Vec2::new(12.0, 3.0), 2.0);
+
+        assert_eq!(
+            corners,
+            [
+                Vec2::new(2.0, 4.0),
+                Vec2::new(12.0, 4.0),
+                Vec2::new(12.0, 2.0),
+                Vec2::new(2.0, 2.0),
+            ]
+        );
+        let slanted = lane_corners(Vec2::new(0.0, 0.0), Vec2::new(6.0, 8.0), 2.0);
+        assert!(
+            (slanted[0].distance(slanted[3]) - 2.0).abs() < 1e-5,
+            "the width"
+        );
+        assert!(
+            (slanted[0].distance(slanted[1]) - 10.0).abs() < 1e-5,
+            "the length"
+        );
+        assert!(
+            (slanted[0] - slanted[3]).dot(slanted[1] - slanted[0]).abs() < 1e-4,
+            "the ends are square to the line"
+        );
+    }
+
+    #[test]
+    fn a_roar_is_a_ring_around_the_boss_that_fills_with_the_progress() {
+        let roaring = boss_view(&boss_frame(WireBossAct::Roar { progress: 0.75 }, 3000)).unwrap();
+
+        assert_eq!(
+            roaring.danger(&world()),
+            Some(Danger::Roar {
+                center: Vec2::new(30.0, 40.0),
+                fill: 0.75,
+            })
+        );
+    }
+
+    #[test]
     fn a_walking_boss_has_no_danger() {
         let walking = boss_view(&boss_frame(WireBossAct::Walking, 3000)).unwrap();
 
@@ -233,5 +334,25 @@ mod tests {
         let view = boss_view(&boss_frame(slam, 3000)).unwrap();
 
         assert_eq!(view.danger(&world), None);
+    }
+
+    #[test]
+    fn a_server_without_a_boss_sends_no_sizes_for_a_lane_or_a_roar_either() {
+        let mut world = world();
+        world.boss = None::<BossInfo>;
+        let (from, to) = (WirePos { x: 0, y: 0 }, WirePos { x: 640, y: 0 });
+
+        for act in [
+            WireBossAct::Charge {
+                from,
+                to,
+                progress: 0.5,
+            },
+            WireBossAct::Dash { from, to },
+            WireBossAct::Roar { progress: 0.5 },
+        ] {
+            let view = boss_view(&boss_frame(act, 3000)).unwrap();
+            assert_eq!(view.danger(&world), None, "{act:?}");
+        }
     }
 }
