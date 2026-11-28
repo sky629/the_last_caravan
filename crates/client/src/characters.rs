@@ -176,6 +176,7 @@ fn monster_look(
     let (body, body_size, bar) = match monster.kind {
         WireMonsterKind::Grunt => (&palette.monster, config::MONSTER_BODY, hurt_bar),
         WireMonsterKind::Runner => (&palette.runner, config::RUNNER_BODY, hurt_bar),
+        WireMonsterKind::Sapper => (&palette.sapper, config::SAPPER_BODY, hurt_bar),
         WireMonsterKind::Scarecrow => (&palette.scarecrow, config::SCARECROW_BODY, None),
         WireMonsterKind::Boss => (&palette.boss, config::BOSS_BODY, None),
     };
@@ -959,6 +960,60 @@ mod tests {
     }
 
     #[test]
+    fn a_sapper_is_bigger_than_a_grunt_wears_its_own_color_and_shows_a_bar_only_once_hurt() {
+        let mut app = app();
+        let max_hp = caravan_rules::Tuning::default().monsters.sapper.max_hp;
+        let sapper = |hp| MonsterView {
+            kind: WireMonsterKind::Sapper,
+            ..monster(2, 4.0, 3.0, hp)
+        };
+        let body_of = |app: &App, id: u32| {
+            let parts = *app.world().get::<Parts>(monster_entity(app, id)).unwrap();
+            (
+                app.world()
+                    .get::<MeshMaterial2d<ColorMaterial>>(parts.body)
+                    .unwrap()
+                    .0
+                    .clone(),
+                app.world()
+                    .get::<Transform>(parts.body)
+                    .unwrap()
+                    .scale
+                    .truncate(),
+                *app.world()
+                    .get::<Visibility>(parts.bar.entities()[0])
+                    .unwrap(),
+            )
+        };
+
+        show(
+            &mut app,
+            frame(vec![], vec![monster(1, 3.0, 3.0, 60), sapper(max_hp)]),
+        );
+        let palette = app.world().resource::<Palette>();
+        assert_ne!(palette.sapper, palette.monster);
+        assert_ne!(palette.sapper, palette.runner);
+        let (color, size, bar) = body_of(&app, 2);
+        assert_eq!(color, palette.sapper);
+        assert_eq!(size, config::SAPPER_BODY);
+        assert_eq!(bar, Visibility::Hidden, "a whole sapper shows no bar");
+
+        show(
+            &mut app,
+            frame(vec![], vec![monster(1, 3.0, 3.0, 60), sapper(max_hp - 1)]),
+        );
+        assert_eq!(body_of(&app, 2).2, Visibility::Inherited, "a hurt one does");
+
+        let scene = app.world().resource::<Scene>();
+        let radius = |kind| scene.monster(kind).unwrap().footprint.radius;
+        assert_eq!(
+            radius(WireMonsterKind::Sapper),
+            radius(WireMonsterKind::Grunt),
+            "the sapper walks with the grunt's body, so only the drawn size differs"
+        );
+    }
+
+    #[test]
     fn a_monster_under_an_effect_wears_its_color_and_gets_its_own_back_when_it_ends() {
         let mut app = app();
         let afflicted = |kind, stunned, slowed, bleeding| MonsterView {
@@ -1050,6 +1105,7 @@ mod tests {
         let bodies = [
             config::MONSTER,
             config::RUNNER,
+            config::SAPPER,
             config::SCARECROW,
             config::YOU,
             config::ALLY,

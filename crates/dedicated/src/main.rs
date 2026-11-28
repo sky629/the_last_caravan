@@ -582,6 +582,7 @@ mod tests {
 
         assert_eq!(kinds(&["--stress"]), BTreeSet::from([MonsterKind::Grunt]));
         assert!(kinds(&[]).contains(&MonsterKind::Runner));
+        assert!(kinds(&[]).contains(&MonsterKind::Sapper));
     }
 
     #[test]

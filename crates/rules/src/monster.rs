@@ -281,7 +281,23 @@ fn raid_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal
     match ctx.t.monsters.get(monster.kind).prey {
         Prey::Nearby => nearby_goal(world, monster, ctx, paths),
         Prey::Wagon => Goal::Wagon,
+        Prey::Towers => towers_goal(world, monster, paths),
     }
+}
+
+/// 포탑을 노리는 몬스터(`Prey::Towers`)의 목표입니다. 걸어서 닿는 서 있는 포탑이 있으면 거리와 관계없이 포탑이고, 없으면 마차입니다.
+/// 플레이어는 후보가 아니므로 곁에 있어도 맞아도 목표가 바뀌지 않습니다. 짓는 중인 포탑은 포탑 흐름장의 도착 타일이 아니므로 후보가 아닙니다.
+fn towers_goal(world: &World, monster: &Monster, paths: &Paths) -> Goal {
+    match steps_to_a_tower(world, monster, paths) {
+        Some(_) => Goal::Tower,
+        None => Goal::Wagon,
+    }
+}
+
+/// 몬스터가 선 타일에서 가장 가까운 서 있는 포탑을 공격할 수 있는 타일까지의 걸음 수입니다. 닿는 포탑이 없으면 `None`입니다.
+fn steps_to_a_tower(world: &World, monster: &Monster, paths: &Paths) -> Option<u16> {
+    let here = world.tiles.tile_at(monster.pos);
+    paths.towers().steps_at(&world.tiles, here)
 }
 
 /// 가까운 대상을 쫓는 몬스터(`Prey::Nearby`)의 목표입니다.
@@ -306,8 +322,7 @@ fn nearby_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Go
             consider(Goal::Player(player.id), distance);
         }
     }
-    let here = world.tiles.tile_at(monster.pos);
-    if let Some(steps) = paths.towers().steps_at(&world.tiles, here) {
+    if let Some(steps) = steps_to_a_tower(world, monster, paths) {
         consider(Goal::Tower, f32::from(steps));
     }
     match best {

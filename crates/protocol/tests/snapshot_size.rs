@@ -230,6 +230,7 @@ fn monsters_of_every_kind_cost_the_same_nine_bytes_as_grunts() {
     let kinds = [
         WireMonsterKind::Grunt,
         WireMonsterKind::Runner,
+        WireMonsterKind::Sapper,
         WireMonsterKind::Scarecrow,
         WireMonsterKind::Boss,
     ];

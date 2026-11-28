@@ -269,9 +269,11 @@ pub enum Prey {
     Nearby,
     /// 아무것도 쫓지 않고 마차로 곧장 갑니다.
     Wagon,
+    /// 플레이어를 쫓지 않고, 서 있는 포탑이 걸어서 닿는 곳에 있으면 거리와 관계없이 가장 가까운 포탑으로 갑니다. 닿을 포탑이 없으면 마차로 갑니다.
+    Towers,
 }
 
-/// 몬스터 종류가 피해와 효과를 받는 방식입니다. 기본 몬스터와 허수아비는 모두 받으므로 `Resist::NONE`이고, 돌격병은 포탑의 피해만 줄여서 받고, 보스는 그에 더해 효과도 줄여서 받습니다.
+/// 몬스터 종류가 피해와 효과를 받는 방식입니다. 기본 몬스터와 허수아비와 파괴병은 모두 받으므로 `Resist::NONE`이고, 돌격병은 포탑의 피해만 줄여서 받고, 보스는 그에 더해 효과도 줄여서 받습니다.
 /// 이 값을 읽는 곳은 `World::apply_hits`(피해)와 `MonsterEffects`의 `would_take`와 `apply`(효과) 셋이고, 규칙의 다른 곳은 종류를 보고 갈라지지 않습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Resist {
@@ -330,6 +332,9 @@ pub struct MonsterTable {
     /// 마차로 곧장 달려가는 약하고 빠른 몬스터입니다. 포탑의 피해를 줄여서 받으므로 포탑이 대신 잡아 주지 못하고 플레이어가 잡아야 합니다.
     /// 걷는 몸과 공격 거리는 `grunt` 이하여서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
     pub runner: MonsterTuning,
+    /// 걸어서 가장 가까운 포탑으로 가서 포탑만 부수는 느리고 단단한 몬스터입니다. 플레이어가 막지 않으면 포탑이 사라집니다.
+    /// 걷는 몸과 공격 거리는 `grunt`와 같아서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
+    pub sapper: MonsterTuning,
 }
 
 impl MonsterTable {
@@ -339,6 +344,7 @@ impl MonsterTable {
             MonsterKind::Scarecrow => &self.scarecrow,
             MonsterKind::Boss => &self.boss,
             MonsterKind::Runner => &self.runner,
+            MonsterKind::Sapper => &self.sapper,
         }
     }
 
@@ -1028,10 +1034,10 @@ impl Tuning {
                 );
             }
         }
-        // 경비는 자리에서 가까운 플레이어를 쫓는 명령(`Order::Guard`)을 받습니다. 마차로 곧장 가는 종류는 이 명령을 받으면 플레이어를 쫓게 되어 종류의 수치와 어긋납니다.
+        // 경비는 자리에서 가까운 플레이어를 쫓는 명령(`Order::Guard`)을 받습니다. 마차로 곧장 가거나 포탑만 노리는 종류는 이 명령을 받으면 플레이어를 쫓게 되어 종류의 수치와 어긋납니다.
         if self.monsters.get(self.guards.kind).prey != Prey::Nearby {
             return Err(format!(
-                "guards.kind {:?} goes straight to the wagon (prey {:?}), but a guard chases the players who come near its post",
+                "guards.kind {:?} does not chase the players who come near it (prey {:?}), but a guard chases the players who come near its post",
                 self.guards.kind,
                 self.monsters.get(self.guards.kind).prey
             ));
@@ -1698,6 +1704,10 @@ impl Default for Tuning {
             kind: MonsterKind::Runner,
             count,
         };
+        let sappers = |count| Pack {
+            kind: MonsterKind::Sapper,
+            count,
+        };
         let wave = |packs: &[Pack]| Wave {
             packs: packs.to_vec(),
         };
@@ -1887,6 +1897,23 @@ impl Default for Tuning {
                     aggro_range: 0.0,
                     separation_speed: 1.0,
                 },
+                // 기본 몬스터의 두 배의 HP와 4분의 3쯤의 속도입니다. 플레이어를 쫓지 않고 걸어서 가장 가까운 포탑으로 가서 포탑을 부수고, 포탑에는 기본 몬스터의 네 배의 피해를 줍니다.
+                // 마차와 플레이어에게 주는 피해는 기본 몬스터와 같습니다. 걷는 몸과 공격 거리가 `grunt`와 같으므로 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
+                // 포탑의 피해는 줄지 않고 그대로 받습니다. `aggro_range`는 `Prey::Nearby`만 읽으므로 쓰이지 않습니다.
+                sapper: MonsterTuning {
+                    max_hp: 120,
+                    radius: 0.4,
+                    hit_margin: 0.0,
+                    resist: Resist::NONE,
+                    speed: 1.7,
+                    attack_damage: 10,
+                    siege_percent: 400,
+                    attack_reach: 0.5,
+                    attack_cooldown_secs: 1.0,
+                    prey: Prey::Towers,
+                    aggro_range: 0.0,
+                    separation_speed: 1.0,
+                },
             },
             wagon: WagonTuning {
                 max_hp: 500,
@@ -2003,8 +2030,8 @@ impl Default for Tuning {
                     NightPlan {
                         waves: vec![
                             wave(&[grunts(40), runners(20)]),
-                            wave(&[grunts(70), runners(20)]),
-                            wave(&[grunts(110), runners(40)]),
+                            wave(&[grunts(60), runners(20), sappers(10)]),
+                            wave(&[grunts(90), runners(40), sappers(20)]),
                         ],
                     },
                 ],

@@ -365,8 +365,8 @@ fn a_wave_for_an_empty_room_is_still_one_monster_of_each_of_its_kinds() {
     assert_eq!(t.nights.wave_size(1, 1, 0), 1);
     assert_eq!(
         t.nights.wave_size(3, 3, 0),
-        2,
-        "the last wave has two kinds, one monster of each"
+        3,
+        "the last wave has three kinds, one monster of each"
     );
     assert_eq!(
         t.nights.wave_size(4, 1, 1),

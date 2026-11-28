@@ -15,14 +15,18 @@ pub enum MonsterKind {
     Boss,
     /// 플레이어와 포탑을 쫓지 않고 마차로 곧장 달려가서 마차를 때리는 약하고 빠른 몬스터입니다. 걷는 몸은 `Grunt`보다 작습니다.
     Runner,
+    /// 플레이어를 쫓지 않고 걸어서 가장 가까운 포탑으로 가서 포탑만 부수는 느리고 단단한 몬스터입니다. 포탑에 주는 피해가 `Grunt`의 네 배입니다.
+    /// 부술 포탑이 없으면 마차로 갑니다. 걷는 몸과 공격 거리는 `Grunt`와 같습니다.
+    Sapper,
 }
 
 impl MonsterKind {
-    pub const ALL: [MonsterKind; 4] = [
+    pub const ALL: [MonsterKind; 5] = [
         MonsterKind::Grunt,
         MonsterKind::Scarecrow,
         MonsterKind::Boss,
         MonsterKind::Runner,
+        MonsterKind::Sapper,
     ];
 }
 

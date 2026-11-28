@@ -558,7 +558,7 @@ fn the_first_night_has_only_grunts_and_the_second_and_third_mix_in_runners_with_
     );
     assert_eq!(
         [composition(3, 1), composition(3, 2), composition(3, 3)],
-        [(40, 20), (70, 20), (110, 40)]
+        [(40, 20), (60, 20), (90, 40)]
     );
     let total = |day| -> u32 {
         (1..=nights.wave_count(day))
@@ -566,6 +566,40 @@ fn the_first_night_has_only_grunts_and_the_second_and_third_mix_in_runners_with_
             .sum()
     };
     assert_eq!([total(1), total(2), total(3)], [20, 90, 300]);
+}
+
+#[test]
+fn sappers_come_only_in_the_second_and_third_wave_of_the_third_night_at_every_party_size() {
+    let nights = Tuning::default().nights;
+    let sappers =
+        |day, wave, party| count_of(&order_of(&nights, day, wave, party), MonsterKind::Sapper);
+
+    for party in 1..=4 {
+        for (day, waves) in [(1, 2), (2, 3), (3, 3)] {
+            for wave in 1..=waves {
+                let expected = if day == 3 && wave >= 2 {
+                    nights.scaled(if wave == 2 { 10 } else { 20 }, party)
+                } else {
+                    0
+                };
+                assert_eq!(
+                    sappers(day, wave, party),
+                    expected,
+                    "night {day} wave {wave}, {party} players"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        [sappers(3, 2, 4), sappers(3, 3, 4)],
+        [10, 20],
+        "ten and then twenty with four players"
+    );
+    assert_eq!(
+        [sappers(3, 2, 1), sappers(3, 3, 1)],
+        [3, 5],
+        "a lone player meets three and then five"
+    );
 }
 
 #[test]
@@ -645,7 +679,7 @@ fn the_siege_percent_rounds_up_so_that_a_hit_that_does_any_damage_takes_somethin
 }
 
 #[test]
-fn at_the_default_numbers_no_kind_hits_a_tower_harder_than_it_hits_the_wagon() {
+fn only_the_sapper_hits_a_tower_harder_than_it_hits_the_wagon_at_the_default_numbers() {
     let monsters = Tuning::default().monsters;
     for kind in MonsterKind::ALL {
         let expected = match kind {
@@ -653,6 +687,7 @@ fn at_the_default_numbers_no_kind_hits_a_tower_harder_than_it_hits_the_wagon() {
             | MonsterKind::Scarecrow
             | MonsterKind::Boss
             | MonsterKind::Runner => 100,
+            MonsterKind::Sapper => 400,
         };
         assert_eq!(monsters.get(kind).siege_percent, expected, "{kind:?}");
     }

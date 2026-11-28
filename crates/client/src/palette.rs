@@ -49,6 +49,7 @@ pub struct Palette {
     pub dead: Handle<ColorMaterial>,
     pub monster: Handle<ColorMaterial>,
     pub runner: Handle<ColorMaterial>,
+    pub sapper: Handle<ColorMaterial>,
     pub scarecrow: Handle<ColorMaterial>,
     pub boss: Handle<ColorMaterial>,
     /// 효과에 걸린 몬스터의 몸통입니다. 모든 종류의 몬스터에게 같이 씁니다.
@@ -179,6 +180,7 @@ pub fn setup_palette(
         dead: paint(config::DEAD),
         monster: paint(config::MONSTER),
         runner: paint(config::RUNNER),
+        sapper: paint(config::SAPPER),
         scarecrow: paint(config::SCARECROW),
         boss: paint(config::BOSS),
         effects: EffectPaints {
