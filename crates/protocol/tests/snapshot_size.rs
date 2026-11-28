@@ -494,6 +494,59 @@ fn the_worst_case_with_the_boss_and_every_other_worst_case_at_once_stays_under_b
 }
 
 #[test]
+fn large_ids_with_the_boss_and_every_other_worst_case_at_once_stay_under_the_large_id_bound() {
+    let mut snapshot = crowded_snapshot(20_000, 300, 8);
+    for (i, player) in snapshot.players.iter_mut().enumerate() {
+        player.last_attack = Some(WireAttack {
+            tick: 100_000,
+            weapon: WireWeaponKind::Rifle,
+            trace_end: Some(WirePos {
+                x: 3000 + 500 * i as u16,
+                y: 2500 - 300 * i as u16,
+            }),
+        });
+    }
+    snapshot.ground_weapons = (1..=MOST_WEAPONS_ON_THE_GROUND)
+        .map(|id| WireGroundWeapon {
+            id,
+            pos: WirePos {
+                x: 800 * id as u16,
+                y: 1500,
+            },
+            kind: WireWeaponKind::Rifle,
+        })
+        .collect();
+    make_all_four_alive_with_both_buffs(&mut snapshot);
+    let mut snapshot = with_the_boss(
+        snapshot,
+        WireBossAct::Slam {
+            center: WirePos { x: 1500, y: 1200 },
+            progress: 0.5,
+        },
+    );
+    // 대상의 번호와 보스의 HP도 한 바이트씩 더 드는 크기입니다.
+    snapshot.monsters[0].hp = 48_000;
+    snapshot.phase = WirePhase::Night {
+        day: 3,
+        wave_count: 3,
+        step: WireNightStep::Boss(WireBoss {
+            max_hp: 48_000,
+            aim: WireAim::Player(200),
+            act: WireBossAct::Slam {
+                center: WirePos { x: 1500, y: 1200 },
+                progress: 0.5,
+            },
+        }),
+    };
+
+    let size = encoded_len(snapshot);
+    println!(
+        "boss slam, 3-byte ids, 4 rifle traces, 9 weapons, 8 arrows, both buffs: {size} bytes"
+    );
+    assert!(size < BOUND_BYTES_WITH_LARGE_IDS, "{size} bytes");
+}
+
+#[test]
 fn the_warning_costs_no_more_than_a_wave_of_the_fight() {
     let mut warning = crowded_snapshot(10_000, 300, 0);
     warning.phase = WirePhase::Night {

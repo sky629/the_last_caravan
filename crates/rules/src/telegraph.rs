@@ -53,9 +53,14 @@ impl Telegraph {
         }
     }
 
-    /// 예고가 얼마나 진행되었는지입니다(0.0 이상 1.0 이하).
+    /// 예고가 얼마나 진행되었는지입니다(0.0 이상 1.0 이하). 예고가 시작된 Tick에 0.0이고, 터지기 바로 앞의 Tick에 1.0입니다.
+    /// 터지는 Tick에는 예고가 사라지므로, 화면은 가득 찬 영역을 한 번 본 뒤에 피해를 봅니다.
     pub fn progress(&self) -> f32 {
-        1.0 - self.ticks_left as f32 / self.total_ticks as f32
+        let steps = self.total_ticks.saturating_sub(1);
+        if steps == 0 {
+            return 1.0;
+        }
+        ((self.total_ticks - self.ticks_left) as f32 / steps as f32).min(1.0)
     }
 
     /// 한 Tick 지나갑니다. 이번 Tick에 터지면 참입니다.
@@ -142,9 +147,14 @@ mod tests {
         assert_eq!(telegraph.progress(), 0.0);
 
         assert!(!telegraph.tick());
-        assert_eq!(telegraph.progress(), 0.25);
+        assert!((telegraph.progress() - 1.0 / 3.0).abs() < 1e-6);
         assert!(!telegraph.tick());
         assert!(!telegraph.tick());
+        assert_eq!(
+            telegraph.progress(),
+            1.0,
+            "full on the last tick it is shown"
+        );
         assert!(telegraph.tick(), "the fourth tick");
         assert_eq!(telegraph.progress(), 1.0);
     }

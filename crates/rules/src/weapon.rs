@@ -168,7 +168,6 @@ fn swing(
     hits: &mut Vec<Hit>,
 ) {
     let t = ctx.t;
-    let cos = arc_cos(arc.half_angle_deg);
     let search_radius =
         t.player.radius + arc.reach + t.monsters.largest_radius() + ctx.grid.hit_margin();
     ctx.grid.query(attack.origin, search_radius, candidates);
@@ -177,12 +176,20 @@ fn swing(
         if !attack.team.is_hostile_to(monster.team) {
             continue;
         }
+        let kind = t.monsters.get(monster.kind);
         let body = Body::Circle {
             center: monster.pos,
-            radius: t.monsters.get(monster.kind).hit_radius(),
+            radius: kind.hit_radius(),
         };
         let in_reach = body.gap_from(attack.origin, t.player.radius) <= arc.reach;
-        if in_reach && in_arc(attack.origin, attack.facing, monster.pos, cos) {
+        let in_arc = in_arc(
+            attack.origin,
+            attack.facing,
+            monster.pos,
+            arc.half_angle_deg,
+            kind.hit_margin,
+        );
+        if in_reach && in_arc {
             hits.push(Hit {
                 target: Target::Monster(monster.id),
                 amount: attack.damage,
@@ -193,10 +200,23 @@ fn swing(
     }
 }
 
-/// `target`이 `origin`에서 `facing` 방향의 부채꼴 안에 있는지 판정합니다.
-fn in_arc(origin: Vec2, facing: Vec2, target: Vec2, arc_cos: f32) -> bool {
+/// 중심이 `target`인 몬스터가 `origin`에서 `facing` 방향으로 반각 `half_angle_deg`인 부채꼴에 걸리는지 판정합니다.
+/// 중심이 부채꼴 안에 있으면 걸립니다. 맞는 몸의 여유(`hit_margin`)가 있는 몬스터는 중심에서 그 여유만큼 떨어진 곳이 부채꼴에 닿아도 걸립니다.
+fn in_arc(origin: Vec2, facing: Vec2, target: Vec2, half_angle_deg: f32, hit_margin: f32) -> bool {
     let offset = target - origin;
     let distance = offset.length();
     // 중심이 거의 겹쳤으면 방향을 알 수 없으므로 부채꼴 안으로 봅니다.
-    distance < 1e-4 || facing.dot(offset * (1.0 / distance)) >= arc_cos
+    if distance < 1e-4 {
+        return true;
+    }
+    let toward = facing.dot(offset * (1.0 / distance));
+    if toward >= arc_cos(half_angle_deg) {
+        return true;
+    }
+    if hit_margin <= 0.0 {
+        return false;
+    }
+    // 거리 `distance`에서 반지름 `hit_margin`의 원이 차지하는 각도만큼 부채꼴을 넓혀서 봅니다.
+    let beyond_the_arc = toward.clamp(-1.0, 1.0).acos() - half_angle_deg.to_radians();
+    distance <= hit_margin || beyond_the_arc <= (hit_margin / distance).asin()
 }

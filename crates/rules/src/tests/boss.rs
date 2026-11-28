@@ -980,6 +980,52 @@ fn a_sword_reaches_the_edge_of_the_boss_body_a_tile_from_its_middle_and_not_beyo
     );
 }
 
+/// `(13, 10)`에서 `(15, 10)` 쪽을 `degrees`만큼 비껴서 겨누는 방향입니다.
+fn turned(degrees: f32) -> (f32, f32) {
+    let radians = degrees.to_radians();
+    (radians.cos(), radians.sin())
+}
+
+#[test]
+fn a_spear_aimed_beside_the_middle_of_the_boss_hits_the_body_it_crosses_and_misses_past_it() {
+    let full = 100_000;
+    let from = Vec2::new(13.0, 10.0);
+    // 창의 반각은 15도입니다. 2타일 떨어진 보스의 맞는 몸의 여유 0.6타일은 양쪽으로 약 17도를 더 덮습니다.
+    assert!(boss_hp_after_attacking(WeaponKind::Spear, from, turned(25.0)) < full);
+    assert_eq!(
+        boss_hp_after_attacking(WeaponKind::Spear, from, turned(40.0)),
+        full
+    );
+}
+
+#[test]
+fn a_spear_aimed_beside_the_middle_of_a_grunt_misses_it() {
+    let mut s = Scenario::with_tuning(|_| {});
+    let id = s.player_at(13.0, 10.0);
+    s.give_weapon(id, WeaponKind::Spear);
+    let t = s.sim.tuning().clone();
+    let grunt = s.sim.world_mut().spawn_monster(
+        MonsterKind::Grunt,
+        Order::Stand,
+        Vec2::new(15.0, 10.0),
+        &t,
+    );
+    let full = s.monster(grunt).expect("alive").hp;
+    let (x, y) = turned(25.0);
+    s.hold(
+        id,
+        PlayerInput {
+            attack: true,
+            aim: AimDir::new(x, y),
+            move_dir: MoveDir::new(0.0, 0.0),
+            ..PlayerInput::default()
+        },
+    );
+    s.run_ticks(40);
+
+    assert_eq!(s.monster(grunt).expect("alive").hp, full);
+}
+
 #[test]
 fn an_arrow_that_passes_a_tile_from_the_middle_of_the_boss_hits_it_and_one_that_passes_wider_does_not()
  {

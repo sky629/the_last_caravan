@@ -119,7 +119,7 @@ pub enum WireAim {
 }
 
 /// 보스가 지금 하는 일입니다. 영역의 크기는 `Welcome`의 `BossInfo`에 있고 여기에는 자리와 진행도만 있습니다.
-/// 진행도는 0.0에서 1.0이고, 1.0이 되는 Tick에 피해가 납니다.
+/// 진행도는 0.0에서 1.0이고, 1.0을 실은 스냅샷의 다음 Tick에 피해가 납니다.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WireBossAct {
     /// 걷는 중입니다.

@@ -17,7 +17,7 @@ pub struct BossView {
     pub state: WireBoss,
 }
 
-/// 위험한 영역입니다. `fill`은 0.0에서 1.0으로 차오르는 진행도이고 1.0이 되는 순간 피해가 납니다.
+/// 위험한 영역입니다. `fill`은 0.0에서 1.0으로 차오르는 진행도이고, 1.0이 된 다음 Tick에 피해가 납니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Danger {
     /// 내려찍기의 원입니다. 지면 좌표(타일)입니다.
