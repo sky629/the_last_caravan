@@ -11,6 +11,7 @@ use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::math::Vec2;
 use crate::monster::Order;
 use crate::player::Presence;
+use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::telegraph::{self, Zone};
 use crate::tuning::{BossTuning, Debuff, Finale, Move, StrikeTuning, Tuning, WaveScaling};
@@ -226,6 +227,84 @@ fn a_night_that_is_not_the_last_has_no_boss() {
     assert!(matches!(phase(&s.sim), Phase::Dawn { .. }));
     s.run_ticks(2 * s.ticks(5.0));
     assert!(s.sim.boss().is_none());
+}
+
+/// 마지막 밤의 마지막 무리를 처치한 뒤 경고, 보스, 원정의 끝, 결과 화면, 야영지, 다음 원정의 첫날까지를 자연스러운 진행으로 따라갑니다.
+/// 원정이 어떻게 끝나든 보스의 상태와 몸이 야영지와 다음 원정에 남지 않고, 다음 원정의 보스는 처음의 모습으로 나타나야 합니다.
+#[test]
+fn whichever_way_the_last_night_ends_no_boss_state_or_body_is_left_in_the_camp_and_the_next_expedition()
+ {
+    for victory in [true, false] {
+        let mut s = Scenario::with_cycle(|t| {
+            with_boss(t);
+            t.cycle.day_secs = t.dt();
+            t.nights.plans = nights(&[&[2]]);
+        });
+        let player = s.player_at(10.0, 10.0);
+        run_until_the_last_wave_is_out(&mut s);
+        s.clear_monsters();
+        s.run_until(500, |sim| sim.boss().is_some());
+        assert!(matches!(
+            phase(&s.sim),
+            Phase::Night {
+                step: NightStep::Boss,
+                ..
+            }
+        ));
+        let first_boss = s.sim.boss().expect("a boss").id;
+
+        if victory {
+            hit_boss(&mut s, player, u32::MAX);
+        } else {
+            s.set_wagon_hp(0);
+        }
+        s.run_ticks(1);
+        let expected = if victory {
+            Outcome::Victory
+        } else {
+            Outcome::Defeat
+        };
+        assert_eq!(outcome(&s.sim), Some(expected), "victory: {victory}");
+        assert!(s.sim.debrief().is_some(), "the result screen is open");
+
+        s.tap_confirm(player);
+        assert!(
+            matches!(s.sim.stage(), Stage::Camp(_)),
+            "the result screen is followed by the camp"
+        );
+        assert!(s.sim.boss().is_none(), "no boss state in the camp");
+        assert!(
+            s.sim.monsters().all(|m| m.kind != MonsterKind::Boss),
+            "no boss body in the camp"
+        );
+
+        s.tap_ready(player);
+        s.run_until(s.ticks(10.0), |sim| sim.phase().is_some());
+        assert!(
+            matches!(phase(&s.sim), Phase::Day { day: 1, .. }),
+            "the next expedition starts on its first day"
+        );
+        assert!(s.sim.boss().is_none(), "no boss state on the first day");
+        assert!(
+            s.sim.monsters().all(|m| m.kind != MonsterKind::Boss),
+            "no boss body on the first day"
+        );
+
+        // 다음 원정의 마지막 밤에 나타나는 보스는 처음의 모습입니다. 이전 보스에서 이어받은 것이 없습니다.
+        run_until_the_last_wave_is_out(&mut s);
+        s.clear_monsters();
+        s.run_until(500, |sim| sim.boss().is_some());
+        let second = s.sim.boss().expect("a boss in the next expedition").clone();
+        assert_ne!(second.id, first_boss, "a new body, not the one that ended");
+        assert_eq!(second.max_hp, full_hp());
+        assert_eq!(boss_hp(&s), full_hp());
+        assert_eq!(second.aim, Aim::Wagon);
+        assert!(
+            matches!(second.act, Act::Walking { ticks_left } if ticks_left > s.ticks(2.0)),
+            "it starts with the three-second walk before its first act, not the shortened one: {:?}",
+            second.act
+        );
+    }
 }
 
 #[test]
@@ -986,7 +1065,8 @@ fn turned(degrees: f32) -> (f32, f32) {
 }
 
 #[test]
-fn a_spear_aimed_beside_the_middle_of_the_boss_hits_the_body_it_crosses_and_misses_past_it() {
+fn a_spear_aimed_beside_the_middle_of_the_boss_hits_the_body_it_crosses_and_misses_past_its_margin()
+{
     let full = 100_000;
     let from = Vec2::new(13.0, 10.0);
     // 창의 반각은 15도입니다. 2타일 떨어진 보스의 맞는 몸의 여유 0.6타일은 양쪽으로 약 17도를 더 덮습니다.
