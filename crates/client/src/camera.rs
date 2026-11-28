@@ -1,4 +1,4 @@
-//! 카메라가 내 캐릭터를 따라가고, 마차가 화면 밖에 있으면 마차가 있는 쪽의 화면 가장자리에 마차까지의 거리를 표시합니다.
+//! 카메라가 내 캐릭터를 따라가고, 마차나 보스가 화면 밖에 있으면 그것이 있는 쪽의 화면 가장자리에 그것까지의 거리를 표시합니다.
 //!
 //! 계산은 `caravan_client_core::camera`가 합니다. 이 파일은 그 계산에 Bevy의 카메라, 창, UI 노드를 연결합니다.
 
@@ -6,8 +6,8 @@ use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 use bevy::text::{Justify, TextLayout};
 use bevy::window::PrimaryWindow;
-use caravan_client_core::Setting;
 use caravan_client_core::camera::{self, ViewRect};
+use caravan_client_core::{Setting, boss_view};
 
 use crate::config;
 use crate::convert;
@@ -19,11 +19,37 @@ use crate::view::Scene;
 #[derive(Resource, Default)]
 pub struct FollowedSetting(pub(crate) Option<Setting>);
 
-/// 화면 가장자리의 마차 표시입니다.
-#[derive(Component)]
-pub struct WagonMarkerNode;
+/// 화면 가장자리의 표시가 가리키는 것입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Marked {
+    Wagon,
+    /// 보스는 보스와 싸우는 동안에만 있으므로, 그 밖의 때에는 표시가 숨습니다.
+    Boss,
+}
 
-/// 카메라와 마차 표시를 만듭니다. 카메라는 세로로 `config::VIEW_HEIGHT_PX`만큼 보여 주고, 창의 가로는 비율에 맞춰 달라집니다.
+impl Marked {
+    const ALL: [Marked; 2] = [Marked::Wagon, Marked::Boss];
+
+    fn name(self) -> &'static str {
+        match self {
+            Marked::Wagon => "WAGON",
+            Marked::Boss => "BOSS",
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Marked::Wagon => config::WAGON_MARKER,
+            Marked::Boss => config::BOSS_MARKER,
+        }
+    }
+}
+
+/// 화면 가장자리의 표시입니다. 가리키는 것마다 하나입니다.
+#[derive(Component)]
+pub struct EdgeMarkerNode(pub Marked);
+
+/// 카메라와 가장자리의 표시를 만듭니다. 카메라는 세로로 `config::VIEW_HEIGHT_PX`만큼 보여 주고, 창의 가로는 비율에 맞춰 달라집니다.
 pub fn setup(mut commands: Commands) {
     commands.spawn((
         Camera2d,
@@ -34,28 +60,30 @@ pub fn setup(mut commands: Commands) {
             ..OrthographicProjection::default_2d()
         }),
     ));
-    commands.spawn((
-        Text::new(""),
-        TextFont {
-            font_size: FontSize::Px(config::WAGON_MARKER_SIZE),
-            ..default()
-        },
-        TextColor(config::WAGON_MARKER),
-        TextShadow::default(),
-        TextLayout::justify(Justify::Center),
-        Node {
-            position_type: PositionType::Absolute,
-            width: px(config::WAGON_MARKER_WIDTH),
-            margin: UiRect {
-                left: px(-config::WAGON_MARKER_WIDTH / 2.0),
-                top: px(-config::WAGON_MARKER_SIZE / 2.0),
+    for marked in Marked::ALL {
+        commands.spawn((
+            Text::new(""),
+            TextFont {
+                font_size: FontSize::Px(config::WAGON_MARKER_SIZE),
                 ..default()
             },
-            ..default()
-        },
-        Visibility::Hidden,
-        WagonMarkerNode,
-    ));
+            TextColor(marked.color()),
+            TextShadow::default(),
+            TextLayout::justify(Justify::Center),
+            Node {
+                position_type: PositionType::Absolute,
+                width: px(config::WAGON_MARKER_WIDTH),
+                margin: UiRect {
+                    left: px(-config::WAGON_MARKER_WIDTH / 2.0),
+                    top: px(-config::WAGON_MARKER_SIZE / 2.0),
+                    ..default()
+                },
+                ..default()
+            },
+            Visibility::Hidden,
+            EdgeMarkerNode(marked),
+        ));
+    }
 }
 
 /// 카메라의 중심을 내 캐릭터의 화면 위치 쪽으로 옮깁니다. 첫 프레임과 세계가 다시 놓인 프레임(원정의 시작, 야영지로 돌아옴)에는 곧바로 옮깁니다.
@@ -87,20 +115,20 @@ pub fn follow(
     camera.translation.y = center.y;
 }
 
-/// 마차가 화면 밖에 있으면 표시를 마차 쪽 가장자리에 놓고 「WAGON 23」처럼 내 캐릭터에서 마차까지의 타일 수를 적습니다.
-pub fn mark_the_wagon(
+/// 마차나 보스가 화면 밖에 있으면 표시를 그쪽 가장자리에 놓고 「WAGON 23」이나 「BOSS 17」처럼 내 캐릭터에서 그것까지의 타일 수를 적습니다.
+/// 보스의 자리는 스냅샷의 보스 몸에서 오므로, 보스가 없는 때에는 보스의 표시가 숨습니다.
+pub fn mark_off_screen(
     frame: Res<CurrentFrame>,
     scene: Res<Scene>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<&Transform, With<Camera2d>>,
-    mut marker: Single<(&mut Node, &mut Text, &mut Visibility), With<WagonMarkerNode>>,
+    mut markers: Query<(&EdgeMarkerNode, &mut Node, &mut Text, &mut Visibility)>,
 ) {
-    let (node, text, visibility) = &mut *marker;
+    let frame = frame.0.as_ref();
     let me = frame
-        .0
-        .as_ref()
         .and_then(|frame| frame.player(scene.you))
         .map(|me| me.pos);
+    let boss = frame.and_then(boss_view).map(|boss| boss.body.pos);
     let view = ViewRect {
         center: convert::to_rules(camera.translation.truncate()),
         size: convert::to_rules(Vec2::new(
@@ -108,25 +136,31 @@ pub fn mark_the_wagon(
             config::VIEW_HEIGHT_PX,
         )),
     };
-    let shown = me.and_then(|me| {
-        camera::wagon_marker(
-            view,
-            convert::to_rules(convert::screen_pos(scene.wagon_center)),
-            me,
-            scene.wagon_center,
-            config::WAGON_MARKER_INSET_PX,
-        )
-    });
-    let Some(shown) = shown else {
-        visibility.set_if_neq(Visibility::Hidden);
-        return;
-    };
-    visibility.set_if_neq(Visibility::Inherited);
-    node.left = percent(shown.anchor.x * 100.0);
-    node.top = percent(shown.anchor.y * 100.0);
-    let label = format!("WAGON {}", shown.distance_tiles);
-    if text.0 != label {
-        text.0 = label;
+    for (EdgeMarkerNode(marked), mut node, mut text, mut visibility) in &mut markers {
+        let ground = match marked {
+            Marked::Wagon => Some(scene.wagon_center),
+            Marked::Boss => boss,
+        };
+        let shown = me.zip(ground).and_then(|(me, ground)| {
+            camera::edge_marker(
+                view,
+                convert::to_rules(convert::screen_pos(ground)),
+                me,
+                ground,
+                config::WAGON_MARKER_INSET_PX,
+            )
+        });
+        let Some(shown) = shown else {
+            visibility.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        visibility.set_if_neq(Visibility::Inherited);
+        node.left = percent(shown.anchor.x * 100.0);
+        node.top = percent(shown.anchor.y * 100.0);
+        let label = format!("{} {}", marked.name(), shown.distance_tiles);
+        if text.0 != label {
+            text.0 = label;
+        }
     }
 }
 
@@ -140,9 +174,10 @@ mod tests {
     use crate::testing::{YOU, joined_flow};
     use crate::view;
     use bevy::time::TimeUpdateStrategy;
-    use caravan_client_core::{Frame, PlayerView};
+    use caravan_client_core::{Frame, MonsterView, PlayerView};
     use caravan_protocol::{
-        WireLife, WireLoadout, WirePhase, WireStructureKind, WireWagon, WireWeaponKind,
+        WireAim, WireBoss, WireBossAct, WireLife, WireLoadout, WireMonsterEffects, WireMonsterKind,
+        WireNightStep, WirePhase, WireStructureKind, WireWagon, WireWeaponKind,
     };
     use caravan_rules::{Team, Vec2 as Ground};
 
@@ -164,7 +199,7 @@ mod tests {
                 (
                     view::spawn_world.run_if(not(resource_exists::<Scene>)),
                     follow.run_if(resource_exists::<Scene>),
-                    mark_the_wagon.run_if(resource_exists::<Scene>),
+                    mark_off_screen.run_if(resource_exists::<Scene>),
                 )
                     .chain(),
             );
@@ -216,10 +251,13 @@ mod tests {
         query.single(world).unwrap().translation.truncate()
     }
 
-    fn marker(app: &mut App) -> (Visibility, String) {
+    fn marker(app: &mut App, marked: Marked) -> (Visibility, String) {
         let world = app.world_mut();
-        let mut query = world.query_filtered::<(&Visibility, &Text), With<WagonMarkerNode>>();
-        let (visibility, text) = query.single(world).unwrap();
+        let mut query = world.query::<(&EdgeMarkerNode, &Visibility, &Text)>();
+        let (_, visibility, text) = query
+            .iter(world)
+            .find(|(node, _, _)| node.0 == marked)
+            .unwrap();
         (*visibility, text.0.clone())
     }
 
@@ -294,17 +332,68 @@ mod tests {
         let mut app = app();
         show(&mut app, 1, 31.0, 29.0);
         assert_eq!(
-            marker(&mut app).0,
+            marker(&mut app, Marked::Wagon).0,
             Visibility::Hidden,
             "the wagon is in view"
         );
 
         show(&mut app, 2, 5.0, 5.0);
-        let (visibility, label) = marker(&mut app);
+        let (visibility, label) = marker(&mut app, Marked::Wagon);
         assert_eq!(visibility, Visibility::Inherited);
         assert_eq!(label, "WAGON 38", "the wagon centre is 38 tiles away");
 
         show(&mut app, 3, 31.0, 29.0);
-        assert_eq!(marker(&mut app).0, Visibility::Hidden, "back in view");
+        assert_eq!(
+            marker(&mut app, Marked::Wagon).0,
+            Visibility::Hidden,
+            "back in view"
+        );
+    }
+
+    /// 보스가 `boss_at`에 서 있는 밤의 프레임을 지금 프레임에 덧씌웁니다.
+    fn put_boss(app: &mut App, boss_at: Ground) {
+        if let Some(frame) = &mut app.world_mut().resource_mut::<CurrentFrame>().0 {
+            frame.phase = WirePhase::Night {
+                day: 3,
+                wave_count: 3,
+                step: WireNightStep::Boss(WireBoss {
+                    max_hp: 12000,
+                    aim: WireAim::Wagon,
+                    act: WireBossAct::Walking,
+                }),
+            };
+            frame.monsters = vec![MonsterView {
+                id: 9,
+                kind: WireMonsterKind::Boss,
+                effects: WireMonsterEffects::NONE,
+                pos: boss_at,
+                facing: Ground::new(1.0, 0.0),
+                hp: 12000,
+            }];
+        }
+        app.update();
+    }
+
+    #[test]
+    fn the_boss_marker_shows_only_while_the_boss_is_off_the_screen() {
+        let mut app = app();
+        show(&mut app, 1, 31.0, 29.0);
+        assert_eq!(
+            marker(&mut app, Marked::Boss).0,
+            Visibility::Hidden,
+            "there is no boss yet"
+        );
+
+        put_boss(&mut app, Ground::new(31.0, 69.0));
+        let (visibility, label) = marker(&mut app, Marked::Boss);
+        assert_eq!(visibility, Visibility::Inherited);
+        assert_eq!(label, "BOSS 40", "the boss is 40 tiles away");
+
+        put_boss(&mut app, Ground::new(33.0, 29.0));
+        assert_eq!(
+            marker(&mut app, Marked::Boss).0,
+            Visibility::Hidden,
+            "the boss is in view"
+        );
     }
 }

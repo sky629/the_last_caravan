@@ -8,6 +8,7 @@
 
 use crate::math::{Rect, Vec2};
 use crate::monster::Monster;
+use crate::tuning::MonsterTable;
 
 pub(crate) struct MonsterGrid {
     origin: Vec2,
@@ -19,6 +20,8 @@ pub(crate) struct MonsterGrid {
     entries: Vec<Entry>,
     /// `rebuild`가 칸마다 다음에 넣을 자리를 기록하는 작업용 배열입니다.
     cursors: Vec<usize>,
+    /// 격자에 든 몬스터의 `MonsterTuning::hit_margin` 가운데 가장 큰 값입니다. 맞는 몸이 걷는 몸보다 큰 몬스터가 없으면 0입니다.
+    hit_margin: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -40,16 +43,19 @@ impl MonsterGrid {
             starts: vec![0; cols * rows + 1],
             entries: Vec::new(),
             cursors: vec![0; cols * rows],
+            hit_margin: 0.0,
         }
     }
 
     /// 몬스터의 현재 위치로 격자를 다시 만듭니다. 칸마다 몬스터를 세고, 누적합으로 시작 위치를 정한 뒤, 차례로 채웁니다.
     /// 같은 칸 안에서는 몬스터의 순서가 유지되므로, 같은 상태에서는 `query`가 항상 같은 순서로 답합니다.
-    pub fn rebuild(&mut self, monsters: &[Monster]) {
+    pub fn rebuild(&mut self, monsters: &[Monster], kinds: &MonsterTable) {
         self.starts.fill(0);
+        self.hit_margin = 0.0;
         for monster in monsters {
             let cell = self.cell_index(monster.pos);
             self.starts[cell + 1] += 1;
+            self.hit_margin = self.hit_margin.max(kinds.get(monster.kind).hit_margin);
         }
         for cell in 0..self.cursors.len() {
             self.starts[cell + 1] += self.starts[cell];
@@ -92,6 +98,12 @@ impl MonsterGrid {
                 }
             }
         }
+    }
+
+    /// 격자에 든 몬스터 가운데 맞는 몸이 걷는 몸보다 가장 많이 큰 차이(타일)입니다. 공격의 후보를 찾는 쪽이 검색 반지름에 더합니다.
+    /// 그런 몬스터가 없으면 0이므로 검색 반지름이 맞는 몸이 큰 몬스터가 없던 때와 같습니다.
+    pub fn hit_margin(&self) -> f32 {
+        self.hit_margin
     }
 
     /// 점이 속한 칸의 열과 행입니다. 격자 밖의 점은 가장 가까운 가장자리 칸으로 봅니다.

@@ -36,6 +36,8 @@ pub const PLAYER_BODY: Vec2 = Vec2::new(14.0, 30.0);
 pub const MONSTER_BODY: Vec2 = Vec2::new(12.0, 20.0);
 /// 야영지의 허수아비입니다. 몬스터보다 키가 크고 막대기에 걸린 모습이라 가늘어서, 몬스터와 한눈에 구분됩니다.
 pub const SCARECROW_BODY: Vec2 = Vec2::new(10.0, 34.0);
+/// 보스는 플레이어보다 두 배쯤 크게 그립니다. 그림자는 맞는 몸의 원이므로 몸통도 그 폭에 가깝습니다.
+pub const BOSS_BODY: Vec2 = Vec2::new(40.0, 56.0);
 /// 쓰러진 플레이어는 누워 있는 것처럼 낮게 그립니다.
 pub const DOWNED_BODY_HEIGHT: f32 = 10.0;
 pub const DEAD_BODY_HEIGHT: f32 = 5.0;
@@ -129,6 +131,16 @@ pub const DEAD: Color = Color::srgb(0.40, 0.40, 0.42);
 pub const MONSTER: Color = Color::srgb(0.85, 0.22, 0.28);
 /// 허수아비는 몬스터(빨강)와 달리 밀짚색이어서, 때려도 되는 과녁임을 알 수 있습니다.
 pub const SCARECROW: Color = Color::srgb(0.82, 0.70, 0.40);
+/// 보스는 몬스터(빨강)보다 어두운 검붉은색이어서, 무리 속에서도 한눈에 구분됩니다. 효과에 걸린 색과도 구분됩니다.
+pub const BOSS: Color = Color::srgb(0.55, 0.05, 0.05);
+/// 보스가 예고한 자리의 색입니다. 테두리는 진하게 그리고, 안쪽은 피해가 날 때가 가까울수록 넓게 채웁니다.
+pub const DANGER: Color = Color::srgba(1.00, 0.30, 0.15, 0.95);
+pub const DANGER_FILL: Color = Color::srgba(1.00, 0.30, 0.15, 0.45);
+/// 보스가 노리는 플레이어의 머리 위에 그리는 표시입니다.
+pub const BOSS_TARGET: Color = Color::srgb(1.00, 0.25, 0.25);
+/// 보스가 노리는 플레이어의 발에서 위로 표시를 띄우는 높이(픽셀)와 표시의 크기입니다. 표시의 끝이 이름 위에 있어야 이름과 겹치지 않습니다.
+pub const BOSS_TARGET_LIFT_PX: f32 = 72.0;
+pub const BOSS_TARGET_SIZE_PX: f32 = 13.0;
 /// 몬스터와 허수아비의 몸통이 효과에 걸렸을 때의 색입니다. 여러 효과가 함께 걸리면 스턴, 감속, 출혈의 순서로 앞선 하나만 보입니다.
 /// 몬스터(빨강), 허수아비(밀짚), 내 캐릭터(노랑), 동료(파랑), 다른 편 플레이어(연보라)와 어느 쪽과도 구분됩니다.
 pub const EFFECT_STUN: Color = Color::srgb(0.97, 0.97, 1.00);
@@ -144,6 +156,7 @@ pub const BAR_SITE: Color = Color::srgb(0.95, 0.80, 0.25);
 pub const BAR_NODE: Color = Color::srgb(0.45, 0.90, 0.82);
 pub const SWING: Color = Color::srgb(1.00, 1.00, 0.80);
 pub const WAGON_MARKER: Color = Color::srgb(1.00, 0.72, 0.38);
+pub const BOSS_MARKER: Color = Color::srgb(1.00, 0.35, 0.35);
 pub const SHOT: Color = Color::srgb(1.00, 0.90, 0.30);
 /// 활과 석궁의 탄환입니다.
 pub const BULLET: Color = Color::srgb(1.00, 0.97, 0.75);
@@ -180,11 +193,34 @@ mod tests {
     }
 
     #[test]
+    fn the_boss_stands_apart_from_the_monsters_the_effects_the_players_and_the_ground() {
+        let others = [
+            MONSTER,
+            SCARECROW,
+            EFFECT_STUN,
+            EFFECT_SLOW,
+            EFFECT_BLEED,
+            YOU,
+            ALLY,
+            HOSTILE_PLAYER,
+            DOWNED,
+            DEAD,
+            SHADOW,
+            WAGON,
+            GROUND_A,
+            GROUND_B,
+        ];
+        for other in others {
+            assert!(apart(BOSS, other) >= 0.25, "{other:?}");
+        }
+    }
+
+    #[test]
     fn the_colours_of_the_kinds_other_than_the_watchtower_stand_apart_from_the_bodies_that_stand_beside_them()
      {
         let other_kinds = [SLOW_TOWER, STUN_TOWER, HASTE_TOWER, SWIFT_TOWER];
         // 같은 편 플레이어(파랑)는 몸통이 작고 서 있는 모양이 달라서 포탑의 파랑 계열과 같은 계열이어도 헷갈리지 않으므로 뺍니다.
-        let bodies = [YOU, HOSTILE_PLAYER, DOWNED, DEAD, MONSTER, SCARECROW];
+        let bodies = [YOU, HOSTILE_PLAYER, DOWNED, DEAD, MONSTER, SCARECROW, BOSS];
         for tower in other_kinds {
             for body in bodies {
                 assert!(apart(tower, body) >= 0.25, "{tower:?} and {body:?}");

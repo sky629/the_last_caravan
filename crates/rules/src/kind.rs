@@ -10,10 +10,17 @@ pub enum MonsterKind {
     /// 야영지에 서 있는 허수아비입니다. 무기를 시험하는 과녁이고, 움직이지 않고 공격하지 않습니다.
     /// 야영지에서는 아무것도 피해를 받지 않으므로 쓰러지지 않습니다.
     Scarecrow,
+    /// 마지막 밤의 끝에 하나만 나타나는 보스입니다. 걷는 몸은 `Grunt`와 같은 크기이고 맞는 몸은 훨씬 큽니다.
+    /// 밤의 무리와 낮의 몬스터로는 놓이지 않고, 보스의 상태(`World::boss`)와 함께 `World::spawn_boss`가 만듭니다.
+    Boss,
 }
 
 impl MonsterKind {
-    pub const ALL: [MonsterKind; 2] = [MonsterKind::Grunt, MonsterKind::Scarecrow];
+    pub const ALL: [MonsterKind; 3] = [
+        MonsterKind::Grunt,
+        MonsterKind::Scarecrow,
+        MonsterKind::Boss,
+    ];
 }
 
 /// 플레이어가 짓는 포탑의 종류입니다. 종류마다 하는 일(`TowerAction`)과 수치는 `StructureTable`의 한 행에 있습니다.

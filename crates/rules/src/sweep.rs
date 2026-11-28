@@ -115,7 +115,7 @@ pub(crate) struct Strikes {
 
 /// 반지름이 `radius`인 원이 `from`에서 `from + delta`로 움직일 때 닿는 `team`과 적대적인 몬스터를 닿는 순서대로 `out.found`에 채웁니다.
 /// 탄환은 앞에서부터 맞힐 수 있는 수만큼 맞히고, 곧바로 맞히는 무기는 첫 항목만 맞힙니다.
-/// 중심이 몬스터의 반지름에 `radius`를 더한 거리 안으로 지나가면 닿은 것입니다.
+/// 중심이 몬스터의 맞는 몸의 반지름(`MonsterTuning::hit_radius`)에 `radius`를 더한 거리 안으로 지나가면 닿은 것입니다.
 pub(crate) fn monsters_along(
     team: Team,
     radius: f32,
@@ -128,14 +128,15 @@ pub(crate) fn monsters_along(
     out.found.clear();
     // 선분 위의 모든 점은 중점에서 길이의 절반 안에 있으므로, 그 둘레의 몬스터만 후보입니다.
     let middle = from + delta * 0.5;
-    let search_radius = delta.length() * 0.5 + radius + ctx.t.monsters.largest_radius();
+    let search_radius =
+        delta.length() * 0.5 + radius + ctx.t.monsters.largest_radius() + ctx.grid.hit_margin();
     ctx.grid.query(middle, search_radius, &mut out.nearby);
     for &index in &out.nearby {
         let monster = &monsters[index];
         if !team.is_hostile_to(monster.team) {
             continue;
         }
-        let reach = ctx.t.monsters.get(monster.kind).radius + radius;
+        let reach = ctx.t.monsters.get(monster.kind).hit_radius() + radius;
         if let Some(at) = circle_entry(from, delta, monster.pos, reach) {
             out.found.push((at, monster.id));
         }

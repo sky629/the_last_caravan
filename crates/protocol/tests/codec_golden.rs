@@ -11,15 +11,15 @@
 //! 이 테스트가 실패하면 전송 형식이 바뀐 것입니다. 기대 바이트를 고칠 때 `PROTOCOL_VERSION`도 함께 올립니다.
 
 use caravan_protocol::{
-    ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RackInfo, RejectReason,
-    SeatToken, ServerMsg, Snapshot, StructureKindInfo, WeaponInfo, Welcome, WireAngle, WireAttack,
-    WireBuffs, WireBuildRefusal, WireCannotBuild, WireChest, WireDelivery, WireGroundWeapon,
-    WireInteraction, WireLife, WireLoadout, WireMember, WireMonster, WireMonsterKind,
-    WireMonsterStatus, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer,
-    WirePos, WireProjectile, WirePrompt, WireRecordRow, WireRect, WireRepairTarget, WireReport,
-    WireRoster, WireShot, WireStruck, WireStructureKind, WireTile, WireTower, WireTowerState,
-    WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client, decode_server, encode_client,
-    encode_server,
+    BossInfo, ClientMsg, InputMsg, MonsterKindInfo, NodeInfo, PROTOCOL_VERSION, RackInfo,
+    RejectReason, SeatToken, ServerMsg, Snapshot, StructureKindInfo, WeaponInfo, Welcome, WireAim,
+    WireAngle, WireAttack, WireBoss, WireBossAct, WireBuffs, WireBuildRefusal, WireCannotBuild,
+    WireChest, WireDelivery, WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMember,
+    WireMonster, WireMonsterKind, WireMonsterStatus, WireNightStep, WireNode, WireOutcome,
+    WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt, WireRecordRow, WireRect,
+    WireRepairTarget, WireReport, WireRoster, WireShot, WireStruck, WireStructureKind, WireTile,
+    WireTower, WireTowerState, WireVec2, WireWagon, WireWeaponKind, WorldInfo, decode_client,
+    decode_server, encode_client, encode_server,
 };
 
 fn assert_client_wire(msg: ClientMsg, bytes: &[u8]) {
@@ -34,7 +34,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 14);
+    assert_eq!(PROTOCOL_VERSION, 15);
 }
 
 /// 값이 눈에 띄도록 0x10부터 이어지는 바이트로 만든 표식입니다.
@@ -54,7 +54,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
         },
         &[
             0x00, // Join 변형
-            0x0E, // version
+            0x0F, // version
             0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
             0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
             0x00, // token: 없음
@@ -68,7 +68,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
             token: Some(TOKEN),
         },
         &[
-            0x00, 0x0E, 0x00, 0x04, b'K', b'A', b'N', b'G', //
+            0x00, 0x0F, 0x00, 0x04, b'K', b'A', b'N', b'G', //
             0x01, // token: 있음
             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 길이 없이 16바이트
             0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -129,162 +129,170 @@ fn welcome_carries_the_fixed_world() {
         min: WirePos { x: min_x, y: min_y },
         max: WirePos { x: max_x, y: max_y },
     };
-    assert_server_wire(
-        ServerMsg::Welcome(Box::new(Welcome {
-            you: 2,
-            team: 0,
-            tick_hz: 20,
-            capacity: 4,
-            room: "k7m2q".to_string(),
-            token: TOKEN,
-            world: WorldInfo {
-                size: WirePos { x: 3072, y: 3072 },
-                obstacles: vec![rect(512, 640, 1024, 768)],
-                wagon: rect(1280, 1408, 1792, 1664),
-                day_count: 3,
-                tower_limit: 40,
-                carry_capacity: 10,
-                node_amount: 15,
-                nodes: vec![NodeInfo {
-                    id: 1,
-                    tile: WireTile { x: 9, y: 22 },
-                }],
-                player_radius: 0.5,
-                monster_kinds: vec![
-                    MonsterKindInfo {
-                        kind: WireMonsterKind::Grunt,
-                        radius: 0.25,
-                        max_hp: 60,
+    let welcome = Welcome {
+        you: 2,
+        team: 0,
+        tick_hz: 20,
+        capacity: 4,
+        room: "k7m2q".to_string(),
+        token: TOKEN,
+        world: WorldInfo {
+            size: WirePos { x: 3072, y: 3072 },
+            obstacles: vec![rect(512, 640, 1024, 768)],
+            wagon: rect(1280, 1408, 1792, 1664),
+            day_count: 3,
+            tower_limit: 40,
+            carry_capacity: 10,
+            node_amount: 15,
+            nodes: vec![NodeInfo {
+                id: 1,
+                tile: WireTile { x: 9, y: 22 },
+            }],
+            player_radius: 0.5,
+            monster_kinds: vec![
+                MonsterKindInfo {
+                    kind: WireMonsterKind::Grunt,
+                    radius: 0.25,
+                    max_hp: 60,
+                },
+                MonsterKindInfo {
+                    kind: WireMonsterKind::Scarecrow,
+                    radius: 0.25,
+                    max_hp: 60,
+                },
+            ],
+            weapons: vec![
+                WeaponInfo {
+                    kind: WireWeaponKind::Sword,
+                    delivery: WireDelivery::Arc {
+                        reach: 1.0,
+                        half_angle_deg: 60.0,
                     },
-                    MonsterKindInfo {
-                        kind: WireMonsterKind::Scarecrow,
-                        radius: 0.25,
-                        max_hp: 60,
+                },
+                WeaponInfo {
+                    kind: WireWeaponKind::Bow,
+                    delivery: WireDelivery::Projectile,
+                },
+                WeaponInfo {
+                    kind: WireWeaponKind::Greatsword,
+                    delivery: WireDelivery::Arc {
+                        reach: 1.3,
+                        half_angle_deg: 90.0,
                     },
-                ],
-                weapons: vec![
-                    WeaponInfo {
-                        kind: WireWeaponKind::Sword,
-                        delivery: WireDelivery::Arc {
-                            reach: 1.0,
-                            half_angle_deg: 60.0,
-                        },
+                },
+                WeaponInfo {
+                    kind: WireWeaponKind::Spear,
+                    delivery: WireDelivery::Arc {
+                        reach: 2.2,
+                        half_angle_deg: 15.0,
                     },
-                    WeaponInfo {
-                        kind: WireWeaponKind::Bow,
-                        delivery: WireDelivery::Projectile,
-                    },
-                    WeaponInfo {
-                        kind: WireWeaponKind::Greatsword,
-                        delivery: WireDelivery::Arc {
-                            reach: 1.3,
-                            half_angle_deg: 90.0,
-                        },
-                    },
-                    WeaponInfo {
-                        kind: WireWeaponKind::Spear,
-                        delivery: WireDelivery::Arc {
-                            reach: 2.2,
-                            half_angle_deg: 15.0,
-                        },
-                    },
-                    WeaponInfo {
-                        kind: WireWeaponKind::Crossbow,
-                        delivery: WireDelivery::Projectile,
-                    },
-                    WeaponInfo {
-                        kind: WireWeaponKind::Rifle,
-                        delivery: WireDelivery::Hitscan,
-                    },
-                ],
-                racks: vec![
-                    RackInfo {
-                        kind: WireWeaponKind::Sword,
-                        pos: WirePos { x: 512, y: 4672 },
-                    },
-                    RackInfo {
-                        kind: WireWeaponKind::Bow,
-                        pos: WirePos { x: 666, y: 4672 },
-                    },
-                ],
-                structure_kinds: vec![
-                    StructureKindInfo {
-                        kind: WireStructureKind::Watchtower,
-                        max_hp: 300,
-                        build_cost: 10,
-                        range: 6.0,
-                        covers_area: false,
-                    },
-                    StructureKindInfo {
-                        kind: WireStructureKind::SlowTower,
-                        max_hp: 300,
-                        build_cost: 15,
-                        range: 4.0,
-                        covers_area: true,
-                    },
-                ],
-            },
-        })),
-        &[
-            0x00, // Welcome 변형
-            0x02, // you
-            0x00, // team
-            0x14, // tick_hz 20
-            0x04, // capacity
-            0x05, b'k', b'7', b'm', b'2', b'q', // room: 글자 5개
-            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
-            0x17, // token: 길이 없이 16바이트
-            0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-            // world.size: 3072 = 24 * 128 -> 0x80 0x18
-            0x80, 0x18, 0x80, 0x18, //
-            0x01, // obstacles: 길이 1
-            0x80, 0x04, 0x80, 0x05, 0x80, 0x08, 0x80, 0x06, // 512, 640 - 1024, 768
-            0x80, 0x0A, 0x80, 0x0B, 0x80, 0x0E, 0x80, 0x0D, // wagon 10, 11 - 14, 13 타일
-            0x03, // day_count
-            0x28, // tower_limit 40
-            0x0A, // carry_capacity 10
-            0x0F, // node_amount 15
-            0x01, // nodes: 길이 1
-            0x01, 0x09, 0x16, // id 1, tile 9 22
-            0x00, 0x00, 0x00, 0x3F, // player_radius 0.5
-            0x02, // monster_kinds: 길이 2
-            0x00, // Grunt
-            0x00, 0x00, 0x80, 0x3E, // radius 0.25
-            0x3C, // max_hp 60
-            0x01, // Scarecrow
-            0x00, 0x00, 0x80, 0x3E, // radius 0.25
-            0x3C, // max_hp 60
-            0x06, // weapons: 길이 6
-            0x00, 0x00, // Sword, Arc
-            0x00, 0x00, 0x80, 0x3F, // reach 1.0
-            0x00, 0x00, 0x70, 0x42, // half_angle_deg 60.0
-            0x01, 0x01, // Bow, Projectile
-            0x02, 0x00, // Greatsword, Arc
-            0x66, 0x66, 0xA6, 0x3F, // reach 1.3
-            0x00, 0x00, 0xB4, 0x42, // half_angle_deg 90.0
-            0x03, 0x00, // Spear, Arc
-            0xCD, 0xCC, 0x0C, 0x40, // reach 2.2
-            0x00, 0x00, 0x70, 0x41, // half_angle_deg 15.0
-            0x04, 0x01, // Crossbow, Projectile
-            0x05, 0x02, // Rifle, Hitscan
-            0x02, // racks: 길이 2
-            0x00, // Sword
-            0x80, 0x04, 0xC0, 0x24, // pos 512, 4672
-            0x01, // Bow
-            0x9A, 0x05, 0xC0, 0x24, // pos 666, 4672
-            0x02, // structure_kinds: 길이 2
-            0x00, // Watchtower
-            0xAC, 0x02, // max_hp 300
-            0x0A, // build_cost 10
-            0x00, 0x00, 0xC0, 0x40, // range 6.0
-            0x00, // covers_area 거짓
-            0x01, // SlowTower
-            0xAC, 0x02, // max_hp 300
-            0x0F, // build_cost 15
-            0x00, 0x00, 0x80, 0x40, // range 4.0
-            0x01, // covers_area 참
-        ],
-    );
+                },
+                WeaponInfo {
+                    kind: WireWeaponKind::Crossbow,
+                    delivery: WireDelivery::Projectile,
+                },
+                WeaponInfo {
+                    kind: WireWeaponKind::Rifle,
+                    delivery: WireDelivery::Hitscan,
+                },
+            ],
+            racks: vec![
+                RackInfo {
+                    kind: WireWeaponKind::Sword,
+                    pos: WirePos { x: 512, y: 4672 },
+                },
+                RackInfo {
+                    kind: WireWeaponKind::Bow,
+                    pos: WirePos { x: 666, y: 4672 },
+                },
+            ],
+            structure_kinds: vec![
+                StructureKindInfo {
+                    kind: WireStructureKind::Watchtower,
+                    max_hp: 300,
+                    build_cost: 10,
+                    range: 6.0,
+                    covers_area: false,
+                },
+                StructureKindInfo {
+                    kind: WireStructureKind::SlowTower,
+                    max_hp: 300,
+                    build_cost: 15,
+                    range: 4.0,
+                    covers_area: true,
+                },
+            ],
+            boss: Some(BossInfo { slam_radius: 2.5 }),
+        },
+    };
+    let bytes: &[u8] = &[
+        0x00, // Welcome 변형
+        0x02, // you
+        0x00, // team
+        0x14, // tick_hz 20
+        0x04, // capacity
+        0x05, b'k', b'7', b'm', b'2', b'q', // room: 글자 5개
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // token: 길이 없이 16바이트
+        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+        // world.size: 3072 = 24 * 128 -> 0x80 0x18
+        0x80, 0x18, 0x80, 0x18, //
+        0x01, // obstacles: 길이 1
+        0x80, 0x04, 0x80, 0x05, 0x80, 0x08, 0x80, 0x06, // 512, 640 - 1024, 768
+        0x80, 0x0A, 0x80, 0x0B, 0x80, 0x0E, 0x80, 0x0D, // wagon 10, 11 - 14, 13 타일
+        0x03, // day_count
+        0x28, // tower_limit 40
+        0x0A, // carry_capacity 10
+        0x0F, // node_amount 15
+        0x01, // nodes: 길이 1
+        0x01, 0x09, 0x16, // id 1, tile 9 22
+        0x00, 0x00, 0x00, 0x3F, // player_radius 0.5
+        0x02, // monster_kinds: 길이 2
+        0x00, // Grunt
+        0x00, 0x00, 0x80, 0x3E, // radius 0.25
+        0x3C, // max_hp 60
+        0x01, // Scarecrow
+        0x00, 0x00, 0x80, 0x3E, // radius 0.25
+        0x3C, // max_hp 60
+        0x06, // weapons: 길이 6
+        0x00, 0x00, // Sword, Arc
+        0x00, 0x00, 0x80, 0x3F, // reach 1.0
+        0x00, 0x00, 0x70, 0x42, // half_angle_deg 60.0
+        0x01, 0x01, // Bow, Projectile
+        0x02, 0x00, // Greatsword, Arc
+        0x66, 0x66, 0xA6, 0x3F, // reach 1.3
+        0x00, 0x00, 0xB4, 0x42, // half_angle_deg 90.0
+        0x03, 0x00, // Spear, Arc
+        0xCD, 0xCC, 0x0C, 0x40, // reach 2.2
+        0x00, 0x00, 0x70, 0x41, // half_angle_deg 15.0
+        0x04, 0x01, // Crossbow, Projectile
+        0x05, 0x02, // Rifle, Hitscan
+        0x02, // racks: 길이 2
+        0x00, // Sword
+        0x80, 0x04, 0xC0, 0x24, // pos 512, 4672
+        0x01, // Bow
+        0x9A, 0x05, 0xC0, 0x24, // pos 666, 4672
+        0x02, // structure_kinds: 길이 2
+        0x00, // Watchtower
+        0xAC, 0x02, // max_hp 300
+        0x0A, // build_cost 10
+        0x00, 0x00, 0xC0, 0x40, // range 6.0
+        0x00, // covers_area 거짓
+        0x01, // SlowTower
+        0xAC, 0x02, // max_hp 300
+        0x0F, // build_cost 15
+        0x00, 0x00, 0x80, 0x40, // range 4.0
+        0x01, // covers_area 참
+        0x01, // boss: 있음
+        0x00, 0x00, 0x20, 0x40, // slam_radius 2.5
+    ];
+    assert_server_wire(ServerMsg::Welcome(Box::new(welcome.clone())), bytes);
+
+    // 보스가 없는 설정은 마지막 한 바이트만 0이고 나머지는 같습니다.
+    let mut without = welcome;
+    without.world.boss = None;
+    let mut shorter = bytes[..bytes.len() - 5].to_vec();
+    shorter.push(0x00);
+    assert_server_wire(ServerMsg::Welcome(Box::new(without)), &shorter);
 }
 
 #[test]
@@ -915,5 +923,82 @@ fn bytes_that_are_not_exactly_one_message_are_rejected() {
     assert!(
         decode_server(&[0x00, 0x01, 0x04, b't']).is_err(),
         "client bytes on the server channel"
+    );
+}
+
+#[test]
+fn the_boss_warning_and_the_boss_step_match_golden_bytes() {
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Night {
+            day: 3,
+            wave_count: 3,
+            step: WireNightStep::Warning { secs_left: 5.0 },
+        }))),
+        &quiet_bytes(&[0x01, 0x03, 0x03, 0x02, 0x00, 0x00, 0xA0, 0x40]),
+    );
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Night {
+            day: 3,
+            wave_count: 3,
+            step: WireNightStep::Boss(WireBoss {
+                max_hp: 12_000,
+                aim: WireAim::Player(2),
+                act: WireBossAct::Slam {
+                    center: WirePos { x: 640, y: 1280 },
+                    progress: 0.5,
+                },
+            }),
+        }))),
+        // Night, 날 3, 무리 3개, 단계 Boss, 최대 HP 12000, 노리는 대상 플레이어 2, 내려찍기(중심 640 1280, 진행도 0.5)
+        &quiet_bytes(&[
+            0x01, 0x03, 0x03, 0x03, 0xE0, 0x5D, 0x00, 0x02, 0x01, 0x80, 0x05, 0x80, 0x0A, 0x00,
+            0x00, 0x00, 0x3F,
+        ]),
+    );
+    assert_server_wire(
+        ServerMsg::Snapshot(Box::new(quiet_snapshot(WirePhase::Night {
+            day: 3,
+            wave_count: 3,
+            step: WireNightStep::Boss(WireBoss {
+                max_hp: 3_000,
+                aim: WireAim::Wagon,
+                act: WireBossAct::Walking,
+            }),
+        }))),
+        // 최대 HP 3000, 노리는 대상 마차, 걷는 중
+        &quiet_bytes(&[0x01, 0x03, 0x03, 0x03, 0xB8, 0x17, 0x01, 0x00]),
+    );
+}
+
+#[test]
+fn a_boss_body_is_a_monster_of_kind_two() {
+    let mut snapshot = quiet_snapshot(WirePhase::Day {
+        day: 1,
+        secs_left: 3.0,
+    });
+    snapshot.monsters = vec![WireMonster {
+        id: 5,
+        status: WireMonsterStatus::plain(WireMonsterKind::Boss),
+        pos: WirePos { x: 3072, y: 128 },
+        facing: WireAngle(128),
+        hp: 12_000,
+    }];
+    // Snapshot, tick 1, expedition 1, 낮(날 1, 3.0초), 마차 0/0, 보관함 0, 탑과 지점과 더미와 플레이어는 빈 목록 넷
+    let mut expected = vec![
+        0x02, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ];
+    expected.extend_from_slice(&[
+        0x01, // monsters: 길이 1
+        0x05, // id 5
+        0x02, // 종류 Boss, 효과 없음
+        0x80, 0x18, 0x80, 0x01, // pos 3072, 128
+        0x80, // facing 128
+        0xE0, 0x5D, // hp 12000
+        0x00, 0x00, 0x00, // chests, ground_weapons, projectiles 비어 있음
+    ]);
+    assert_eq!(
+        encode_server(&ServerMsg::Snapshot(Box::new(snapshot))),
+        expected
     );
 }

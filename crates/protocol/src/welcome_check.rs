@@ -112,6 +112,15 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
         }
     }
 
+    if let Some(boss) = &world.boss {
+        let tiles = boss.slam_radius;
+        if !(tiles > 0.0 && tiles <= MAX_MAP_SIDE_TILES) {
+            return Err(format!(
+                "a boss slam radius of {tiles} tiles is outside 0 to {MAX_MAP_SIDE_TILES} tiles"
+            ));
+        }
+    }
+
     let map = Rect::new(0.0, 0.0, size.x, size.y);
     let solids = world.obstacles.iter().copied().chain([world.wagon]);
     let mut solid_tiles = 0;
@@ -165,7 +174,7 @@ fn check_count(name: &str, value: usize, max: usize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MonsterKindInfo, StructureKindInfo, WireRect};
+    use crate::{BossInfo, MonsterKindInfo, StructureKindInfo, WireRect};
     use caravan_rules::{Seed, Sim, Tuning};
 
     /// 기본 수치에서 서버가 보내는 입장 안내입니다.
@@ -423,5 +432,24 @@ mod tests {
             };
             assert!(refused(&welcome).contains("radius"), "monster radius {bad}");
         }
+    }
+
+    #[test]
+    fn a_boss_slam_that_is_not_a_positive_number_within_the_map_is_refused() {
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY, MAX_MAP_SIDE_TILES + 1.0] {
+            let mut welcome = normal();
+            welcome.world.boss = Some(BossInfo { slam_radius: bad });
+            assert!(
+                refused(&welcome).contains("boss slam radius"),
+                "slam radius {bad}"
+            );
+        }
+        let mut welcome = normal();
+        welcome.world.boss = Some(BossInfo {
+            slam_radius: MAX_MAP_SIDE_TILES,
+        });
+        assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
+        welcome.world.boss = None;
+        assert_eq!(check_welcome(&welcome), Ok(()), "no boss is fine");
     }
 }

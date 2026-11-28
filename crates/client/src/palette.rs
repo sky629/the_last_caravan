@@ -49,7 +49,8 @@ pub struct Palette {
     pub dead: Handle<ColorMaterial>,
     pub monster: Handle<ColorMaterial>,
     pub scarecrow: Handle<ColorMaterial>,
-    /// 효과에 걸린 몬스터의 몸통입니다. 몬스터와 허수아비에게 같이 씁니다.
+    pub boss: Handle<ColorMaterial>,
+    /// 효과에 걸린 몬스터의 몸통입니다. 몬스터와 허수아비와 보스에게 같이 씁니다.
     pub effects: EffectPaints,
     pub nose_player: Handle<ColorMaterial>,
     pub nose_monster: Handle<ColorMaterial>,
@@ -177,6 +178,7 @@ pub fn setup_palette(
         dead: paint(config::DEAD),
         monster: paint(config::MONSTER),
         scarecrow: paint(config::SCARECROW),
+        boss: paint(config::BOSS),
         effects: EffectPaints {
             stun: paint(config::EFFECT_STUN),
             slow: paint(config::EFFECT_SLOW),

@@ -38,6 +38,10 @@ fn the_layout_is_the_kind_in_the_low_bits_and_one_bit_per_effect_above_it() {
     assert_eq!(byte_of(WireMonsterStatus::plain(grunt)), 0b0000_0000);
     assert_eq!(byte_of(WireMonsterStatus::plain(scarecrow)), 0b0000_0001);
     assert_eq!(
+        byte_of(WireMonsterStatus::plain(WireMonsterKind::Boss)),
+        0b0000_0010
+    );
+    assert_eq!(
         byte_of(WireMonsterStatus::new(grunt, effects(true, false, false))),
         0b0001_0000,
         "stunned"

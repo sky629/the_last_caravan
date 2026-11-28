@@ -4,8 +4,8 @@ use super::support::{Scenario, nights, watchtower_shot};
 use crate::kind::WeaponKind;
 use crate::math::{Rect, Vec2};
 use crate::tuning::{
-    AfflictTuning, ArcTuning, AuraTuning, Buff, Debuff, Delivery, HitscanTuning, ProjectileTuning,
-    PulseTuning, TowerAction, Tuning, WaveScaling,
+    AfflictTuning, ArcTuning, AuraTuning, BossTuning, Buff, Debuff, Delivery, Finale,
+    HitscanTuning, ProjectileTuning, PulseTuning, TowerAction, Tuning, WaveScaling,
 };
 use crate::world::Tile;
 
@@ -1174,4 +1174,90 @@ fn the_buff_of_a_buff_tower_lasts_longer_than_zero() {
 
     t.structures.swift_tower.action = aura(Buff::Swift { secs: 0.05 });
     assert_eq!(t.validate(), Ok(()), "a buff of one tick");
+}
+
+#[test]
+fn a_monster_row_that_takes_more_than_the_whole_tower_damage_or_slow_is_rejected() {
+    let mut t = Tuning::default();
+    t.monsters.boss.resist.tower_damage_percent = 101;
+    let why = t.validate().expect_err("more than all of the damage");
+    assert!(why.contains("tower_damage_percent"), "{why}");
+
+    let mut t = Tuning::default();
+    t.monsters.boss.resist.slow_percent = 101;
+    let why = t.validate().expect_err("more than all of the slow");
+    assert!(why.contains("slow_percent"), "{why}");
+
+    let mut t = Tuning::default();
+    t.monsters.boss.resist.tower_damage_percent = 0;
+    t.monsters.boss.resist.slow_percent = 0;
+    assert_eq!(t.validate(), Ok(()), "a monster that takes none of them");
+}
+
+#[test]
+fn a_hit_body_smaller_than_nothing_is_rejected() {
+    let mut t = Tuning::default();
+    for bad in [-0.1, f32::NAN, f32::INFINITY] {
+        t.monsters.boss.hit_margin = bad;
+        let why = t.validate().expect_err(&format!("a margin of {bad}"));
+        assert!(why.contains("hit_margin"), "{bad}: {why}");
+    }
+    t.monsters.boss.hit_margin = 0.0;
+    assert_eq!(t.validate(), Ok(()), "both bodies the same");
+}
+
+#[test]
+fn the_boss_cannot_come_in_a_wave_or_as_a_guard() {
+    let mut t = Tuning::default();
+    t.nights.plans[0].waves[0].kind = crate::kind::MonsterKind::Boss;
+    assert!(t.validate().is_err(), "a boss in a wave");
+
+    let mut t = Tuning::default();
+    t.guards.kind = crate::kind::MonsterKind::Boss;
+    assert!(t.validate().is_err(), "a boss as a guard");
+}
+
+/// 기본 수치에서 보스의 행동만 `change`로 바꾼 수치입니다.
+fn tuning_with_boss(change: impl FnOnce(&mut BossTuning)) -> Tuning {
+    let mut t = Tuning::default();
+    match &mut t.nights.finale {
+        Finale::Boss(cfg) => change(cfg),
+        Finale::LastWave => panic!("the default tuning has a boss"),
+    }
+    t
+}
+
+#[test]
+fn a_boss_that_has_nothing_to_do_or_no_time_to_be_seen_is_rejected() {
+    let why = tuning_with_boss(|cfg| cfg.script.clear())
+        .validate()
+        .expect_err("an empty script");
+    assert!(why.contains("script"), "{why}");
+
+    for (name, t) in [
+        ("warning_secs", tuning_with_boss(|c| c.warning_secs = 0.0)),
+        ("threat_secs", tuning_with_boss(|c| c.threat_secs = -1.0)),
+        (
+            "slam windup_secs",
+            tuning_with_boss(|c| c.slam.windup_secs = 0.0),
+        ),
+        (
+            "target_range",
+            tuning_with_boss(|c| c.target_range = f32::NAN),
+        ),
+        ("slam radius", tuning_with_boss(|c| c.slam.radius = 0.0)),
+        ("rest_secs", tuning_with_boss(|c| c.rest_secs = -0.5)),
+    ] {
+        let why = t.validate().expect_err(name);
+        assert!(why.contains(name), "{name}: {why}");
+    }
+
+    assert_eq!(
+        tuning_with_boss(|c| c.rest_secs = 0.0).validate(),
+        Ok(()),
+        "a boss that never rests is a valid one"
+    );
+    let mut t = Tuning::default();
+    t.nights.finale = Finale::LastWave;
+    assert_eq!(t.validate(), Ok(()), "no boss");
 }

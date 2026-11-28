@@ -1,5 +1,6 @@
 //! `Sim`은 방 하나의 게임 상태 전체이며, 규칙 크레이트의 공개 진입점입니다.
 
+use crate::boss::{self, Boss};
 use crate::build;
 use crate::camp::Camp;
 use crate::debrief::{Debrief, Report};
@@ -188,7 +189,8 @@ impl Sim {
             self.begin_expedition();
             return;
         }
-        self.monster_grid.rebuild(&self.world.monsters);
+        self.monster_grid
+            .rebuild(&self.world.monsters, &self.tuning.monsters);
         let ctx = Ctx {
             t: &self.tuning,
             inputs,
@@ -240,7 +242,8 @@ impl Sim {
         );
 
         self.paths.sync(&self.world, &self.tuning);
-        self.monster_grid.rebuild(&self.world.monsters);
+        self.monster_grid
+            .rebuild(&self.world.monsters, &self.tuning.monsters);
         let ctx = Ctx {
             t: &self.tuning,
             inputs,
@@ -260,6 +263,7 @@ impl Sim {
         weapon::use_weapons(&mut self.world, &ctx, &mut hits);
         projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
         structures::towers_act(&mut self.world, &ctx, &mut hits, &mut afflictions);
+        boss::act(&mut self.world, &ctx, &mut hits);
         monster::monsters_act(
             &mut self.world,
             &ctx,
@@ -408,6 +412,11 @@ impl Sim {
     /// 번호가 작은 몬스터부터 차례로 돌려줍니다.
     pub fn monsters(&self) -> impl Iterator<Item = &Monster> {
         self.world.monsters.iter()
+    }
+
+    /// 싸우는 중인 보스의 상태입니다. 보스의 몸은 `monsters`에 있고 `Boss::id`가 그 몬스터의 번호입니다.
+    pub fn boss(&self) -> Option<&Boss> {
+        self.world.boss.as_ref()
     }
 
     /// 번호가 작은 탄환부터 차례로 돌려줍니다. 이번 Tick에 끝난 탄환도 포함합니다(`Projectile::flight`).

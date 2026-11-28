@@ -9,9 +9,10 @@
 //! (번호 2, 종류와 효과 1, 위치 4, 방향 1, HP 1). postcard는 필드 이름을 기록하지 않으므로 필드 이름은 크기에 영향이 없습니다.
 
 use caravan_rules::{
-    BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life, Loadout,
-    Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, PlayerBuffs, Projectile, Prompt,
-    RepairTarget, Sim, Stage, StructureKind, Tower, TowerState, Tuning, WeaponKind,
+    Act, Aim, Boss, BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life,
+    Loadout, Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, PlayerBuffs,
+    Projectile, Prompt, RepairTarget, Sim, Stage, StructureKind, Tower, TowerState, Tuning,
+    WeaponKind, Zone,
 };
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +95,59 @@ pub enum WireNightStep {
     Waiting { next_wave: u32, secs_left: f32 },
     /// `wave`번 무리가 나타나는 중이거나 싸우는 중입니다.
     Fighting { wave: u32 },
+    /// 마지막 무리를 모두 처치했고, `secs_left`초 뒤에 보스가 나타납니다.
+    Warning { secs_left: f32 },
+    /// 보스와 싸우는 중입니다. 보스의 몸은 몬스터 목록에 있고, 여기에는 몸에 없는 것만 있습니다.
+    Boss(WireBoss),
+}
+
+/// 보스에 관한 것 가운데 몬스터 목록의 몸에 없는 것입니다. 보스의 몸은 목록에서 종류(`WireMonsterKind::Boss`)로 찾습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WireBoss {
+    /// 이 밤의 인원에 맞춘 최대 HP입니다. 몸의 현재 HP와 함께 HP 막대의 비율을 정합니다.
+    pub max_hp: u32,
+    /// 보스가 노리는 대상입니다.
+    pub aim: WireAim,
+    pub act: WireBossAct,
+}
+
+/// 보스가 노리는 대상입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireAim {
+    Player(u32),
+    Wagon,
+}
+
+/// 보스가 지금 하는 일입니다. 영역의 크기는 `Welcome`의 `BossInfo`에 있고 여기에는 자리와 진행도만 있습니다.
+/// 진행도는 0.0에서 1.0이고, 1.0을 실은 스냅샷의 다음 Tick에 피해가 납니다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum WireBossAct {
+    /// 걷는 중입니다.
+    Walking,
+    /// 내려찍기를 예고하는 중입니다. `center`가 원의 중심입니다.
+    Slam { center: WirePos, progress: f32 },
+}
+
+impl WireBoss {
+    fn of(boss: &Boss) -> WireBoss {
+        WireBoss {
+            max_hp: boss.max_hp,
+            aim: match boss.aim {
+                Aim::Player(id) => WireAim::Player(id.0),
+                Aim::Wagon => WireAim::Wagon,
+            },
+            act: match boss.act {
+                Act::Walking { .. } => WireBossAct::Walking,
+                Act::Slamming(telegraph) => {
+                    let Zone::Circle { center, .. } = telegraph.zone;
+                    WireBossAct::Slam {
+                        center: WirePos::from_tiles(center),
+                        progress: clamp_progress(telegraph.progress()),
+                    }
+                }
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -421,6 +475,7 @@ pub struct WireMonster {
 pub enum WireMonsterKind {
     Grunt,
     Scarecrow,
+    Boss,
 }
 
 impl WireMonsterKind {
@@ -429,6 +484,7 @@ impl WireMonsterKind {
         match kind {
             MonsterKind::Grunt => WireMonsterKind::Grunt,
             MonsterKind::Scarecrow => WireMonsterKind::Scarecrow,
+            MonsterKind::Boss => WireMonsterKind::Boss,
         }
     }
 
@@ -438,6 +494,7 @@ impl WireMonsterKind {
         match self {
             WireMonsterKind::Grunt => 0,
             WireMonsterKind::Scarecrow => 1,
+            WireMonsterKind::Boss => 2,
         }
     }
 
@@ -465,7 +522,7 @@ impl Snapshot {
         Snapshot {
             tick: sim.tick(),
             expedition: sim.expedition_number(),
-            phase: wire_stage(sim.stage(), tuning),
+            phase: wire_stage(sim.stage(), tuning, sim.boss()),
             wagon: WireWagon {
                 hp: sim.wagon().hp,
                 max_hp: tuning.wagon.max_hp,
@@ -501,7 +558,7 @@ fn wire_outcome(outcome: Outcome) -> WireOutcome {
     }
 }
 
-fn wire_stage(stage: &Stage, tuning: &Tuning) -> WirePhase {
+fn wire_stage(stage: &Stage, tuning: &Tuning, boss: Option<&Boss>) -> WirePhase {
     match stage {
         Stage::Camp(camp) => WirePhase::Camp {
             ready: camp.ready().map(|id| id.0).collect(),
@@ -515,7 +572,7 @@ fn wire_stage(stage: &Stage, tuning: &Tuning) -> WirePhase {
                 })
                 .collect(),
         },
-        Stage::Expedition(phase) => wire_phase(*phase, tuning),
+        Stage::Expedition(phase) => wire_phase(*phase, tuning, boss),
         Stage::Debrief(debrief) => WirePhase::Debrief {
             outcome: wire_outcome(debrief.outcome()),
             secs_left: secs(debrief.ticks_left(), tuning),
@@ -524,7 +581,7 @@ fn wire_stage(stage: &Stage, tuning: &Tuning) -> WirePhase {
     }
 }
 
-fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
+fn wire_phase(phase: Phase, tuning: &Tuning, boss: Option<&Boss>) -> WirePhase {
     match phase {
         Phase::Day { day, ticks_left } => WirePhase::Day {
             day,
@@ -542,6 +599,13 @@ fn wire_phase(phase: Phase, tuning: &Tuning) -> WirePhase {
                     secs_left: secs(ticks_left, tuning),
                 },
                 NightStep::Fighting { wave, .. } => WireNightStep::Fighting { wave },
+                NightStep::Warning { ticks_left } => WireNightStep::Warning {
+                    secs_left: secs(ticks_left, tuning),
+                },
+                // 보스의 단계에 보스가 없는 것은 규칙의 어느 Tick 끝에서도 생기지 않습니다. 그래도 값을 정해야 하므로 보스가 막 나타나기 직전으로 보냅니다.
+                NightStep::Boss => boss.map_or(WireNightStep::Warning { secs_left: 0.0 }, |boss| {
+                    WireNightStep::Boss(WireBoss::of(boss))
+                }),
             },
         },
         Phase::Dawn {

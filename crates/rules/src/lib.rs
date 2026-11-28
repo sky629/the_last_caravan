@@ -9,9 +9,10 @@
 //! 플레이어에게 버프를 거는 함수(`Player::grant`)는 크레이트 밖에 공개하지 않습니다.
 //! 타일 지도, 충돌, 경로 탐색 같은 내부 모듈은 공개하지 않습니다.
 //!
-//! 읽는 순서: `tuning`(모든 수치), `sim`(Tick 하나의 처리 순서), `stage`(야영지, 원정, 결과 화면을 도는 방의 단계), `camp`, `debrief`, `player`, `loadout`, `weapon`, `projectile`, `stamina`, `resources`, `effect`, `monster`, `structures`, `build`, `expedition`, `loot`, `spawn`.
+//! 읽는 순서: `tuning`(모든 수치), `sim`(Tick 하나의 처리 순서), `stage`(야영지, 원정, 결과 화면을 도는 방의 단계), `camp`, `debrief`, `player`, `loadout`, `weapon`, `projectile`, `stamina`, `resources`, `effect`, `monster`, `boss`, `telegraph`, `structures`, `build`, `expedition`, `loot`, `spawn`.
 //! `world`(타일 지도 포함), `collision`, `sweep`, `nav`, `spatial`은 이 모듈들이 쓰는 도구입니다.
 
+mod boss;
 mod build;
 mod camp;
 mod collision;
@@ -37,6 +38,7 @@ mod stamina;
 mod stats;
 mod structures;
 mod sweep;
+mod telegraph;
 mod tuning;
 mod weapon;
 mod world;
@@ -44,6 +46,7 @@ mod world;
 #[cfg(test)]
 mod tests;
 
+pub use boss::{Act, Aim, Boss};
 pub use build::{BuildRefusal, CannotBuild, front_tile};
 pub use camp::Camp;
 pub use debrief::{Debrief, Report};
@@ -65,12 +68,13 @@ pub use sim::{JoinError, Sim};
 pub use stage::Stage;
 pub use stamina::Stamina;
 pub use structures::{Shot, Tower, TowerState, Wagon};
+pub use telegraph::{Telegraph, Zone};
 pub use tuning::{
-    AfflictTuning, ArcTuning, AuraTuning, Buff, CampLayout, CampTuning, CycleTuning, Debuff,
-    Delivery, EffectTuning, GuardTuning, HealTuning, HitscanTuning, LootTuning, MapSpec,
-    MonsterTable, MonsterTuning, NightPlan, NightTuning, PlayerTuning, ProjectileTuning,
-    PulseTuning, RepairTuning, ResourceTuning, ReviveTuning, ShootTuning, SprintTuning, Start,
-    StructureTable, StructureTuning, TowerAction, Tuning, VillageTuning, WagonTuning, WavePlan,
-    WaveScaling, WeaponTable, WeaponTuning,
+    AfflictTuning, ArcTuning, AuraTuning, BossTuning, Buff, CampLayout, CampTuning, CycleTuning,
+    Debuff, Delivery, EffectTuning, Finale, GuardTuning, HealTuning, HitscanTuning, LootTuning,
+    MapSpec, MonsterTable, MonsterTuning, Move, NightPlan, NightTuning, PlayerTuning,
+    ProjectileTuning, PulseTuning, RepairTuning, Resist, ResourceTuning, ReviveTuning, ShootTuning,
+    SlamTuning, SprintTuning, Start, StrikeTuning, StructureTable, StructureTuning, TowerAction,
+    Tuning, VillageTuning, WagonTuning, WavePlan, WaveScaling, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;

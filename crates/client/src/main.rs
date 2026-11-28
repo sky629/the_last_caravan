@@ -89,7 +89,7 @@ fn main() {
                     view::spawn_world
                         .run_if(start::in_room.and_then(not(resource_exists::<view::Scene>))),
                     camera::follow.run_if(resource_exists::<view::Scene>),
-                    camera::mark_the_wagon.run_if(resource_exists::<view::Scene>),
+                    camera::mark_off_screen.run_if(resource_exists::<view::Scene>),
                     towers::sync_towers.run_if(resource_exists::<view::Scene>),
                     supplies::sync_nodes.run_if(resource_exists::<view::Scene>),
                     supplies::sync_piles.run_if(resource_exists::<view::Scene>),

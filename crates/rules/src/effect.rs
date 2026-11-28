@@ -25,7 +25,7 @@
 use std::cmp::Ordering;
 
 use crate::player::Life;
-use crate::tuning::{Buff, Debuff, Tuning};
+use crate::tuning::{Buff, Debuff, Resist, Tuning};
 use crate::world::{Affliction, Ctx, Hit, Source, Target, World};
 
 /// 같은 칸에 걸려 있는 효과와 새로 받은 효과 가운데 새것이 칸에 남는지 정합니다. 몬스터의 효과와 플레이어의 버프가 이 규칙 하나를 씁니다.
@@ -198,8 +198,16 @@ impl MonsterEffects {
 
     /// `debuff`를 지금 받으면 칸이 바뀌는지입니다. `apply`가 이 질문으로 시작하므로, 거짓이면 `apply`는 아무것도 바꾸지 않습니다.
     /// 감속과 출혈은 `new_one_stays`를 따르고, 스턴은 걸려 있지 않고 면역도 아닐 때만 걸립니다.
+    /// 몬스터의 종류가 효과를 받는 방식(`resist`)이 먼저 효과를 바꾸거나 막습니다. 스턴에 걸리지 않는 종류는 언제나 거짓입니다.
     /// 효과 하나를 거는 포탑이 대상을 고를 때 이 질문으로 걸리지 않을 몬스터를 건너뜁니다.
-    pub(crate) fn would_take(&self, debuff: Debuff, t: &Tuning) -> bool {
+    pub(crate) fn would_take(&self, debuff: Debuff, resist: &Resist, t: &Tuning) -> bool {
+        resist
+            .filter(debuff)
+            .is_some_and(|debuff| self.would_take_resisted(debuff, t))
+    }
+
+    /// 종류의 저항을 이미 거친 효과가 칸을 바꾸는지입니다.
+    fn would_take_resisted(&self, debuff: Debuff, t: &Tuning) -> bool {
         match debuff {
             // 비율이 작을수록 센 감속입니다.
             Debuff::Slow { factor, secs } => self.slow.is_none_or(|held| {
@@ -222,8 +230,11 @@ impl MonsterEffects {
     /// - 감속: 비율과 시간이 새 값으로 바뀝니다.
     /// - 출혈: 주인, 피해량, 남은 시간이 새 값으로 바뀝니다. 피해가 나는 시점은 이어집니다. 처음 걸리면 `bleed_interval_secs` 뒤에 첫 피해가 납니다.
     /// - 스턴: 시간만큼 걸립니다.
-    pub(crate) fn apply(&mut self, debuff: Debuff, by: Source, t: &Tuning) {
-        if !self.would_take(debuff, t) {
+    pub(crate) fn apply(&mut self, debuff: Debuff, by: Source, resist: &Resist, t: &Tuning) {
+        let Some(debuff) = resist.filter(debuff) else {
+            return;
+        };
+        if !self.would_take_resisted(debuff, t) {
             return;
         }
         match debuff {
@@ -305,7 +316,9 @@ pub(crate) fn apply_debuffs(world: &mut World, hits: &[Hit], t: &Tuning) {
             .monsters
             .binary_search_by_key(&id, |monster| monster.id)
         {
-            world.monsters[index].effects.apply(debuff, hit.by, t);
+            let monster = &mut world.monsters[index];
+            let resist = &t.monsters.get(monster.kind).resist;
+            monster.effects.apply(debuff, hit.by, resist, t);
         }
     }
 }
@@ -318,9 +331,11 @@ pub(crate) fn apply_afflictions(world: &mut World, afflictions: &[Affliction], t
             .monsters
             .binary_search_by_key(&affliction.target, |monster| monster.id)
         {
-            world.monsters[index]
+            let monster = &mut world.monsters[index];
+            let resist = &t.monsters.get(monster.kind).resist;
+            monster
                 .effects
-                .apply(affliction.debuff, affliction.by, t);
+                .apply(affliction.debuff, affliction.by, resist, t);
         }
     }
 }

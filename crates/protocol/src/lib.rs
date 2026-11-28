@@ -43,16 +43,16 @@ pub use room_code::{RoomCode, RoomCodeError};
 pub use roster::{WireMember, WireRoster};
 pub use seat_token::SeatToken;
 pub use snapshot::{
-    Snapshot, WireAttack, WireBuffs, WireBuildRefusal, WireCannotBuild, WireChest,
-    WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMonster, WireMonsterKind,
-    WireNightStep, WireNode, WireOutcome, WirePhase, WirePile, WirePlayer, WireProjectile,
-    WirePrompt, WireRepairTarget, WireShot, WireStruck, WireStructureKind, WireTower,
-    WireTowerState, WireWagon, WireWeaponKind,
+    Snapshot, WireAim, WireAttack, WireBoss, WireBossAct, WireBuffs, WireBuildRefusal,
+    WireCannotBuild, WireChest, WireGroundWeapon, WireInteraction, WireLife, WireLoadout,
+    WireMonster, WireMonsterKind, WireNightStep, WireNode, WireOutcome, WirePhase, WirePile,
+    WirePlayer, WireProjectile, WirePrompt, WireRepairTarget, WireShot, WireStruck,
+    WireStructureKind, WireTower, WireTowerState, WireWagon, WireWeaponKind,
 };
 pub use transport::{ClientEvent, ClientTransport, LinkId, PeerKey, ServerEvent, ServerTransport};
 pub use units::{WireAngle, WirePos, WireRect, WireTile};
 pub use welcome::{
-    MonsterKindInfo, NodeInfo, RackInfo, StructureKindInfo, WeaponInfo, Welcome, WireDelivery,
-    WorldInfo,
+    BossInfo, MonsterKindInfo, NodeInfo, RackInfo, StructureKindInfo, WeaponInfo, Welcome,
+    WireDelivery, WorldInfo,
 };
 pub use welcome_check::check_welcome;

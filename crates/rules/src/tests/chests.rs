@@ -64,7 +64,7 @@ fn layouts_of_days(mut sim: Sim, days: u32) -> Vec<Layout> {
 fn post_of(monster: &Monster) -> Tile {
     match monster.order {
         Order::Guard { post } => post,
-        Order::Raid | Order::Stand => panic!("{monster:?} is not a guard"),
+        Order::Raid | Order::Stand | Order::Boss => panic!("{monster:?} is not a guard"),
     }
 }
 

@@ -17,6 +17,7 @@ mod tiles;
 
 use std::collections::BTreeMap;
 
+use crate::boss::Boss;
 use crate::collision::Body;
 use crate::effect;
 use crate::ids::{
@@ -32,7 +33,7 @@ use crate::projectile::{Launch, Projectile};
 use crate::resources::{self, GatherNode, Pile};
 use crate::spatial::MonsterGrid;
 use crate::structures::{Tower, TowerState, Wagon};
-use crate::tuning::{Debuff, Tuning};
+use crate::tuning::{BossTuning, Debuff, Tuning};
 
 pub use tiles::Tile;
 pub(crate) use tiles::{TileMap, TileUse};
@@ -64,6 +65,9 @@ pub(crate) struct World {
     pub racks: Vec<Rack>,
     /// 이번 원정에서 포탑이 마지막 피해를 주어 처치한 몬스터의 수입니다. 새 원정이나 야영지가 시작되면 0으로 돌아갑니다(`restart`).
     pub tower_kills: u32,
+    /// 싸우는 중인 보스의 상태입니다. 보스의 몸은 `monsters`에 있고, 이 값의 `id`가 그 몬스터를 가리킵니다.
+    /// 보스가 나타나는 `spawn_boss`가 둘을 함께 만들고, `apply_hits`가 보스를 제거하는 순간 이 값도 함께 비웁니다. 그래서 몸이 없는 상태와 상태가 없는 몸은 생기지 않습니다.
+    pub boss: Option<Boss>,
     /// 읽기만 할 수 있습니다. `TileMap::set`은 이 모듈 밖에서 부를 수 없습니다.
     pub tiles: TileMap,
     /// 포탑이 생기거나, 서거나, 사라질 때마다 올라가고 줄어들지 않습니다.
@@ -112,6 +116,7 @@ impl World {
             ground_weapons: Vec::new(),
             racks: Vec::new(),
             tower_kills: 0,
+            boss: None,
             tiles: TileMap::from_map(&t.map),
             layout_revision: 0,
             next_monster: 1,
@@ -137,6 +142,7 @@ impl World {
         self.ground_weapons.clear();
         self.racks.clear();
         self.tower_kills = 0;
+        self.boss = None;
         self.wagon = Wagon::new(t);
         self.layout_revision += 1;
         match layout {
@@ -277,6 +283,21 @@ impl World {
         id
     }
 
+    /// 방에 플레이어가 `party`명 있는 밤의 보스를 `pos`에 만듭니다. 몸(`MonsterKind::Boss`)과 상태(`World::boss`)를 함께 만드는 유일한 곳입니다.
+    /// 몸의 HP는 인원에 맞춘 최대 HP입니다. 이미 보스가 있으면 만들지 않고 그 보스의 번호를 돌려줍니다.
+    pub fn spawn_boss(&mut self, pos: Vec2, party: u32, cfg: &BossTuning, t: &Tuning) -> MonsterId {
+        if let Some(boss) = &self.boss {
+            return boss.id;
+        }
+        let id = self.spawn_monster(MonsterKind::Boss, Order::Boss, pos, t);
+        let boss = Boss::new(id, party, cfg, t);
+        if let Some(body) = self.monsters.last_mut() {
+            body.hp = boss.max_hp;
+        }
+        self.boss = Some(boss);
+        id
+    }
+
     /// 탄환을 만들어 탄환 목록의 끝에 추가합니다. 번호는 새로 받고 다시 사용하지 않습니다.
     pub(crate) fn launch(&mut self, launch: Launch) -> ProjectileId {
         let id = ProjectileId(self.next_projectile);
@@ -339,7 +360,8 @@ pub(crate) struct Affliction {
 
 impl World {
     /// 모든 피해를 적용하는 유일한 곳입니다. 몬스터의 HP를 0으로 만든 피해가 있으면 그 피해를 준 쪽이 처치를 가져갑니다.
-    /// 같은 Tick에 여럿이 같은 몬스터를 맞히면 `hits`의 순서(플레이어의 공격, 탄환, 포탑, 몬스터, 출혈)에서 HP를 0으로 만든 피해가 주인입니다.
+    /// 같은 Tick에 여럿이 같은 몬스터를 맞히면 `hits`의 순서(플레이어의 공격, 탄환, 포탑, 보스, 몬스터, 출혈)에서 HP를 0으로 만든 피해가 주인입니다.
+    /// 포탑이 몬스터에게 준 피해(포탑이 건 출혈 포함)는 그 몬스터의 종류가 받는 비율(`Resist::tower_damage_percent`)만 들어갑니다.
     /// 피해를 모두 적용하고 죽은 몬스터를 제거한 뒤에, 살아남은 몬스터에게 `Hit`이 싣고 온 효과를 겁니다.
     pub fn apply_hits(&mut self, hits: &[Hit], t: &Tuning) {
         for hit in hits {
@@ -356,7 +378,18 @@ impl World {
                     if let Ok(index) = self.monsters.binary_search_by_key(&id, |m| m.id) {
                         let monster = &mut self.monsters[index];
                         let was_alive = monster.hp > 0;
-                        monster.hp = monster.hp.saturating_sub(hit.amount);
+                        let dealt = t
+                            .monsters
+                            .get(monster.kind)
+                            .resist
+                            .damage_from(hit.by, hit.amount);
+                        monster.hp = monster.hp.saturating_sub(dealt);
+                        // 보스는 가장 많이 때린 플레이어를 노리므로, 플레이어가 준 피해를 기억합니다. 포탑의 피해는 기억하지 않습니다.
+                        if let (Some(boss), Source::Player(by)) = (&mut self.boss, hit.by)
+                            && boss.id == id
+                        {
+                            boss.record(by, dealt);
+                        }
                         if was_alive && monster.hp == 0 {
                             self.credit_kill(hit.by);
                         }
@@ -384,6 +417,15 @@ impl World {
         }
         // 몬스터는 모든 피해를 받은 뒤에 한꺼번에 제거합니다. 중간에 제거하면 뒤따르는 피해가 엉뚱한 몬스터에 닿을 수 있습니다.
         self.monsters.retain(|monster| monster.hp > 0);
+        // 보스의 몸이 제거되면 보스의 상태도 함께 사라집니다.
+        if let Some(boss) = &self.boss
+            && self
+                .monsters
+                .binary_search_by_key(&boss.id, |m| m.id)
+                .is_err()
+        {
+            self.boss = None;
+        }
         effect::apply_debuffs(self, hits, t);
     }
 

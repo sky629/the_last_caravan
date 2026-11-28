@@ -3,7 +3,8 @@
 //! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸, 내가 받은 버프의 이름이 있고,
 //! 야영지에서는 그 아래에 방 코드와 `C` 안내, 준비 목록, `R` 안내, 시작까지 남은 시간이 있고,
 //! 아래 가운데에 F를 누르면 하게 되는 일의 안내와 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
-//! 오른쪽 아래에 원정 중의 방 코드가 있고, 화면 가운데에 접속을 기다리는 안내나 원정의 결과(성공 여부, 요약, 개인별 기록의 표, 확인 안내)가 크게 나옵니다.
+//! 오른쪽 아래에 원정 중의 방 코드가 있고, 화면 가운데에 접속을 기다리는 안내, 보스가 온다는 경고, 원정의 결과(성공 여부, 요약, 개인별 기록의 표, 확인 안내)가 크게 나옵니다.
+//! 보스가 나와 있는 동안에는 위쪽 가운데에 보스의 HP 막대가 있습니다.
 
 use bevy::prelude::*;
 use caravan_client_core::{BannerTone, Hud, Invite, Meter, Tone};
@@ -12,6 +13,7 @@ use crate::net::{ClientFlow, CurrentFrame, InviteFlash};
 
 const METER_WIDTH: f32 = 260.0;
 const ACTION_WIDTH: f32 = 380.0;
+const BOSS_WIDTH: f32 = 520.0;
 const METER_HEIGHT: f32 = 22.0;
 const LABEL_SIZE: f32 = 14.0;
 
@@ -28,6 +30,7 @@ fn tone_color(tone: Tone) -> Color {
         Tone::Stamina => Color::srgb(0.30, 0.62, 0.92),
         Tone::Downed => Color::srgb(0.90, 0.40, 0.15),
         Tone::Gone => Color::srgb(0.38, 0.38, 0.40),
+        Tone::Boss => Color::srgb(0.78, 0.12, 0.20),
     }
 }
 
@@ -89,6 +92,7 @@ pub struct HudNodes {
     me: Entity,
     stamina: Entity,
     wagon: Entity,
+    boss: Entity,
     action: Entity,
     allies_panel: Entity,
     allies: Vec<Entity>,
@@ -220,6 +224,18 @@ pub fn setup(mut commands: Commands) {
             camp_countdown,
         ]);
 
+    // 위쪽 가운데: 보스의 HP.
+    let boss = meter_node(&mut commands, BOSS_WIDTH);
+    commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            top: px(12),
+            width: percent(100),
+            justify_content: JustifyContent::Center,
+            ..default()
+        })
+        .add_child(boss);
+
     // 아래 가운데: F를 누르면 하게 되는 일, 출혈 시간, 건설과 수리의 거절 이유, 부활이나 수리나 건설의 진행 막대.
     let hint = text_node(&mut commands, 24.0, TEXT);
     let bleed = text_node(&mut commands, 24.0, BLEED);
@@ -326,6 +342,7 @@ pub fn setup(mut commands: Commands) {
         me,
         stamina,
         wagon,
+        boss,
         action,
         allies_panel,
         allies: Vec::new(),
@@ -522,6 +539,7 @@ pub fn update(
         (nodes.me, hud.me.as_ref()),
         (nodes.stamina, hud.stamina.as_ref()),
         (nodes.wagon, hud.wagon.as_ref()),
+        (nodes.boss, hud.boss.as_ref()),
         (nodes.action, hud.action.as_ref()),
     ];
     for (entity, meter) in rows {

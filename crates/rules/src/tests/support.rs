@@ -16,7 +16,7 @@ use crate::sim::Sim;
 use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
-    Buff, CampLayout, Debuff, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning,
+    Buff, CampLayout, Debuff, Finale, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning,
     ShootTuning, TowerAction, Tuning, WavePlan, WaveScaling,
 };
 use crate::world::{Source, Tile};
@@ -71,6 +71,8 @@ impl Scenario {
     fn started(tuning: Tuning, adjust: impl FnOnce(&mut Tuning)) -> Scenario {
         let mut scenario = Scenario::in_camp(tuning, |t| {
             t.nights.scaling = WaveScaling::Fixed;
+            // 보스의 밤을 시험하는 테스트가 아니면 마지막 무리를 처치하는 순간 원정이 끝납니다. 보스가 필요한 테스트는 `adjust`가 다시 켭니다.
+            t.nights.finale = Finale::LastWave;
             adjust(t);
             let first_spawn = t.map.player_spawns.first().copied().unwrap_or(Vec2::ZERO);
             t.map.camp = without_camp(first_spawn);
@@ -149,7 +151,10 @@ impl Scenario {
             .iter_mut()
             .find(|monster| monster.id == id)
             .expect("the monster exists");
-        monster.effects.apply(debuff, Source::Player(owner), &t);
+        let resist = t.monsters.get(monster.kind).resist;
+        monster
+            .effects
+            .apply(debuff, Source::Player(owner), &resist, &t);
     }
 
     /// 플레이어에게 버프를 줍니다. 버프 포탑이 하는 것과 같이 `Player::grant`를 부릅니다. 버프의 규칙을 버프 포탑 없이 시험할 때 이 함수로 줍니다.

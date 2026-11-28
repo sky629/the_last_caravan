@@ -3,11 +3,12 @@
 //! 한계는 측정한 크기보다 3%에서 6% 큰 값입니다. 한계를 넘으면 접속 하나가 쓰는 대역폭이 늘어난 것이므로, 다음 단계의 설계를 다시 정해야 합니다.
 
 use caravan_protocol::{
-    ServerMsg, Snapshot, WireAngle, WireAttack, WireBuffs, WireGroundWeapon, WireInteraction,
-    WireLife, WireLoadout, WireMonster, WireMonsterEffects, WireMonsterKind, WireMonsterStatus,
-    WireNightStep, WireNode, WirePhase, WirePile, WirePlayer, WirePos, WireProjectile, WirePrompt,
-    WireRecordRow, WireReport, WireShot, WireStruck, WireStructureKind, WireTile, WireTower,
-    WireTowerState, WireWagon, WireWeaponKind, encode_server,
+    ServerMsg, Snapshot, WireAim, WireAngle, WireAttack, WireBoss, WireBossAct, WireBuffs,
+    WireGroundWeapon, WireInteraction, WireLife, WireLoadout, WireMonster, WireMonsterEffects,
+    WireMonsterKind, WireMonsterStatus, WireNightStep, WireNode, WirePhase, WirePile, WirePlayer,
+    WirePos, WireProjectile, WirePrompt, WireRecordRow, WireReport, WireShot, WireStruck,
+    WireStructureKind, WireTile, WireTower, WireTowerState, WireWagon, WireWeaponKind,
+    encode_server,
 };
 
 /// 세 효과가 모두 걸린 몬스터의 종류와 효과입니다. 효과가 크기를 늘리지 않는다는 것을 가장 큰 경우로 확인하려고 모든 몬스터가 이 상태입니다.
@@ -420,4 +421,140 @@ fn the_result_of_four_players_with_the_longest_names_is_sent_once_and_is_small()
         "result: 4 players with 12-letter names, sent once when the result opens: {size} bytes"
     );
     assert!(size < 200, "{size} bytes");
+}
+
+/// 보스의 몸이 몬스터 목록의 첫 몬스터이고, 밤의 단계가 보스와 싸우는 중인 스냅샷입니다. 보스의 몸은 보통 몬스터와 같은 9바이트에 HP가 한 바이트 더 큽니다.
+fn with_the_boss(mut snapshot: Snapshot, act: WireBossAct) -> Snapshot {
+    snapshot.monsters[0].status = WireMonsterStatus::new(
+        WireMonsterKind::Boss,
+        WireMonsterEffects {
+            stunned: false,
+            slowed: true,
+            bleeding: true,
+        },
+    );
+    snapshot.monsters[0].hp = 12_000;
+    snapshot.phase = WirePhase::Night {
+        day: 3,
+        wave_count: 3,
+        step: WireNightStep::Boss(WireBoss {
+            max_hp: 12_000,
+            aim: WireAim::Player(4),
+            act,
+        }),
+    };
+    snapshot
+}
+
+/// 보스가 하는 일의 모든 경우입니다. 위치는 두 축이 모두 2바이트로 기록되는 크기(128 이상)입니다.
+fn every_boss_act() -> [(&'static str, WireBossAct); 2] {
+    [
+        ("walking", WireBossAct::Walking),
+        (
+            "slam",
+            WireBossAct::Slam {
+                center: WirePos { x: 1500, y: 1200 },
+                progress: 0.5,
+            },
+        ),
+    ]
+}
+
+#[test]
+fn the_boss_step_costs_at_most_sixteen_bytes_more_than_a_fight_and_stays_under_the_bound() {
+    let fight = encoded_len(crowded_snapshot(10_000, 300, 0));
+    for (name, act) in every_boss_act() {
+        let boss = encoded_len(with_the_boss(crowded_snapshot(10_000, 300, 0), act));
+        println!(
+            "boss {name}: {boss} bytes, {} more than a fight",
+            boss - fight
+        );
+        assert!(boss - fight <= 16, "{name}: {} more bytes", boss - fight);
+        assert!(boss < BOUND_BYTES, "{name}: {boss} bytes");
+    }
+}
+
+#[test]
+fn the_worst_case_with_the_boss_and_every_other_worst_case_at_once_stays_under_both_bounds() {
+    for (name, act) in every_boss_act() {
+        let mut worst = with_the_boss(four_rifle_traces_and_the_most_weapons_on_the_ground(8), act);
+        make_all_four_alive_with_both_buffs(&mut worst);
+        let mut large_ids = with_the_boss(crowded_snapshot(20_000, 300, 0), act);
+        make_all_four_alive_with_both_buffs(&mut large_ids);
+        let (worst, large_ids) = (encoded_len(worst), encoded_len(large_ids));
+        println!(
+            "boss {name}, four players with both buffs, 4 rifle traces, 9 weapons, 8 arrows: {worst} bytes; with 3-byte ids: {large_ids} bytes"
+        );
+        assert!(worst < BOUND_BYTES, "{name}: {worst} bytes");
+        assert!(
+            large_ids < BOUND_BYTES_WITH_LARGE_IDS,
+            "{name}: {large_ids} bytes"
+        );
+    }
+}
+
+#[test]
+fn large_ids_with_the_boss_and_every_other_worst_case_at_once_stay_under_the_large_id_bound() {
+    let mut snapshot = crowded_snapshot(20_000, 300, 8);
+    for (i, player) in snapshot.players.iter_mut().enumerate() {
+        player.last_attack = Some(WireAttack {
+            tick: 100_000,
+            weapon: WireWeaponKind::Rifle,
+            trace_end: Some(WirePos {
+                x: 3000 + 500 * i as u16,
+                y: 2500 - 300 * i as u16,
+            }),
+        });
+    }
+    snapshot.ground_weapons = (1..=MOST_WEAPONS_ON_THE_GROUND)
+        .map(|id| WireGroundWeapon {
+            id,
+            pos: WirePos {
+                x: 800 * id as u16,
+                y: 1500,
+            },
+            kind: WireWeaponKind::Rifle,
+        })
+        .collect();
+    make_all_four_alive_with_both_buffs(&mut snapshot);
+    let mut snapshot = with_the_boss(
+        snapshot,
+        WireBossAct::Slam {
+            center: WirePos { x: 1500, y: 1200 },
+            progress: 0.5,
+        },
+    );
+    // 대상의 번호와 보스의 HP도 한 바이트씩 더 드는 크기입니다.
+    snapshot.monsters[0].hp = 48_000;
+    snapshot.phase = WirePhase::Night {
+        day: 3,
+        wave_count: 3,
+        step: WireNightStep::Boss(WireBoss {
+            max_hp: 48_000,
+            aim: WireAim::Player(200),
+            act: WireBossAct::Slam {
+                center: WirePos { x: 1500, y: 1200 },
+                progress: 0.5,
+            },
+        }),
+    };
+
+    let size = encoded_len(snapshot);
+    println!(
+        "boss slam, 3-byte ids, 4 rifle traces, 9 weapons, 8 arrows, both buffs: {size} bytes"
+    );
+    assert!(size < BOUND_BYTES_WITH_LARGE_IDS, "{size} bytes");
+}
+
+#[test]
+fn the_warning_costs_no_more_than_a_wave_of_the_fight() {
+    let mut warning = crowded_snapshot(10_000, 300, 0);
+    warning.phase = WirePhase::Night {
+        day: 3,
+        wave_count: 3,
+        step: WireNightStep::Warning { secs_left: 4.5 },
+    };
+    let fight = encoded_len(crowded_snapshot(10_000, 300, 0));
+
+    assert!(encoded_len(warning) - fight <= 4);
 }

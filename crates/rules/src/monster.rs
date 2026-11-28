@@ -2,10 +2,11 @@
 //!
 //! 몬스터에게는 명령(`Order`)이 있습니다. 낮에 채집 지점 곁에 놓인 몬스터는 자리를 지키고(`Guard`),
 //! 밤에 나타난 몬스터와 밤이 된 뒤의 낮의 몬스터는 마차를 향합니다(`Raid`). 명령을 바꾸는 곳은 `expedition::nightfall` 하나입니다.
-//! 야영지의 허수아비는 제자리에 서 있습니다(`Stand`).
+//! 야영지의 허수아비는 제자리에 서 있습니다(`Stand`). 보스는 대상과 걷는지 서 있는지를 보스의 상태(`World::boss`)가 정합니다(`Boss`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::boss::Aim;
 use crate::collision::{Body, move_circle};
 use crate::effect::MonsterEffects;
 use crate::ids::{MonsterId, PlayerId, Team};
@@ -43,6 +44,8 @@ pub enum Order {
     Raid,
     /// 제자리에 서 있습니다. 아무것도 쫓지 않고 공격하지 않습니다. 야영지의 허수아비가 받는 명령입니다.
     Stand,
+    /// 보스의 몸이 받는 명령입니다. 걸을 때는 보스의 상태가 정한 대상(플레이어 또는 마차)을 향하고, 행동을 하는 동안에는 서 있습니다.
+    Boss,
 }
 
 impl Monster {
@@ -226,6 +229,16 @@ fn choose_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Go
         Order::Raid => raid_goal(world, monster, ctx, paths),
         Order::Guard { post } => guard_goal(world, monster, post, ctx),
         Order::Stand => Goal::Stay,
+        Order::Boss => boss_goal(world),
+    }
+}
+
+/// 보스의 목표입니다. 걷는 동안에는 보스의 상태가 정한 대상이고, 예고하는 동안에는 서 있습니다.
+fn boss_goal(world: &World) -> Goal {
+    match world.boss.as_ref().and_then(|boss| boss.walk_aim()) {
+        Some(Aim::Player(id)) => Goal::Player(id),
+        Some(Aim::Wagon) => Goal::Wagon,
+        None => Goal::Stay,
     }
 }
 
@@ -343,8 +356,11 @@ fn plan(
             direction * (monster.stats(t).move_speed * t.dt()),
         )
     };
+    // 근접 피해가 0인 몬스터는 대상에게 다가가서 멈출 뿐 공격하지 않습니다. 0의 피해도 하는 일(상자 열기)을 취소하기 때문입니다.
     Action {
-        hit: in_reach.then_some(target),
+        hit: in_reach
+            .then_some(target)
+            .filter(|_| kind.attack_damage > 0),
         heading,
         step: crowd_step(index, walk, world, ctx, neighbours),
     }

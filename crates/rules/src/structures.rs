@@ -179,7 +179,14 @@ pub(crate) fn towers_act(
         }
 
         let center = tower.tile.center();
-        ctx.grid.query(center, spec.range, &mut candidates);
+        // 사거리는 몬스터의 중심까지 잽니다. 맞는 몸이 걷는 몸보다 큰 몬스터는 그 차이만큼 더 멀리서도 사거리 안입니다.
+        ctx.grid
+            .query(center, spec.range + ctx.grid.hit_margin(), &mut candidates);
+        candidates.retain(|&index| {
+            let monster = &world.monsters[index];
+            let reach = spec.range + t.monsters.get(monster.kind).hit_margin;
+            (monster.pos - center).length_squared() <= reach * reach
+        });
         let acted = match spec.action {
             TowerAction::Shoot(shoot) => {
                 let target = nearest(&world.monsters, &candidates, tower.team, center, |_| true);
@@ -205,7 +212,11 @@ pub(crate) fn towers_act(
                     center,
                     |monster| {
                         !taken.contains(&monster.id)
-                            && monster.effects.would_take(afflict.debuff, t)
+                            && monster.effects.would_take(
+                                afflict.debuff,
+                                &t.monsters.get(monster.kind).resist,
+                                t,
+                            )
                     },
                 );
                 if let Some(target) = target {

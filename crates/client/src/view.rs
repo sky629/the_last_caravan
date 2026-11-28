@@ -12,7 +12,7 @@ use caravan_protocol::{
 };
 use caravan_rules::{Team, Vec2 as Ground};
 
-use crate::camera::{FollowedSetting, WagonMarkerNode};
+use crate::camera::{EdgeMarkerNode, FollowedSetting};
 use crate::camp::StrikeRegistry;
 use crate::characters::Spawned;
 use crate::config;
@@ -193,13 +193,13 @@ pub fn spawn_world(
 }
 
 /// 방을 떠났을 때 방의 세계를 모두 지웁니다. 지형과 번호로 추적하는 개체를 지우고, 추적하는 표를 비우고, 그릴 모습과 `Scene`을 없애고,
-/// 화면 가장자리의 마차 표시를 숨기고, 카메라가 따라가던 세계의 모습을 잊습니다. 다음 방에 들어가면 `spawn_world`가 처음부터 다시 만듭니다.
+/// 화면 가장자리의 표시(마차와 보스)를 숨기고, 카메라가 따라가던 세계의 모습을 잊습니다. 다음 방에 들어가면 `spawn_world`가 처음부터 다시 만듭니다.
 pub fn clear_world(
     mut commands: Commands,
     entities: Query<Entity, With<RoomEntity>>,
-    mut wagon_marker: Query<&mut Visibility, With<WagonMarkerNode>>,
+    mut edge_markers: Query<&mut Visibility, With<EdgeMarkerNode>>,
 ) {
-    for mut visibility in &mut wagon_marker {
+    for mut visibility in &mut edge_markers {
         *visibility = Visibility::Hidden;
     }
     commands.insert_resource(FollowedSetting::default());
@@ -219,6 +219,7 @@ pub fn clear_world(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::Marked;
     use crate::camp;
     use crate::characters;
     use crate::loot;
@@ -372,7 +373,7 @@ mod tests {
         assert!(app.world().contains_resource::<Scene>());
         let marker = app
             .world_mut()
-            .spawn((WagonMarkerNode, Visibility::Inherited))
+            .spawn((EdgeMarkerNode(Marked::Wagon), Visibility::Inherited))
             .id();
         app.world_mut()
             .insert_resource(FollowedSetting(Some(crowded_frame().setting())));
@@ -391,7 +392,7 @@ mod tests {
         assert_eq!(
             app.world().get::<Visibility>(marker),
             Some(&Visibility::Hidden),
-            "the wagon marker at the edge of the screen does not stay on the start screen"
+            "the markers at the edge of the screen do not stay on the start screen"
         );
         assert!(
             app.world().resource::<FollowedSetting>().0.is_none(),

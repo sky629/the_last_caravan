@@ -2,14 +2,15 @@
 //! 규칙은 공개 함수(`add_player`, `step`)로만 움직이고, 기대하는 값은 규칙의 약속(수치표의 값)에서 구합니다.
 
 use caravan_protocol::{
-    RoomCode, SeatToken, Snapshot, WeaponInfo, Welcome, WireAngle, WireAttack, WireBuffs,
-    WireBuildRefusal, WireCannotBuild, WireDelivery, WireInteraction, WireLife, WireLoadout,
-    WireMonsterKind, WireOutcome, WirePhase, WirePos, WirePrompt, WireRepairTarget, WireStruck,
-    WireStructureKind, WireTile, WireTowerState, WireWeaponKind,
+    RoomCode, SeatToken, Snapshot, WeaponInfo, Welcome, WireAim, WireAngle, WireAttack, WireBoss,
+    WireBossAct, WireBuffs, WireBuildRefusal, WireCannotBuild, WireDelivery, WireInteraction,
+    WireLife, WireLoadout, WireMonsterKind, WireNightStep, WireOutcome, WirePhase, WirePos,
+    WirePrompt, WireRepairTarget, WireStruck, WireStructureKind, WireTile, WireTowerState,
+    WireWeaponKind,
 };
 use caravan_rules::{
-    AimDir, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim, Start,
-    Tile, Tuning, Vec2, WavePlan, WeaponKind,
+    AimDir, Finale, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim,
+    Start, Tile, Tuning, Vec2, WavePlan, WeaponKind,
 };
 
 fn room() -> RoomCode {
@@ -260,13 +261,30 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
         .collect();
     assert_eq!(sites, expected, "the nodes of the map, numbered from 1");
     assert_eq!(world.player_radius, 0.35);
-    let [grunt, scarecrow] = world.monster_kinds[..] else {
-        panic!("the grunt and the scarecrow expected");
+    let [grunt, scarecrow, boss] = world.monster_kinds[..] else {
+        panic!("the grunt, the scarecrow and the boss expected");
     };
     assert_eq!(grunt.kind, WireMonsterKind::Grunt);
     assert_eq!((grunt.radius, grunt.max_hp), (0.4, 60));
     assert_eq!(scarecrow.kind, WireMonsterKind::Scarecrow);
     assert_eq!((scarecrow.radius, scarecrow.max_hp), (0.4, 60));
+    // 보스의 반지름은 그리는 크기이므로 맞는 몸의 반지름이고, 최대 HP는 기준 인원일 때의 값입니다.
+    assert_eq!(boss.kind, WireMonsterKind::Boss);
+    assert_eq!(
+        (boss.radius, boss.max_hp),
+        (1.0, Tuning::default().monsters.boss.max_hp)
+    );
+    let info = world.boss.expect("the default tuning has a boss");
+    assert_eq!(info.slam_radius, 2.5);
+}
+
+#[test]
+fn welcome_has_no_boss_for_a_tuning_without_one() {
+    let mut sim = sim_with(|t| t.nights.finale = Finale::LastWave);
+    let me = sim.add_player().unwrap();
+    let welcome = Welcome::from_sim(&sim, sim.player(me).unwrap(), &room(), SeatToken([7; 16]));
+
+    assert_eq!(welcome.world.boss, None);
 }
 
 /// 야영지에서 시작 무기가 `weapon`인 플레이어가 바로 앞(한 걸음 떨어진 곳)의 허수아비를 동쪽으로 한 번 쏘거나 벤 뒤의 허수아비입니다.
@@ -1203,4 +1221,95 @@ fn the_welcome_lists_every_weapon_with_the_way_its_attack_is_delivered() {
             },
         ]
     );
+}
+
+#[test]
+fn the_warning_the_boss_its_max_hp_its_aim_and_its_slam_reach_the_wire_in_order() {
+    // 마지막 밤의 무리가 한 마리이고 감시탑 하나가 그 한 마리를 처치합니다. 그 뒤에 경고가 5초 이어지고 보스가 나타납니다.
+    let mut sim = sim_with(|t| {
+        t.cycle.day_secs = 0.1;
+        t.nights.plans = one_monster();
+        t.nights.first_wave_delay_secs = 0.05;
+        t.guards.per_node = 0;
+        t.guards.per_chest = 0;
+    });
+    let builder = sim.add_player().unwrap();
+    let none = PlayerInputs::new();
+    let building = PlayerInputs::from([(
+        builder,
+        PlayerInput {
+            build: true,
+            aim: AimDir::new(1.0, 0.0),
+            ..PlayerInput::default()
+        },
+    )]);
+    step(&mut sim, &building, 60);
+
+    let mut warned_with = None;
+    for _ in 0..3000 {
+        sim.step(&none);
+        if let WirePhase::Night {
+            step: WireNightStep::Warning { secs_left },
+            ..
+        } = Snapshot::from_sim(&sim).phase
+        {
+            warned_with = Some(secs_left);
+            break;
+        }
+    }
+    let secs_left = warned_with.expect("the last wave is cleared and the warning starts");
+    assert!((4.9..=5.0).contains(&secs_left), "{secs_left}");
+    assert!(
+        Snapshot::from_sim(&sim).monsters.is_empty(),
+        "nobody is on the field during the warning"
+    );
+
+    let mut boss = None;
+    for _ in 0..200 {
+        sim.step(&none);
+        if let WirePhase::Night {
+            step: WireNightStep::Boss(state),
+            ..
+        } = Snapshot::from_sim(&sim).phase
+        {
+            boss = Some(state);
+            break;
+        }
+    }
+    let state = boss.expect("the boss comes after five seconds");
+    let snapshot = Snapshot::from_sim(&sim);
+    let one = Tuning::default().monsters.boss.max_hp.div_ceil(4);
+    assert_eq!(state.max_hp, one, "a room of one has a quarter of the HP");
+    assert_eq!(state.aim, WireAim::Wagon);
+    assert_eq!(state.act, WireBossAct::Walking);
+    let [body] = &snapshot.monsters[..] else {
+        panic!("the boss alone: {:?}", snapshot.monsters);
+    };
+    assert_eq!(body.status.kind(), WireMonsterKind::Boss);
+    assert_eq!(body.hp, one);
+
+    let mut slam = None;
+    for _ in 0..4000 {
+        sim.step(&none);
+        if let WirePhase::Night {
+            step:
+                WireNightStep::Boss(WireBoss {
+                    act: WireBossAct::Slam { center, progress },
+                    ..
+                }),
+            ..
+        } = Snapshot::from_sim(&sim).phase
+        {
+            slam = Some((center, progress));
+            break;
+        }
+    }
+    let (center, progress) = slam.expect("the boss slams the wagon once it is within eight tiles");
+    let wagon = Tuning::default().map.wagon.center();
+    assert_eq!(
+        center,
+        WirePos::from_tiles(wagon),
+        "on the middle of the wagon"
+    );
+    assert!((0.0..=1.0).contains(&progress), "{progress}");
 }

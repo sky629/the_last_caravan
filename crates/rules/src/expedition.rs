@@ -1,19 +1,20 @@
 //! 원정의 진행입니다. 원정은 첫날의 낮부터 성공이나 실패까지의 한 판이고, 날마다 낮 한 번과 밤 한 번이 있습니다.
 //! 낮의 시간이 끝나면 밤이 되고, 밤의 무리를 한 마리씩 등장시키고, 무리를 모두 처치하면 다음 날의 낮이 시작됩니다.
-//! 마지막 밤을 막거나 실패하면 원정이 끝나고, 방은 결과 화면(`Stage::Debrief`)으로 넘어갑니다.
+//! 마지막 밤의 끝이나 실패로 원정이 끝나고, 방은 결과 화면(`Stage::Debrief`)으로 넘어갑니다. 마지막 밤의 끝은 보스가 있는 설정에서는 보스를 쓰러뜨린 때이고, 보스가 없는 설정에서는 마지막 무리를 처치한 때입니다.
 //!
 //! 단계를 바꾸는 곳은 이 파일의 `advance_phase`와 `settle_outcome` 둘뿐입니다.
 //! 단계가 바뀔 때 함께 일어나는 일(낮이 시작되면 모든 플레이어가 회복되고 낮의 몬스터가 놓이고, 밤이 되면 낮의 몬스터가 마차를 향함)도
 //! 단계를 바꾸는 바로 그 자리에서 부르므로, 단계와 그 일이 어긋날 수 없습니다.
 //! 첫날의 낮은 `Sim::begin_expedition`이 `begin_day`를 불러 시작합니다.
 
+use crate::boss;
 use crate::camp::who_must_agree;
 use crate::loot::{self, Seed};
 use crate::math::Vec2;
 use crate::monster::Order;
 use crate::resources;
 use crate::spawn::SpawnPlan;
-use crate::tuning::Tuning;
+use crate::tuning::{Finale, Tuning};
 use crate::world::World;
 
 /// 원정의 단계입니다. 단계마다 그 단계에서만 의미 있는 값을 가집니다. 그래서 「낮의 남은 시간」이나 「현재 무리 번호」 같은 별도의 필드가 없고,
@@ -23,7 +24,9 @@ use crate::world::World;
 ///   새 원정 -> Day{1} --낮의 시간이 끝남--> Night{1, Waiting{1}} --대기--> Night{1, Fighting{1}}
 ///   Night{d, Fighting{w}} --몬스터가 모두 사라짐--> Night{d, Waiting{w + 1}}                (그 밤의 마지막 무리가 아니면)
 ///   Night{d, Fighting{마지막 무리}} --몬스터가 모두 사라짐--> Dawn{d + 1} --대기--> Day{d + 1}    (마지막 밤이 아니면)
-///   Night{마지막 밤, Fighting{마지막 무리}} --몬스터가 모두 사라짐--> 원정이 끝남(Victory)
+///   Night{마지막 밤, Fighting{마지막 무리}} --몬스터가 모두 사라짐--> Night{마지막 밤, Warning} --경고가 끝남--> Night{마지막 밤, Boss}   (보스가 있는 설정)
+///   Night{마지막 밤, Fighting{마지막 무리}} --몬스터가 모두 사라짐--> 원정이 끝남(Victory)                                      (보스가 없는 설정)
+///   Night{마지막 밤, Boss} --보스가 쓰러짐--> 원정이 끝남(Victory)
 ///   모든 단계 --마차 HP 0, 또는 살아 있는 플레이어 없음--> 원정이 끝남(Defeat)
 /// ```
 /// 원정이 끝나면 `settle_outcome`이 결과를 돌려주고, `Sim`이 방을 결과 화면으로 옮깁니다.
@@ -56,6 +59,10 @@ pub enum NightStep {
         /// 다음 몬스터가 나타날 때까지 남은 Tick입니다.
         spawn_in_ticks: u32,
     },
+    /// 마지막 밤의 마지막 무리를 모두 처치했고, `ticks_left`가 지나면 보스가 나타납니다. 플레이어는 움직이고, 싸우고, 부활과 수리와 건설을 할 수 있습니다.
+    Warning { ticks_left: u32 },
+    /// 보스가 있습니다. 보스의 상태는 `World::boss`에 있고, 보스가 쓰러지면 원정이 성공으로 끝납니다.
+    Boss,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +152,28 @@ pub(crate) fn advance_phase(
                 }
             }
             NightStep::Fighting { .. } => spawn_next(phase, world, spawns, t),
+            NightStep::Warning { ticks_left } => {
+                *phase = if ticks_left > 1 {
+                    Phase::Night {
+                        day,
+                        party,
+                        step: NightStep::Warning {
+                            ticks_left: ticks_left - 1,
+                        },
+                    }
+                } else {
+                    // 경고는 보스가 있는 설정에서만 시작합니다. 보스가 없는 설정에서 단계만 바꾼 경우에는 보스 없이 보스의 단계가 되고, 곧바로 성공으로 끝납니다.
+                    if let Finale::Boss(cfg) = &t.nights.finale {
+                        world.spawn_boss(boss::arrival_spot(spawns, t), party, cfg, t);
+                    }
+                    Phase::Night {
+                        day,
+                        party,
+                        step: NightStep::Boss,
+                    }
+                };
+            }
+            NightStep::Boss => {}
         },
     }
 }
@@ -235,6 +264,7 @@ pub(crate) fn day_of(phase: Phase) -> u32 {
 }
 
 /// Tick의 맨 끝에서 원정이 끝났는지, 무리를 모두 처치했는지 판정합니다. 원정이 끝났으면 결과를 돌려주고, 단계는 그대로 둡니다.
+/// 성공은 보스가 없는 설정(`Finale::LastWave`)에서는 마지막 밤의 마지막 무리를 모두 처치한 때이고, 보스가 있는 설정에서는 마지막 무리를 처치한 뒤 경고가 끝나고 나타난 보스가 쓰러진 때입니다.
 /// 실패를 먼저 검사하므로, 마지막 몬스터가 죽은 Tick에 마차도 부서졌다면 실패입니다. 실패는 낮에도 밤에도 같습니다.
 /// 실패는 자리에 있는 플레이어를 기준으로 판정합니다. 자리에 있는 사람이 모두 쓰러지거나 죽으면 실패이고,
 /// 보호받는 캐릭터가 살아 있다고 해서 실패가 미뤄지지 않습니다. 자리에 있는 플레이어가 한 명도 없는 방은 실패하지 않습니다.
@@ -245,32 +275,45 @@ pub(crate) fn settle_outcome(phase: &mut Phase, world: &World, t: &Tuning) -> Op
     if defeated {
         return Some(Outcome::Defeat);
     }
-    if let Phase::Night {
-        day,
-        party,
-        step: NightStep::Fighting {
-            wave, to_spawn: 0, ..
-        },
-    } = *phase
-        && world.monsters.is_empty()
-    {
-        if wave < t.nights.wave_count(day) {
-            *phase = Phase::Night {
-                day,
-                party,
-                step: NightStep::Waiting {
-                    next_wave: wave + 1,
-                    ticks_left: t.ticks(t.nights.between_waves_secs),
-                },
-            };
-        } else if day < t.day_count() {
-            *phase = Phase::Dawn {
-                next_day: day + 1,
-                ticks_left: t.ticks(t.cycle.dawn_secs),
-            };
-        } else {
-            return Some(Outcome::Victory);
+    match *phase {
+        Phase::Night {
+            day,
+            party,
+            step: NightStep::Fighting {
+                wave, to_spawn: 0, ..
+            },
+        } if world.monsters.is_empty() => {
+            if wave < t.nights.wave_count(day) {
+                *phase = Phase::Night {
+                    day,
+                    party,
+                    step: NightStep::Waiting {
+                        next_wave: wave + 1,
+                        ticks_left: t.ticks(t.nights.between_waves_secs),
+                    },
+                };
+            } else if day < t.day_count() {
+                *phase = Phase::Dawn {
+                    next_day: day + 1,
+                    ticks_left: t.ticks(t.cycle.dawn_secs),
+                };
+            } else if let Finale::Boss(cfg) = &t.nights.finale {
+                *phase = Phase::Night {
+                    day,
+                    party,
+                    step: NightStep::Warning {
+                        ticks_left: t.ticks(cfg.warning_secs),
+                    },
+                };
+            } else {
+                return Some(Outcome::Victory);
+            }
         }
+        Phase::Night {
+            step: NightStep::Boss,
+            ..
+        } if world.boss.is_none() => return Some(Outcome::Victory),
+        Phase::Day { .. } | Phase::Night { .. } | Phase::Dawn { .. } => {}
     }
     None
 }
