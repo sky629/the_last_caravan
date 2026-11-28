@@ -29,7 +29,7 @@ use crate::spawn::SpawnPlan;
 use crate::sweep;
 use crate::telegraph::{self, Telegraph, Zone};
 use crate::tuning::{BossTuning, Finale, Move, Tuning};
-use crate::world::{Ctx, Hit, Target, World};
+use crate::world::{Ctx, Hit, Shove, Target, World};
 
 /// 보스가 노리는 대상입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,9 +189,9 @@ pub(crate) fn arrival_spot(spawns: &SpawnPlan, t: &Tuning) -> Vec2 {
     spawns.night_spot(t.nights.wave_total(), 0)
 }
 
-/// Tick마다 보스의 한 걸음입니다. 대상을 다시 정하고, 하고 있는 일을 한 Tick 진행하고, 끝나는 일이 있으면 피해를 `hits`에 더합니다.
-/// 보스가 없거나 마지막 밤의 끝이 보스가 아니면 아무것도 하지 않습니다.
-pub(crate) fn act(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
+/// Tick마다 보스의 한 걸음입니다. 대상을 다시 정하고, 하고 있는 일을 한 Tick 진행하고, 끝나는 일이 있으면 피해를 `hits`에 더하고
+/// 돌진에 맞은 플레이어의 밀어내기를 `shoves`에 더합니다. 보스가 없거나 마지막 밤의 끝이 보스가 아니면 아무것도 하지 않습니다.
+pub(crate) fn act(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>, shoves: &mut Vec<Shove>) {
     let Finale::Boss(cfg) = &ctx.t.nights.finale else {
         return;
     };
@@ -199,7 +199,7 @@ pub(crate) fn act(world: &mut World, ctx: &Ctx, hits: &mut Vec<Hit>) {
         return;
     };
     if let Ok(index) = world.monsters.binary_search_by_key(&boss.id, |m| m.id) {
-        step(world, index, &mut boss, cfg, ctx.t, hits);
+        step(world, index, &mut boss, cfg, ctx.t, hits, shoves);
     }
     world.boss = Some(boss);
 }
@@ -212,6 +212,7 @@ fn step(
     cfg: &BossTuning,
     t: &Tuning,
     hits: &mut Vec<Hit>,
+    shoves: &mut Vec<Shove>,
 ) {
     boss.threat.advance();
     boss.aim = choose_aim(world, boss, world.monsters[index].pos, cfg);
@@ -246,7 +247,7 @@ fn step(
             }
         }
         Act::Charging(mut charge) => {
-            if run(world, index, &mut charge, cfg, t, hits) {
+            if run(world, index, &mut charge, cfg, t, hits, shoves) {
                 boss.finish(cfg, t)
             } else {
                 Act::Charging(charge)
@@ -355,6 +356,7 @@ impl Charge {
 }
 
 /// 돌진을 한 Tick 달립니다. 보스의 걷는 몸은 걷는 것과 같은 충돌 규칙으로 움직이고, 이번 Tick에 지나간 띠(앞쪽 반폭 포함)에 든 대상을 맞힙니다.
+/// 새로 맞은 플레이어는 돌진의 방향으로 밀려나도록 `shoves`에 더합니다.
 /// 목표까지 달렸거나 가로막혀서 나아가지 못하면 끝나고 참을 돌려줍니다.
 fn run(
     world: &mut World,
@@ -363,6 +365,7 @@ fn run(
     cfg: &BossTuning,
     t: &Tuning,
     hits: &mut Vec<Hit>,
+    shoves: &mut Vec<Shove>,
 ) -> bool {
     let radius = t.monsters.boss.radius;
     let wanted = (cfg.charge.speed * t.dt())
@@ -386,6 +389,18 @@ fn run(
         to: pos + charge.dir * charge.half_width,
         half_width: charge.half_width,
     };
+    let already_struck = charge.struck.len();
     telegraph::strike_fresh(world, &swept, &cfg.charge.strike, &mut charge.struck, hits);
+    let ticks = t.ticks(cfg.charge.push_secs);
+    let step = charge.dir * (cfg.charge.push_tiles / ticks as f32);
+    for target in &charge.struck[already_struck..] {
+        if let Target::Player(player) = *target {
+            shoves.push(Shove {
+                player,
+                step,
+                ticks,
+            });
+        }
+    }
     charge.travelled >= charge.length - 1e-3 || moved < wanted * 0.5
 }

@@ -358,6 +358,16 @@ pub(crate) struct Affliction {
     pub by: Source,
 }
 
+/// 이번 Tick에 플레이어를 밀어내기로 정한 기록입니다. 플레이어는 `ticks` Tick 동안 Tick마다 `step`씩 밀려납니다.
+/// 밀어내는 공격이 만들고, 피해를 적용한 뒤에 `player::apply_shoves`가 그 플레이어가 아직 살아 있으면 밀려나는 상태(`Interaction::Knocked`)로 바꿉니다.
+/// 피해가 없으므로 `Hit`이 아닙니다.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Shove {
+    pub player: PlayerId,
+    pub step: Vec2,
+    pub ticks: u32,
+}
+
 impl World {
     /// 모든 피해를 적용하는 유일한 곳입니다. 몬스터의 HP를 0으로 만든 피해가 있으면 그 피해를 준 쪽이 처치를 가져갑니다.
     /// 같은 Tick에 여럿이 같은 몬스터를 맞히면 `hits`의 순서(플레이어의 공격, 탄환, 포탑, 보스, 몬스터, 출혈)에서 HP를 0으로 만든 피해가 주인입니다.

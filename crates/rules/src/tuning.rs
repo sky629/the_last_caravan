@@ -692,6 +692,10 @@ pub struct ChargeTuning {
     /// 띠를 따라 달리는 초당 타일 수입니다.
     pub speed: f32,
     pub strike: StrikeTuning,
+    /// 맞은 플레이어가 돌진의 방향으로 밀려나는 거리(타일)입니다.
+    pub push_tiles: f32,
+    /// 밀려나는 동안의 시간입니다. 이 시간 동안 플레이어는 조작할 수 없습니다.
+    pub push_secs: f32,
 }
 
 /// 마지막 밤의 보스에 관한 수치입니다. 보스의 몸과 HP와 걷는 속도는 몬스터 종류표(`MonsterTable::boss`)에 있습니다.
@@ -1118,7 +1122,7 @@ impl Tuning {
     ///
     /// - 행동의 순서는 비어 있지 않아야 합니다. 비어 있으면 보스가 아무것도 하지 않습니다.
     /// - 경고와 되돌아보는 시간과 예고의 시간은 유한하고 0보다 길어야 하고, 걷는 시간은 유한하고 0 이상이어야 합니다. 예고가 0초이면 보고 피할 수 없습니다.
-    /// - 보스가 대상으로 삼는 거리, 원의 반지름, 띠의 폭과 길이와 속도는 유한하고 0보다 길어야 합니다.
+    /// - 보스가 대상으로 삼는 거리, 원의 반지름, 띠의 폭과 길이와 속도, 밀려나는 시간은 유한하고 0보다 길어야 하고, 밀려나는 거리는 유한하고 0 이상이어야 합니다.
     /// - 돌진이 한 Tick에 달리는 거리는 보스의 걷는 몸의 반지름의 `MAX_PLAYER_STEPS_PER_TICK`배보다 짧아야 합니다. 돌진은 걷는 몸의 반지름보다 짧은 걸음으로 나누어 움직이므로 걸음의 수에 끝이 있어야 합니다.
     /// - 순서에 들어 있는 행동만이 아니라 모든 행동의 수치를 검사합니다. 순서는 수치를 바꾸지 않고 고칠 수 있어야 하기 때문입니다.
     fn validate_finale(&self) -> Result<(), String> {
@@ -1133,6 +1137,7 @@ impl Tuning {
             ("threat_secs", boss.threat_secs),
             ("slam windup_secs", boss.slam.windup_secs),
             ("charge windup_secs", boss.charge.windup_secs),
+            ("charge push_secs", boss.charge.push_secs),
             ("target_range", boss.target_range),
             ("slam radius", boss.slam.radius),
             ("charge width", boss.charge.width),
@@ -1142,6 +1147,7 @@ impl Tuning {
             check_positive(&format!("boss {name}"), value)?;
         }
         check_not_negative("boss rest_secs", boss.rest_secs)?;
+        check_not_negative("boss charge push_tiles", boss.charge.push_tiles)?;
         let radii = boss.charge.speed * self.dt() / self.monsters.boss.radius;
         if radii >= MAX_PLAYER_STEPS_PER_TICK {
             return Err(format!(
@@ -1828,6 +1834,8 @@ impl Default for Tuning {
                             tower: 100,
                             wagon: 80,
                         },
+                        push_tiles: 3.0,
+                        push_secs: 0.3,
                     },
                 }),
             },

@@ -407,6 +407,8 @@ pub enum WireInteraction {
         /// 열기의 진행도(0.0에서 1.0)입니다. 진행도는 상자가 아니라 여는 플레이어에게 있습니다.
         progress: f32,
     },
+    /// 공격에 맞아서 밀려나는 중입니다. 위치는 서버가 Tick마다 조금씩 옮기므로, 클라이언트가 보간하면 미끄러지듯 움직입니다.
+    Knocked,
 }
 
 /// 수리하는 대상입니다.
@@ -732,6 +734,7 @@ fn wire_interaction(sim: &Sim, player: &Player, interaction: &Interaction) -> Wi
         },
         Interaction::Gathering { node, .. } => WireInteraction::Gathering { node: node.0 },
         Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },
+        Interaction::Knocked { .. } => WireInteraction::Knocked,
         Interaction::Opening { chest, .. } => WireInteraction::Opening {
             chest: chest.0,
             // 진행도는 여는 플레이어에게 있으므로 `Sim`이 그 플레이어의 열기에서 계산합니다.
