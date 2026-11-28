@@ -111,7 +111,7 @@ fn runners_take_every_tower_hit() -> Numbers {
     }
 }
 
-/// 돌격병이 없는 무리입니다. 밤마다 무리의 크기는 기본 수치와 같은 합이고 모두 기본 몬스터이며, 보스의 졸개도 기본 몬스터입니다.
+/// 돌격병과 파괴병이 없는 무리입니다. 밤마다 무리의 크기는 기본 수치와 같은 합이고 모두 기본 몬스터이며, 보스의 졸개도 기본 몬스터입니다.
 fn grunts_only() -> Numbers {
     let mut tuning = Tuning::default();
     tuning.nights.plans = nights(&[&[8, 12], &[20, 30, 40], &[60, 90, 150]]);
@@ -119,7 +119,7 @@ fn grunts_only() -> Numbers {
         boss.summon.kind = MonsterKind::Grunt;
     }
     Numbers {
-        name: "grunts only (no runners, grunt minions)".to_string(),
+        name: "grunts only (no runners, no sappers, grunt minions)".to_string(),
         tuning,
     }
 }
