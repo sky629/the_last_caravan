@@ -44,7 +44,7 @@ const ESCAPE_TILES: f32 = 3.2;
 const EDGE_MARGIN: f32 = 6.0;
 
 /// 곁에 온 졸개를 제자리에서 베기 시작하는 거리(타일)입니다. 검이 닿는 거리 1.0에 플레이어와 돌격병의 반지름을 더하고 조금 줄인 값입니다.
-const SWING_REACH: f32 = 1.55;
+pub(super) const SWING_REACH: f32 = 1.55;
 
 /// 마차를 지키는 플레이어가 졸개가 가장 가까이 온 쪽의 마차 가장자리에서 떨어져 기다리는 거리(타일)입니다.
 const GUARD_POST_GAP: f32 = 1.5;
@@ -302,7 +302,7 @@ pub(super) fn guard_the_wagon(sim: &Sim, at: Vec2, waits_for_the_strike: bool) -
 }
 
 /// `at`에서 `to`로 향해 걷는 방향입니다. 곧장 가는 선 위에 막힌 타일이 없으면 곧장 걷고, 막혀 있으면(마차나 감시탑 너머로 가는 경우) 길을 따라 돌아갑니다.
-fn walk_toward(sim: &Sim, at: Vec2, to: Vec2) -> Vec2 {
+pub(super) fn walk_toward(sim: &Sim, at: Vec2, to: Vec2) -> Vec2 {
     let tiles = sim.tiles();
     let straight = to - at;
     let samples = (straight.length() / CLEAR_LINE_STEP).ceil() as u32;
