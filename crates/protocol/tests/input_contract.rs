@@ -6,7 +6,7 @@
 use caravan_protocol::{ClientMsg, InputMsg, WireVec2};
 
 #[test]
-fn an_input_carries_a_sequence_number_two_directions_and_nine_buttons_and_nothing_else() {
+fn an_input_carries_a_sequence_number_two_directions_and_ten_buttons_and_nothing_else() {
     let input = InputMsg::default();
     // 필드를 모두 나열해서 분해합니다. 위치, 피해량, 대상, 명중 여부 같은 필드가 생기면 여기서 컴파일이 멈춥니다.
     let InputMsg {
@@ -22,6 +22,7 @@ fn an_input_carries_a_sequence_number_two_directions_and_nine_buttons_and_nothin
         toggle_ready: _,
         confirm: _,
         cycle_tower: _,
+        drop_weapon: _,
     } = input;
 }
 

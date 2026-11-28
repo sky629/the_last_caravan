@@ -10,7 +10,7 @@
 //! (그 밖의 모든 상태) --Disconnected--> Disconnected   (Rejected, Failed, Unreachable, TakenOver는 사유를 유지합니다)
 //! ```
 //!
-//! 방에 들어간 뒤에 필요한 값(입장 안내, 명단, 스냅샷, 입력 순서 번호)은 `InRoom`에만 있습니다.
+//! 방에 들어간 뒤에 필요한 값(입장 안내, 명단, 스냅샷, 입력 순서 번호, 나가기 확인 창)은 `InRoom`에만 있습니다.
 //! 그래서 입장하기 전에 스냅샷을 그리거나 입력을 보내는 일은 값이 없어서 일어날 수 없습니다.
 //! 끝난 상태(Rejected, Disconnected, Unreachable, Failed, TakenOver)가 되면 `Flow`가 접속을 버리고 시작 화면으로 돌아갑니다.
 
@@ -23,6 +23,7 @@ use caravan_rules::Vec2;
 use crate::hud::reject_text;
 use crate::input::{Controls, InputSender};
 use crate::interp::{Frame, SnapshotBuffer};
+use crate::leave::LeavePrompt;
 use crate::start::JoinRequest;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +80,8 @@ pub struct Joined {
     /// 서버가 가장 최근에 보낸 결과입니다. 결과 화면이 열릴 때 오고, 결과에는 몇 번째 원정의 것인지가 있어서
     /// 지금 그리는 원정(`Frame::expedition`)의 것인지 화면이 알아봅니다. 결과 화면이 아닐 때에도 마지막 결과가 남아 있지만 그리지 않습니다.
     pub report: Option<WireReport>,
+    /// 방을 나가기 전에 묻는 확인 창입니다. 방에 들어간 뒤의 상태에만 있으므로, 방을 나가거나 접속이 끊겨서 `Joined`가 사라지면 창도 사라집니다.
+    pub(crate) leave_prompt: LeavePrompt,
     /// 받아들인 명단의 번호입니다. 아직 받아들인 명단이 없으면 0입니다.
     roster_revision: u32,
     snapshots: SnapshotBuffer,
@@ -92,6 +95,7 @@ impl Joined {
             name,
             roster: Vec::new(),
             report: None,
+            leave_prompt: LeavePrompt::default(),
             roster_revision: 0,
             snapshots: SnapshotBuffer::new(welcome.tick_hz),
             inputs: InputSender::new(welcome.tick_hz),
@@ -282,6 +286,7 @@ impl Session {
 
     /// 프레임마다 부릅니다. 입력을 보낼 때가 되었으면 입력 메시지를 돌려줍니다.
     /// `now_secs`는 앱이 시작된 뒤 지난 시간(초)이고, `me`는 내 캐릭터가 화면에 그려진 지면 위치입니다.
+    /// 나가기 확인 창이 떠 있는 동안의 Enter는 나가기이므로 결과 화면의 확인으로 보내지 않습니다.
     pub fn input_due(
         &mut self,
         now_secs: f64,
@@ -291,9 +296,13 @@ impl Session {
         let Session::InRoom(joined) = self else {
             return None;
         };
+        let controls = Controls {
+            confirm: controls.confirm && !joined.leave_prompt.is_open(),
+            ..*controls
+        };
         joined
             .inputs
-            .poll(now_secs, controls, me)
+            .poll(now_secs, &controls, me)
             .map(ClientMsg::Input)
     }
 
@@ -817,5 +826,68 @@ mod tests {
         assert_eq!(seq_of(session.input_due(1.000, &idle, None)), Some(1));
         assert_eq!(seq_of(session.input_due(1.020, &idle, None)), None);
         assert_eq!(seq_of(session.input_due(1.051, &idle, None)), Some(2));
+    }
+
+    fn confirm_sent(session: &mut Session, now_secs: f64) -> bool {
+        let enter = Controls {
+            confirm: true,
+            ..Controls::default()
+        };
+        match session.input_due(now_secs, &enter, None) {
+            Some(ClientMsg::Input(input)) => input.confirm,
+            other => panic!("an input is due: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_enter_pressed_while_the_leave_prompt_is_open_is_not_sent_as_a_confirmation() {
+        let mut session = in_room();
+        assert!(
+            confirm_sent(&mut session, 1.00),
+            "without the prompt Enter confirms the result"
+        );
+
+        let Session::InRoom(joined) = &mut session else {
+            panic!("in the room");
+        };
+        joined.leave_prompt = LeavePrompt::Open;
+        assert!(
+            !confirm_sent(&mut session, 1.06),
+            "with the prompt Enter only leaves"
+        );
+
+        let Session::InRoom(joined) = &mut session else {
+            panic!("in the room");
+        };
+        joined.leave_prompt = LeavePrompt::Closed;
+        assert!(
+            confirm_sent(&mut session, 1.12),
+            "closing the prompt gives Enter back"
+        );
+    }
+
+    #[test]
+    fn the_prompt_does_not_hold_back_the_other_keys() {
+        let mut session = in_room();
+        let Session::InRoom(joined) = &mut session else {
+            panic!("in the room");
+        };
+        joined.leave_prompt = LeavePrompt::Open;
+        let busy = Controls {
+            attack: true,
+            switch_weapon: true,
+            right: true,
+            ..Controls::default()
+        };
+
+        let Some(ClientMsg::Input(input)) = session.input_due(1.0, &busy, None) else {
+            panic!("an input is due");
+        };
+
+        assert!(
+            input.attack && input.switch_weapon,
+            "the game does not stop"
+        );
+        assert!(input.move_dir.x != 0.0 || input.move_dir.y != 0.0);
     }
 }

@@ -4,13 +4,14 @@
 //!   Start --Enter(맞는 값)--> Playing(Connecting -> Joining -> InRoom)
 //!   Playing --거절--> Start(입력한 값과 거절된 이유)
 //!   Playing --끊김, 접속 실패, 자리를 다른 창에 내줌--> Start(들어가 있던 방 코드와 이유)
-//!   Playing --Esc--> Start(들어가 있던 방 코드)
+//!   Playing(방에 들어감) --Esc--> 나가기 확인 창 --Enter--> Start(들어가 있던 방 코드)
+//!   Playing(접속하는 중, 입장하는 중) --Esc--> Start(들어가 있던 방 코드)
 //!   (시작할 때 이름과 방 코드가 모두 주어졌으면 Start 없이 Playing)
 //! ```
 //!
 //! 입장하면 서버가 알려 준 자리의 표식을 기기에 저장합니다. 끊겨서 시작 화면으로 돌아온 뒤 같은 방 코드로 입장하면(방 코드를 비우고 방을
 //! 만들었어도 칸에 서버가 정한 코드가 채워집니다) 그 표식을 `Join`에 실어서, 서버가 60초 동안 유지하는 같은 캐릭터로 돌아갑니다.
-//! Esc는 스스로 나가는 것이므로 서버에 `Leave`를 보내서 자리를 곧바로 내놓고 표식을 지웁니다.
+//! 확인 창에서 Enter로 나가는 것은 스스로 나가는 것이므로 서버에 `Leave`를 보내서 자리를 곧바로 내놓고 표식을 지웁니다.
 //!
 //! 이 파일은 접속 방식, 저장소, 클립보드를 직접 다루지 않고 해야 할 일을 `Command`로 돌려줍니다.
 //! 그래서 Bevy 없이 키와 이벤트를 넣고 돌아온 `Command`를 보는 테스트로 확인합니다.
@@ -19,6 +20,7 @@ use caravan_protocol::{ClientEvent, ClientMsg, PlayerName, RejectReason};
 
 use crate::hud::{InviteKind, reject_text};
 use crate::launch::{DEFAULT_SERVER, LaunchError, LaunchOptions};
+use crate::leave::{PromptStep, RoomKey};
 use crate::memory::Memory;
 use crate::page::Page;
 use crate::session::Session;
@@ -213,9 +215,30 @@ impl Flow {
         commands
     }
 
-    /// 방 안에서 Esc입니다. 접속을 버리고, 들어가 있던 방 코드가 채워진 시작 화면으로 돌아갑니다.
+    /// 방 안에서 Esc나 Enter를 눌렀습니다. 방에 들어간 뒤에는 나가기 확인 창(`LeavePrompt`)이 키를 읽습니다.
+    /// Esc가 창을 열고 닫고, 창이 떠 있을 때의 Enter가 방을 나갑니다. 창이 닫혀 있을 때의 Enter는 아무 일도 하지 않습니다.
+    /// 방에 들어가기 전(접속하는 중, 입장하는 중)에는 잃을 것이 없으므로 Esc가 확인 없이 나가고, Enter는 아무 일도 하지 않습니다.
+    pub fn on_room_key(&mut self, key: RoomKey) -> Vec<Command> {
+        let Screen::Playing(session) = &mut self.screen else {
+            return Vec::new();
+        };
+        match session {
+            Session::InRoom(joined) => match joined.leave_prompt.press(key) {
+                PromptStep::Stay(prompt) => {
+                    joined.leave_prompt = prompt;
+                    Vec::new()
+                }
+                PromptStep::Leave => self.leave(),
+            },
+            _ if key == RoomKey::Escape => self.leave(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// 확인 없이 방을 나갑니다. 사람이 키로 나가는 길은 확인 창을 거치는 `on_room_key`입니다.
+    /// 접속을 버리고, 들어가 있던 방 코드가 채워진 시작 화면으로 돌아갑니다.
     /// 입장 요청(`Join`)을 보낸 뒤였으면 서버에 `Leave`를 먼저 보내서 자리를 곧바로 내놓고, 이 서버의 표식을 지웁니다.
-    /// 서버는 `Join` 뒤의 `Leave`를 순서대로 받으므로, 입장 안내가 오기 전에 Esc를 눌러도 자리가 남지 않습니다.
+    /// 서버는 `Join` 뒤의 `Leave`를 순서대로 받으므로, 입장 안내가 오기 전에 나가도 자리가 남지 않습니다.
     /// 접속이 열리기 전에는 서버가 아무것도 모르므로 접속만 버립니다.
     pub fn leave(&mut self) -> Vec<Command> {
         let Screen::Playing(session) = &self.screen else {
@@ -675,6 +698,118 @@ mod tests {
         assert_eq!(form.room.text(), "k7m2q");
         assert_eq!(form.name.text(), "KANG");
         assert_eq!(form.notice, None);
+    }
+
+    fn prompt_is_open(flow: &Flow) -> bool {
+        flow.session()
+            .and_then(Session::joined)
+            .is_some_and(|joined| joined.leave_prompt.is_open())
+    }
+
+    #[test]
+    fn one_escape_in_the_room_asks_instead_of_leaving() {
+        let mut flow = joined("k7m2q");
+
+        let commands = flow.on_room_key(RoomKey::Escape);
+
+        assert_eq!(commands, vec![], "nothing is sent and the connection stays");
+        assert!(matches!(flow.screen(), Screen::Playing(Session::InRoom(_))));
+        assert!(prompt_is_open(&flow));
+    }
+
+    #[test]
+    fn a_second_escape_closes_the_prompt_and_the_room_goes_on() {
+        let mut flow = joined("k7m2q");
+        flow.on_room_key(RoomKey::Escape);
+
+        let commands = flow.on_room_key(RoomKey::Escape);
+
+        assert_eq!(commands, vec![]);
+        assert!(matches!(flow.screen(), Screen::Playing(Session::InRoom(_))));
+        assert!(!prompt_is_open(&flow));
+    }
+
+    #[test]
+    fn enter_in_the_room_leaves_only_while_the_prompt_is_open() {
+        let mut flow = joined("k7m2q");
+        assert_eq!(
+            flow.on_room_key(RoomKey::Enter),
+            vec![],
+            "without the prompt Enter is not a way out"
+        );
+        assert!(matches!(flow.screen(), Screen::Playing(_)));
+
+        flow.on_room_key(RoomKey::Escape);
+        let commands = flow.on_room_key(RoomKey::Enter);
+
+        let [
+            Command::Send(ClientMsg::Leave),
+            Command::Disconnect,
+            Command::Save(_),
+        ] = &commands[..]
+        else {
+            panic!("expected Leave, Disconnect and Save, got {commands:?}");
+        };
+        let form = form(&flow);
+        assert_eq!(form.room.text(), "k7m2q");
+        assert_eq!(form.notice, None);
+    }
+
+    #[test]
+    fn before_the_room_is_entered_escape_leaves_at_once_and_enter_does_nothing() {
+        let mut flow = start(launch(None, None), Memory::default());
+        type_text(&mut flow, "KANG");
+        flow.on_key(FormKey::Enter);
+        assert_eq!(flow.on_room_key(RoomKey::Enter), vec![]);
+        assert!(matches!(flow.screen(), Screen::Playing(_)));
+        assert_eq!(
+            flow.on_room_key(RoomKey::Escape),
+            vec![Command::Disconnect],
+            "the connection is not open yet, so there is nothing to confirm"
+        );
+
+        flow.on_key(FormKey::Enter);
+        flow.on_event(ClientEvent::Connected);
+        assert_eq!(flow.on_room_key(RoomKey::Enter), vec![]);
+        let commands = flow.on_room_key(RoomKey::Escape);
+        assert!(
+            matches!(
+                &commands[..],
+                [
+                    Command::Send(ClientMsg::Leave),
+                    Command::Disconnect,
+                    Command::Save(_)
+                ]
+            ),
+            "the join was sent, so the seat is given up: {commands:?}"
+        );
+        assert!(matches!(flow.screen(), Screen::Start(_)));
+    }
+
+    #[test]
+    fn room_keys_on_the_start_screen_do_nothing() {
+        let mut flow = start(launch(None, None), Memory::default());
+        assert_eq!(flow.on_room_key(RoomKey::Escape), vec![]);
+        assert_eq!(flow.on_room_key(RoomKey::Enter), vec![]);
+        assert!(matches!(flow.screen(), Screen::Start(_)));
+    }
+
+    #[test]
+    fn an_open_prompt_is_gone_when_the_connection_drops_and_the_next_room_starts_without_one() {
+        let mut flow = joined("k7m2q");
+        flow.on_room_key(RoomKey::Escape);
+        assert!(prompt_is_open(&flow));
+
+        flow.on_event(ClientEvent::Disconnected {
+            reason: "the server closed the connection".to_string(),
+        });
+        assert!(matches!(flow.screen(), Screen::Start(_)));
+
+        flow.on_key(FormKey::Enter);
+        flow.on_event(ClientEvent::Connected);
+        flow.on_event(ClientEvent::Message(welcome("k7m2q")));
+        assert!(flow.session().and_then(Session::joined).is_some());
+        assert!(!prompt_is_open(&flow), "the new room has no prompt");
     }
 
     /// 입장한 뒤 `Save`가 알려 준 글자를 돌려줍니다.

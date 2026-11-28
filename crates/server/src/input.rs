@@ -13,7 +13,7 @@ pub(crate) struct MemberInput {
     newest_seq: Option<u32>,
     /// 지난 Tick 이후 받아들인 입력을 하나로 합친 값입니다. 새 입력이 없었으면 `None`입니다.
     merged: Option<PlayerInput>,
-    /// 가장 최근에 받아들인 입력에서 누른 순간(`switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`, `cycle_tower`)을 지운 것입니다. 새 입력이 없는 Tick에 다시 사용합니다.
+    /// 가장 최근에 받아들인 입력에서 누른 순간(`switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`, `cycle_tower`, `drop_weapon`)을 지운 것입니다. 새 입력이 없는 Tick에 다시 사용합니다.
     held: PlayerInput,
     /// 새 입력 없이 지나간 Tick의 수입니다.
     silent_ticks: u32,
@@ -96,12 +96,13 @@ fn to_rules(msg: &InputMsg) -> PlayerInput {
         toggle_ready: msg.toggle_ready,
         confirm: msg.confirm,
         cycle_tower: msg.cycle_tower,
+        drop_weapon: msg.drop_weapon,
     }
 }
 
 /// 같은 Tick 안에 도착한 두 입력을 합칩니다. 이동, 조준, `interact`, `build`, `sprint`는 더 새로운 입력을 따릅니다.
 /// `interact`와 `build`와 `sprint`는 누르고 있는 동안 이어지는 상태이므로, Tick 안에서 눌렀다 뗐다면 뗀 것으로 봅니다.
-/// `attack`, `switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`, `cycle_tower`는 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭과 키가 사라지지 않게 합니다.
+/// `attack`, `switch_weapon`, `interact_pressed`, `toggle_ready`, `confirm`, `cycle_tower`, `drop_weapon`은 하나라도 눌렸으면 눌린 것으로 봅니다. Tick보다 짧게 누른 클릭과 키가 사라지지 않게 합니다.
 /// 누른 순간인 조작을 더하면 `PlayerInput::held`가 그 값을 지우게 하고, 여기에도 `||`를 한 줄 더합니다.
 fn merge(older: PlayerInput, newer: PlayerInput) -> PlayerInput {
     PlayerInput {
@@ -111,6 +112,7 @@ fn merge(older: PlayerInput, newer: PlayerInput) -> PlayerInput {
         toggle_ready: older.toggle_ready || newer.toggle_ready,
         confirm: older.confirm || newer.confirm,
         cycle_tower: older.cycle_tower || newer.cycle_tower,
+        drop_weapon: older.drop_weapon || newer.drop_weapon,
         ..newer
     }
 }
@@ -419,6 +421,59 @@ mod tests {
 
         let tick = input.for_tick(10);
         assert!(!tick.toggle_ready && !tick.confirm);
+    }
+
+    fn g(seq: u32) -> InputMsg {
+        InputMsg {
+            seq,
+            drop_weapon: true,
+            ..InputMsg::default()
+        }
+    }
+
+    #[test]
+    fn a_press_of_g_reaches_the_rules_in_exactly_one_tick_and_the_held_keys_go_on() {
+        let mut input = MemberInput::new();
+        input.accept(&InputMsg {
+            attack: true,
+            ..g(1)
+        });
+
+        let first = input.for_tick(10);
+        assert!(first.drop_weapon, "the press reaches the rules");
+
+        let second = input.for_tick(10);
+        assert!(
+            !second.drop_weapon,
+            "a tick without a message does not drop the next weapon too"
+        );
+        assert!(second.attack, "the held click is still reused");
+    }
+
+    #[test]
+    fn a_press_of_g_that_was_followed_by_another_input_in_the_same_tick_is_kept_once() {
+        let mut input = MemberInput::new();
+        input.accept(&g(1));
+        input.accept(&g(2));
+        input.accept(&msg(3, false, false));
+
+        assert!(input.for_tick(10).drop_weapon);
+        assert!(!input.for_tick(10).drop_weapon);
+    }
+
+    #[test]
+    fn a_late_or_repeated_message_with_g_does_not_press_it() {
+        let mut input = MemberInput::new();
+        input.accept(&msg(5, false, false));
+        input.for_tick(10);
+
+        input.accept(&g(3));
+        input.accept(&g(5));
+
+        assert!(
+            !input.for_tick(10).drop_weapon,
+            "neither is newer than seq 5"
+        );
     }
 
     #[test]

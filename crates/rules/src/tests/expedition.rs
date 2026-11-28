@@ -372,6 +372,7 @@ fn play_a_scripted_expedition() -> String {
                     toggle_ready: false,
                     confirm: false,
                     cycle_tower: tick % 130 == 65,
+                    drop_weapon: false,
                 },
             );
         }
