@@ -286,7 +286,6 @@ impl Session {
 
     /// 프레임마다 부릅니다. 입력을 보낼 때가 되었으면 입력 메시지를 돌려줍니다.
     /// `now_secs`는 앱이 시작된 뒤 지난 시간(초)이고, `me`는 내 캐릭터가 화면에 그려진 지면 위치입니다.
-    /// 나가기 확인 창이 떠 있는 동안의 Enter는 나가기이므로 결과 화면의 확인으로 보내지 않습니다.
     pub fn input_due(
         &mut self,
         now_secs: f64,
@@ -296,13 +295,9 @@ impl Session {
         let Session::InRoom(joined) = self else {
             return None;
         };
-        let controls = Controls {
-            confirm: controls.confirm && !joined.leave_prompt.is_open(),
-            ..*controls
-        };
         joined
             .inputs
-            .poll(now_secs, &controls, me)
+            .poll(now_secs, controls, me)
             .map(ClientMsg::Input)
     }
 
@@ -826,44 +821,6 @@ mod tests {
         assert_eq!(seq_of(session.input_due(1.000, &idle, None)), Some(1));
         assert_eq!(seq_of(session.input_due(1.020, &idle, None)), None);
         assert_eq!(seq_of(session.input_due(1.051, &idle, None)), Some(2));
-    }
-
-    fn confirm_sent(session: &mut Session, now_secs: f64) -> bool {
-        let enter = Controls {
-            confirm: true,
-            ..Controls::default()
-        };
-        match session.input_due(now_secs, &enter, None) {
-            Some(ClientMsg::Input(input)) => input.confirm,
-            other => panic!("an input is due: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn an_enter_pressed_while_the_leave_prompt_is_open_is_not_sent_as_a_confirmation() {
-        let mut session = in_room();
-        assert!(
-            confirm_sent(&mut session, 1.00),
-            "without the prompt Enter confirms the result"
-        );
-
-        let Session::InRoom(joined) = &mut session else {
-            panic!("in the room");
-        };
-        joined.leave_prompt = LeavePrompt::Open;
-        assert!(
-            !confirm_sent(&mut session, 1.06),
-            "with the prompt Enter only leaves"
-        );
-
-        let Session::InRoom(joined) = &mut session else {
-            panic!("in the room");
-        };
-        joined.leave_prompt = LeavePrompt::Closed;
-        assert!(
-            confirm_sent(&mut session, 1.12),
-            "closing the prompt gives Enter back"
-        );
     }
 
     #[test]

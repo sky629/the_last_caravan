@@ -11,6 +11,12 @@ use crate::convert;
 #[derive(Resource, Default)]
 pub struct HeldControls(pub Controls);
 
+/// 이번 프레임에 Enter를 누르기 시작했는지 봅니다. 숫자 패드의 Enter도 같은 Enter입니다. 시작 화면이 읽는 논리 키 Enter가 숫자 패드의 Enter이기도 한 것과 같습니다.
+/// 결과 화면의 확인과 나가기 확인 창의 Enter가 이 함수 하나로 읽으므로, 같은 키를 눌러서 하나는 되고 하나는 되지 않는 일이 없습니다.
+pub fn enter_pressed(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter)
+}
+
 /// 키보드와 마우스의 상태를 읽습니다.
 pub fn read_controls(
     keys: Res<ButtonInput<KeyCode>>,
@@ -42,10 +48,32 @@ pub fn read_controls(
         switch_weapon: keys.just_pressed(KeyCode::KeyQ),
         // 누르기 시작한 프레임만 참입니다. 키를 누르고 있어도 준비가 계속 바뀌지 않습니다.
         toggle_ready: keys.just_pressed(KeyCode::KeyR),
-        confirm: keys.just_pressed(KeyCode::Enter),
+        confirm: enter_pressed(&keys),
         // 누르기 시작한 프레임만 참입니다. 키를 누르고 있어도 포탑의 종류가 계속 바뀌지 않습니다.
         cycle_tower: keys.just_pressed(KeyCode::KeyE),
         // 누르기 시작한 프레임만 참입니다. 키를 누르고 있어도 무기를 계속 버리지 않습니다.
         drop_weapon: keys.just_pressed(KeyCode::KeyG),
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pressed(key: KeyCode) -> ButtonInput<KeyCode> {
+        let mut keys = ButtonInput::default();
+        keys.press(key);
+        keys
+    }
+
+    #[test]
+    fn the_numpad_enter_is_the_same_enter_and_only_the_press_counts() {
+        assert!(enter_pressed(&pressed(KeyCode::Enter)));
+        assert!(enter_pressed(&pressed(KeyCode::NumpadEnter)));
+        assert!(!enter_pressed(&pressed(KeyCode::Space)));
+
+        let mut held = pressed(KeyCode::NumpadEnter);
+        held.clear_just_pressed(KeyCode::NumpadEnter);
+        assert!(!enter_pressed(&held), "holding is not a press");
+    }
 }

@@ -13,16 +13,16 @@ use caravan_protocol::{ClientEvent, ClientTransport, ServerMsg, WirePhase};
 use caravan_ws_client::WsClient;
 
 use crate::config;
-use crate::input::HeldControls;
-use crate::storage;
+use crate::input::{HeldControls, enter_pressed};
+use crate::storage::Store;
 
 /// 접속 방식입니다. 웹의 WebSocket은 다른 스레드로 옮길 수 없으므로 non-send 리소스로 보관합니다.
 /// Bevy는 non-send 리소스를 사용하는 시스템을 항상 메인 스레드에서 실행합니다. 접속이 없으면 `transport`가 없습니다.
 pub struct Net {
     transport: Option<Box<dyn ClientTransport>>,
     debug_net: bool,
-    /// PC에서 기억하는 것을 담는 파일을 고르는 이름입니다(`--profile`). 없으면 기본 파일입니다.
-    profile: Option<String>,
+    /// 기억하는 것을 남기는 곳입니다. 앱은 기기의 저장소(`storage::Device`)를, 시험은 메모리의 저장소(`testing::MemoryStore`)를 가집니다.
+    store: Box<dyn Store>,
 }
 
 /// 화면 흐름입니다. `Flow`는 Bevy를 모르는 크레이트의 타입이므로 리소스로 쓰려면 감쌉니다.
@@ -63,7 +63,7 @@ pub fn install(
     flow: Flow,
     first: Vec<Command>,
     debug_net: bool,
-    profile: Option<String>,
+    store: Box<dyn Store>,
 ) {
     app.insert_resource(ClientFlow(flow))
         .insert_resource(StartupCommands(first))
@@ -72,7 +72,7 @@ pub fn install(
         .insert_non_send(Net {
             transport: None,
             debug_net,
-            profile,
+            store,
         });
 }
 
@@ -107,7 +107,7 @@ pub fn run_commands(
             }
             // 접속을 버리면 닫힙니다.
             Command::Disconnect => net.transport = None,
-            Command::Save(text) => storage::save(net.profile.as_deref(), &text),
+            Command::Save(text) => net.store.save(&text),
             Command::Copy(text) => match clipboard.set_text(text) {
                 Ok(()) => copied = true,
                 Err(err) => warn!("cannot copy to the clipboard: {err}"),
@@ -164,6 +164,7 @@ pub fn advance_playback(
 }
 
 /// 방 안의 키입니다. Esc는 나가기 확인 창을 열고 닫고, 창이 떠 있을 때의 Enter는 시작 화면으로 돌아갑니다(입장하는 중의 Esc는 확인 없이 돌아갑니다).
+/// 창이 떠 있는 프레임의 Enter는 창의 것이므로 `read_controls`가 읽은 결과 화면의 확인에서 지웁니다(`Flow::on_room_frame`). 이 시스템은 `read_controls`와 `send_input` 사이에 있습니다.
 /// 야영지에서 C는 링크나 방 코드를 복사합니다.
 pub fn read_room_keys(
     keys: Res<ButtonInput<KeyCode>>,
@@ -173,11 +174,10 @@ pub fn read_room_keys(
     mut flow: ResMut<ClientFlow>,
     mut flash: ResMut<InviteFlash>,
     mut clipboard: ResMut<Clipboard>,
+    mut controls: ResMut<HeldControls>,
 ) {
-    if let Some(key) = room_key(&keys) {
-        let commands = flow.0.on_room_key(key);
-        run_commands(commands, &mut flow.0, &mut net, &mut clipboard);
-    }
+    let commands = flow.0.on_room_frame(room_key(&keys), &mut controls.0);
+    run_commands(commands, &mut flow.0, &mut net, &mut clipboard);
     if invite_requested(&keys, frame.0.as_ref())
         && let Some(command) = flow.0.copy_invite()
         && run_commands(vec![command], &mut flow.0, &mut net, &mut clipboard)
@@ -186,11 +186,11 @@ pub fn read_room_keys(
     }
 }
 
-/// 이번 프레임에 누르기 시작한 Esc나 Enter입니다. 둘을 함께 눌렀으면 Esc만 읽습니다.
+/// 이번 프레임에 누르기 시작한 Esc나 Enter입니다. 숫자 패드의 Enter도 Enter입니다. 둘을 함께 눌렀으면 Esc만 읽습니다.
 fn room_key(keys: &ButtonInput<KeyCode>) -> Option<RoomKey> {
     if keys.just_pressed(KeyCode::Escape) {
         Some(RoomKey::Escape)
-    } else if keys.just_pressed(KeyCode::Enter) {
+    } else if enter_pressed(keys) {
         Some(RoomKey::Enter)
     } else {
         None
@@ -253,9 +253,18 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::testing::empty_frame;
+    use crate::testing::{MemoryStore, empty_frame};
     use caravan_client_core::{LaunchOptions, Memory};
     use caravan_protocol::{ClientMsg, PROTOCOL_VERSION};
+
+    /// 시험이 만드는 `Net`입니다. 저장소는 언제나 메모리의 저장소이므로, 시험은 이 컴퓨터의 설정 폴더에 닿지 않습니다.
+    fn net_with(transport: Option<Box<dyn ClientTransport>>, store: &MemoryStore) -> Net {
+        Net {
+            transport,
+            debug_net: false,
+            store: Box::new(store.clone()),
+        }
+    }
 
     /// 보낸 메시지를 모아 두는 접속 방식입니다.
     struct Recorder(Rc<RefCell<Vec<ClientMsg>>>);
@@ -304,11 +313,10 @@ mod tests {
             .insert_resource(crate::testing::joined_flow())
             .insert_resource(StartupCommands(Vec::new()))
             .insert_resource(Clipboard::default())
-            .insert_non_send(Net {
-                transport: Some(Box::new(DropsOnce(false))),
-                debug_net: false,
-                profile: None,
-            })
+            .insert_non_send(net_with(
+                Some(Box::new(DropsOnce(false))),
+                &MemoryStore::default(),
+            ))
             .add_systems(Update, keys_then_network());
         // 방에 있을 때 이동 키를 눌렀고, 같은 프레임에 접속이 끊겼습니다.
         app.world_mut().write_message(KeyboardInput {
@@ -336,11 +344,10 @@ mod tests {
     #[test]
     fn what_the_flow_sends_goes_out_on_the_open_connection_and_leaving_closes_it() {
         let sent = Rc::new(RefCell::new(Vec::new()));
-        let mut net = Net {
-            transport: Some(Box::new(Recorder(sent.clone()))),
-            debug_net: false,
-            profile: None,
-        };
+        let mut net = net_with(
+            Some(Box::new(Recorder(sent.clone()))),
+            &MemoryStore::default(),
+        );
         let mut flow = start_screen();
         let mut clipboard = Clipboard::default();
         let join = ClientMsg::Join {
@@ -370,11 +377,7 @@ mod tests {
 
     #[test]
     fn a_message_with_no_open_connection_is_dropped_without_an_error() {
-        let mut net = Net {
-            transport: None,
-            debug_net: false,
-            profile: None,
-        };
+        let mut net = net_with(None, &MemoryStore::default());
         let join = ClientMsg::Join {
             version: PROTOCOL_VERSION,
             room: None,
@@ -431,6 +434,11 @@ mod tests {
     fn escape_and_enter_are_the_room_keys_and_escape_comes_first() {
         assert_eq!(room_key(&pressed(KeyCode::Escape)), Some(RoomKey::Escape));
         assert_eq!(room_key(&pressed(KeyCode::Enter)), Some(RoomKey::Enter));
+        assert_eq!(
+            room_key(&pressed(KeyCode::NumpadEnter)),
+            Some(RoomKey::Enter),
+            "the numpad Enter is the same Enter, as on the start screen"
+        );
         assert_eq!(room_key(&pressed(KeyCode::KeyQ)), None);
         assert_eq!(room_key(&ButtonInput::default()), None);
 
@@ -443,30 +451,43 @@ mod tests {
         assert_eq!(room_key(&held), None, "holding is not a press");
     }
 
-    fn room_app() -> App {
+    fn room_app(store: &MemoryStore) -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<CurrentFrame>()
             .init_resource::<InviteFlash>()
+            .init_resource::<HeldControls>()
             .insert_resource(crate::testing::joined_flow())
             .insert_resource(Clipboard::default())
-            .insert_non_send(Net {
-                transport: None,
-                debug_net: false,
-                profile: None,
-            })
+            .insert_non_send(net_with(None, store))
             .add_systems(Update, read_room_keys);
         app
     }
 
     /// 키를 한 번 눌렀다 떼고 프레임 하나를 진행합니다.
     fn tap(app: &mut App, key: KeyCode) {
+        tap_together(app, &[key]);
+    }
+
+    /// 키 여러 개를 한 프레임에 함께 누르고 프레임 하나를 진행합니다.
+    fn tap_together(app: &mut App, pressed: &[KeyCode]) {
         let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-        keys.release(key);
+        for key in pressed {
+            keys.release(*key);
+        }
         keys.clear();
-        keys.press(key);
+        for key in pressed {
+            keys.press(*key);
+        }
         app.update();
+    }
+
+    /// 이 프레임에 `read_controls`가 Enter를 읽은 것으로 하고, 그 확인이 프레임을 지나서도 남았는지 봅니다.
+    fn confirm_survives(app: &mut App, pressed: &[KeyCode]) -> bool {
+        app.world_mut().resource_mut::<HeldControls>().0.confirm = true;
+        tap_together(app, pressed);
+        app.world().resource::<HeldControls>().0.confirm
     }
 
     /// 방에 들어가 있고 나가기 확인 창이 떠 있는지 봅니다. 방에 없으면 `None`입니다.
@@ -486,7 +507,8 @@ mod tests {
 
     #[test]
     fn escape_asks_in_the_room_and_only_enter_then_leaves_for_the_start_screen() {
-        let mut app = room_app();
+        let store = MemoryStore::default();
+        let mut app = room_app(&store);
         assert_eq!(prompt_shown(&app), Some(false));
 
         tap(&mut app, KeyCode::Enter);
@@ -502,11 +524,78 @@ mod tests {
         tap(&mut app, KeyCode::Escape);
         assert_eq!(prompt_shown(&app), Some(false), "the second Escape stays");
 
+        assert!(store.saves().is_empty(), "asking saves nothing");
+
         tap(&mut app, KeyCode::Escape);
         tap(&mut app, KeyCode::Enter);
         assert_eq!(prompt_shown(&app), None, "Enter with the prompt leaves");
         let flow = &app.world().resource::<ClientFlow>().0;
         assert!(flow.form().is_some(), "the start screen is back");
+
+        let saves = store.saves();
+        assert_eq!(saves.len(), 1, "leaving saves once");
+        let kept = Memory::parse(&saves[0]);
+        let room = caravan_protocol::RoomCode::parse("test").unwrap();
+        assert_eq!(
+            kept.name().map(ToString::to_string).as_deref(),
+            Some("KANG")
+        );
+        assert_eq!(
+            kept.last_room(caravan_client_core::DEFAULT_SERVER),
+            Some(&room),
+            "the room is remembered so that the start screen offers it again"
+        );
+        assert_eq!(
+            kept.seat(caravan_client_core::DEFAULT_SERVER, &room),
+            None,
+            "the seat was given up, so its token is forgotten"
+        );
+    }
+
+    #[test]
+    fn the_numpad_enter_leaves_through_the_prompt_like_the_enter_key() {
+        let store = MemoryStore::default();
+        let mut app = room_app(&store);
+
+        tap(&mut app, KeyCode::NumpadEnter);
+        assert_eq!(
+            prompt_shown(&app),
+            Some(false),
+            "the numpad Enter alone leaves nothing"
+        );
+
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::NumpadEnter);
+
+        assert_eq!(
+            prompt_shown(&app),
+            None,
+            "the numpad Enter with the prompt leaves"
+        );
+        assert_eq!(store.saves().len(), 1);
+    }
+
+    #[test]
+    fn an_enter_in_a_frame_where_the_prompt_is_up_is_not_a_confirmation_of_the_result() {
+        let mut app = room_app(&MemoryStore::default());
+        assert!(
+            confirm_survives(&mut app, &[KeyCode::Enter]),
+            "no prompt, so Enter confirms the result"
+        );
+
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(prompt_shown(&app), Some(true));
+        assert!(
+            !confirm_survives(&mut app, &[KeyCode::Escape, KeyCode::Enter]),
+            "Escape closes the prompt that was up when Enter was pressed"
+        );
+        assert_eq!(prompt_shown(&app), Some(false), "Escape won");
+
+        assert!(
+            !confirm_survives(&mut app, &[KeyCode::Escape, KeyCode::Enter]),
+            "Escape opens the prompt in the frame of Enter"
+        );
+        assert_eq!(prompt_shown(&app), Some(true));
     }
 
     #[test]

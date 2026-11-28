@@ -32,7 +32,7 @@ pub struct Hud {
     pub carry: Option<String>,
     /// 내가 들고 있는 무기와 바꾸는 키입니다. 내 캐릭터가 화면에 있으면 항상 있고, 쓰러졌어도 무기는 들고 있습니다.
     pub weapon: Option<String>,
-    /// 무기를 버리는 키의 안내입니다. `G  DROP`이고, 버릴 수 있을 때만 있습니다. 원정 중에 살아 있고 두 칸에 모두 무기가 있어야 합니다.
+    /// 무기를 버리는 키의 안내입니다. `G  DROP`이고, 서버가 G를 눌렀을 때 실제로 버려 줄 때만 있습니다. 원정 중에 살아 있고, 부활, 수리, 채집, 건설, 상자 열기, 밀려남을 하고 있지 않고, 두 칸에 모두 무기가 있어야 합니다.
     pub drop_weapon: Option<String>,
     /// 내가 받은 버프의 이름입니다. `HASTE`(공격 속도)와 `SWIFT`(이동 속도) 가운데 받은 것을 두 칸 띄워 적습니다.
     /// 살아 있고 버프가 있을 때만 있고, 결과를 보여 주는 동안에도 없습니다. 다른 플레이어의 버프는 보이지 않습니다.
@@ -298,8 +298,10 @@ impl Hud {
                 // 든 자원은 원정의 것이므로 야영지에서는 보이지 않습니다.
                 if !matches!(frame.phase, WirePhase::Camp { .. }) {
                     hud.carry = Some(carry_text(carried, joined.welcome.world.carry_capacity));
-                    // 버리기는 원정 중에만 되고, 무기가 하나뿐이면 맨손이 되므로 버릴 수 없습니다.
-                    hud.drop_weapon = me.loadout.spare.is_some().then(|| DROP_HINT.to_string());
+                    // 서버는 원정 중에, 하고 있는 일이 없는 플레이어가 두 칸에 모두 무기를 가졌을 때만 버려 줍니다(`loot::drops_this_tick`).
+                    // 하고 있는 일은 이 스냅샷이 보여 주는 값이고, 서버가 다음 Tick이 시작될 때 보는 값과 같습니다.
+                    hud.drop_weapon = (interaction.is_none() && me.loadout.spare.is_some())
+                        .then(|| DROP_HINT.to_string());
                 }
                 hud.refusal = build_refusal
                     .map(refusal_text)
@@ -1123,6 +1125,50 @@ mod tests {
         assert_eq!(shown(with_two_weapons(downed)), None, "downed");
         assert_eq!(shown(with_two_weapons(WireLife::Dead)), None, "dead");
         assert_eq!(Hud::of(&session, None, INVITE).drop_weapon, None);
+    }
+
+    fn alive_doing(interaction: WireInteraction) -> WireLife {
+        WireLife::Alive {
+            hp: 100,
+            max_hp: 100,
+            carried: 0,
+            stamina: 100,
+            interaction: Some(interaction),
+            build_refusal: None,
+            buffs: WireBuffs::NONE,
+        }
+    }
+
+    #[test]
+    fn the_drop_key_is_not_shown_while_a_job_is_going_on_because_the_server_ignores_g_then() {
+        let session = session_in_room();
+        let shown = |me: PlayerView| Hud::of(&session, Some(&frame(vec![me])), INVITE).drop_weapon;
+        let jobs = [
+            WireInteraction::Reviving {
+                target: 2,
+                progress: 0.3,
+            },
+            WireInteraction::Repairing {
+                target: caravan_protocol::WireRepairTarget::Wagon,
+                stash_short: false,
+            },
+            WireInteraction::Gathering { node: 1 },
+            WireInteraction::Building { tower: 1 },
+            WireInteraction::Opening {
+                chest: 1,
+                progress: 0.2,
+            },
+            WireInteraction::Knocked,
+        ];
+
+        for job in jobs {
+            assert_eq!(shown(with_two_weapons(alive_doing(job))), None, "{job:?}");
+        }
+        assert_eq!(
+            shown(with_two_weapons(alive(100))).as_deref(),
+            Some("G  DROP"),
+            "the same weapons with no job show the key"
+        );
     }
 
     #[test]

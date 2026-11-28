@@ -1,4 +1,5 @@
 //! 기기의 저장소입니다. `Memory`의 글자 하나를 읽고 씁니다. 읽지 못하면 빈 기억으로 시작하고, 쓰지 못하면 경고만 남깁니다.
+//! 앱은 `Device`를 `Store`로 `Net`에 넣고, 시험은 메모리에 남기는 `Store`를 넣으므로 시험은 이 컴퓨터의 설정 폴더를 쓰지 않습니다.
 //!
 //! 웹: `localStorage`의 `caravan.memory`입니다. 새로 고침해도 남지만 사생활 보호 창에서는 막힐 수 있습니다.
 //! 같은 브라우저 프로필의 탭은 값을 함께 쓰므로, 두 사람을 시험하려면 서로 다른 브라우저 프로필을 씁니다.
@@ -11,17 +12,38 @@
 use bevy::prelude::warn;
 use caravan_client_core::Memory;
 
-/// 기기에 저장된 기억입니다. 저장된 글자가 없거나 읽을 수 없으면 빈 기억입니다.
-pub fn load(profile: Option<&str>) -> Memory {
-    read_text(profile)
-        .map(|text| Memory::parse(&text))
-        .unwrap_or_default()
+/// 기억을 읽고 남기는 곳입니다. `Net`이 이 값을 가지므로, 시험은 기기의 파일 대신 메모리에 남기는 값을 넣습니다.
+pub trait Store {
+    /// 저장된 기억입니다. 저장된 글자가 없거나 읽을 수 없으면 빈 기억입니다.
+    fn load(&self) -> Memory;
+
+    /// `Memory::to_text`의 글자를 저장합니다.
+    fn save(&mut self, text: &str);
 }
 
-/// `Memory::to_text`의 글자를 저장합니다.
-pub fn save(profile: Option<&str>, text: &str) {
-    if let Err(reason) = write_text(profile, text) {
-        warn!("cannot save what this device remembers: {reason}");
+/// 이 기기의 저장소입니다. 웹은 `localStorage`, PC는 설정 폴더의 파일입니다.
+pub struct Device {
+    /// PC에서 기억하는 것을 담는 파일을 고르는 이름입니다(`--profile`). 없으면 기본 파일입니다.
+    profile: Option<String>,
+}
+
+impl Device {
+    pub fn new(profile: Option<String>) -> Device {
+        Device { profile }
+    }
+}
+
+impl Store for Device {
+    fn load(&self) -> Memory {
+        read_text(self.profile.as_deref())
+            .map(|text| Memory::parse(&text))
+            .unwrap_or_default()
+    }
+
+    fn save(&mut self, text: &str) {
+        if let Err(reason) = write_text(self.profile.as_deref(), text) {
+            warn!("cannot save what this device remembers: {reason}");
+        }
     }
 }
 
@@ -70,7 +92,14 @@ mod desktop {
         }
     }
 
+    /// 시험은 이 컴퓨터의 실제 설정 폴더에 닿을 수 없습니다. 시험이 만든 앱은 `Store`의 시험용 구현을 가지므로 이 함수까지 오지 않고,
+    /// 오면 시험을 멈춥니다. 그렇지 않으면 `cargo test`가 개발자가 저장한 이름과 방 코드와 자리의 표식을 덮어씁니다.
     pub fn memory_path(profile: Option<&str>) -> Option<PathBuf> {
+        if cfg!(test) {
+            panic!(
+                "a test reached the settings folder of this computer; give the app a `Store` that keeps its text in memory"
+            );
+        }
         let dir = config_dir(std::env::consts::OS, |name| std::env::var(name).ok())?;
         Some(dir.join("the-last-caravan").join(file_name(profile)))
     }
@@ -226,6 +255,12 @@ mod tests {
             path.parent(),
             "renaming stays in one folder"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "settings folder")]
+    fn a_test_cannot_reach_the_settings_folder_of_this_computer() {
+        memory_path(None);
     }
 
     #[test]

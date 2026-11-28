@@ -9,10 +9,10 @@ use caravan_protocol::{
     ClientMsg, ClientTransport, InputMsg, ServerLimits, Snapshot, WireLife, WirePhase,
     WireStructureKind, WireVec2, WireWeaponKind,
 };
-use caravan_rules::{Loadout, Tuning, WeaponKind as RulesWeapon};
+use caravan_rules::{Loadout, Tile, Tuning, WeaponKind as RulesWeapon};
 use common::{
-    assert_near, input_with, last_snapshot, player, position, press_ready, rig, rig_in_expedition,
-    rig_with, rig_with_limits,
+    Rig, assert_near, input_with, last_snapshot, player, position, press_ready, rig,
+    rig_in_expedition, rig_with, rig_with_limits,
 };
 
 /// 한 Tick에 움직이는 거리(타일)입니다.
@@ -351,6 +351,113 @@ fn a_press_of_g_reaches_the_rules_and_drops_the_held_weapon_on_an_expedition_but
         "the sword was dropped, and the sword every joining player is given does not lie on the ground"
     );
     assert!(snapshot.ground_weapons.is_empty());
+}
+
+/// 상자 하나가 마차에서 먼 자리(35, 20)에 놓이고 그 안에는 창이 들어 있으며, 상자를 지키는 몬스터는 없는 수치입니다.
+/// 검과 활을 두 칸에 가지고 시작하므로 둘은 시작 무기이고, 상자에서 나온 창만 바닥에 놓일 수 있습니다.
+fn armed_with_a_spear_chest() -> Tuning {
+    let mut tuning = armed();
+    tuning.map.chest_sites = vec![Tile::new(35, 20)];
+    tuning.loot.chests_per_day = 1;
+    tuning.guards.per_chest = 0;
+    let weapons = &mut tuning.weapons;
+    for row in [
+        &mut weapons.sword,
+        &mut weapons.bow,
+        &mut weapons.greatsword,
+        &mut weapons.crossbow,
+        &mut weapons.rifle,
+    ] {
+        row.chest_weight = 0;
+    }
+    weapons.spear.chest_weight = 1;
+    tuning
+}
+
+#[test]
+fn a_weapon_dropped_with_g_that_is_not_a_starting_weapon_lies_in_the_snapshot_where_the_player_stood()
+ {
+    let mut rig = rig_in_expedition(armed_with_a_spear_chest());
+    let (mut a, a_id) = rig.join_ok("test");
+    let mut seq = 0;
+    // 서버는 입력이 잠시 끊기면 눌린 키를 놓은 것으로 보므로, 클라이언트처럼 Tick마다 입력을 하나씩 보냅니다.
+    let mut hold = |rig: &mut Rig, move_dir: (f32, f32), interact: bool, ticks: u32| {
+        for _ in 0..ticks {
+            seq += 1;
+            a.send(&ClientMsg::Input(InputMsg {
+                seq,
+                move_dir: WireVec2::new(move_dir.0, move_dir.1),
+                interact,
+                ..InputMsg::default()
+            }));
+            rig.run_ticks(1);
+        }
+        last_snapshot(&mut a)
+    };
+
+    // 상자 곁까지 동쪽으로 18 Tick, 북쪽으로 37 Tick 걷습니다. 걸음은 Tick마다 0.2타일이므로 (35.6, 22.1)에 섭니다.
+    hold(&mut rig, (1.0, 0.0), false, 18);
+    hold(&mut rig, (0.0, -1.0), false, 37);
+    let snapshot = hold(&mut rig, (0.0, 0.0), true, 35);
+    let [on_the_ground] = &snapshot.ground_weapons[..] else {
+        panic!(
+            "the opened chest left one weapon: {:?}",
+            snapshot.ground_weapons
+        );
+    };
+    assert_eq!(on_the_ground.kind, WireWeaponKind::Spear);
+    assert_near(
+        on_the_ground.pos.to_tiles().y,
+        20.5,
+        "where the chest stood",
+    );
+
+    seq += 1;
+    a.send(&ClientMsg::Input(InputMsg {
+        seq,
+        interact: true,
+        interact_pressed: true,
+        ..InputMsg::default()
+    }));
+    rig.run_ticks(1);
+    let snapshot = last_snapshot(&mut a);
+    let loadout = player(&snapshot, a_id).loadout;
+    assert_eq!(
+        (loadout.held, loadout.spare),
+        (WireWeaponKind::Spear, Some(WireWeaponKind::Bow)),
+        "F took the spear and the sword every joining player is given vanished"
+    );
+    assert!(snapshot.ground_weapons.is_empty());
+
+    seq += 1;
+    a.send(&press_g(seq));
+    rig.run_ticks(1);
+
+    let snapshot = last_snapshot(&mut a);
+    let loadout = player(&snapshot, a_id).loadout;
+    assert_eq!(
+        (loadout.held, loadout.spare),
+        (WireWeaponKind::Bow, None),
+        "the spear was dropped and the bow is held"
+    );
+    let [dropped] = &snapshot.ground_weapons[..] else {
+        panic!(
+            "the spear lies on the ground: {:?}",
+            snapshot.ground_weapons
+        );
+    };
+    assert_eq!(dropped.kind, WireWeaponKind::Spear);
+    let stood = position(&snapshot, a_id);
+    assert_near(
+        dropped.pos.to_tiles().x,
+        stood.x,
+        "dropped where the player stood",
+    );
+    assert_near(
+        dropped.pos.to_tiles().y,
+        stood.y,
+        "dropped where the player stood",
+    );
 }
 
 #[test]

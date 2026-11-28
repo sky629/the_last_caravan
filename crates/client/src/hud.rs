@@ -646,7 +646,7 @@ pub fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_client_core::{Frame, PlayerView, RoomKey};
+    use caravan_client_core::{Controls, Frame, PlayerView, RoomKey};
     use caravan_protocol::{
         WireBuffs, WireLife, WireLoadout, WireNightStep, WirePhase, WireStructureKind,
         WireWeaponKind,
@@ -681,7 +681,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<ClientFlow>()
             .0
-            .on_room_key(key);
+            .on_room_frame(Some(key), &mut Controls::default());
         app.update();
     }
 
