@@ -1,6 +1,8 @@
 //! Bevy 시스템 테스트가 함께 쓰는 도구입니다. 화면과 GPU 없이 입장을 마친 화면 흐름을 만듭니다.
 
 use caravan_client_core::{Flow, Frame, LaunchOptions, Memory};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use caravan_protocol::{
@@ -10,6 +12,34 @@ use caravan_protocol::{
 use caravan_rules::{Seed, Sim, Tuning};
 
 use crate::net::ClientFlow;
+use crate::storage::Store;
+
+/// 기억을 메모리에만 남기는 저장소입니다. 이 저장소를 가진 앱은 이 컴퓨터의 설정 폴더를 쓰지 않습니다.
+/// 복사본은 같은 기록을 함께 쓰므로, 시험은 앱에 넣은 뒤에도 남긴 글자를 읽을 수 있습니다.
+#[derive(Clone, Default)]
+pub struct MemoryStore(Rc<RefCell<Vec<String>>>);
+
+impl MemoryStore {
+    /// 지금까지 저장한 글자를 저장한 순서대로 돌려줍니다.
+    pub fn saves(&self) -> Vec<String> {
+        self.0.borrow().clone()
+    }
+}
+
+impl Store for MemoryStore {
+    /// 마지막으로 저장한 글자의 기억입니다. 저장한 적이 없으면 빈 기억입니다.
+    fn load(&self) -> Memory {
+        self.0
+            .borrow()
+            .last()
+            .map(|text| Memory::parse(text))
+            .unwrap_or_default()
+    }
+
+    fn save(&mut self, text: &str) {
+        self.0.borrow_mut().push(text.to_string());
+    }
+}
 
 /// 테스트의 플레이어 번호입니다.
 pub const YOU: u32 = 1;
