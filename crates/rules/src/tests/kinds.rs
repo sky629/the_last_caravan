@@ -26,7 +26,7 @@ fn letter(kind: MonsterKind) -> char {
     format!("{kind:?}").chars().next().expect("a name")
 }
 
-/// 종류마다의 수가 `packs`일 때 무리의 모든 순서를 종류의 첫 글자로 적습니다. 인원에 따라 줄이지 않으므로 수는 묶음에 적은 그대로입니다.
+/// 묶음마다의 수가 `packs`일 때 무리의 모든 순서를 종류의 첫 글자로 적습니다. 인원에 따라 줄이지 않으므로 수는 묶음에 적은 그대로입니다.
 fn letters(packs: &[(MonsterKind, u32)]) -> String {
     let wave = wave_of(packs);
     (0..wave.size(WaveScaling::Fixed, 1))
@@ -99,7 +99,7 @@ fn a_wave_of_one_kind_comes_out_in_that_kind_until_its_size_and_then_ends() {
     assert_eq!(wave.kind_at(WaveScaling::Fixed, 1, 100), None);
 }
 
-/// 몬스터를 한 마리씩 내보내며 「나온 비율이 가장 작은 종류, 같으면 앞쪽」을 고르는 가장 단순한 계산입니다. `Wave::kind_at`이 같은 순서를 내는지 견주는 기준입니다.
+/// 몬스터를 한 마리씩 내보내며 「나온 비율이 가장 작은 묶음, 같으면 앞쪽」을 고르는 가장 단순한 계산입니다. `Wave::kind_at`이 같은 순서를 내는지 견주는 기준입니다.
 fn replayed_order(sizes: &[u32]) -> Vec<usize> {
     let mut spawned = vec![0u32; sizes.len()];
     let mut order = Vec::new();
@@ -699,13 +699,14 @@ fn the_monsters_a_pack_hands_over_come_in_the_order_of_a_wave_whose_kind_is_that
 
 #[test]
 fn a_pack_that_does_not_join_hands_its_count_to_the_first_pack_that_joins_everywhere_of_its_kind() {
-    // 기준 인원일 때 기본 몬스터 8마리와 돌격병 8마리와 기본 몬스터 8마리와 파괴병 8마리입니다. 파괴병은 두 명 이상이 있을 때만 나옵니다.
-    // 한 명이면 2, 2, 2마리이고 파괴병의 2마리가 첫 기본 몬스터에게 가서 4, 2, 2, 0마리입니다. 뒤의 기본 몬스터에게 가면 2, 2, 4, 0마리이고 순서가 다릅니다.
+    // 기준 인원일 때 기본 몬스터 4마리와 돌격병 8마리와 기본 몬스터 4마리와 파괴병 4마리입니다. 파괴병은 두 명 이상이 있을 때만 나옵니다.
+    // 한 명이면 1, 2, 1마리이고 파괴병의 1마리가 첫 기본 몬스터에게 가서 2, 2, 1, 0마리이며 순서는 기본, 돌격병, 기본, 기본, 돌격병입니다.
+    // 뒤의 기본 몬스터에게 가면 1, 2, 2, 0마리이고 순서는 기본, 돌격병, 기본, 돌격병, 기본으로 다릅니다.
     let mut wave = wave_of(&[
-        (MonsterKind::Grunt, 8),
+        (MonsterKind::Grunt, 4),
         (MonsterKind::Runner, 8),
-        (MonsterKind::Grunt, 8),
-        (MonsterKind::Sapper, 8),
+        (MonsterKind::Grunt, 4),
+        (MonsterKind::Sapper, 4),
     ]);
     wave.packs[3].joins = Joins::FromParty {
         min_party: 2,
@@ -718,11 +719,19 @@ fn a_pack_that_does_not_join_hands_its_count_to_the_first_pack_that_joins_everyw
         MonsterKind::Grunt,
         MonsterKind::Sapper,
     ];
-    let expected: Vec<MonsterKind> = replayed_order(&[4, 2, 2, 0])
-        .into_iter()
-        .map(|index| kinds[index])
-        .collect();
-    assert_eq!(order_of(&nights, 1, 1, 1), expected);
+    let order_of_sizes = |sizes: &[u32]| -> Vec<MonsterKind> {
+        replayed_order(sizes)
+            .into_iter()
+            .map(|index| kinds[index])
+            .collect()
+    };
+    let given_to_the_first = order_of_sizes(&[2, 2, 1, 0]);
+    assert_ne!(
+        given_to_the_first,
+        order_of_sizes(&[1, 2, 2, 0]),
+        "the two packs of grunts must be told apart by the order"
+    );
+    assert_eq!(order_of(&nights, 1, 1, 1), given_to_the_first);
 }
 
 /// 나타난 순서(`spawned_order`)에서 기본 몬스터, 돌격병, 파괴병이 몇 마리인지입니다.
