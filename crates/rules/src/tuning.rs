@@ -957,7 +957,7 @@ impl Tuning {
         if self.nights.plans.is_empty() {
             return Err("there must be at least one night".to_string());
         }
-        for plan in &self.nights.plans {
+        for (night, plan) in self.nights.plans.iter().enumerate() {
             let empty_wave = |wave: &Wave| {
                 wave.packs.is_empty() || wave.packs.iter().any(|pack| pack.count == 0)
             };
@@ -966,6 +966,18 @@ impl Tuning {
                     "every night needs at least one wave, and every wave at least one monster"
                         .to_string(),
                 );
+            }
+            // 무리의 크기(`Wave::count`와 `Wave::size`)는 `u32`로 더하므로, 묶음의 합이 넘치는 무리는 만들 수 없습니다.
+            for (index, wave) in plan.waves.iter().enumerate() {
+                let total: u64 = wave.packs.iter().map(|pack| u64::from(pack.count)).sum();
+                if total > u64::from(u32::MAX) {
+                    return Err(format!(
+                        "night {} wave {} adds up to {total} monsters, which is more than {}",
+                        night + 1,
+                        index + 1,
+                        u32::MAX
+                    ));
+                }
             }
         }
         // 기준 인원이 정원보다 작으면, 꽉 찬 방의 무리가 수치표보다 커집니다.

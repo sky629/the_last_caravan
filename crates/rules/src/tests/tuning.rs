@@ -1262,6 +1262,34 @@ fn a_guard_has_to_be_a_kind_that_chases_players_and_the_reason_names_the_row() {
     assert_eq!(t.validate(), Ok(()));
 }
 
+#[test]
+fn a_wave_that_adds_up_to_more_monsters_than_a_u32_counts_is_rejected_and_one_that_just_fits_is_not()
+ {
+    use crate::kind::MonsterKind;
+    use crate::tuning::Pack;
+
+    let wave_of_two = |grunts, runners| {
+        let mut t = Tuning::default();
+        t.nights.plans[1].waves[2].packs = vec![
+            Pack {
+                kind: MonsterKind::Grunt,
+                count: grunts,
+            },
+            Pack {
+                kind: MonsterKind::Runner,
+                count: runners,
+            },
+        ];
+        t
+    };
+
+    let why = wave_of_two(u32::MAX, 1)
+        .validate()
+        .expect_err("one monster more than a u32 counts");
+    assert!(why.contains("night 2 wave 3"), "{why}");
+    assert_eq!(wave_of_two(u32::MAX - 1, 1).validate(), Ok(()));
+}
+
 /// 기본 수치에서 보스의 행동만 `change`로 바꾼 수치입니다.
 fn tuning_with_boss(change: impl FnOnce(&mut BossTuning)) -> Tuning {
     let mut t = Tuning::default();
