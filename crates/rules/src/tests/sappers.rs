@@ -1,5 +1,5 @@
 //! 파괴병을 확인합니다: 플레이어를 지나쳐서 거리와 관계없이 걸어서 가장 가까운 포탑으로 가는 것, 포탑이 부서지거나 새로 서면 목표가 바뀌는 것,
-//! 닿을 포탑이 없으면 마차로 가는 것, 포탑에 주는 피해와 포탑에게서 받는 피해, 수치, 효과, 건설 규칙이 허락하는 가장 빽빽한 마을에서도 포탑이나 마차에 닿는 것.
+//! 걸어서 닿는 포탑이 없으면(서 있어도 상자로 둘레가 막힌 포탑만 있는 경우를 포함합니다) 마차로 가는 것, 포탑에 주는 피해와 포탑에게서 받는 피해, 수치, 효과, 건설 규칙이 허락하는 가장 빽빽한 마을에서도 포탑이나 마차에 닿는 것.
 //! 파괴병이 무리의 반대쪽에서 나타나는 것은 `days.rs`가 확인합니다.
 
 use std::cmp::Ordering;
@@ -9,7 +9,7 @@ use crate::build::check_site;
 use crate::expedition::Phase;
 use crate::ids::{MonsterId, PlayerId};
 use crate::input::{AimDir, PlayerInput};
-use crate::kind::{MonsterKind, StructureKind};
+use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::math::Rect;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{Debuff, Prey, Tuning};
@@ -229,6 +229,35 @@ fn a_tower_that_stands_at_last_becomes_a_target_for_a_sapper_that_was_walking_to
         500,
         "it went for the tower, not the wagon"
     );
+}
+
+#[test]
+fn a_standing_tower_that_no_free_tile_reaches_is_not_a_target_for_a_sapper() {
+    // 타일 (5, 5)의 감시탑은 서 있지만 둘레의 여덟 타일에 무기 상자가 있어서, 파괴병이 공격할 수 있는 자리에 걸어서 닿지 못합니다.
+    // 파괴병은 마차보다 이 감시탑에 훨씬 가까운 자리(감시탑까지 약 7타일, 마차까지 약 15타일)에서 출발하지만, 마차로 걸어가서 마차를 때립니다.
+    let mut s = field(|_| {});
+    s.tower_at(5, 5);
+    for (x, y) in [
+        (4, 4),
+        (5, 4),
+        (6, 4),
+        (4, 5),
+        (6, 5),
+        (4, 6),
+        (5, 6),
+        (6, 6),
+    ] {
+        s.sim
+            .world_mut()
+            .add_chest(Tile::new(x, y), WeaponKind::Sword);
+    }
+    s.monster_of(MonsterKind::Sapper, 3.5, 12.5);
+
+    s.run_until(800, |sim| sim.wagon().hp < 500);
+
+    assert!(s.tower().is_standing(), "the tower stands");
+    assert_eq!(s.tower().hp(), TOWER_HP, "no free tile reaches the tower");
+    assert_eq!(s.sim.wagon().hp, 500 - 10, "the sapper came to the wagon");
 }
 
 /// 파괴병 하나(`kind`가 `Sapper`이면)가 포탑 곁에 서서 포탑이 부서질 때까지 걸린 Tick입니다. 감시탑은 사격하지 않습니다.
