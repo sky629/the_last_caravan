@@ -340,7 +340,7 @@ impl Cell {
     fn describe(&self) -> String {
         let (nobody, one) = (&self.nobody_blocks, &self.one_blocks);
         format!(
-            "{:?}, {} players, {} towers | towers lost: no sappers {}, nobody blocks {}, one blocks {} | runs in which one loses fewer towers than nobody: {} of {RUNS} | defeats: nobody {}, one {} | wagon at the end, lowest: nobody {}, one {}",
+            "{:?}, {} players, {} towers | towers lost: no sappers {}, nobody blocks {}, one blocks {} | runs in which one loses fewer towers than nobody: {} of {RUNS} | defeats: nobody {}, one {} | wagon at the end, lowest: nobody {}, one {} | players standing at the end, fewest: nobody {}, one {}",
             self.layout,
             self.party,
             self.towers,
@@ -352,6 +352,8 @@ impl Cell {
             defeats(one),
             lowest_wagon(nobody),
             lowest_wagon(one),
+            fewest_standing(nobody),
+            fewest_standing(one),
         )
     }
 }
@@ -383,6 +385,14 @@ fn defeats(nights: &[Night]) -> usize {
 
 fn lowest_wagon(nights: &[Night]) -> u32 {
     nights.iter().map(|night| night.wagon_hp).min().unwrap_or(0)
+}
+
+fn fewest_standing(nights: &[Night]) -> usize {
+    nights
+        .iter()
+        .map(|night| night.players_standing)
+        .min()
+        .unwrap_or(0)
 }
 
 #[test]
@@ -437,7 +447,19 @@ fn the_third_night_is_printed_for_each_party_and_tower_count_at_each_tower_damag
 #[ignore = "about a minute; run with --ignored"]
 fn the_third_night_is_printed_with_the_towers_spread_across_the_village() {
     // 감시탑을 마을 전체에 같은 간격으로 세우면, 마차를 지키는 사람이 닿지 못하는 감시탑을 파괴병이 노립니다. 기본 수치로 돌립니다.
-    for (party, towers) in [(4, 10), (4, 15), (4, 25), (2, 10), (2, 15), (2, 25)] {
+    // 35개, 28개, 22개는 모의 원정이 셋째 밤에 만나는 감시탑의 수(4명은 34개에서 37개, 3명은 26개에서 31개, 2명은 19개에서 24개)와 가깝습니다.
+    for (party, towers) in [
+        (4, 10),
+        (4, 15),
+        (4, 25),
+        (4, 35),
+        (3, 15),
+        (3, 28),
+        (2, 10),
+        (2, 15),
+        (2, 22),
+        (2, 25),
+    ] {
         println!(
             "{}",
             Cell::measure(party, towers, Layout::AcrossTheVillage, &|_| {}).describe()

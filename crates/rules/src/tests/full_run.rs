@@ -772,9 +772,9 @@ fn summarize(journeys: &[Journey]) -> String {
     lines.join(" | ")
 }
 
-/// `numbers`의 원정을 `party`명이 모든 씨앗으로 돌리고, 원정마다 한 줄과 모은 한 줄(`SUMMARY`)을 출력합니다. 이긴 원정의 수를 돌려줍니다.
-fn print_all_seeds(numbers: &Numbers, party: u32) -> usize {
-    let journeys: Vec<Journey> = SEEDS
+/// `numbers`의 원정을 `party`명이 `seeds`의 모든 씨앗으로 돌리고, 원정마다 한 줄과 모은 한 줄(`SUMMARY`)을 출력합니다. 이긴 원정의 수를 돌려줍니다.
+fn print_seeds(numbers: &Numbers, party: u32, seeds: &[u64]) -> usize {
+    let journeys: Vec<Journey> = seeds
         .iter()
         .map(|&seed| journey(numbers, party, seed))
         .collect();
@@ -796,7 +796,7 @@ fn print_all_seeds(numbers: &Numbers, party: u32) -> usize {
 fn a_full_mock_expedition_of_one_to_four_players_is_printed_for_each_set_of_numbers() {
     for numbers in [as_shipped(), runners_take_every_tower_hit(), grunts_only()] {
         for party in [1, 2, 3, 4] {
-            print_all_seeds(&numbers, party);
+            print_seeds(&numbers, party, &SEEDS);
         }
     }
 }
@@ -808,10 +808,20 @@ fn a_full_mock_expedition_with_at_most_so_many_towers_is_printed_to_find_where_a
     // 낮에 모은 자원으로 짓는 감시탑의 수가 얼마나 되어야 원정을 끝내는지를 봅니다. 포탑의 상한을 낮추면 그 수를 넘게 짓지 못하므로, 자원이나 시간이 모자란 방을 흉내 냅니다.
     for numbers in [as_shipped(), runners_take_every_tower_hit(), grunts_only()] {
         for party in [1, 2, 3, 4] {
-            for limit in [2, 4, 6, 8, 11] {
-                print_all_seeds(&numbers.with_tower_limit(limit), party);
+            for limit in [2, 4, 6, 8, 11, 13, 15, 17, 20, 24] {
+                print_seeds(&numbers.with_tower_limit(limit), party, &SEEDS);
             }
         }
+    }
+}
+
+#[test]
+#[ignore = "twenty-four more seeds of every party size take minutes; run with --ignored"]
+fn a_full_mock_expedition_is_printed_for_the_seeds_after_the_first_six_at_the_default_numbers() {
+    // 씨앗 여섯 개 밖의 씨앗에서도 기본 수치의 원정이 끝까지 이기는지를 봅니다.
+    let later: Vec<u64> = (7..=30).collect();
+    for party in [1, 2, 3, 4] {
+        print_seeds(&as_shipped(), party, &later);
     }
 }
 
@@ -821,7 +831,7 @@ fn a_full_mock_expedition_is_printed_for_each_tower_damage_a_sapper_takes() {
     for percent in [25, 30, 35, 40, 45, 50] {
         let numbers = as_shipped().with_sapper_tower_damage_percent(percent);
         for party in [1, 2, 3, 4] {
-            print_all_seeds(&numbers, party);
+            print_seeds(&numbers, party, &SEEDS);
         }
     }
 }
