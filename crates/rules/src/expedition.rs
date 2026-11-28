@@ -243,6 +243,9 @@ fn spawn_next(phase: &mut Phase, world: &mut World, spawns: &SpawnPlan, t: &Tuni
         *phase = fighting(to_spawn, spawn_in_ticks - 1);
         return;
     }
+    if t.nights.wave(day, wave).is_none() {
+        return;
+    }
     let nth = t.nights.wave_size(day, wave, party) - to_spawn;
     let Some(kind) = t.nights.kind_at(day, wave, party, nth) else {
         return;

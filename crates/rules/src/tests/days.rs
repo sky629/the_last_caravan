@@ -372,3 +372,24 @@ fn every_night_is_larger_than_the_one_before_and_the_last_has_hundreds() {
     );
     assert!(totals[2] >= 300, "{totals:?}");
 }
+
+#[test]
+fn a_fighting_step_of_a_wave_the_night_does_not_have_spawns_nothing_and_stays_as_it_is() {
+    // 규칙이 만들지 않는 단계이고 `set_phase`로만 만들 수 있습니다. 없는 무리의 크기는 0이므로, 무리를 찾기 전에 크기에서 나온 수를 빼면 안 됩니다.
+    let mut s = Scenario::open_field();
+    let fighting = Phase::Night {
+        day: 1,
+        party: 1,
+        step: NightStep::Fighting {
+            wave: 99,
+            to_spawn: 1,
+            spawn_in_ticks: 0,
+        },
+    };
+    s.sim.set_phase(fighting);
+
+    s.run_ticks(3);
+
+    assert_eq!(monster_count(&s), 0);
+    assert_eq!(phase(&s.sim), fighting);
+}
