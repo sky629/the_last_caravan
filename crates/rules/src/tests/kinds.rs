@@ -26,12 +26,13 @@ fn letter(kind: MonsterKind) -> char {
     format!("{kind:?}").chars().next().expect("a name")
 }
 
-/// 종류마다의 수가 `sizes`일 때 무리의 모든 순서를 종류의 첫 글자로 적습니다.
-fn letters(wave: &Wave, sizes: &[u32]) -> String {
-    (0..sizes.iter().sum())
+/// 종류마다의 수가 `packs`일 때 무리의 모든 순서를 종류의 첫 글자로 적습니다. 인원에 따라 줄이지 않으므로 수는 묶음에 적은 그대로입니다.
+fn letters(packs: &[(MonsterKind, u32)]) -> String {
+    let wave = wave_of(packs);
+    (0..wave.size(WaveScaling::Fixed, 1))
         .map(|nth| {
             letter(
-                wave.kind_at(sizes, nth)
+                wave.kind_at(WaveScaling::Fixed, 1, nth)
                     .expect("the wave still has monsters"),
             )
         })
@@ -42,37 +43,45 @@ fn grunts_and_runners() -> Wave {
     wave_of(&[(MonsterKind::Grunt, 20), (MonsterKind::Runner, 10)])
 }
 
+/// 기본 몬스터와 돌격병의 수가 `grunts`와 `runners`인 무리의 순서입니다.
+fn grunts_then_runners(grunts: u32, runners: u32) -> String {
+    letters(&[(MonsterKind::Grunt, grunts), (MonsterKind::Runner, runners)])
+}
+
 #[test]
 fn a_mixed_wave_takes_the_kind_with_the_largest_share_left_and_the_earlier_kind_on_a_tie() {
-    let wave = grunts_and_runners();
-    assert_eq!(letters(&wave, &[20, 10]), "GRGGRGGRGGRGGRGGRGGRGGRGGRGGRG");
-    assert_eq!(letters(&wave, &[5, 3]), "GRGRGGRG");
     assert_eq!(
-        letters(&wave, &[1, 1]),
+        grunts_then_runners(20, 10),
+        "GRGGRGGRGGRGGRGGRGGRGGRGGRGGRG"
+    );
+    assert_eq!(grunts_then_runners(5, 3), "GRGRGGRG");
+    assert_eq!(
+        grunts_then_runners(1, 1),
         "GR",
         "a tie goes to the earlier kind"
     );
     assert_eq!(
-        letters(&wave, &[3, 5]),
+        grunts_then_runners(3, 5),
         "GRRGRRGR",
         "the smaller share is not served last"
     );
-    let three = wave_of(&[
-        (MonsterKind::Grunt, 2),
-        (MonsterKind::Runner, 1),
-        (MonsterKind::Boss, 1),
-    ]);
-    assert_eq!(letters(&three, &[2, 1, 1]), "GRBG");
+    assert_eq!(
+        letters(&[
+            (MonsterKind::Grunt, 2),
+            (MonsterKind::Runner, 1),
+            (MonsterKind::Boss, 1),
+        ]),
+        "GRBG"
+    );
 }
 
 #[test]
 fn every_kind_of_a_mixed_wave_comes_out_exactly_as_many_times_as_its_size() {
-    let wave = grunts_and_runners();
-    for sizes in [[20, 10], [5, 3], [1, 1], [1, 6], [25, 15]] {
-        let order = letters(&wave, &sizes);
-        for (kind, size) in [('G', sizes[0]), ('R', sizes[1])] {
+    for (grunts, runners) in [(20, 10), (5, 3), (1, 1), (1, 6), (25, 15)] {
+        let order = grunts_then_runners(grunts, runners);
+        for (kind, size) in [('G', grunts), ('R', runners)] {
             let count = order.chars().filter(|&found| found == kind).count() as u32;
-            assert_eq!(count, size, "{kind} in {sizes:?}");
+            assert_eq!(count, size, "{kind} in {grunts} and {runners}");
         }
     }
 }
@@ -81,9 +90,86 @@ fn every_kind_of_a_mixed_wave_comes_out_exactly_as_many_times_as_its_size() {
 fn a_wave_of_one_kind_comes_out_in_that_kind_until_its_size_and_then_ends() {
     let wave = wave_of(&[(MonsterKind::Grunt, 8)]);
 
-    assert_eq!(letters(&wave, &[8]), "GGGGGGGG");
-    assert_eq!(wave.kind_at(&[8], 8), None, "nothing after the last one");
-    assert_eq!(wave.kind_at(&[8], 100), None);
+    assert_eq!(letters(&[(MonsterKind::Grunt, 8)]), "GGGGGGGG");
+    assert_eq!(
+        wave.kind_at(WaveScaling::Fixed, 1, 8),
+        None,
+        "nothing after the last one"
+    );
+    assert_eq!(wave.kind_at(WaveScaling::Fixed, 1, 100), None);
+}
+
+/// 몬스터를 한 마리씩 내보내며 「나온 비율이 가장 작은 종류, 같으면 앞쪽」을 고르는 가장 단순한 계산입니다. `Wave::kind_at`이 같은 순서를 내는지 견주는 기준입니다.
+fn replayed_order(sizes: &[u32]) -> Vec<usize> {
+    let mut spawned = vec![0u32; sizes.len()];
+    let mut order = Vec::new();
+    while let Some(index) = (0..sizes.len())
+        .filter(|&index| spawned[index] < sizes[index])
+        .reduce(|best, index| {
+            let (done, size) = (u64::from(spawned[index]), u64::from(sizes[index]));
+            let (best_done, best_size) = (u64::from(spawned[best]), u64::from(sizes[best]));
+            if done * best_size < best_done * size {
+                index
+            } else {
+                best
+            }
+        })
+    {
+        spawned[index] += 1;
+        order.push(index);
+    }
+    order
+}
+
+#[test]
+fn the_order_of_a_wave_is_the_one_a_monster_by_monster_replay_gives_for_every_small_set_of_sizes() {
+    // 종류가 하나에서 셋이고 종류마다 1마리에서 8마리인 모든 무리를 견줍니다. 순서는 종류를 이름표로만 쓰므로 종류는 앞에서부터 세 가지를 씁니다.
+    let kinds = [
+        MonsterKind::Grunt,
+        MonsterKind::Runner,
+        MonsterKind::Scarecrow,
+    ];
+    let mut checked = 0;
+    for kind_count in 1..=kinds.len() {
+        let mut sizes = vec![1u32; kind_count];
+        loop {
+            let packs: Vec<(MonsterKind, u32)> = kinds.iter().copied().zip(sizes.clone()).collect();
+            let wave = wave_of(&packs);
+            let expected = replayed_order(&sizes);
+            let total = sizes.iter().sum::<u32>();
+            for nth in 0..total {
+                assert_eq!(
+                    wave.kind_at(WaveScaling::Fixed, 1, nth),
+                    Some(kinds[expected[nth as usize]]),
+                    "sizes {sizes:?}, monster {nth}"
+                );
+            }
+            assert_eq!(wave.kind_at(WaveScaling::Fixed, 1, total), None);
+            checked += 1;
+
+            // 다음 크기의 조합입니다. 자릿수가 8을 넘으면 올림합니다.
+            let Some(digit) = sizes.iter().position(|&size| size < 8) else {
+                break;
+            };
+            sizes[digit] += 1;
+            sizes[..digit].fill(1);
+        }
+    }
+    assert_eq!(checked, 8 + 64 + 512);
+}
+
+#[test]
+fn a_wave_of_billions_gives_the_kind_of_any_place_without_counting_up_to_it() {
+    // 두 종류가 20억 마리씩이면 번갈아 나오므로 짝수 번째는 기본 몬스터, 홀수 번째는 돌격병입니다. 한 마리씩 세어서는 끝나지 않는 크기입니다.
+    let wave = wave_of(&[
+        (MonsterKind::Grunt, 2_000_000_000),
+        (MonsterKind::Runner, 2_000_000_000),
+    ]);
+    let at = |nth| wave.kind_at(WaveScaling::Fixed, 1, nth);
+
+    assert_eq!(at(3_999_999_998), Some(MonsterKind::Grunt));
+    assert_eq!(at(3_999_999_999), Some(MonsterKind::Runner));
+    assert_eq!(at(4_000_000_000), None);
 }
 
 /// 밤이 하나이고 무리가 `wave` 하나이며 무리가 인원에 비례하는 수치입니다.

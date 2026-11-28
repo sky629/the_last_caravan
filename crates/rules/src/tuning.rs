@@ -594,38 +594,64 @@ impl Wave {
         self.packs.iter().map(|pack| pack.count).sum()
     }
 
-    /// 종류마다 나올 수가 `sizes`(`packs`와 같은 순서)일 때, `nth`번째(0부터 셉니다)로 나올 몬스터의 종류입니다. 모두 나온 뒤의 순서는 `None`입니다.
+    /// 방에 플레이어가 `party`명 있을 때 이 무리의 몬스터 수입니다. 종류마다 `scaling`으로 바꾼 수의 합이므로, 묶음이 하나 이상이면 인원이 몇 명이어도 한 마리 이상입니다.
+    pub fn size(&self, scaling: WaveScaling, party: u32) -> u32 {
+        self.packs
+            .iter()
+            .map(|pack| scaling.scaled(pack.count, party))
+            .sum()
+    }
+
+    /// 방에 플레이어가 `party`명 있을 때 `nth`번째(0부터 셉니다)로 나올 몬스터의 종류입니다. 모두 나온 뒤의 순서는 `None`입니다.
     ///
-    /// 순서는 「아직 나오지 않은 비율이 가장 큰 종류를 고르고, 같으면 목록의 앞쪽」입니다. 종류마다 나온 수만으로 정해지므로 상태를 저장하지 않고,
-    /// 같은 `sizes`와 `nth`는 언제나 같은 종류입니다. 기본 20과 돌격병 10이면 기본, 돌격병, 기본, 기본, 돌격병의 꼴로 고르게 섞입니다.
-    /// 종류가 하나뿐이면 언제나 그 종류입니다.
-    pub fn kind_at(&self, sizes: &[u32], nth: u32) -> Option<MonsterKind> {
-        let mut spawned = vec![0; sizes.len()];
-        for _ in 0..nth {
-            let index = most_left(sizes, &spawned)?;
-            spawned[index] += 1;
-        }
-        most_left(sizes, &spawned).map(|index| self.packs[index].kind)
+    /// 순서는 「아직 나오지 않은 비율이 가장 큰 종류를 고르고, 같으면 목록의 앞쪽」입니다. 종류마다 나올 수(`size`와 같은 수)만으로 정해지므로 상태를 저장하지 않고,
+    /// 같은 입력은 언제나 같은 종류입니다. 기본 20과 돌격병 10이면 기본, 돌격병, 기본, 기본, 돌격병의 꼴로 고르게 섞입니다. 종류가 하나뿐이면 언제나 그 종류입니다.
+    ///
+    /// 종류마다 `k`번째 몬스터에 `k / 그 종류의 수`라는 값을 매기면, 순서는 이 값이 작은 쪽부터(같으면 목록의 앞쪽 종류부터)입니다.
+    /// 그래서 한 마리를 내보낼 때마다 처음부터 다시 세지 않고, 종류마다 「그 종류의 `k`번째가 무리 전체에서 몇 번째인가」를 이분 탐색으로 찾습니다(`place_of`).
+    pub fn kind_at(&self, scaling: WaveScaling, party: u32, nth: u32) -> Option<MonsterKind> {
+        let sizes: Vec<u64> = self
+            .packs
+            .iter()
+            .map(|pack| u64::from(scaling.scaled(pack.count, party)))
+            .collect();
+        let nth = u64::from(nth);
+        (0..sizes.len()).find_map(|index| {
+            let (mut low, mut high) = (0, sizes[index]);
+            while low < high {
+                let middle = (low + high) / 2;
+                if place_of(&sizes, index, middle) < nth {
+                    low = middle + 1;
+                } else {
+                    high = middle;
+                }
+            }
+            (low < sizes[index] && place_of(&sizes, index, low) == nth)
+                .then(|| self.packs[index].kind)
+        })
     }
 }
 
-/// 나온 수가 `spawned`일 때, 아직 나오지 않은 비율이 가장 큰 종류의 순서입니다. 모두 나왔으면 `None`입니다.
-/// 나온 비율(`나온 수 / 크기`)이 가장 작은 종류를 고르고, 두 비율은 곱해서 정수로 비교합니다.
-fn most_left(sizes: &[u32], spawned: &[u32]) -> Option<usize> {
-    let mut leader: Option<usize> = None;
-    for (index, (&size, &done)) in sizes.iter().zip(spawned).enumerate() {
-        if done >= size {
-            continue;
-        }
-        let has_more_left = leader.is_none_or(|leader| {
-            u64::from(done) * u64::from(sizes[leader])
-                < u64::from(spawned[leader]) * u64::from(size)
-        });
-        if has_more_left {
-            leader = Some(index);
-        }
-    }
-    leader
+/// 종류마다 나올 수가 `sizes`일 때, `index`번째 종류의 `k`번째(0부터 셉니다) 몬스터가 무리 전체에서 몇 번째로 나오는지입니다.
+/// 그보다 먼저 나오는 몬스터는 자기 종류의 `k`마리와, 다른 종류마다 나온 비율이 `k / sizes[index]`보다 작은 몬스터입니다.
+/// 비율이 같으면 앞쪽 종류가 먼저이므로, 앞쪽 종류는 같은 비율까지 세고 뒤쪽 종류는 같은 비율 앞까지 셉니다.
+fn place_of(sizes: &[u64], index: usize, k: u64) -> u64 {
+    let own = sizes[index];
+    let before: u64 = sizes
+        .iter()
+        .enumerate()
+        .filter(|&(other, _)| other != index)
+        .map(|(other, &size)| {
+            let reach = k * size;
+            let earlier = if other < index {
+                reach / own + 1
+            } else {
+                reach.div_ceil(own)
+            };
+            earlier.min(size)
+        })
+        .sum();
+    k + before
 }
 
 /// 무리의 크기가 방의 인원에 따라 달라지는지입니다.
@@ -636,6 +662,20 @@ pub enum WaveScaling {
     ByParty { full_party: u32 },
     /// 인원과 관계없이 `plans`의 수 그대로입니다. 몬스터의 수를 정해서 재는 부하 시험(`--stress`)이 씁니다.
     Fixed,
+}
+
+impl WaveScaling {
+    /// 기준 인원일 때의 수 `count`를 방에 플레이어가 `party`명 있을 때의 수로 바꿉니다. 무리의 크기와 보스의 HP가 모두 이 함수 하나를 거칩니다.
+    /// `count`가 1 이상이면 결과도 1 이상입니다.
+    pub fn scaled(self, count: u32, party: u32) -> u32 {
+        match self {
+            WaveScaling::Fixed => count,
+            WaveScaling::ByParty { full_party } => {
+                let scaled = (u64::from(count) * u64::from(party)).div_ceil(u64::from(full_party));
+                u32::try_from(scaled.max(1)).unwrap_or(u32::MAX)
+            }
+        }
+    }
 }
 
 /// 밤의 진행과 밤의 몬스터가 나타나는 방법입니다.
@@ -676,37 +716,20 @@ impl NightTuning {
 
     /// `day`번째 밤의 `wave`번째 무리에 나올 몬스터의 수입니다. 방에 플레이어가 `party`명 있을 때의 크기이고, 없는 무리는 0입니다.
     /// 종류마다 `scaled`로 바꾼 수의 합이므로, 있는 무리는 종류마다 인원이 몇 명이어도 한 마리 이상입니다.
-    /// 인원에 따라 달라지는 값은 `scaled` 한 곳에서 정합니다.
     pub fn wave_size(&self, day: u32, wave: u32, party: u32) -> u32 {
         self.wave(day, wave)
-            .map_or(0, |wave| self.pack_sizes(wave, party).iter().sum())
+            .map_or(0, |wave| wave.size(self.scaling, party))
     }
 
     /// `day`번째 밤의 `wave`번째 무리에서 방에 플레이어가 `party`명 있을 때 `nth`번째(0부터 셉니다)로 나올 몬스터의 종류입니다.
     /// 없는 무리와 무리의 크기(`wave_size`) 이후의 순서는 `None`입니다. 순서의 규칙은 `Wave::kind_at`에 있습니다.
     pub fn kind_at(&self, day: u32, wave: u32, party: u32, nth: u32) -> Option<MonsterKind> {
-        let wave = self.wave(day, wave)?;
-        wave.kind_at(&self.pack_sizes(wave, party), nth)
+        self.wave(day, wave)?.kind_at(self.scaling, party, nth)
     }
 
-    /// 방에 플레이어가 `party`명 있을 때 `wave`의 종류마다 나올 수입니다. `Wave::packs`와 같은 순서입니다.
-    fn pack_sizes(&self, wave: &Wave, party: u32) -> Vec<u32> {
-        wave.packs
-            .iter()
-            .map(|pack| self.scaled(pack.count, party))
-            .collect()
-    }
-
-    /// 기준 인원일 때의 수 `count`를 방에 플레이어가 `party`명 있을 때의 수로 바꿉니다. 무리의 크기와 보스의 HP가 모두 이 함수 하나를 거칩니다.
-    /// `count`가 1 이상이면 결과도 1 이상입니다.
+    /// 기준 인원일 때의 수 `count`를 방에 플레이어가 `party`명 있을 때의 수로 바꿉니다(`WaveScaling::scaled`).
     pub fn scaled(&self, count: u32, party: u32) -> u32 {
-        match self.scaling {
-            WaveScaling::Fixed => count,
-            WaveScaling::ByParty { full_party } => {
-                let scaled = (u64::from(count) * u64::from(party)).div_ceil(u64::from(full_party));
-                u32::try_from(scaled.max(1)).unwrap_or(u32::MAX)
-            }
-        }
+        self.scaling.scaled(count, party)
     }
 
     /// 원정의 모든 밤의 무리를 합친 수입니다. 무리가 나타나는 방향은 첫 무리부터 센 순번으로 정해지므로, 보스는 이 수를 순번으로 받습니다.

@@ -243,11 +243,11 @@ fn spawn_next(phase: &mut Phase, world: &mut World, spawns: &SpawnPlan, t: &Tuni
         *phase = fighting(to_spawn, spawn_in_ticks - 1);
         return;
     }
-    if t.nights.wave(day, wave).is_none() {
+    let Some(plan) = t.nights.wave(day, wave) else {
         return;
-    }
-    let nth = t.nights.wave_size(day, wave, party) - to_spawn;
-    let Some(kind) = t.nights.kind_at(day, wave, party, nth) else {
+    };
+    let nth = plan.size(t.nights.scaling, party) - to_spawn;
+    let Some(kind) = plan.kind_at(t.nights.scaling, party, nth) else {
         return;
     };
     let spot: Vec2 = spawns.night_spot(t.nights.wave_serial(day, wave), nth);
