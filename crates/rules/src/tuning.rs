@@ -614,7 +614,7 @@ pub struct Wave {
     pub packs: Vec<Pack>,
 }
 
-/// 한 무리 안의 한 종류입니다. `count`는 `WaveScaling`이 정하는 기준 인원일 때의 수입니다.
+/// 한 무리 안의 묶음 하나입니다. 같은 종류의 묶음이 한 무리에 여럿일 수 있습니다. `count`는 `WaveScaling`이 정하는 기준 인원일 때의 수입니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pack {
     pub kind: MonsterKind,
