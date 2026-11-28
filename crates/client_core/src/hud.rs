@@ -32,6 +32,8 @@ pub struct Hud {
     pub carry: Option<String>,
     /// 내가 들고 있는 무기와 바꾸는 키입니다. 내 캐릭터가 화면에 있으면 항상 있고, 쓰러졌어도 무기는 들고 있습니다.
     pub weapon: Option<String>,
+    /// 무기를 버리는 키의 안내입니다. `G  DROP`이고, 버릴 수 있을 때만 있습니다. 원정 중에 살아 있고 두 칸에 모두 무기가 있어야 합니다.
+    pub drop_weapon: Option<String>,
     /// 내가 받은 버프의 이름입니다. `HASTE`(공격 속도)와 `SWIFT`(이동 속도) 가운데 받은 것을 두 칸 띄워 적습니다.
     /// 살아 있고 버프가 있을 때만 있고, 결과를 보여 주는 동안에도 없습니다. 다른 플레이어의 버프는 보이지 않습니다.
     pub buffs: Option<String>,
@@ -178,6 +180,7 @@ impl Hud {
             stash: None,
             carry: None,
             weapon: None,
+            drop_weapon: None,
             buffs: None,
             build: None,
             hint: None,
@@ -295,6 +298,8 @@ impl Hud {
                 // 든 자원은 원정의 것이므로 야영지에서는 보이지 않습니다.
                 if !matches!(frame.phase, WirePhase::Camp { .. }) {
                     hud.carry = Some(carry_text(carried, joined.welcome.world.carry_capacity));
+                    // 버리기는 원정 중에만 되고, 무기가 하나뿐이면 맨손이 되므로 버릴 수 없습니다.
+                    hud.drop_weapon = me.loadout.spare.is_some().then(|| DROP_HINT.to_string());
                 }
                 hud.refusal = build_refusal
                     .map(refusal_text)
@@ -316,6 +321,9 @@ impl Hud {
         hud
     }
 }
+
+/// 무기를 버리는 키의 안내 문구입니다.
+const DROP_HINT: &str = "G  DROP";
 
 /// 나가기 확인 창의 문구입니다. 방에 들어간 뒤라면 첫 스냅샷을 기다리는 동안과 결과 화면에서도 같습니다.
 fn leave_panel() -> LeavePanel {
@@ -1086,6 +1094,70 @@ mod tests {
         archer.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         let bow = Hud::of(&session, Some(&frame(vec![archer])), INVITE);
         assert_eq!(bow.weapon.as_deref(), Some("WEAPON  [BOW]  SWORD  [Q]"));
+    }
+
+    fn with_two_weapons(life: WireLife) -> PlayerView {
+        let mut me = player(YOU, life);
+        me.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
+        me
+    }
+
+    #[test]
+    fn the_drop_key_is_shown_only_while_it_can_drop_a_weapon() {
+        let session = session_in_room();
+        let shown = |me: PlayerView| Hud::of(&session, Some(&frame(vec![me])), INVITE).drop_weapon;
+        assert_eq!(
+            shown(with_two_weapons(alive(100))).as_deref(),
+            Some("G  DROP")
+        );
+        assert_eq!(
+            shown(player(YOU, alive(100))),
+            None,
+            "the only weapon is never dropped"
+        );
+
+        let downed = WireLife::Downed {
+            bleed_secs_left: 20.0,
+            revive_progress: None,
+        };
+        assert_eq!(shown(with_two_weapons(downed)), None, "downed");
+        assert_eq!(shown(with_two_weapons(WireLife::Dead)), None, "dead");
+        assert_eq!(Hud::of(&session, None, INVITE).drop_weapon, None);
+    }
+
+    #[test]
+    fn the_drop_key_is_not_shown_in_the_camp_or_the_result_or_for_an_ally() {
+        let session = session_in_room();
+        let phases = [
+            WirePhase::Camp {
+                ready: vec![],
+                starting_in: None,
+                struck: vec![],
+            },
+            WirePhase::Debrief {
+                outcome: WireOutcome::Victory,
+                secs_left: 5.0,
+                confirmed: vec![],
+            },
+        ];
+        for phase in phases {
+            let mut frame = frame(vec![with_two_weapons(alive(100))]);
+            frame.phase = phase.clone();
+            assert_eq!(
+                Hud::of(&session, Some(&frame), INVITE).drop_weapon,
+                None,
+                "{phase:?}"
+            );
+        }
+
+        let mut ally = player(2, alive(100));
+        ally.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), ally])),
+            INVITE,
+        );
+        assert_eq!(hud.drop_weapon, None, "only my weapons count");
     }
 
     #[test]

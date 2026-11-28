@@ -1,6 +1,6 @@
 //! 화면 위의 HUD입니다 (Bevy UI). 무엇을 표시할지는 `caravan_client_core::Hud`가 정하고, 이 파일은 그 값을 노드에 옮깁니다.
 //!
-//! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸, 내가 받은 버프의 이름이 있고,
+//! 왼쪽 위에 내 HP와 달리기 게이지, 마차, 동료의 막대가 있고, 오른쪽 위에 날과 낮밤, 낮의 남은 시간이나 무리 번호, 보관함의 자원, 내가 든 자원, 내가 가진 무기 두 칸과 `G` 안내, 내가 받은 버프의 이름이 있고,
 //! 야영지에서는 그 아래에 방 코드와 `C` 안내, 준비 목록, `R` 안내, 시작까지 남은 시간이 있고,
 //! 아래 가운데에 F를 누르면 하게 되는 일의 안내와 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 원정 중의 방 코드가 있고, 화면 가운데에 접속을 기다리는 안내, 보스가 온다는 경고, 원정의 결과(성공 여부, 요약, 개인별 기록의 표, 확인 안내)가 크게 나옵니다.
@@ -75,6 +75,8 @@ pub struct HudNodes {
     stash: Entity,
     carry: Entity,
     weapon: Entity,
+    /// 무기를 버리는 키 `G`의 안내입니다.
+    drop_weapon: Entity,
     /// 건설 키가 지을 포탑의 종류와 비용입니다.
     build: Entity,
     /// 내가 받은 버프의 이름입니다.
@@ -191,13 +193,14 @@ pub fn setup(mut commands: Commands) {
         }))
         .add_children(&[me, stamina, wagon, allies_panel]);
 
-    // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함, 내가 든 자원, 내가 든 무기, 지을 포탑, 내가 받은 버프.
+    // 오른쪽 위: 날과 낮밤, 낮의 남은 시간이나 무리 번호, 원정 번호, 보관함, 내가 든 자원, 내가 든 무기, 무기를 버리는 키의 안내, 지을 포탑, 내가 받은 버프.
     let day = text_node(&mut commands, 30.0, TEXT);
     let timer = text_node(&mut commands, 20.0, TEXT);
     let expedition = text_node(&mut commands, 16.0, TEXT_DIM);
     let stash = text_node(&mut commands, 22.0, TEXT);
     let carry = text_node(&mut commands, 22.0, TEXT);
     let weapon = text_node(&mut commands, 22.0, TEXT);
+    let drop_weapon = text_node(&mut commands, 22.0, TEXT);
     let build = text_node(&mut commands, 22.0, TEXT);
     let buffs = text_node(&mut commands, 22.0, TEXT);
     // 야영지에서는 이 아래에 방 코드와 준비 목록이 나옵니다.
@@ -227,6 +230,7 @@ pub fn setup(mut commands: Commands) {
             stash,
             carry,
             weapon,
+            drop_weapon,
             build,
             buffs,
             camp_room,
@@ -365,6 +369,7 @@ pub fn setup(mut commands: Commands) {
         stash,
         carry,
         weapon,
+        drop_weapon,
         build,
         buffs,
         camp_room,
@@ -517,6 +522,11 @@ pub fn update(
         nodes.weapon,
         hud.weapon.as_deref().unwrap_or(""),
     );
+    set_text(
+        &mut texts,
+        nodes.drop_weapon,
+        hud.drop_weapon.as_deref().unwrap_or(""),
+    );
     set_text(&mut texts, nodes.build, hud.build.as_deref().unwrap_or(""));
     set_text(&mut texts, nodes.buffs, hud.buffs.as_deref().unwrap_or(""));
     let camp = hud.camp.as_ref();
@@ -636,9 +646,14 @@ pub fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caravan_client_core::RoomKey;
+    use caravan_client_core::{Frame, PlayerView, RoomKey};
+    use caravan_protocol::{
+        WireBuffs, WireLife, WireLoadout, WireNightStep, WirePhase, WireStructureKind,
+        WireWeaponKind,
+    };
+    use caravan_rules::{Team, Vec2};
 
-    use crate::testing::joined_flow;
+    use crate::testing::{YOU, empty_frame, joined_flow};
 
     fn drawn() -> App {
         let mut app = App::new();
@@ -668,6 +683,62 @@ mod tests {
             .0
             .on_room_key(key);
         app.update();
+    }
+
+    /// 밤에 내가 `loadout`을 들고 살아 있는 방의 모습입니다.
+    fn night_with(loadout: WireLoadout) -> Frame {
+        let mut frame = empty_frame(WirePhase::Night {
+            day: 1,
+            wave_count: 3,
+            step: WireNightStep::Fighting { wave: 1 },
+        });
+        frame.players.push(PlayerView {
+            id: YOU,
+            team: Team::CARAVAN,
+            pos: Vec2::new(5.0, 5.0),
+            facing: Vec2::new(1.0, 0.0),
+            life: WireLife::Alive {
+                hp: 100,
+                max_hp: 100,
+                carried: 0,
+                stamina: 100,
+                interaction: None,
+                build_refusal: None,
+                buffs: WireBuffs::NONE,
+            },
+            last_attack: None,
+            loadout,
+            prompt: None,
+            build_kind: WireStructureKind::Watchtower,
+        });
+        frame
+    }
+
+    #[test]
+    fn the_drop_key_is_drawn_under_the_weapon_only_while_there_is_a_second_weapon_to_hold() {
+        let mut app = drawn();
+        let show = |app: &mut App, loadout| {
+            app.world_mut().resource_mut::<CurrentFrame>().0 = Some(night_with(loadout));
+            app.update();
+        };
+
+        show(
+            &mut app,
+            WireLoadout {
+                held: WireWeaponKind::Bow,
+                spare: Some(WireWeaponKind::Sword),
+            },
+        );
+        assert_eq!(text_of(&app, |nodes| nodes.drop_weapon), "G  DROP");
+
+        show(
+            &mut app,
+            WireLoadout {
+                held: WireWeaponKind::Sword,
+                spare: None,
+            },
+        );
+        assert_eq!(text_of(&app, |nodes| nodes.drop_weapon), "");
     }
 
     #[test]
