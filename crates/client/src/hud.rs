@@ -13,7 +13,8 @@ use crate::net::{ClientFlow, CurrentFrame, InviteFlash};
 
 const METER_WIDTH: f32 = 260.0;
 const ACTION_WIDTH: f32 = 380.0;
-const BOSS_WIDTH: f32 = 520.0;
+/// 위쪽 가운데의 보스 HP 막대의 폭입니다. 창의 폭이 960픽셀일 때 왼쪽 위의 막대(오른쪽 끝 270픽셀)와 겹치지 않는 폭입니다.
+const BOSS_WIDTH: f32 = 380.0;
 const METER_HEIGHT: f32 = 22.0;
 const LABEL_SIZE: f32 = 14.0;
 
