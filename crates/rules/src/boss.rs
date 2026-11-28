@@ -7,11 +7,12 @@
 //! ```text
 //!   Walking --(걷는 시간이 끝나고 대상이 `target_range` 안에 있음)--> 순서의 다음 행동
 //!     ^                                                        |
-//!     |        Slam -> Slamming(예고) --(시간이 지남)--> 원 안에 피해
-//!     +----------------------------------(Walking으로 돌아가고 순서가 한 칸 나아감)
+//!     |        Slam   -> Slamming(예고) --(시간이 지남)--> 원 안에 피해 ---------------+
+//!     |        Charge -> Winding(예고) --(시간이 지남)--> Charging(띠를 따라 달림) ---+
+//!     +----------------------------------(Walking으로 돌아가고 순서가 한 칸 나아감)--+
 //! ```
 //!
-//! 보스는 걷는 동안에만 걷고, 예고하는 동안에는 걷는 일을 하지 않습니다(`Boss::walk_aim`이 `None`입니다).
+//! 보스는 걷는 동안에만 걷고, 예고하거나 달리는 동안에는 걷는 일을 하지 않습니다(`Boss::walk_aim`이 `None`입니다).
 //! 대상은 Tick마다 다시 정합니다. 보스에게서 `target_range` 안에 있는 살아 있고 자리에 있는 플레이어 가운데 최근 `threat_secs` 동안
 //! 보스에게 가장 많은 피해를 준 플레이어이고, 그런 플레이어가 없으면 마차입니다. 포탑이 준 피해는 세지 않습니다.
 //!
@@ -21,12 +22,14 @@
 
 use std::collections::VecDeque;
 
+use crate::collision::move_circle;
 use crate::ids::{MonsterId, PlayerId};
 use crate::math::Vec2;
 use crate::spawn::SpawnPlan;
+use crate::sweep;
 use crate::telegraph::{self, Telegraph, Zone};
 use crate::tuning::{BossTuning, Finale, Move, Tuning};
-use crate::world::{Ctx, Hit, World};
+use crate::world::{Ctx, Hit, Target, World};
 
 /// 보스가 노리는 대상입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,13 +39,39 @@ pub enum Aim {
 }
 
 /// 보스가 지금 하고 있는 일입니다. 일마다 그 일에서만 의미 있는 값을 가집니다.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Act {
     /// 대상을 향해 걷습니다. `ticks_left`가 0이 되고 대상이 `target_range` 안에 있으면 다음 행동을 시작합니다.
     /// 대상이 멀면 0에 머물면서 계속 걷습니다.
     Walking { ticks_left: u32 },
     /// 내려찍기를 예고하는 중입니다. 보스는 서 있고, 영역은 예고가 시작될 때 대상이 서 있던 자리의 원입니다.
     Slamming(Telegraph),
+    /// 돌진을 예고하는 중입니다. 보스는 서 있습니다. 예고가 끝나면 `charge`를 따라 달립니다.
+    /// `charge`의 띠는 예고가 시작될 때 보스에서 대상 쪽으로 뻗은 띠이고, `telegraph`의 영역도 같은 띠입니다.
+    Winding {
+        telegraph: Telegraph,
+        charge: Charge,
+    },
+    /// 예고한 띠를 따라 달리는 중입니다.
+    Charging(Charge),
+}
+
+/// 돌진입니다. 예고할 때 띠를 한 번 정하고, 달리는 동안 이미 맞힌 대상을 기억합니다.
+/// 띠는 `from`에서 `to`까지 이은 선분의 양옆으로 `half_width`만큼 넓힌 영역(`zone`)이고, 달리는 동안에도 화면에 남습니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Charge {
+    /// 보스의 중심이 출발하는 자리입니다.
+    pub from: Vec2,
+    /// 띠의 끝입니다. 보스의 중심이 끝나는 곳에서 띠의 반폭만큼 더 나아간 자리입니다. 막은 포탑이나 마차를 띠가 덮기 때문입니다.
+    pub to: Vec2,
+    half_width: f32,
+    /// 길이가 1인 달리는 방향입니다.
+    dir: Vec2,
+    /// 보스의 중심이 달려야 하는 거리입니다. 띠가 막힌 곳 앞에서 끝나도록 정한 길이에서 앞쪽 반폭을 뺀 값입니다.
+    length: f32,
+    travelled: f32,
+    /// 이번 돌진이 이미 맞힌 대상입니다. 한 번 가로지르는 돌진이 같은 대상을 두 번 맞히지 않습니다.
+    struck: Vec<Target>,
 }
 
 /// 최근에 플레이어가 보스에게 준 피해입니다. 플레이어마다 따로 모으지 않고 피해 하나하나를 시간순으로 적으므로, 오래된 피해가 빠지는 때가 Tick 단위로 정확합니다.
@@ -187,7 +216,8 @@ fn step(
     boss.threat.advance();
     boss.aim = choose_aim(world, boss, world.monsters[index].pos, cfg);
 
-    boss.act = match boss.act {
+    let act = std::mem::replace(&mut boss.act, Act::Walking { ticks_left: 0 });
+    boss.act = match act {
         Act::Walking { ticks_left } => {
             let ticks_left = ticks_left.saturating_sub(1);
             let pos = world.monsters[index].pos;
@@ -203,6 +233,23 @@ fn step(
                 boss.finish(cfg, t)
             } else {
                 Act::Slamming(telegraph)
+            }
+        }
+        Act::Winding {
+            mut telegraph,
+            charge,
+        } => {
+            if telegraph.tick() {
+                Act::Charging(charge)
+            } else {
+                Act::Winding { telegraph, charge }
+            }
+        }
+        Act::Charging(mut charge) => {
+            if run(world, index, &mut charge, cfg, t, hits) {
+                boss.finish(cfg, t)
+            } else {
+                Act::Charging(charge)
             }
         }
     };
@@ -246,7 +293,7 @@ fn point_of(world: &World, aim: Aim) -> Vec2 {
     }
 }
 
-/// 순서의 다음 행동을 시작합니다. 영역은 지금 정하고 그 뒤에는 바꾸지 않으므로, 플레이어는 예고를 보고 피할 수 있습니다.
+/// 순서의 다음 행동을 시작합니다. 영역과 방향은 지금 정하고 그 뒤에는 바꾸지 않으므로, 플레이어는 예고를 보고 피할 수 있습니다.
 /// 보스는 겨냥한 쪽을 바라봅니다. `match`에 `_` 갈래가 없으므로 행동을 추가하면 여기서 컴파일 오류가 납니다.
 fn start(world: &mut World, index: usize, boss: &Boss, cfg: &BossTuning, t: &Tuning) -> Act {
     let pos = world.monsters[index].pos;
@@ -263,5 +310,82 @@ fn start(world: &mut World, index: usize, boss: &Boss, cfg: &BossTuning, t: &Tun
             },
             t.ticks(cfg.slam.windup_secs),
         )),
+        Move::Charge => {
+            let charge = Charge::new(world, pos, world.monsters[index].facing, cfg, t);
+            Act::Winding {
+                telegraph: Telegraph::new(charge.zone(), t.ticks(cfg.charge.windup_secs)),
+                charge,
+            }
+        }
     }
+}
+
+/// 걷는 몸이 막힌 타일의 가장자리에 닿아 있을 때 반지름에서 덜어 내는 여유(타일)입니다. 벽에 붙어 선 보스가 벽에서 멀어지는 쪽으로 달리는데도 길이가 0이 되지 않게 합니다.
+const TOUCHING_SLACK: f32 = 1e-3;
+
+impl Charge {
+    /// `from`에서 `dir` 방향으로 달리는 돌진입니다. 보스의 걷는 몸이 막힌 타일(지형, 포탑, 마차)이나 맵의 끝에 닿는 곳에서 달리기가 끝나므로,
+    /// 보스의 중심이 달리는 길이도 거기서 끝나고(최대 `ChargeTuning::length`), 띠는 거기서 반폭만큼 더 나아가서 끝납니다.
+    fn new(world: &World, from: Vec2, dir: Vec2, cfg: &BossTuning, t: &Tuning) -> Charge {
+        let walk_radius = t.monsters.boss.radius - TOUCHING_SLACK;
+        let wanted = dir * cfg.charge.length;
+        let mut scratch = Vec::new();
+        let length = sweep::first_blocked(&world.tiles, from, wanted, walk_radius, &mut scratch)
+            .map_or(cfg.charge.length, |at| cfg.charge.length * at);
+        let half_width = cfg.charge.width * 0.5;
+        Charge {
+            from,
+            to: from + dir * (length + half_width),
+            half_width,
+            dir,
+            length,
+            travelled: 0.0,
+            struck: Vec::new(),
+        }
+    }
+
+    /// 띠가 덮는 영역입니다.
+    pub fn zone(&self) -> Zone {
+        Zone::Lane {
+            from: self.from,
+            to: self.to,
+            half_width: self.half_width,
+        }
+    }
+}
+
+/// 돌진을 한 Tick 달립니다. 보스의 걷는 몸은 걷는 것과 같은 충돌 규칙으로 움직이고, 이번 Tick에 지나간 띠(앞쪽 반폭 포함)에 든 대상을 맞힙니다.
+/// 목표까지 달렸거나 가로막혀서 나아가지 못하면 끝나고 참을 돌려줍니다.
+fn run(
+    world: &mut World,
+    index: usize,
+    charge: &mut Charge,
+    cfg: &BossTuning,
+    t: &Tuning,
+    hits: &mut Vec<Hit>,
+) -> bool {
+    let radius = t.monsters.boss.radius;
+    let wanted = (cfg.charge.speed * t.dt())
+        .min(charge.length - charge.travelled)
+        .max(0.0);
+    let before = world.monsters[index].pos;
+    // 충돌 처리는 한 번에 움직이는 거리가 반지름보다 짧아야 하므로 걸음을 나눕니다.
+    let steps = (wanted / radius) as u32 + 1;
+    let part = charge.dir * (wanted / steps as f32);
+    let mut scratch = Vec::new();
+    let mut pos = before;
+    for _ in 0..steps {
+        pos = move_circle(pos, radius, part, &world.tiles, &mut scratch);
+    }
+    world.monsters[index].pos = pos;
+    let moved = pos.distance(before);
+    charge.travelled += moved;
+
+    let swept = Zone::Lane {
+        from: before,
+        to: pos + charge.dir * charge.half_width,
+        half_width: charge.half_width,
+    };
+    telegraph::strike_fresh(world, &swept, &cfg.charge.strike, &mut charge.struck, hits);
+    charge.travelled >= charge.length - 1e-3 || moved < wanted * 0.5
 }

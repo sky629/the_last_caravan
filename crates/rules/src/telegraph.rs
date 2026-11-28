@@ -15,13 +15,40 @@ use crate::world::{Hit, Source, Target, World};
 pub enum Zone {
     /// 중심에서 반지름 안입니다.
     Circle { center: Vec2, radius: f32 },
+    /// `from`에서 `to`까지 이은 선분의 양옆으로 `half_width`만큼 넓힌 띠입니다. 두 끝은 선분에 수직으로 잘려 있습니다.
+    Lane {
+        from: Vec2,
+        to: Vec2,
+        half_width: f32,
+    },
 }
 
 impl Zone {
+    /// 영역의 중심입니다. 원은 중심이고 띠는 두 끝의 가운데입니다.
+    pub fn center(&self) -> Vec2 {
+        match *self {
+            Zone::Circle { center, .. } => center,
+            Zone::Lane { from, to, .. } => (from + to) * 0.5,
+        }
+    }
+
     /// 점 `p`가 영역 안에 있는지입니다. 경계는 안쪽입니다.
     pub fn contains(&self, p: Vec2) -> bool {
         match *self {
             Zone::Circle { center, radius } => center.distance(p) <= radius,
+            Zone::Lane {
+                from,
+                to,
+                half_width,
+            } => {
+                let Some((along_axis, length)) = lane_axis(from, to) else {
+                    return from.distance(p) <= half_width;
+                };
+                let offset = p - from;
+                let along = offset.dot(along_axis);
+                let across = offset.dot(Vec2::new(-along_axis.y, along_axis.x));
+                (0.0..=length).contains(&along) && across.abs() <= half_width
+            }
         }
     }
 
@@ -29,8 +56,60 @@ impl Zone {
     pub fn overlaps(&self, rect: Rect) -> bool {
         match *self {
             Zone::Circle { center, radius } => rect.distance_to(center) <= radius,
+            Zone::Lane {
+                from,
+                to,
+                half_width,
+            } => {
+                let Some((along_axis, _)) = lane_axis(from, to) else {
+                    return rect.distance_to(from) <= half_width;
+                };
+                let across_axis = Vec2::new(-along_axis.y, along_axis.x);
+                let lane = [
+                    from + across_axis * half_width,
+                    from - across_axis * half_width,
+                    to + across_axis * half_width,
+                    to - across_axis * half_width,
+                ];
+                let corners = [
+                    rect.min,
+                    Vec2::new(rect.max.x, rect.min.y),
+                    rect.max,
+                    Vec2::new(rect.min.x, rect.max.y),
+                ];
+                // 두 볼록 사각형이 겹치지 않으면 둘을 가르는 축이 한 변의 수직 방향 가운데 있습니다. 네 축을 모두 보면 됩니다.
+                [
+                    along_axis,
+                    across_axis,
+                    Vec2::new(1.0, 0.0),
+                    Vec2::new(0.0, 1.0),
+                ]
+                .into_iter()
+                .all(|axis| {
+                    let (lane_low, lane_high) = extent(&lane, axis);
+                    let (rect_low, rect_high) = extent(&corners, axis);
+                    lane_low <= rect_high && rect_low <= lane_high
+                })
+            }
         }
     }
+}
+
+/// 띠의 중심선 방향(길이 1)과 길이입니다. 두 끝이 같아서 방향이 없으면 `None`입니다.
+fn lane_axis(from: Vec2, to: Vec2) -> Option<(Vec2, f32)> {
+    let axis = to - from;
+    let length = axis.length();
+    (length > 0.0).then(|| (axis * (1.0 / length), length))
+}
+
+/// 꼭짓점들을 `axis` 위에 내려놓았을 때 값의 범위입니다.
+fn extent(points: &[Vec2; 4], axis: Vec2) -> (f32, f32) {
+    points
+        .iter()
+        .map(|point| point.dot(axis))
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), value| {
+            (low.min(value), high.max(value))
+        })
 }
 
 /// 터지기를 기다리는 영역입니다. `ticks_left`가 0이 되는 Tick에 영역 안의 대상이 피해를 받습니다.
@@ -55,6 +134,7 @@ impl Telegraph {
 
     /// 예고가 얼마나 진행되었는지입니다(0.0 이상 1.0 이하). 예고가 시작된 Tick에 0.0이고, 터지기 바로 앞의 Tick에 1.0입니다.
     /// 터지는 Tick에는 예고가 사라지므로, 화면은 가득 찬 영역을 한 번 본 뒤에 피해를 봅니다.
+    /// 예고가 1 Tick이면 보이는 Tick이 하나뿐이므로 처음부터 1.0입니다.
     pub fn progress(&self) -> f32 {
         let steps = self.total_ticks.saturating_sub(1);
         if steps == 0 {
@@ -75,7 +155,23 @@ impl Telegraph {
 /// 맞는 플레이어는 살아 있고 자리에 있는 플레이어뿐입니다. 쓰러졌거나 사망한 플레이어와 자리를 비운 플레이어는 맞지 않고,
 /// 짓는 중인 포탑도 피해를 받지 않으므로 맞히지 않습니다.
 pub(crate) fn strike(world: &World, zone: &Zone, damage: &StrikeTuning, hits: &mut Vec<Hit>) {
+    strike_fresh(world, zone, damage, &mut Vec::new(), hits);
+}
+
+/// `strike`와 같지만 `struck`에 이미 있는 대상은 건너뛰고, 이번에 맞힌 대상을 `struck`의 끝에 더합니다.
+/// 여러 Tick에 걸쳐 같은 대상 곁을 지나가는 공격(돌진)이 그 대상을 두 번 맞히지 않게 하는 기록입니다.
+pub(crate) fn strike_fresh(
+    world: &World,
+    zone: &Zone,
+    damage: &StrikeTuning,
+    struck: &mut Vec<Target>,
+    hits: &mut Vec<Hit>,
+) {
     let mut hit = |target: Target, amount: u32| {
+        if struck.contains(&target) {
+            return;
+        }
+        struck.push(target);
         hits.push(Hit {
             target,
             amount,
@@ -139,6 +235,108 @@ mod tests {
         // 원의 바깥 상자(8..12)에 들지만 원에는 닿지 않는 모서리입니다. 모서리까지의 거리는 약 2.12입니다.
         let corner = Rect::new(11.5, 11.5, 12.5, 12.5);
         assert!(!circle().overlaps(corner));
+    }
+
+    fn lane() -> Zone {
+        Zone::Lane {
+            from: Vec2::new(2.0, 5.0),
+            to: Vec2::new(12.0, 5.0),
+            half_width: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_lane_holds_what_is_within_its_half_width_of_the_line_and_between_its_flat_ends() {
+        let lane = lane();
+        assert!(lane.contains(Vec2::new(2.0, 5.0)), "the start of the line");
+        assert!(lane.contains(Vec2::new(12.0, 5.0)), "the end of the line");
+        assert!(lane.contains(Vec2::new(7.0, 6.0)), "the side edge");
+        assert!(lane.contains(Vec2::new(7.0, 4.0)), "the other side edge");
+        assert!(
+            !lane.contains(Vec2::new(7.0, 6.01)),
+            "a hair beyond the side"
+        );
+        assert!(!lane.contains(Vec2::new(1.99, 5.0)), "behind the start");
+        assert!(!lane.contains(Vec2::new(12.01, 5.0)), "past the end");
+        assert!(
+            !lane.contains(Vec2::new(12.5, 5.9)),
+            "the ends are flat, not rounded"
+        );
+    }
+
+    #[test]
+    fn a_lane_turns_with_its_line() {
+        let diagonal = Zone::Lane {
+            from: Vec2::new(0.0, 0.0),
+            to: Vec2::new(6.0, 8.0),
+            half_width: 1.0,
+        };
+        assert!(diagonal.contains(Vec2::new(3.0, 4.0)));
+        assert!(
+            diagonal.contains(Vec2::new(3.0 + 0.8, 4.0 - 0.6)),
+            "one tile across"
+        );
+        assert!(!diagonal.contains(Vec2::new(3.0 + 0.9, 4.0 - 0.7)));
+        assert!(!diagonal.contains(Vec2::new(3.0, 0.0)));
+    }
+
+    #[test]
+    fn a_lane_overlaps_a_rect_that_touches_its_side_or_its_end_and_not_one_beyond() {
+        let lane = lane();
+        assert!(
+            lane.overlaps(Rect::new(6.0, 6.0, 7.0, 7.0)),
+            "touching the side"
+        );
+        assert!(
+            !lane.overlaps(Rect::new(6.0, 6.01, 7.0, 7.0)),
+            "a hair beyond"
+        );
+        assert!(
+            lane.overlaps(Rect::new(12.0, 4.0, 13.0, 5.0)),
+            "touching the end"
+        );
+        assert!(
+            !lane.overlaps(Rect::new(12.01, 4.0, 13.0, 5.0)),
+            "past the end"
+        );
+        assert!(lane.overlaps(Rect::new(6.0, 4.0, 7.0, 5.0)), "inside it");
+        assert!(
+            lane.overlaps(Rect::new(0.0, 0.0, 20.0, 20.0)),
+            "a rect that holds the whole lane"
+        );
+    }
+
+    #[test]
+    fn a_tile_beside_the_corner_of_a_diagonal_lane_is_outside_it() {
+        let diagonal = Zone::Lane {
+            from: Vec2::new(0.0, 0.0),
+            to: Vec2::new(10.0, 10.0),
+            half_width: 1.0,
+        };
+        // 띠의 바깥 상자 안에 들지만 띠에는 닿지 않는 타일입니다. 중심선에서 가장 가까운 모서리 (7, 4)까지 수직으로 약 2.12타일이므로 띠의 반폭 1타일을 넘습니다.
+        assert!(!diagonal.overlaps(Rect::new(7.0, 3.0, 8.0, 4.0)));
+        assert!(!diagonal.overlaps(Rect::new(7.0, 4.0, 8.0, 5.0)));
+        assert!(
+            diagonal.overlaps(Rect::new(6.0, 4.0, 7.0, 5.0)),
+            "the corner (6, 5) is 0.71 tiles off the line"
+        );
+        assert!(
+            diagonal.overlaps(Rect::new(5.0, 5.0, 6.0, 6.0)),
+            "on the line"
+        );
+    }
+
+    #[test]
+    fn a_lane_of_no_length_is_a_circle_of_its_half_width() {
+        let stub = Zone::Lane {
+            from: Vec2::new(4.0, 4.0),
+            to: Vec2::new(4.0, 4.0),
+            half_width: 1.0,
+        };
+        assert!(stub.contains(Vec2::new(4.0, 5.0)));
+        assert!(!stub.contains(Vec2::new(4.0, 5.01)));
+        assert!(stub.overlaps(Rect::new(5.0, 3.0, 6.0, 4.0)));
+        assert!(!stub.overlaps(Rect::new(5.01, 3.0, 6.0, 4.0)));
     }
 
     #[test]

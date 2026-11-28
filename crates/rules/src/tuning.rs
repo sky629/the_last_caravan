@@ -661,11 +661,13 @@ pub enum Finale {
 }
 
 /// 보스의 행동 하나입니다. 행동마다 그 행동에서만 의미 있는 수치를 `BossTuning`의 필드 하나로 가집니다.
-/// 행동을 추가하려면 변형을 하나 더하고, `BossTuning`에 수치를 더하고, `boss::start`의 `match`에 갈래를 더합니다.
+/// 행동을 추가하려면 변형을 하나 더하고, `BossTuning`에 수치를 더하고, `boss::start`의 `match`와 `Tuning::validate_finale`에 갈래를 하나씩 더합니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Move {
     /// 대상이 서 있던 자리에 원을 예고하고, 시간이 지나면 원 안의 모든 것에 피해를 줍니다.
     Slam,
+    /// 보스에서 대상 쪽으로 뻗는 띠를 예고하고, 시간이 지나면 띠를 따라 달리며 띠 위의 모든 것에 피해를 줍니다.
+    Charge,
 }
 
 /// 내려찍기의 수치입니다.
@@ -675,6 +677,20 @@ pub struct SlamTuning {
     pub windup_secs: f32,
     /// 원의 반지름(타일)입니다. 대상이 서 있던 자리가 중심입니다.
     pub radius: f32,
+    pub strike: StrikeTuning,
+}
+
+/// 돌진의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChargeTuning {
+    /// 띠가 보이기 시작해서 보스가 달리기 시작하기까지의 시간입니다.
+    pub windup_secs: f32,
+    /// 띠의 폭(타일)입니다.
+    pub width: f32,
+    /// 띠의 길이(타일)입니다. 보스의 걷는 몸이 막힌 타일이나 맵의 끝에 막히는 곳이 이보다 가까우면 그곳까지만 뻗습니다.
+    pub length: f32,
+    /// 띠를 따라 달리는 초당 타일 수입니다.
+    pub speed: f32,
     pub strike: StrikeTuning,
 }
 
@@ -693,6 +709,7 @@ pub struct BossTuning {
     /// 보스가 가장 많이 맞은 플레이어를 고를 때 되돌아보는 시간입니다.
     pub threat_secs: f32,
     pub slam: SlamTuning,
+    pub charge: ChargeTuning,
 }
 
 /// 예고된 공격의 영역 안에 있던 대상이 한 번 맞을 때 받는 피해입니다. 대상의 종류마다 다릅니다.
@@ -1101,7 +1118,9 @@ impl Tuning {
     ///
     /// - 행동의 순서는 비어 있지 않아야 합니다. 비어 있으면 보스가 아무것도 하지 않습니다.
     /// - 경고와 되돌아보는 시간과 예고의 시간은 유한하고 0보다 길어야 하고, 걷는 시간은 유한하고 0 이상이어야 합니다. 예고가 0초이면 보고 피할 수 없습니다.
-    /// - 보스가 대상으로 삼는 거리와 원의 반지름은 유한하고 0보다 길어야 합니다.
+    /// - 보스가 대상으로 삼는 거리, 원의 반지름, 띠의 폭과 길이와 속도는 유한하고 0보다 길어야 합니다.
+    /// - 돌진이 한 Tick에 달리는 거리는 보스의 걷는 몸의 반지름의 `MAX_PLAYER_STEPS_PER_TICK`배보다 짧아야 합니다. 돌진은 걷는 몸의 반지름보다 짧은 걸음으로 나누어 움직이므로 걸음의 수에 끝이 있어야 합니다.
+    /// - 순서에 들어 있는 행동만이 아니라 모든 행동의 수치를 검사합니다. 순서는 수치를 바꾸지 않고 고칠 수 있어야 하기 때문입니다.
     fn validate_finale(&self) -> Result<(), String> {
         let Finale::Boss(boss) = &self.nights.finale else {
             return Ok(());
@@ -1113,12 +1132,24 @@ impl Tuning {
             ("warning_secs", boss.warning_secs),
             ("threat_secs", boss.threat_secs),
             ("slam windup_secs", boss.slam.windup_secs),
+            ("charge windup_secs", boss.charge.windup_secs),
             ("target_range", boss.target_range),
             ("slam radius", boss.slam.radius),
+            ("charge width", boss.charge.width),
+            ("charge length", boss.charge.length),
+            ("charge speed", boss.charge.speed),
         ] {
             check_positive(&format!("boss {name}"), value)?;
         }
-        check_not_negative("boss rest_secs", boss.rest_secs)
+        check_not_negative("boss rest_secs", boss.rest_secs)?;
+        let radii = boss.charge.speed * self.dt() / self.monsters.boss.radius;
+        if radii >= MAX_PLAYER_STEPS_PER_TICK {
+            return Err(format!(
+                "boss charge speed {} moves the boss {radii} walking radii in one tick, which must be fewer than {MAX_PLAYER_STEPS_PER_TICK}",
+                boss.charge.speed
+            ));
+        }
+        Ok(())
     }
 
     /// 야영지의 배치를 검사합니다. 허수아비와 진열대는 맵 안에 있고 장애물과 마차에 겹치지 않아야 합니다.
@@ -1785,6 +1816,17 @@ impl Default for Tuning {
                             player: 50,
                             tower: 100,
                             wagon: 60,
+                        },
+                    },
+                    charge: ChargeTuning {
+                        windup_secs: 1.5,
+                        width: 2.0,
+                        length: 10.0,
+                        speed: 14.0,
+                        strike: StrikeTuning {
+                            player: 40,
+                            tower: 100,
+                            wagon: 80,
                         },
                     },
                 }),

@@ -46,7 +46,7 @@ mod world;
 #[cfg(test)]
 mod tests;
 
-pub use boss::{Act, Aim, Boss};
+pub use boss::{Act, Aim, Boss, Charge};
 pub use build::{BuildRefusal, CannotBuild, front_tile};
 pub use camp::Camp;
 pub use debrief::{Debrief, Report};
@@ -70,9 +70,9 @@ pub use stamina::Stamina;
 pub use structures::{Shot, Tower, TowerState, Wagon};
 pub use telegraph::{Telegraph, Zone};
 pub use tuning::{
-    AfflictTuning, ArcTuning, AuraTuning, BossTuning, Buff, CampLayout, CampTuning, CycleTuning,
-    Debuff, Delivery, EffectTuning, Finale, GuardTuning, HealTuning, HitscanTuning, LootTuning,
-    MapSpec, MonsterTable, MonsterTuning, Move, NightPlan, NightTuning, PlayerTuning,
+    AfflictTuning, ArcTuning, AuraTuning, BossTuning, Buff, CampLayout, CampTuning, ChargeTuning,
+    CycleTuning, Debuff, Delivery, EffectTuning, Finale, GuardTuning, HealTuning, HitscanTuning,
+    LootTuning, MapSpec, MonsterTable, MonsterTuning, Move, NightPlan, NightTuning, PlayerTuning,
     ProjectileTuning, PulseTuning, RepairTuning, Resist, ResourceTuning, ReviveTuning, ShootTuning,
     SlamTuning, SprintTuning, Start, StrikeTuning, StructureTable, StructureTuning, TowerAction,
     Tuning, VillageTuning, WagonTuning, WavePlan, WaveScaling, WeaponTable, WeaponTuning,

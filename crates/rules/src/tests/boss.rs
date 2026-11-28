@@ -22,12 +22,12 @@ fn full_hp() -> u32 {
 }
 
 /// 보스의 수치를 켭니다. 원정을 시험하는 시나리오는 보스를 꺼 두고 시작하므로, 보스가 필요한 테스트가 부릅니다.
-fn with_boss(t: &mut Tuning) {
+pub(super) fn with_boss(t: &mut Tuning) {
     t.nights.finale = Tuning::default().nights.finale;
 }
 
 /// 시나리오의 수치에서 보스의 행동을 바꿉니다. 보스가 켜져 있어야 합니다.
-fn boss_tuning(t: &mut Tuning) -> &mut BossTuning {
+pub(super) fn boss_tuning(t: &mut Tuning) -> &mut BossTuning {
     match &mut t.nights.finale {
         Finale::Boss(cfg) => cfg,
         Finale::LastWave => panic!("the scenario has a boss"),
@@ -52,7 +52,7 @@ fn put_boss_body(s: &mut Scenario, x: f32, y: f32) -> MonsterId {
 }
 
 /// 보스를 `(x, y)`에 놓고 보스의 단계로 바꿉니다. 방에 `party`명이 있는 밤입니다.
-fn put_boss(s: &mut Scenario, x: f32, y: f32, party: u32) -> MonsterId {
+pub(super) fn put_boss(s: &mut Scenario, x: f32, y: f32, party: u32) -> MonsterId {
     let t = s.sim.tuning().clone();
     let Finale::Boss(cfg) = &t.nights.finale else {
         panic!("the scenario has a boss");
@@ -82,7 +82,7 @@ fn hp_of(s: &Scenario, id: MonsterId) -> u32 {
     s.monster(id).expect("the monster is alive").hp
 }
 
-fn boss_hp(s: &Scenario) -> u32 {
+pub(super) fn boss_hp(s: &Scenario) -> u32 {
     hp_of(s, s.sim.boss().expect("a boss").id)
 }
 
@@ -90,12 +90,12 @@ fn aim(s: &Scenario) -> Aim {
     s.sim.boss().expect("a boss").aim
 }
 
-fn act(s: &Scenario) -> Act {
-    s.sim.boss().expect("a boss").act
+pub(super) fn act(s: &Scenario) -> Act {
+    s.sim.boss().expect("a boss").act.clone()
 }
 
 /// 플레이어 `by`가 보스에게 `amount`의 피해를 준 것으로 만듭니다. 무기를 거치지 않고 대상을 고르는 규칙만 시험할 때 씁니다.
-fn hit_boss(s: &mut Scenario, by: PlayerId, amount: u32) {
+pub(super) fn hit_boss(s: &mut Scenario, by: PlayerId, amount: u32) {
     let t = s.sim.tuning().clone();
     let id = s.sim.boss().expect("a boss").id;
     s.sim.world_mut().apply_hits(
@@ -110,7 +110,7 @@ fn hit_boss(s: &mut Scenario, by: PlayerId, amount: u32) {
 }
 
 /// 걷는 시간이 남지 않았다고 정해서 다음 Tick에 행동을 시작하게 합니다.
-fn skip_the_rest(s: &mut Scenario) {
+pub(super) fn skip_the_rest(s: &mut Scenario) {
     let boss = s.sim.world_mut().boss.as_mut().expect("a boss");
     boss.act = Act::Walking { ticks_left: 1 };
 }
@@ -118,20 +118,18 @@ fn skip_the_rest(s: &mut Scenario) {
 fn run_until_slamming(s: &mut Scenario) {
     skip_the_rest(s);
     s.run_until(5, |sim| {
-        matches!(sim.boss().map(|boss| boss.act), Some(Act::Slamming(_)))
+        matches!(sim.boss().map(|boss| &boss.act), Some(Act::Slamming(_)))
     });
 }
 
 fn slam_center(s: &Scenario) -> Vec2 {
     match act(s) {
-        Act::Slamming(telegraph) => match telegraph.zone {
-            Zone::Circle { center, .. } => center,
-        },
+        Act::Slamming(telegraph) => telegraph.zone.center(),
         other => panic!("the boss is not slamming: {other:?}"),
     }
 }
 
-fn hp_of_player(s: &Scenario, id: PlayerId) -> u32 {
+pub(super) fn hp_of_player(s: &Scenario, id: PlayerId) -> u32 {
     s.player(id).hp()
 }
 

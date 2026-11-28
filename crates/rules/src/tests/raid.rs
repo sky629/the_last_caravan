@@ -48,14 +48,16 @@ struct Bot {
 fn zone_now(sim: &Sim) -> Option<Zone> {
     match &sim.boss()?.act {
         Act::Slamming(telegraph) => Some(telegraph.zone),
-        Act::Walking { .. } => None,
+        Act::Walking { .. } | Act::Winding { .. } | Act::Charging(_) => None,
     }
 }
 
 /// 여유 `margin`타일을 두고 `zone` 안에 있는지입니다.
 fn is_inside(zone: &Zone, at: Vec2, margin: f32) -> bool {
-    let Zone::Circle { center, radius } = *zone;
-    at.distance(center) < radius + margin
+    match *zone {
+        Zone::Circle { center, radius } => at.distance(center) < radius + margin,
+        Zone::Lane { .. } => false,
+    }
 }
 
 /// `weapon`으로 보스의 중심에서 몇 타일 떨어져 서면 맞는지입니다. 가까이서 치는 무기는 맞는 거리의 끝에서 조금 안쪽입니다.

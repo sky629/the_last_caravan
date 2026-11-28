@@ -12,7 +12,7 @@ use caravan_rules::{
     Act, Aim, Boss, BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life,
     Loadout, Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, PlayerBuffs,
     Projectile, Prompt, RepairTarget, Sim, Stage, StructureKind, Tower, TowerState, Tuning,
-    WeaponKind, Zone,
+    WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -136,15 +136,14 @@ impl WireBoss {
                 Aim::Player(id) => WireAim::Player(id.0),
                 Aim::Wagon => WireAim::Wagon,
             },
-            act: match boss.act {
-                Act::Walking { .. } => WireBossAct::Walking,
-                Act::Slamming(telegraph) => {
-                    let Zone::Circle { center, .. } = telegraph.zone;
-                    WireBossAct::Slam {
-                        center: WirePos::from_tiles(center),
-                        progress: clamp_progress(telegraph.progress()),
-                    }
+            act: match &boss.act {
+                Act::Walking { .. } | Act::Winding { .. } | Act::Charging(_) => {
+                    WireBossAct::Walking
                 }
+                Act::Slamming(telegraph) => WireBossAct::Slam {
+                    center: WirePos::from_tiles(telegraph.zone.center()),
+                    progress: clamp_progress(telegraph.progress()),
+                },
             },
         }
     }

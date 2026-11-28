@@ -1261,3 +1261,40 @@ fn a_boss_that_has_nothing_to_do_or_no_time_to_be_seen_is_rejected() {
     t.nights.finale = Finale::LastWave;
     assert_eq!(t.validate(), Ok(()), "no boss");
 }
+
+#[test]
+fn a_charge_with_no_time_no_width_no_length_or_no_speed_is_rejected() {
+    for (name, t) in [
+        (
+            "charge windup_secs",
+            tuning_with_boss(|c| c.charge.windup_secs = 0.0),
+        ),
+        ("charge width", tuning_with_boss(|c| c.charge.width = -1.0)),
+        (
+            "charge length",
+            tuning_with_boss(|c| c.charge.length = f32::NAN),
+        ),
+        ("charge speed", tuning_with_boss(|c| c.charge.speed = 0.0)),
+    ] {
+        let why = t.validate().expect_err(name);
+        assert!(why.contains(name), "{name}: {why}");
+    }
+}
+
+#[test]
+fn a_charge_that_crosses_more_than_sixty_four_body_radii_in_one_tick_is_rejected() {
+    // 한 Tick에 달리는 거리를 반지름보다 짧은 걸음으로 나누므로, 걸음의 수에 끝이 있어야 합니다.
+    let radius = Tuning::default().monsters.boss.radius;
+    let dt = Tuning::default().dt();
+    let too_fast = 64.0 * radius / dt + 1.0;
+    let why = tuning_with_boss(|c| c.charge.speed = too_fast)
+        .validate()
+        .expect_err("a charge too fast to step");
+    assert!(why.contains("walking radii"), "{why}");
+
+    let fast_enough = 63.0 * radius / dt;
+    assert_eq!(
+        tuning_with_boss(|c| c.charge.speed = fast_enough).validate(),
+        Ok(())
+    );
+}
