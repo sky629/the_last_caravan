@@ -72,10 +72,10 @@ pub use telegraph::{Telegraph, Zone};
 pub use tuning::{
     AfflictTuning, ArcTuning, AuraTuning, BossTuning, Buff, CampLayout, CampTuning, ChargeTuning,
     CycleTuning, Debuff, Delivery, EffectTuning, Finale, GuardTuning, HealTuning, HitscanTuning,
-    LootTuning, MapSpec, MonsterTable, MonsterTuning, Move, NightPlan, NightTuning, PlayerTuning,
-    Prey, ProjectileTuning, PulseTuning, RepairTuning, Resist, ResourceTuning, ReviveTuning,
-    ShootTuning, SlamTuning, SprintTuning, Start, StrikeTuning, StructureTable, StructureTuning,
-    SummonTuning, TowerAction, Tuning, VillageTuning, WagonTuning, WavePlan, WaveScaling,
-    WeaponTable, WeaponTuning,
+    LootTuning, MapSpec, MonsterTable, MonsterTuning, Move, NightPlan, NightTuning, Pack,
+    PlayerTuning, Prey, ProjectileTuning, PulseTuning, RepairTuning, Resist, ResourceTuning,
+    ReviveTuning, ShootTuning, SlamTuning, SprintTuning, Start, StrikeTuning, StructureTable,
+    StructureTuning, SummonTuning, TowerAction, Tuning, VillageTuning, WagonTuning, Wave,
+    WaveScaling, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;

@@ -567,14 +567,61 @@ pub struct CampTuning {
 /// 밤 하나입니다. 무리는 목록의 순서대로 나옵니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NightPlan {
-    pub waves: Vec<WavePlan>,
+    pub waves: Vec<Wave>,
 }
 
-/// 무리 하나입니다. 무리가 나타나는 방법은 종류와 수뿐이므로, 새 종류의 몬스터가 나오는 밤은 이 목록에 항목을 더해서 만듭니다.
+/// 무리 하나입니다. 무리는 종류마다 한 묶음(`Pack`)을 가지고, 모든 묶음의 몬스터가 한 무리 안에서 섞여 나타납니다.
+/// 새 종류의 몬스터가 나오는 밤은 이 목록에 묶음을 더해서 만듭니다. 비어 있을 수 없습니다(`Tuning::validate`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wave {
+    pub packs: Vec<Pack>,
+}
+
+/// 한 무리 안의 한 종류입니다. `count`는 `WaveScaling`이 정하는 기준 인원일 때의 수입니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct WavePlan {
+pub struct Pack {
     pub kind: MonsterKind,
     pub count: u32,
+}
+
+impl Wave {
+    /// 기준 인원일 때 이 무리의 몬스터 수입니다. 묶음마다의 수를 더한 값입니다.
+    pub fn count(&self) -> u32 {
+        self.packs.iter().map(|pack| pack.count).sum()
+    }
+
+    /// 종류마다 나올 수가 `sizes`(`packs`와 같은 순서)일 때, `nth`번째(0부터 셉니다)로 나올 몬스터의 종류입니다. 모두 나온 뒤의 순서는 `None`입니다.
+    ///
+    /// 순서는 「아직 나오지 않은 비율이 가장 큰 종류를 고르고, 같으면 목록의 앞쪽」입니다. 종류마다 나온 수만으로 정해지므로 상태를 저장하지 않고,
+    /// 같은 `sizes`와 `nth`는 언제나 같은 종류입니다. 기본 20과 돌격병 10이면 기본, 돌격병, 기본, 기본, 돌격병의 꼴로 고르게 섞입니다.
+    /// 종류가 하나뿐이면 언제나 그 종류입니다.
+    pub fn kind_at(&self, sizes: &[u32], nth: u32) -> Option<MonsterKind> {
+        let mut spawned = vec![0; sizes.len()];
+        for _ in 0..nth {
+            let index = most_left(sizes, &spawned)?;
+            spawned[index] += 1;
+        }
+        most_left(sizes, &spawned).map(|index| self.packs[index].kind)
+    }
+}
+
+/// 나온 수가 `spawned`일 때, 아직 나오지 않은 비율이 가장 큰 종류의 순서입니다. 모두 나왔으면 `None`입니다.
+/// 나온 비율(`나온 수 / 크기`)이 가장 작은 종류를 고르고, 두 비율은 곱해서 정수로 비교합니다.
+fn most_left(sizes: &[u32], spawned: &[u32]) -> Option<usize> {
+    let mut leader: Option<usize> = None;
+    for (index, (&size, &done)) in sizes.iter().zip(spawned).enumerate() {
+        if done >= size {
+            continue;
+        }
+        let has_more_left = leader.is_none_or(|leader| {
+            u64::from(done) * u64::from(sizes[leader])
+                < u64::from(spawned[leader]) * u64::from(size)
+        });
+        if has_more_left {
+            leader = Some(index);
+        }
+    }
+    leader
 }
 
 /// 무리의 크기가 방의 인원에 따라 달라지는지입니다.
@@ -618,16 +665,32 @@ impl NightTuning {
     }
 
     /// `day`번째 밤의 `wave`번째 무리입니다(둘 다 1부터 셉니다).
-    pub fn wave(&self, day: u32, wave: u32) -> Option<WavePlan> {
+    pub fn wave(&self, day: u32, wave: u32) -> Option<&Wave> {
         let index = (wave as usize).checked_sub(1)?;
-        self.plan(day)?.waves.get(index).copied()
+        self.plan(day)?.waves.get(index)
     }
 
     /// `day`번째 밤의 `wave`번째 무리에 나올 몬스터의 수입니다. 방에 플레이어가 `party`명 있을 때의 크기이고, 없는 무리는 0입니다.
-    /// 인원에 따라 달라지는 값은 이 함수 한 곳에서 정합니다. 있는 무리는 인원이 몇 명이어도 한 마리 이상입니다.
+    /// 종류마다 `scaled`로 바꾼 수의 합이므로, 있는 무리는 종류마다 인원이 몇 명이어도 한 마리 이상입니다.
+    /// 인원에 따라 달라지는 값은 `scaled` 한 곳에서 정합니다.
     pub fn wave_size(&self, day: u32, wave: u32, party: u32) -> u32 {
         self.wave(day, wave)
-            .map_or(0, |plan| self.scaled(plan.count, party))
+            .map_or(0, |wave| self.pack_sizes(wave, party).iter().sum())
+    }
+
+    /// `day`번째 밤의 `wave`번째 무리에서 방에 플레이어가 `party`명 있을 때 `nth`번째(0부터 셉니다)로 나올 몬스터의 종류입니다.
+    /// 없는 무리와 무리의 크기(`wave_size`) 이후의 순서는 `None`입니다. 순서의 규칙은 `Wave::kind_at`에 있습니다.
+    pub fn kind_at(&self, day: u32, wave: u32, party: u32, nth: u32) -> Option<MonsterKind> {
+        let wave = self.wave(day, wave)?;
+        wave.kind_at(&self.pack_sizes(wave, party), nth)
+    }
+
+    /// 방에 플레이어가 `party`명 있을 때 `wave`의 종류마다 나올 수입니다. `Wave::packs`와 같은 순서입니다.
+    fn pack_sizes(&self, wave: &Wave, party: u32) -> Vec<u32> {
+        wave.packs
+            .iter()
+            .map(|pack| self.scaled(pack.count, party))
+            .collect()
     }
 
     /// 기준 인원일 때의 수 `count`를 방에 플레이어가 `party`명 있을 때의 수로 바꿉니다. 무리의 크기와 보스의 HP가 모두 이 함수 하나를 거칩니다.
@@ -868,7 +931,10 @@ impl Tuning {
             return Err("there must be at least one night".to_string());
         }
         for plan in &self.nights.plans {
-            if plan.waves.is_empty() || plan.waves.iter().any(|wave| wave.count == 0) {
+            let empty_wave = |wave: &Wave| {
+                wave.packs.is_empty() || wave.packs.iter().any(|pack| pack.count == 0)
+            };
+            if plan.waves.is_empty() || plan.waves.iter().any(empty_wave) {
                 return Err(
                     "every night needs at least one wave, and every wave at least one monster"
                         .to_string(),
@@ -895,7 +961,8 @@ impl Tuning {
             .nights
             .plans
             .iter()
-            .flat_map(|plan| plan.waves.iter().map(|wave| wave.kind))
+            .flat_map(|plan| &plan.waves)
+            .flat_map(|wave| wave.packs.iter().map(|pack| pack.kind))
             .chain([self.guards.kind]);
         for kind in expedition_kinds {
             if kind == MonsterKind::Scarecrow {
@@ -1564,9 +1631,12 @@ fn check_spawns(
 
 impl Default for Tuning {
     fn default() -> Tuning {
-        let grunts = |count| WavePlan {
+        let grunts = |count| Pack {
             kind: MonsterKind::Grunt,
             count,
+        };
+        let wave = |packs: &[Pack]| Wave {
+            packs: packs.to_vec(),
         };
         // 포탑은 종류와 관계없이 HP, 수리, 건설 시간이 같습니다. 1초에 20 HP를 수리하고, HP가 거의 없는 감시탑을 가득 수리하면 건설 비용(10)과 같은 자원이 듭니다.
         let tower = |range, build_cost, action| StructureTuning {
@@ -1836,13 +1906,21 @@ impl Default for Tuning {
             nights: NightTuning {
                 plans: vec![
                     NightPlan {
-                        waves: vec![grunts(8), grunts(12)],
+                        waves: vec![wave(&[grunts(8)]), wave(&[grunts(12)])],
                     },
                     NightPlan {
-                        waves: vec![grunts(20), grunts(30), grunts(40)],
+                        waves: vec![
+                            wave(&[grunts(20)]),
+                            wave(&[grunts(30)]),
+                            wave(&[grunts(40)]),
+                        ],
                     },
                     NightPlan {
-                        waves: vec![grunts(60), grunts(90), grunts(150)],
+                        waves: vec![
+                            wave(&[grunts(60)]),
+                            wave(&[grunts(90)]),
+                            wave(&[grunts(150)]),
+                        ],
                     },
                 ],
                 // 위의 무리는 네 명이 모였을 때의 크기입니다.

@@ -1207,9 +1207,29 @@ fn a_hit_body_smaller_than_nothing_is_rejected() {
 }
 
 #[test]
+fn a_wave_without_a_monster_is_rejected() {
+    let mut t = Tuning::default();
+    t.nights.plans[0].waves[0].packs.clear();
+    assert!(t.validate().is_err(), "a wave of no pack");
+
+    let mut t = Tuning::default();
+    t.nights.plans[0].waves[0].packs[0].count = 0;
+    assert!(t.validate().is_err(), "a pack of no monster");
+
+    let mut t = Tuning::default();
+    let mut second = t.nights.plans[0].waves[0].packs[0];
+    second.count = 0;
+    t.nights.plans[0].waves[0].packs.push(second);
+    assert!(
+        t.validate().is_err(),
+        "a pack of no monster beside a pack of some"
+    );
+}
+
+#[test]
 fn the_boss_cannot_come_in_a_wave_or_as_a_guard() {
     let mut t = Tuning::default();
-    t.nights.plans[0].waves[0].kind = crate::kind::MonsterKind::Boss;
+    t.nights.plans[0].waves[0].packs[0].kind = crate::kind::MonsterKind::Boss;
     assert!(t.validate().is_err(), "a boss in a wave");
 
     let mut t = Tuning::default();

@@ -9,8 +9,8 @@ use caravan_protocol::{
     WireWeaponKind,
 };
 use caravan_rules::{
-    AimDir, Finale, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim,
-    Start, Tile, Tuning, Vec2, WavePlan, WeaponKind,
+    AimDir, Finale, Loadout, MonsterKind, MoveDir, NightPlan, Pack, PlayerInput, PlayerInputs,
+    Seed, Sim, Start, Tile, Tuning, Vec2, Wave, WeaponKind,
 };
 
 fn room() -> RoomCode {
@@ -26,9 +26,11 @@ fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
 /// 밤이 하나이고 무리가 하나이며 몬스터가 한 마리인 구성입니다.
 fn one_monster() -> Vec<NightPlan> {
     vec![NightPlan {
-        waves: vec![WavePlan {
-            kind: MonsterKind::Grunt,
-            count: 1,
+        waves: vec![Wave {
+            packs: vec![Pack {
+                kind: MonsterKind::Grunt,
+                count: 1,
+            }],
         }],
     }]
 }
@@ -1322,9 +1324,11 @@ fn a_charge_its_dash_the_push_it_causes_and_the_roar_reach_the_wire_in_order() {
         t.cycle.day_secs = 0.1;
         t.nights.plans = vec![NightPlan {
             waves: vec![
-                WavePlan {
-                    kind: MonsterKind::Grunt,
-                    count: 1,
+                Wave {
+                    packs: vec![Pack {
+                        kind: MonsterKind::Grunt,
+                        count: 1,
+                    }],
                 };
                 2
             ],

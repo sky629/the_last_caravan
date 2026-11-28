@@ -17,7 +17,7 @@ use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
     Buff, CampLayout, Debuff, Finale, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning,
-    ShootTuning, TowerAction, Tuning, WavePlan, WaveScaling,
+    Pack, ShootTuning, TowerAction, Tuning, Wave, WaveScaling,
 };
 use crate::world::{Source, Tile};
 
@@ -536,9 +536,11 @@ pub(crate) fn nights(counts: &[&[u32]]) -> Vec<NightPlan> {
         .map(|waves| NightPlan {
             waves: waves
                 .iter()
-                .map(|&count| WavePlan {
-                    kind: MonsterKind::Grunt,
-                    count,
+                .map(|&count| Wave {
+                    packs: vec![Pack {
+                        kind: MonsterKind::Grunt,
+                        count,
+                    }],
                 })
                 .collect(),
         })

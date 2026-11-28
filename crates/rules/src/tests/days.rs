@@ -2,7 +2,7 @@
 
 use super::support::{Scenario, nights, outcome, phase};
 use crate::expedition::{NightStep, Outcome, Phase};
-use crate::tuning::Tuning;
+use crate::tuning::{Tuning, Wave};
 
 /// 밤의 무리가 모두 나타날 때까지 진행합니다.
 fn run_until_fully_spawned(s: &mut Scenario) {
@@ -362,7 +362,7 @@ fn every_night_is_larger_than_the_one_before_and_the_last_has_hundreds() {
         .nights
         .plans
         .iter()
-        .map(|night| night.waves.iter().map(|wave| wave.count).sum())
+        .map(|night| night.waves.iter().map(Wave::count).sum())
         .collect();
 
     assert_eq!(totals.len(), 3);

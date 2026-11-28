@@ -28,7 +28,8 @@ mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
 use caravan_rules::{
-    Finale, Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WaveScaling, WeaponKind,
+    Finale, Loadout, MonsterKind, NightPlan, Pack, Seed, Start, Tuning, Wave, WaveScaling,
+    WeaponKind,
 };
 use caravan_server::{GameServer, RandomSource, RoomSeeds};
 use caravan_ws_server::{PublicUrl, WebFiles, WsServer};
@@ -164,9 +165,11 @@ fn tuning_from(options: &Options) -> Tuning {
             .map(|sizes| NightPlan {
                 waves: sizes
                     .iter()
-                    .map(|&count| WavePlan {
-                        kind: MonsterKind::Grunt,
-                        count,
+                    .map(|&count| Wave {
+                        packs: vec![Pack {
+                            kind: MonsterKind::Grunt,
+                            count,
+                        }],
                     })
                     .collect(),
             })
@@ -313,7 +316,7 @@ fn main() -> ExitCode {
             .nights
             .plans
             .iter()
-            .map(|night| night.waves.iter().map(|wave| wave.count).collect())
+            .map(|night| night.waves.iter().map(Wave::count).collect())
             .collect();
         match tuning.nights.scaling {
             WaveScaling::ByParty { full_party } => {
@@ -486,7 +489,7 @@ mod tests {
             .nights
             .plans
             .iter()
-            .map(|night| night.waves.iter().map(|wave| wave.count).collect())
+            .map(|night| night.waves.iter().map(Wave::count).collect())
             .collect();
         assert_eq!(counts, [vec![100, 200], vec![300]]);
         assert_eq!(
