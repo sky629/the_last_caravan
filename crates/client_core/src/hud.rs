@@ -45,6 +45,8 @@ pub struct Hud {
     pub camp: Option<CampPanel>,
     /// 결과 화면의 가운데에 띄우는 원정의 요약과 개인별 기록의 표입니다. 결과 화면일 때만 있습니다.
     pub debrief: Option<DebriefPanel>,
+    /// 방에서 Esc를 눌렀을 때 화면 가운데에 띄우는 나가기 확인 창입니다. 창이 떠 있는 동안만 있고, 게임은 멈추지 않습니다.
+    pub leave: Option<LeavePanel>,
     pub me: Option<Meter>,
     /// 내 달리기 게이지입니다. 살아 있을 때만 있습니다.
     pub stamina: Option<Meter>,
@@ -90,6 +92,15 @@ pub struct DebriefPanel {
     pub action: String,
     /// 모두가 확인하지 않아도 야영지로 돌아가기까지 남은 시간입니다.
     pub countdown: String,
+}
+
+/// 나가기 확인 창입니다. 질문 한 줄과 두 키가 하는 일입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeavePanel {
+    /// `LEAVE THE ROOM?`입니다.
+    pub title: String,
+    /// `ENTER  LEAVE      ESC  STAY`입니다.
+    pub action: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -173,6 +184,7 @@ impl Hud {
             banner: None,
             camp: None,
             debrief: None,
+            leave: None,
             me: None,
             stamina: None,
             wagon: None,
@@ -192,6 +204,7 @@ impl Hud {
         };
         if let Some(joined) = session.joined() {
             hud.room = Some(format!("ROOM {}", joined.room));
+            hud.leave = joined.leave_prompt.is_open().then(leave_panel);
         }
         hud.banner = session_banner(session, frame);
 
@@ -301,6 +314,14 @@ impl Hud {
             }
         }
         hud
+    }
+}
+
+/// 나가기 확인 창의 문구입니다. 방에 들어간 뒤라면 첫 스냅샷을 기다리는 동안과 결과 화면에서도 같습니다.
+fn leave_panel() -> LeavePanel {
+    LeavePanel {
+        title: "LEAVE THE ROOM?".to_string(),
+        action: "ENTER  LEAVE      ESC  STAY".to_string(),
     }
 }
 
@@ -792,6 +813,7 @@ mod tests {
 
     use crate::interp::{MonsterView, PlayerView};
     use crate::launch::DEFAULT_SERVER;
+    use crate::leave::LeavePrompt;
     use crate::start::JoinRequest;
 
     const YOU: u32 = 1;
@@ -2333,5 +2355,68 @@ mod tests {
         );
 
         assert_eq!(hud.boss, None);
+    }
+
+    fn with_the_leave_prompt_open(mut session: Session) -> Session {
+        let Session::InRoom(joined) = &mut session else {
+            panic!("in the room");
+        };
+        joined.leave_prompt = LeavePrompt::Open;
+        session
+    }
+
+    #[test]
+    fn the_leave_prompt_asks_and_names_both_keys_only_while_it_is_open() {
+        let frame = frame(vec![player(YOU, alive(100))]);
+
+        let closed = Hud::of(&session_in_room(), Some(&frame), INVITE);
+        assert_eq!(closed.leave, None);
+
+        let session = with_the_leave_prompt_open(session_in_room());
+        let open = Hud::of(&session, Some(&frame), INVITE);
+        assert_eq!(
+            open.leave,
+            Some(LeavePanel {
+                title: "LEAVE THE ROOM?".to_string(),
+                action: "ENTER  LEAVE      ESC  STAY".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn the_leave_prompt_is_asked_in_every_part_of_the_room_and_the_game_behind_it_is_still_shown() {
+        let session = with_the_leave_prompt_open(session_in_room());
+        let phases = [
+            WirePhase::Camp {
+                ready: vec![],
+                starting_in: None,
+                struck: vec![],
+            },
+            WirePhase::Day {
+                day: 1,
+                secs_left: 60.0,
+            },
+            WirePhase::Debrief {
+                outcome: WireOutcome::Defeat,
+                secs_left: 5.0,
+                confirmed: vec![],
+            },
+        ];
+        for phase in phases {
+            let mut frame = frame(vec![player(YOU, alive(100))]);
+            frame.phase = phase.clone();
+
+            let hud = Hud::of(&session, Some(&frame), INVITE);
+
+            assert!(hud.leave.is_some(), "{phase:?}");
+            assert!(
+                hud.wagon.is_some(),
+                "the world goes on behind it: {phase:?}"
+            );
+        }
+        assert!(
+            Hud::of(&session, None, INVITE).leave.is_some(),
+            "before the first snapshot"
+        );
     }
 }

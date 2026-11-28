@@ -8,7 +8,7 @@ use bevy::clipboard::Clipboard;
 use bevy::ecs::schedule::ScheduleConfigs;
 use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
-use caravan_client_core::{Command, Flow, Frame, Joined, Session};
+use caravan_client_core::{Command, Flow, Frame, Joined, RoomKey, Session};
 use caravan_protocol::{ClientEvent, ClientTransport, ServerMsg, WirePhase};
 use caravan_ws_client::WsClient;
 
@@ -163,7 +163,8 @@ pub fn advance_playback(
     frame.0 = flow.0.session().and_then(Session::frame);
 }
 
-/// 방 안의 키입니다. Esc는 시작 화면으로 돌아가고(입장하는 중에도 됩니다), 야영지에서 C는 링크나 방 코드를 복사합니다.
+/// 방 안의 키입니다. Esc는 나가기 확인 창을 열고 닫고, 창이 떠 있을 때의 Enter는 시작 화면으로 돌아갑니다(입장하는 중의 Esc는 확인 없이 돌아갑니다).
+/// 야영지에서 C는 링크나 방 코드를 복사합니다.
 pub fn read_room_keys(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time<Real>>,
@@ -173,8 +174,8 @@ pub fn read_room_keys(
     mut flash: ResMut<InviteFlash>,
     mut clipboard: ResMut<Clipboard>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
-        let commands = flow.0.leave();
+    if let Some(key) = room_key(&keys) {
+        let commands = flow.0.on_room_key(key);
         run_commands(commands, &mut flow.0, &mut net, &mut clipboard);
     }
     if invite_requested(&keys, frame.0.as_ref())
@@ -182,6 +183,17 @@ pub fn read_room_keys(
         && run_commands(vec![command], &mut flow.0, &mut net, &mut clipboard)
     {
         flash.copied_at = Some(time.elapsed_secs_f64());
+    }
+}
+
+/// 이번 프레임에 누르기 시작한 Esc나 Enter입니다. 둘을 함께 눌렀으면 Esc만 읽습니다.
+fn room_key(keys: &ButtonInput<KeyCode>) -> Option<RoomKey> {
+    if keys.just_pressed(KeyCode::Escape) {
+        Some(RoomKey::Escape)
+    } else if keys.just_pressed(KeyCode::Enter) {
+        Some(RoomKey::Enter)
+    } else {
+        None
     }
 }
 
@@ -413,6 +425,88 @@ mod tests {
             !invite_requested(&held, Some(&camp())),
             "holding is not a press"
         );
+    }
+
+    #[test]
+    fn escape_and_enter_are_the_room_keys_and_escape_comes_first() {
+        assert_eq!(room_key(&pressed(KeyCode::Escape)), Some(RoomKey::Escape));
+        assert_eq!(room_key(&pressed(KeyCode::Enter)), Some(RoomKey::Enter));
+        assert_eq!(room_key(&pressed(KeyCode::KeyQ)), None);
+        assert_eq!(room_key(&ButtonInput::default()), None);
+
+        let mut both = pressed(KeyCode::Enter);
+        both.press(KeyCode::Escape);
+        assert_eq!(room_key(&both), Some(RoomKey::Escape));
+
+        let mut held = pressed(KeyCode::Escape);
+        held.clear_just_pressed(KeyCode::Escape);
+        assert_eq!(room_key(&held), None, "holding is not a press");
+    }
+
+    fn room_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<CurrentFrame>()
+            .init_resource::<InviteFlash>()
+            .insert_resource(crate::testing::joined_flow())
+            .insert_resource(Clipboard::default())
+            .insert_non_send(Net {
+                transport: None,
+                debug_net: false,
+                profile: None,
+            })
+            .add_systems(Update, read_room_keys);
+        app
+    }
+
+    /// 키를 한 번 눌렀다 떼고 프레임 하나를 진행합니다.
+    fn tap(app: &mut App, key: KeyCode) {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(key);
+        keys.clear();
+        keys.press(key);
+        app.update();
+    }
+
+    /// 방에 들어가 있고 나가기 확인 창이 떠 있는지 봅니다. 방에 없으면 `None`입니다.
+    fn prompt_shown(app: &App) -> Option<bool> {
+        let session = app.world().resource::<ClientFlow>().0.session()?;
+        session.joined()?;
+        let invite = caravan_client_core::Invite {
+            kind: caravan_client_core::InviteKind::Code,
+            copied: false,
+        };
+        Some(
+            caravan_client_core::Hud::of(session, None, invite)
+                .leave
+                .is_some(),
+        )
+    }
+
+    #[test]
+    fn escape_asks_in_the_room_and_only_enter_then_leaves_for_the_start_screen() {
+        let mut app = room_app();
+        assert_eq!(prompt_shown(&app), Some(false));
+
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(
+            prompt_shown(&app),
+            Some(false),
+            "Enter alone leaves nothing"
+        );
+
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(prompt_shown(&app), Some(true), "one Escape asks");
+
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(prompt_shown(&app), Some(false), "the second Escape stays");
+
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(prompt_shown(&app), None, "Enter with the prompt leaves");
+        let flow = &app.world().resource::<ClientFlow>().0;
+        assert!(flow.form().is_some(), "the start screen is back");
     }
 
     #[test]

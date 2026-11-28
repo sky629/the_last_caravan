@@ -4,6 +4,7 @@
 //! 야영지에서는 그 아래에 방 코드와 `C` 안내, 준비 목록, `R` 안내, 시작까지 남은 시간이 있고,
 //! 아래 가운데에 F를 누르면 하게 되는 일의 안내와 건설과 수리의 거절 이유와 부활, 수리, 건설의 진행 막대가 있고,
 //! 오른쪽 아래에 원정 중의 방 코드가 있고, 화면 가운데에 접속을 기다리는 안내, 보스가 온다는 경고, 원정의 결과(성공 여부, 요약, 개인별 기록의 표, 확인 안내)가 크게 나옵니다.
+//! 나가기 확인 창은 그 위에 가운데에 뜹니다.
 //! 보스가 나와 있는 동안에는 위쪽 가운데에 보스의 HP 막대가 있습니다.
 
 use bevy::prelude::*;
@@ -19,6 +20,8 @@ const METER_HEIGHT: f32 = 22.0;
 const LABEL_SIZE: f32 = 14.0;
 
 const PANEL_BACK: Color = Color::srgba(0.0, 0.0, 0.0, 0.55);
+/// 나가기 확인 창의 뒤판입니다. 뒤의 세계와 결과가 비쳐도 글자가 읽히도록 다른 뒤판보다 짙습니다.
+const DIALOG_BACK: Color = Color::srgba(0.0, 0.0, 0.0, 0.85);
 const TEXT: Color = Color::srgb(0.92, 0.92, 0.92);
 const TEXT_DIM: Color = Color::srgb(0.65, 0.65, 0.68);
 const BLEED: Color = Color::srgb(1.0, 0.45, 0.25);
@@ -57,6 +60,10 @@ pub struct MeterFill;
 #[derive(Component)]
 pub struct ResultPanel;
 
+/// 나가기 확인 창을 화면 가운데에 놓는 판입니다. 창이 떠 있을 때만 보입니다.
+#[derive(Component)]
+pub struct LeaveOverlay;
+
 /// 갱신할 노드들의 목록입니다. 시작할 때 만든 것은 처음부터 있고, 동료의 막대는 입장한 뒤에 정해집니다.
 #[derive(Resource)]
 pub struct HudNodes {
@@ -88,6 +95,9 @@ pub struct HudNodes {
     result_table: Entity,
     result_action: Entity,
     result_countdown: Entity,
+    leave_overlay: Entity,
+    leave_title: Entity,
+    leave_action: Entity,
     bleed: Entity,
     refusal: Entity,
     me: Entity,
@@ -314,6 +324,38 @@ pub fn setup(mut commands: Commands) {
         })
         .add_children(&[banner_title, result_panel]);
 
+    // 나가기 확인 창입니다. 결과 화면 위에도 뜨도록 가운데 판과 따로 맨 위에 놓습니다.
+    let leave_title = text_node(&mut commands, 40.0, TEXT);
+    let leave_action = text_node(&mut commands, 24.0, TEXT);
+    let leave_overlay = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                display: Display::None,
+                ..default()
+            },
+            GlobalZIndex(1),
+            LeaveOverlay,
+        ))
+        .id();
+    let leave_panel = commands
+        .spawn((
+            column(Node {
+                align_items: AlignItems::Center,
+                row_gap: px(16),
+                padding: UiRect::axes(px(48), px(28)),
+                ..default()
+            }),
+            BackgroundColor(DIALOG_BACK),
+        ))
+        .add_children(&[leave_title, leave_action])
+        .id();
+    commands.entity(leave_overlay).add_child(leave_panel);
+
     commands.insert_resource(HudNodes {
         connection,
         room,
@@ -338,6 +380,9 @@ pub fn setup(mut commands: Commands) {
         result_table,
         result_action,
         result_countdown,
+        leave_overlay,
+        leave_title,
+        leave_action,
         bleed,
         refusal,
         me,
@@ -436,6 +481,15 @@ pub fn update(
     mut slots: Query<(&MeterSlot, &mut Node), Without<MeterFill>>,
     mut fills: Query<(&mut Node, &mut BackgroundColor), With<MeterFill>>,
     mut panels: Query<&mut Node, (With<ResultPanel>, Without<MeterSlot>, Without<MeterFill>)>,
+    mut overlays: Query<
+        &mut Node,
+        (
+            With<LeaveOverlay>,
+            Without<ResultPanel>,
+            Without<MeterSlot>,
+            Without<MeterFill>,
+        ),
+    >,
 ) {
     // 시작 화면에는 방에 관한 값이 없으므로 모든 칸을 비웁니다.
     let invite = Invite {
@@ -536,6 +590,28 @@ pub fn update(
         }
     }
 
+    let leave = hud.leave.as_ref();
+    set_text(
+        &mut texts,
+        nodes.leave_title,
+        leave.map_or("", |panel| panel.title.as_str()),
+    );
+    set_text(
+        &mut texts,
+        nodes.leave_action,
+        leave.map_or("", |panel| panel.action.as_str()),
+    );
+    if let Ok(mut node) = overlays.get_mut(nodes.leave_overlay) {
+        let display = if leave.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
+
     let rows = [
         (nodes.me, hud.me.as_ref()),
         (nodes.stamina, hud.stamina.as_ref()),
@@ -554,5 +630,63 @@ pub fn update(
             &mut fills,
             &mut texts,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caravan_client_core::RoomKey;
+
+    use crate::testing::joined_flow;
+
+    fn drawn() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<CurrentFrame>()
+            .init_resource::<InviteFlash>()
+            .insert_resource(joined_flow())
+            .add_systems(Startup, setup)
+            .add_systems(Update, update);
+        app.update();
+        app
+    }
+
+    fn text_of(app: &App, pick: impl Fn(&HudNodes) -> Entity) -> String {
+        let entity = pick(app.world().resource::<HudNodes>());
+        app.world().get::<Text>(entity).unwrap().0.clone()
+    }
+
+    fn leave_display(app: &App) -> Display {
+        let overlay = app.world().resource::<HudNodes>().leave_overlay;
+        app.world().get::<Node>(overlay).unwrap().display
+    }
+
+    fn press(app: &mut App, key: RoomKey) {
+        app.world_mut()
+            .resource_mut::<ClientFlow>()
+            .0
+            .on_room_key(key);
+        app.update();
+    }
+
+    #[test]
+    fn the_leave_prompt_is_drawn_in_the_middle_while_it_is_open_and_gone_after() {
+        let mut app = drawn();
+        assert_eq!(leave_display(&app), Display::None);
+        assert_eq!(text_of(&app, |nodes| nodes.leave_title), "");
+
+        press(&mut app, RoomKey::Escape);
+        assert_eq!(leave_display(&app), Display::Flex);
+        assert_eq!(text_of(&app, |nodes| nodes.leave_title), "LEAVE THE ROOM?");
+        assert_eq!(
+            text_of(&app, |nodes| nodes.leave_action),
+            "ENTER  LEAVE      ESC  STAY"
+        );
+
+        press(&mut app, RoomKey::Escape);
+        assert_eq!(leave_display(&app), Display::None);
+        assert_eq!(text_of(&app, |nodes| nodes.leave_title), "");
+        assert_eq!(text_of(&app, |nodes| nodes.leave_action), "");
     }
 }
