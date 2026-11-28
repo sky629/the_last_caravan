@@ -1004,6 +1004,14 @@ impl Tuning {
                 );
             }
         }
+        // 경비는 자리에서 가까운 플레이어를 쫓는 명령(`Order::Guard`)을 받습니다. 마차로 곧장 가는 종류는 이 명령을 받으면 플레이어를 쫓게 되어 종류의 수치와 어긋납니다.
+        if self.monsters.get(self.guards.kind).prey != Prey::Nearby {
+            return Err(format!(
+                "guards.kind {:?} goes straight to the wagon (prey {:?}), but a guard chases the players who come near its post",
+                self.guards.kind,
+                self.monsters.get(self.guards.kind).prey
+            ));
+        }
         // HP가 0인 개체는 만들어지는 순간 쓰러지거나 제거되므로, 모든 최대 HP는 1 이상이어야 합니다.
         let all_hp = [self.player.max_hp, self.wagon.max_hp]
             .into_iter()

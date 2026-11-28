@@ -1237,6 +1237,31 @@ fn the_boss_cannot_come_in_a_wave_or_as_a_guard() {
     assert!(t.validate().is_err(), "a boss as a guard");
 }
 
+#[test]
+fn a_guard_has_to_be_a_kind_that_chases_players_and_the_reason_names_the_row() {
+    use crate::kind::MonsterKind;
+    use crate::tuning::Prey;
+
+    let mut t = Tuning::default();
+    t.guards.kind = MonsterKind::Runner;
+    let why = t.validate().expect_err("a runner that guards");
+    assert!(why.contains("guards.kind"), "{why}");
+
+    // 이름이 아니라 종류의 수치가 정합니다. 기본 몬스터도 마차로 곧장 가면 경비가 될 수 없고, 돌격병도 가까운 플레이어를 쫓으면 될 수 있습니다.
+    let mut t = Tuning::default();
+    t.monsters.grunt.prey = Prey::Wagon;
+    assert!(
+        t.validate()
+            .expect_err("a grunt that only goes to the wagon")
+            .contains("guards.kind")
+    );
+
+    let mut t = Tuning::default();
+    t.guards.kind = MonsterKind::Runner;
+    t.monsters.runner.prey = Prey::Nearby;
+    assert_eq!(t.validate(), Ok(()));
+}
+
 /// 기본 수치에서 보스의 행동만 `change`로 바꾼 수치입니다.
 fn tuning_with_boss(change: impl FnOnce(&mut BossTuning)) -> Tuning {
     let mut t = Tuning::default();

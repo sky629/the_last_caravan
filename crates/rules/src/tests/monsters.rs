@@ -2,8 +2,8 @@
 
 use super::support::{Scenario, nights, outcome, watchtower_shot};
 use crate::expedition::Outcome;
+use crate::kind::MonsterKind;
 use crate::math::{Rect, Vec2};
-use crate::tuning::Prey;
 
 #[test]
 fn a_standing_scarecrow_neither_walks_nor_attacks_whatever_its_numbers_say() {
@@ -63,14 +63,12 @@ fn a_monster_chases_a_player_inside_the_aggro_range_and_hits_them() {
 
 #[test]
 fn a_monster_that_hunts_only_the_wagon_walks_past_a_player_and_a_tower_beside_its_way() {
+    // 마차로 곧장 가는 종류(`Prey::Wagon`)는 돌격병입니다. 경비는 이 종류가 될 수 없으므로(`Tuning::validate`) 기본 몬스터의 수치를 바꾸지 않고 돌격병을 씁니다.
     // 감시탑은 사격하지만 피해를 주지 않습니다. 몬스터가 쓰러지면 마차까지 가지 못하기 때문입니다.
-    let mut s = Scenario::with_tuning(|t| {
-        t.monsters.grunt.prey = Prey::Wagon;
-        watchtower_shot(t).damage = 0;
-    });
+    let mut s = Scenario::with_tuning(|t| watchtower_shot(t).damage = 0);
     let a = s.player_at(14.0, 16.0);
     s.tower_at(14, 19);
-    s.monster_at(10.0, 18.0);
+    s.monster_of(MonsterKind::Runner, 10.0, 18.0);
 
     s.run_until(200, |sim| sim.wagon().hp < 500);
 
