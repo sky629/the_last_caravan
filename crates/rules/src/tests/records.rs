@@ -4,7 +4,7 @@ use super::support::{Scenario, in_camp, nights, phase};
 use crate::expedition::{NightStep, Outcome, Phase};
 use crate::ids::PlayerId;
 use crate::input::{AimDir, PlayerInput};
-use crate::kind::WeaponKind;
+use crate::kind::{MonsterKind, WeaponKind};
 use crate::player::{Presence, Record};
 use crate::sim::Sim;
 use crate::tuning::{Tuning, WaveScaling};
@@ -360,13 +360,17 @@ fn the_monsters_of_a_small_wave_stand_where_the_first_ones_of_the_full_wave_stan
 }
 
 #[test]
-fn a_wave_for_an_empty_room_is_still_one_monster_of_each_of_its_kinds() {
+fn a_wave_for_an_empty_room_is_still_one_monster_of_each_of_its_packs() {
     let t = Tuning::default();
     assert_eq!(t.nights.wave_size(1, 1, 0), 1);
     assert_eq!(
         t.nights.wave_size(3, 3, 0),
         3,
-        "the last wave has three kinds, one monster of each"
+        "the last wave has three packs, one monster for each"
+    );
+    assert!(
+        (0..3).all(|nth| t.nights.kind_at(3, 3, 0, nth) != Some(MonsterKind::Sapper)),
+        "the sapper's one is a grunt, because an empty room has no two players"
     );
     assert_eq!(
         t.nights.wave_size(4, 1, 1),
