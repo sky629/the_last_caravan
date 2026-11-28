@@ -54,6 +54,15 @@ pub struct PlayerTuning {
     pub start_loadout: Loadout,
 }
 
+impl PlayerTuning {
+    /// 이 종류의 무기가 바닥에 놓일 수 있는지 봅니다. 시작 무기(`start_loadout`)에 있는 종류는 놓일 수 없고, 놓으려 하면 사라집니다.
+    /// 입장하는 플레이어마다 공짜로 받는 무기이므로, 바닥에 놓이면 입장과 퇴장을 되풀이해서 바닥의 무기를 끝없이 늘릴 수 있기 때문입니다.
+    /// 버리기, 퇴장, 줍기의 맞바꿈이 모두 이 함수로 정하므로, 바닥의 무기는 모두 상자에서 나온 것입니다.
+    pub(crate) fn may_lie_on_ground(&self, kind: WeaponKind) -> bool {
+        !self.start_loadout.holds(kind)
+    }
+}
+
 /// 무기 한 종류의 수치입니다. 무기마다 다른 점은 모두 이 구조체의 값입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeaponTuning {

@@ -19,6 +19,7 @@
 use caravan_protocol::{ClientEvent, ClientMsg, PlayerName, RejectReason};
 
 use crate::hud::{InviteKind, reject_text};
+use crate::input::Controls;
 use crate::launch::{DEFAULT_SERVER, LaunchError, LaunchOptions};
 use crate::leave::{PromptStep, RoomKey};
 use crate::memory::Memory;
@@ -215,10 +216,29 @@ impl Flow {
         commands
     }
 
+    /// 프레임마다 방 안의 키를 처리합니다. `key`는 이 프레임에 누른 Esc나 Enter이고(둘을 함께 눌렀으면 Esc), `controls`는 이 프레임에 읽은 조작입니다.
+    /// 나가기 확인 창이 이 프레임에 떠 있었다면, 곧 프레임이 시작될 때나 `key`를 처리한 뒤에 떠 있다면, 이 프레임의 Enter는 창의 것입니다.
+    /// 그래서 `controls`의 확인을 지워서 결과 화면의 확인으로 서버에 가지 않게 합니다. Esc가 창을 닫은 프레임의 Enter도 같습니다.
+    pub fn on_room_frame(&mut self, key: Option<RoomKey>, controls: &mut Controls) -> Vec<Command> {
+        let prompt_was_open = self.leave_prompt_open();
+        let commands = key.map_or_else(Vec::new, |key| self.on_room_key(key));
+        if prompt_was_open || self.leave_prompt_open() {
+            controls.confirm = false;
+        }
+        commands
+    }
+
+    /// 나가기 확인 창이 떠 있는지 봅니다. 방에 들어가기 전에는 창이 없습니다.
+    fn leave_prompt_open(&self) -> bool {
+        self.session()
+            .and_then(Session::joined)
+            .is_some_and(|joined| joined.leave_prompt.is_open())
+    }
+
     /// 방 안에서 Esc나 Enter를 눌렀습니다. 방에 들어간 뒤에는 나가기 확인 창(`LeavePrompt`)이 키를 읽습니다.
     /// Esc가 창을 열고 닫고, 창이 떠 있을 때의 Enter가 방을 나갑니다. 창이 닫혀 있을 때의 Enter는 아무 일도 하지 않습니다.
     /// 방에 들어가기 전(접속하는 중, 입장하는 중)에는 잃을 것이 없으므로 Esc가 확인 없이 나가고, Enter는 아무 일도 하지 않습니다.
-    pub fn on_room_key(&mut self, key: RoomKey) -> Vec<Command> {
+    fn on_room_key(&mut self, key: RoomKey) -> Vec<Command> {
         let Screen::Playing(session) = &mut self.screen else {
             return Vec::new();
         };
@@ -235,7 +255,7 @@ impl Flow {
         }
     }
 
-    /// 확인 없이 방을 나갑니다. 사람이 키로 나가는 길은 확인 창을 거치는 `on_room_key`입니다.
+    /// 확인 없이 방을 나갑니다. 사람이 키로 나가는 길은 확인 창을 거치는 `on_room_frame`입니다.
     /// 접속을 버리고, 들어가 있던 방 코드가 채워진 시작 화면으로 돌아갑니다.
     /// 입장 요청(`Join`)을 보낸 뒤였으면 서버에 `Leave`를 먼저 보내서 자리를 곧바로 내놓고, 이 서버의 표식을 지웁니다.
     /// 서버는 `Join` 뒤의 `Leave`를 순서대로 받으므로, 입장 안내가 오기 전에 나가도 자리가 남지 않습니다.
@@ -753,6 +773,93 @@ mod tests {
         let form = form(&flow);
         assert_eq!(form.room.text(), "k7m2q");
         assert_eq!(form.notice, None);
+    }
+
+    /// 서버로 가는 다음 입력이 결과 화면의 확인을 싣고 있는지 봅니다. `controls`는 그 프레임에 읽은 조작입니다.
+    fn confirm_in_next_input(flow: &mut Flow, controls: &Controls) -> bool {
+        let session = flow.session_mut().expect("in a room");
+        match session.input_due(1.0, controls, None) {
+            Some(ClientMsg::Input(input)) => input.confirm,
+            other => panic!("an input is due: {other:?}"),
+        }
+    }
+
+    fn enter() -> Controls {
+        Controls {
+            confirm: true,
+            ..Controls::default()
+        }
+    }
+
+    #[test]
+    fn an_enter_pressed_in_the_frame_where_escape_closes_the_prompt_is_not_a_confirmation() {
+        let mut flow = joined("k7m2q");
+        flow.on_room_frame(Some(RoomKey::Escape), &mut Controls::default());
+        assert!(prompt_is_open(&flow));
+
+        let mut controls = enter();
+        let commands = flow.on_room_frame(Some(RoomKey::Escape), &mut controls);
+
+        assert_eq!(commands, vec![]);
+        assert!(!prompt_is_open(&flow), "Escape closed the prompt");
+        assert!(
+            !confirm_in_next_input(&mut flow, &controls),
+            "the prompt was up when Enter was pressed, so it was the prompt's Enter"
+        );
+    }
+
+    #[test]
+    fn an_enter_pressed_in_the_frame_where_escape_opens_the_prompt_is_not_a_confirmation() {
+        let mut flow = joined("k7m2q");
+
+        let mut controls = enter();
+        flow.on_room_frame(Some(RoomKey::Escape), &mut controls);
+
+        assert!(prompt_is_open(&flow));
+        assert!(!confirm_in_next_input(&mut flow, &controls));
+    }
+
+    #[test]
+    fn an_enter_with_no_prompt_in_its_frame_confirms_the_result_and_one_after_the_prompt_closed_does_too()
+     {
+        let mut flow = joined("k7m2q");
+        let mut controls = enter();
+        let commands = flow.on_room_frame(Some(RoomKey::Enter), &mut controls);
+        assert_eq!(
+            commands,
+            vec![],
+            "Enter without the prompt is not a way out"
+        );
+        assert!(confirm_in_next_input(&mut flow, &controls));
+
+        let mut flow = joined("k7m2q");
+        flow.on_room_frame(Some(RoomKey::Escape), &mut Controls::default());
+        flow.on_room_frame(Some(RoomKey::Escape), &mut Controls::default());
+        let mut controls = enter();
+        flow.on_room_frame(Some(RoomKey::Enter), &mut controls);
+        assert!(
+            confirm_in_next_input(&mut flow, &controls),
+            "closing the prompt gives Enter back"
+        );
+    }
+
+    #[test]
+    fn an_enter_that_leaves_through_the_prompt_confirms_nothing() {
+        let mut flow = joined("k7m2q");
+        flow.on_room_frame(Some(RoomKey::Escape), &mut Controls::default());
+
+        let mut controls = enter();
+        let commands = flow.on_room_frame(Some(RoomKey::Enter), &mut controls);
+
+        assert!(matches!(
+            &commands[..],
+            [
+                Command::Send(ClientMsg::Leave),
+                Command::Disconnect,
+                Command::Save(_)
+            ]
+        ));
+        assert!(!controls.confirm);
     }
 
     #[test]

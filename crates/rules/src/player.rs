@@ -408,8 +408,10 @@ impl Player {
 /// F로 할 일이 없고 B를 누르고 있으면 건설 요청으로 모아서 `build::start_builds`가 번호 순서로 하나씩 판정합니다.
 /// 건설의 진행과 완료와 취소는 `structures::advance_construction`이 정합니다.
 ///
-/// 무기 버리기(G)는 이번 Tick의 하는 일이 정해진 뒤에, 하고 있는 일이 없는 플레이어에게만 하고(`loot::apply_drops`), 줍기보다 먼저입니다.
-/// 버린 플레이어의 같은 Tick의 줍기는 하지 않으므로, 같은 Tick에 G와 F가 함께 와도 버리기만 합니다.
+/// 무기 버리기(G)는 Tick이 시작될 때 하고 있는 일이 없고 버릴 수 있는 플레이어(`loot::drops_this_tick`)가 하고, 그 플레이어는 이번 Tick에 새 일을 시작하지 않습니다.
+/// 새 일은 F로 시작하는 부활, 수리, 채집, 상자 열기, 줍기와 B로 시작하는 건설입니다. 그래서 같은 Tick에 G와 F나 B가 함께 와도 버리기만 하고, 버린 무기를 곧바로 다시 줍지도 않습니다.
+/// 이미 하고 있는 일이 있는 플레이어의 G는 그 일이 이번 Tick에 끝나더라도 아무 일도 하지 않고, 버릴 수 없는 플레이어의 G는 F와 B를 막지 않습니다.
+/// 버리기는 수리와 채집을 적용한 뒤에 합니다(`loot::apply_drops`).
 pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     let holding = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.interact);
@@ -427,6 +429,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let mut gathers: Vec<(PlayerId, NodeId)> = Vec::new();
     let mut build_requests: Vec<PlayerId> = Vec::new();
     let mut pickups: Vec<(PlayerId, Pickup)> = Vec::new();
+    let mut droppers: Vec<PlayerId> = Vec::new();
     for player in world.players.values() {
         if let Some(Interaction::Reviving {
             target,
@@ -478,6 +481,12 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
                     elapsed_ticks: elapsed_ticks + 1,
                 }),
             );
+            continue;
+        }
+        // 버리는 플레이어는 이번 Tick에 새 일을 고르지 않습니다. 하고 있는 일이 없는 플레이어만 버리므로, 위에서 이어지는 일과 겹치지 않습니다.
+        if loot::drops_this_tick(player, ctx) {
+            droppers.push(player.id);
+            next.insert(player.id, None);
             continue;
         }
         // F를 한 번 두드리기만 해도 더 높은 순위의 대상이 있으면 줍기를 막습니다. 하지만 일을 시작하는 것은 누르고 있을 때뿐입니다.
@@ -564,8 +573,7 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     }
     apply_repairs(world, &repairs, t);
     resources::apply_gathers(world, &gathers, t);
-    let dropped = loot::apply_drops(world, ctx);
-    pickups.retain(|(id, _)| !dropped.contains(id));
+    loot::apply_drops(world, &droppers, t);
     loot::apply_pickups(world, &pickups, t);
     build::start_builds(world, ctx, &build_requests);
 }

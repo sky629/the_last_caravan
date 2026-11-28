@@ -34,6 +34,7 @@ mod view;
 
 use bevy::prelude::*;
 use caravan_client_core::{Flow, LaunchError, LaunchOptions, Page};
+use storage::Store;
 
 fn main() {
     let page = page();
@@ -43,7 +44,8 @@ fn main() {
         .as_ref()
         .ok()
         .and_then(|launch| launch.profile.clone());
-    let (flow, first) = Flow::new(launch, storage::load(profile.as_deref()), page);
+    let device = storage::Device::new(profile);
+    let (flow, first) = Flow::new(launch, device.load(), page);
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -55,7 +57,7 @@ fn main() {
         }),
         ..default()
     }));
-    net::install(&mut app, flow, first, debug_net, profile);
+    net::install(&mut app, flow, first, debug_net, Box::new(device));
     app.insert_resource(ClearColor(config::BACKGROUND))
         .init_resource::<input::HeldControls>()
         .init_resource::<characters::Spawned>()

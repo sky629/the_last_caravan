@@ -1,5 +1,5 @@
 //! 든 무기를 버리는 일을 확인합니다: G가 든 무기를 선 자리의 바닥에 놓고 다른 칸의 무기를 드는 것, 버릴 수 없는 때(무기가 하나뿐일 때, 하고 있는 일이 있을 때,
-//! 쓰러졌거나 사망했거나 자리를 비웠을 때, 야영지와 결과 화면), 시작 무기가 바닥에 놓이지 않는 것, 바닥의 무기가 늘지 않는 것, 같은 Tick의 F.
+//! 쓰러졌거나 사망했거나 자리를 비웠을 때, 야영지와 결과 화면), 시작 무기가 바닥에 놓이지 않는 것, 바닥의 무기가 늘지 않는 것, 같은 Tick의 F와 B와 Q, 버린 뒤의 쿨다운과 공격.
 //!
 //! 시험하는 것은 `&Sim`이 공개하는 값(바닥의 무기, 가진 무기, 안내)뿐입니다.
 
@@ -185,6 +185,309 @@ fn f_takes_the_weapon_as_usual_when_g_had_nothing_to_drop() {
         Loadout::new(WeaponKind::Sword, Some(WeaponKind::Greatsword))
     );
     assert!(ground(&s).is_empty());
+}
+
+/// 창과 활을 든 `id`가 F를 눌러서 새 일을 시작할 수 있는 자리에서, 한 Tick 동안 G와 F를 함께 누릅니다.
+/// 그 Tick에는 버리기만 하고 F의 일은 시작하지 않아야 하고, 다음 Tick에 G를 떼고 F를 누르고 있으면 F의 일이 시작됩니다.
+fn g_comes_first_and_f_starts_its_job_one_tick_later(
+    mut s: Scenario,
+    id: PlayerId,
+    stood_at: (f32, f32),
+    started: fn(&Interaction) -> bool,
+) {
+    s.arm(id, WeaponKind::Spear, Some(WeaponKind::Bow));
+    s.hold(
+        id,
+        PlayerInput {
+            drop_weapon: true,
+            interact: true,
+            interact_pressed: true,
+            ..PlayerInput::default()
+        },
+    );
+
+    s.run_ticks(1);
+
+    assert_eq!(
+        s.player(id).loadout,
+        Loadout::new(WeaponKind::Bow, None),
+        "G dropped the spear"
+    );
+    assert_eq!(
+        s.player(id).interaction(),
+        None,
+        "F started nothing in the tick of the drop"
+    );
+    assert_eq!(ground(&s), [(WeaponKind::Spear, stood_at.0, stood_at.1)]);
+
+    s.hold_interact(id);
+    s.run_ticks(1);
+
+    assert!(
+        s.player(id).interaction().is_some_and(started),
+        "F starts its job in the next tick: {:?}",
+        s.player(id).interaction()
+    );
+}
+
+#[test]
+fn g_and_f_in_the_same_tick_beside_a_downed_ally_drop_first_and_revive_from_the_next_tick() {
+    let mut s = Scenario::open_field();
+    let downed = s.player_at(10.0, 10.0);
+    let reviver = s.player_at(11.0, 10.0);
+    s.knock_down(downed);
+
+    g_comes_first_and_f_starts_its_job_one_tick_later(s, reviver, (11.0, 10.0), |job| {
+        matches!(job, Interaction::Reviving { .. })
+    });
+}
+
+#[test]
+fn g_and_f_in_the_same_tick_beside_a_damaged_wagon_drop_first_and_repair_from_the_next_tick() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(16.3, 18.0);
+    s.set_wagon_hp(100);
+
+    g_comes_first_and_f_starts_its_job_one_tick_later(s, a, (16.3, 18.0), |job| {
+        matches!(job, Interaction::Repairing { .. })
+    });
+}
+
+#[test]
+fn g_and_f_in_the_same_tick_beside_a_node_drop_first_and_gather_from_the_next_tick() {
+    let mut s = Scenario::with_tuning(|t| t.map.nodes = vec![Tile::new(8, 10)]);
+    let a = s.player_at(7.3, 10.5);
+
+    g_comes_first_and_f_starts_its_job_one_tick_later(s, a, (7.3, 10.5), |job| {
+        matches!(job, Interaction::Gathering { .. })
+    });
+}
+
+#[test]
+fn g_and_f_in_the_same_tick_beside_a_chest_drop_first_and_open_from_the_next_tick() {
+    let mut s = Scenario::with_chest(WeaponKind::Rifle, 0);
+    let a = s.player_at(2.5, 3.6);
+
+    g_comes_first_and_f_starts_its_job_one_tick_later(s, a, (2.5, 3.6), |job| {
+        matches!(job, Interaction::Opening { .. })
+    });
+}
+
+#[test]
+fn g_and_b_in_the_same_tick_drop_first_and_start_the_build_in_the_next_tick() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(13.5, 15.5);
+    s.arm(a, WeaponKind::Spear, Some(WeaponKind::Bow));
+    s.hold_build(a, 0.0, -1.0);
+
+    s.tap_drop_key(a);
+
+    assert_eq!(s.player(a).loadout, Loadout::new(WeaponKind::Bow, None));
+    assert_eq!(ground(&s), [(WeaponKind::Spear, 13.5, 15.5)]);
+    assert_eq!(s.player(a).interaction(), None, "no build in the tick of G");
+    assert_eq!(s.sim.towers().count(), 0);
+
+    s.run_ticks(1);
+
+    assert!(
+        matches!(
+            s.player(a).interaction(),
+            Some(Interaction::Building { .. })
+        ),
+        "B builds from the next tick: {:?}",
+        s.player(a).interaction()
+    );
+    assert_eq!(s.sim.towers().count(), 1);
+}
+
+#[test]
+fn g_with_nothing_to_drop_does_not_hold_back_a_build() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(13.5, 15.5);
+    s.hold_build(a, 0.0, -1.0);
+
+    s.tap_drop_key(a);
+
+    assert_eq!(s.player(a).loadout, Loadout::new(WeaponKind::Sword, None));
+    assert!(
+        matches!(
+            s.player(a).interaction(),
+            Some(Interaction::Building { .. })
+        ),
+        "the only weapon is never dropped, so B builds at once: {:?}",
+        s.player(a).interaction()
+    );
+}
+
+#[test]
+fn g_with_nothing_to_drop_does_not_hold_back_f_beside_a_downed_ally() {
+    let mut s = Scenario::open_field();
+    let downed = s.player_at(10.0, 10.0);
+    let reviver = s.player_at(11.0, 10.0);
+    s.knock_down(downed);
+    s.hold_interact(reviver);
+
+    s.tap_drop_key(reviver);
+
+    assert!(matches!(
+        s.player(reviver).interaction(),
+        Some(Interaction::Reviving { .. })
+    ));
+    assert!(ground(&s).is_empty());
+}
+
+#[test]
+fn g_in_the_camp_does_not_hold_back_f_at_a_rack() {
+    let mut s = Scenario::camp(|_| {});
+    let a = s.player_at(6.0, 10.0);
+    s.arm(a, WeaponKind::Sword, Some(WeaponKind::Bow));
+    let rack = s
+        .sim
+        .racks()
+        .find(|rack| !s.player(a).loadout.holds(rack.kind))
+        .cloned()
+        .expect("a rack of a weapon the player does not hold");
+    s.move_player(a, rack.pos);
+    s.hold(
+        a,
+        PlayerInput {
+            drop_weapon: true,
+            interact: true,
+            interact_pressed: true,
+            ..PlayerInput::default()
+        },
+    );
+
+    s.run_ticks(1);
+
+    assert!(in_camp(&s.sim));
+    assert!(
+        !s.player(a).loadout.holds(WeaponKind::Sword),
+        "F swapped the held sword for the rack's weapon even though G was pressed too"
+    );
+    assert!(s.player(a).loadout.holds(rack.kind));
+    assert!(ground(&s).is_empty());
+}
+
+#[test]
+fn a_g_in_the_tick_a_job_ends_is_ignored_because_the_job_was_still_going_on_when_the_tick_began() {
+    let mut s = Scenario::open_field();
+    let downed = s.player_at(10.0, 10.0);
+    let reviver = s.player_at(11.0, 10.0);
+    s.knock_down(downed);
+    s.arm(reviver, WeaponKind::Spear, Some(WeaponKind::Bow));
+    s.hold_interact(reviver);
+    s.run_ticks(2);
+    assert!(matches!(
+        s.player(reviver).interaction(),
+        Some(Interaction::Reviving { .. })
+    ));
+
+    s.hold(
+        reviver,
+        PlayerInput {
+            drop_weapon: true,
+            ..PlayerInput::default()
+        },
+    );
+    s.run_ticks(1);
+
+    assert_eq!(s.player(reviver).interaction(), None, "F was let go");
+    assert_eq!(
+        s.player(reviver).loadout,
+        Loadout::new(WeaponKind::Spear, Some(WeaponKind::Bow)),
+        "the revive was going on when the tick began, so G does nothing in this tick"
+    );
+    assert!(ground(&s).is_empty());
+
+    s.tap_drop_key(reviver);
+    assert_eq!(
+        s.player(reviver).loadout,
+        Loadout::new(WeaponKind::Bow, None),
+        "the next G drops"
+    );
+}
+
+#[test]
+fn g_and_q_in_the_same_tick_drop_the_weapon_held_before_the_switch_and_q_does_nothing() {
+    let mut s = Scenario::open_field();
+    let a = holding_spear_and_bow(&mut s);
+    s.hold(
+        a,
+        PlayerInput {
+            drop_weapon: true,
+            switch_weapon: true,
+            ..PlayerInput::default()
+        },
+    );
+
+    s.run_ticks(1);
+
+    assert_eq!(
+        s.player(a).loadout,
+        Loadout::new(WeaponKind::Bow, None),
+        "the bow is held and Q found no other weapon to switch to"
+    );
+    assert_eq!(ground(&s), [(WeaponKind::Spear, 6.0, 7.0)]);
+}
+
+fn attack_cooldown_ticks(s: &Scenario, id: PlayerId) -> u32 {
+    match s.player(id).life {
+        Life::Alive { cooldown_ticks, .. } => cooldown_ticks,
+        _ => panic!("the player is alive"),
+    }
+}
+
+#[test]
+fn the_cooldown_of_an_attack_goes_on_after_a_drop_so_the_weapon_taken_up_waits_for_it() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(6.0, 7.0);
+    s.arm(a, WeaponKind::Greatsword, Some(WeaponKind::Bow));
+    s.hold(
+        a,
+        PlayerInput {
+            attack: true,
+            ..PlayerInput::default()
+        },
+    );
+    s.run_ticks(1);
+    let swung_at = s.player(a).last_attack.as_ref().expect("a swing").tick;
+    assert!(
+        attack_cooldown_ticks(&s, a) > 1,
+        "the greatsword swing started a cooldown"
+    );
+
+    s.tap_drop_key(a);
+
+    assert_eq!(s.player(a).weapon(), WeaponKind::Bow);
+    let last = s.player(a).last_attack.as_ref().expect("the swing");
+    assert_eq!(
+        (last.tick, last.weapon),
+        (swung_at, WeaponKind::Greatsword),
+        "the cooldown belongs to the player, so the bow does not shoot until it is over"
+    );
+}
+
+#[test]
+fn an_attack_in_the_tick_of_the_drop_is_made_with_the_weapon_taken_up() {
+    let mut s = Scenario::open_field();
+    let a = s.player_at(6.0, 7.0);
+    s.arm(a, WeaponKind::Greatsword, Some(WeaponKind::Bow));
+    s.hold(
+        a,
+        PlayerInput {
+            attack: true,
+            ..PlayerInput::default()
+        },
+    );
+
+    s.tap_drop_key(a);
+
+    assert_eq!(
+        s.player(a).last_attack.as_ref().expect("an attack").weapon,
+        WeaponKind::Bow
+    );
+    assert_eq!(ground(&s), [(WeaponKind::Greatsword, 6.0, 7.0)]);
 }
 
 #[test]

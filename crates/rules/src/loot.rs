@@ -254,46 +254,39 @@ pub(crate) fn nearest_pickup(
     nearest.map(|(_, pickup, kind)| (pickup, kind))
 }
 
-/// 이번 Tick에 G를 눌러서 든 무기를 버리는 플레이어들을 플레이어 번호 순서로 처리하고, 실제로 버린 플레이어의 번호를 돌려줍니다.
-/// 든 무기가 플레이어가 선 자리의 바닥에 놓이고, 다른 칸의 무기를 듭니다. 다른 칸이 비어 있으면 버리지 않으므로 맨손이 되지 않습니다.
-/// 시작 무기(`PlayerTuning::start_loadout`)와 같은 종류는 바닥에 놓이지 않고 사라집니다(`World::set_down_weapon`). 그래서 바닥의 무기는 여전히 모두 상자에서 나온 것입니다.
-/// 살아 있고, 자리에 있고, 하고 있는 일이 없는 플레이어만 버립니다. 야영지에서는 아무도 버리지 않아서 야영지의 바닥에는 무기가 놓이지 않습니다.
-/// 부르는 쪽은 버린 플레이어의 같은 Tick의 줍기를 하지 않습니다. 버린 무기를 곧바로 다시 줍지 않게 하기 위해서입니다.
-pub(crate) fn apply_drops(world: &mut World, ctx: &Ctx) -> BTreeSet<PlayerId> {
-    let mut dropped = BTreeSet::new();
-    if ctx.practice {
-        return dropped;
-    }
-    let droppers: Vec<PlayerId> = world
-        .players
-        .values()
-        .filter(|player| player.is_free_to_act() && player.is_present())
-        .filter(|player| {
-            ctx.inputs
-                .get(&player.id)
-                .is_some_and(|input| input.drop_weapon)
-        })
-        .map(|player| player.id)
-        .collect();
+/// `player`가 이번 Tick에 G로 든 무기를 버리는지 봅니다. G를 눌렀고, Tick이 시작될 때 살아 있고 자리에 있고 하고 있는 일이 없고, 다른 칸에 무기가 있어야 합니다.
+/// 하고 있는 일은 이번 Tick의 일이 정해지기 전의 값으로 봅니다. 이 값은 앞 Tick의 스냅샷이 보여 준 값과 같으므로, 스냅샷에서 하고 있는 일이 없는 플레이어가 G를 누르면 버려집니다.
+/// 다른 칸이 비어 있으면 맨손이 되므로 버리지 않고, 야영지에서는 바닥에 무기가 쌓이지 않도록 아무도 버리지 않습니다.
+/// 버리는 플레이어는 이번 Tick에 새 일(F의 부활, 수리, 채집, 상자 열기, 줍기와 B의 건설)을 시작하지 않습니다. 버릴 수 없는 플레이어의 G는 F와 B를 막지 않습니다.
+pub(crate) fn drops_this_tick(player: &Player, ctx: &Ctx) -> bool {
+    !ctx.practice
+        && player.is_free_to_act()
+        && player.is_present()
+        && player.loadout.spare().is_some()
+        && ctx
+            .inputs
+            .get(&player.id)
+            .is_some_and(|input| input.drop_weapon)
+}
+
+/// `drops_this_tick`가 고른 플레이어마다 든 무기를 선 자리의 바닥에 놓고 다른 칸의 무기를 듭니다. 부르는 쪽이 플레이어 번호 순서로 넘깁니다.
+/// 바닥에 놓일 수 없는 종류(`PlayerTuning::may_lie_on_ground`)는 놓이지 않고 사라집니다(`World::set_down_weapon`). 그래서 바닥의 무기는 여전히 모두 상자에서 나온 것입니다.
+pub(crate) fn apply_drops(world: &mut World, droppers: &[PlayerId], t: &Tuning) {
     for id in droppers {
-        let Some(player) = world.players.get_mut(&id) else {
+        let Some(player) = world.players.get_mut(id) else {
             continue;
         };
         let Some(left_behind) = player.loadout.drop_held() else {
             continue;
         };
         let pos = player.pos;
-        world.set_down_weapon(pos, left_behind, ctx.t);
-        dropped.insert(id);
+        world.set_down_weapon(pos, left_behind, t);
     }
-    dropped
 }
 
 /// 이번 Tick에 F를 눌러서 바닥의 무기를 줍는 플레이어들을 플레이어 번호 순서로 처리합니다.
 /// 빈 칸이 있으면 무기가 빈 칸에 들어가고 바닥에서 사라집니다. 빈 칸이 없으면 든 무기와 바뀌어서, 이전에 든 무기가 바닥의 그 자리에 놓입니다.
-/// 다만 이전에 든 무기가 시작 무기(`PlayerTuning::start_loadout`)와 같은 종류이면 바닥에 놓이지 않고 사라집니다.
-/// 입장하는 플레이어마다 새로 받는 무기이므로, 바닥에 놓이면 입장과 퇴장을 되풀이해서 바닥의 무기를 끝없이 늘릴 수 있기 때문입니다.
-/// 그래서 바닥의 무기는 모두 상자에서 나온 것입니다.
+/// 다만 이전에 든 무기가 바닥에 놓일 수 없는 종류(`PlayerTuning::may_lie_on_ground`)이면 놓이지 않고 사라집니다.
 /// 같은 Tick에 두 명이 같은 무기를 노리면 번호가 작은 플레이어가 줍고, 다른 플레이어의 F는 아무 일도 하지 않습니다.
 /// 진열대에서 집으면 진열대는 그대로이고, 내준 무기는 바닥에 놓이지 않고 사라집니다. 여럿이 같은 진열대에서 같은 Tick에 집어도 모두 집습니다.
 pub(crate) fn apply_pickups(world: &mut World, pickups: &[(PlayerId, Pickup)], t: &Tuning) {
@@ -318,7 +311,7 @@ pub(crate) fn apply_pickups(world: &mut World, pickups: &[(PlayerId, Pickup)], t
             continue;
         };
         match player.loadout.take(world.ground_weapons[index].kind) {
-            Some(left_behind) if !t.player.start_loadout.holds(left_behind) => {
+            Some(left_behind) if t.player.may_lie_on_ground(left_behind) => {
                 world.ground_weapons[index].kind = left_behind;
             }
             None | Some(_) => {
