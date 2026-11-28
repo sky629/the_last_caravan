@@ -137,9 +137,10 @@ impl WireBoss {
                 Aim::Wagon => WireAim::Wagon,
             },
             act: match &boss.act {
-                Act::Walking { .. } | Act::Winding { .. } | Act::Charging(_) => {
-                    WireBossAct::Walking
-                }
+                Act::Walking { .. }
+                | Act::Winding { .. }
+                | Act::Charging(_)
+                | Act::Roaring { .. } => WireBossAct::Walking,
                 Act::Slamming(telegraph) => WireBossAct::Slam {
                     center: WirePos::from_tiles(telegraph.zone.center()),
                     progress: clamp_progress(telegraph.progress()),

@@ -13,7 +13,7 @@ use crate::monster::Order;
 use crate::player::Presence;
 use crate::structures::{Tower, TowerState};
 use crate::telegraph::{self, Zone};
-use crate::tuning::{BossTuning, Debuff, Finale, StrikeTuning, Tuning, WaveScaling};
+use crate::tuning::{BossTuning, Debuff, Finale, Move, StrikeTuning, Tuning, WaveScaling};
 use crate::world::{Hit, Source, Target, Tile};
 
 /// 기본 수치에서 인원이 넷일 때 보스의 최대 HP입니다.
@@ -34,10 +34,11 @@ pub(super) fn boss_tuning(t: &mut Tuning) -> &mut BossTuning {
     }
 }
 
-/// 보스와 보통 몬스터가 놓인 자리에 서 있기만 하는 20 x 20 빈 들판입니다. 보스의 행동만 시험할 때 씁니다.
+/// 보스와 보통 몬스터가 놓인 자리에 서 있기만 하는 20 x 20 빈 들판입니다. 보스의 행동만 시험할 때 씁니다. 보스는 내려찍기만 되풀이합니다.
 fn still_field() -> Scenario {
     Scenario::with_tuning(|t| {
         with_boss(t);
+        boss_tuning(t).script = vec![Move::Slam];
         t.monsters.boss.speed = 0.0;
         t.monsters.grunt.speed = 0.0;
     })

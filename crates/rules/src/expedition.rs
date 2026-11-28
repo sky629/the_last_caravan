@@ -61,7 +61,7 @@ pub enum NightStep {
     },
     /// 마지막 밤의 마지막 무리를 모두 처치했고, `ticks_left`가 지나면 보스가 나타납니다. 플레이어는 움직이고, 싸우고, 부활과 수리와 건설을 할 수 있습니다.
     Warning { ticks_left: u32 },
-    /// 보스가 있습니다. 보스의 상태는 `World::boss`에 있고, 보스가 쓰러지면 원정이 성공으로 끝납니다.
+    /// 보스가 있습니다. 보스의 상태는 `World::boss`에 있고, 보스가 쓰러지면 원정이 성공으로 끝납니다. 보스가 부른 졸개는 이 단계에서 나타납니다.
     Boss,
 }
 
@@ -173,7 +173,7 @@ pub(crate) fn advance_phase(
                     }
                 };
             }
-            NightStep::Boss => {}
+            NightStep::Boss => boss::spawn_called(world, spawns, t),
         },
     }
 }

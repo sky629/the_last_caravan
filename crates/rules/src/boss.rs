@@ -1,6 +1,6 @@
 //! 마지막 밤의 보스입니다. 보스의 몸은 `World::monsters`에 있는 종류 `MonsterKind::Boss`의 몬스터이고, 보스가 무엇을 노리고 지금 무엇을 하는지는
 //! `World::boss`의 `Boss`가 가집니다. 몸은 맞고 걷고 효과를 받는 일을 다른 몬스터와 같은 규칙으로 하므로, 무기와 포탑과 효과와 스냅샷이 보스를 따로 알지 않습니다.
-//! 이 파일이 정하는 것은 보스의 대상, 행동의 순서, 예고된 공격입니다.
+//! 이 파일이 정하는 것은 보스의 대상, 행동의 순서, 예고된 공격, 졸개 부르기입니다.
 //!
 //! 보스는 걷고, 때가 되면 행동 하나를 합니다. 행동은 순서(`BossTuning::script`)대로 되풀이합니다.
 //!
@@ -9,10 +9,11 @@
 //!     ^                                                        |
 //!     |        Slam   -> Slamming(예고) --(시간이 지남)--> 원 안에 피해 ---------------+
 //!     |        Charge -> Winding(예고) --(시간이 지남)--> Charging(띠를 따라 달림) ---+
+//!     |        Summon -> Roaring(포효) --(시간이 지남)--> 졸개가 나타나기 시작함 ----+
 //!     +----------------------------------(Walking으로 돌아가고 순서가 한 칸 나아감)--+
 //! ```
 //!
-//! 보스는 걷는 동안에만 걷고, 예고하거나 달리는 동안에는 걷는 일을 하지 않습니다(`Boss::walk_aim`이 `None`입니다).
+//! 보스는 걷는 동안에만 걷고, 예고하거나 달리거나 포효하는 동안에는 걷는 일을 하지 않습니다(`Boss::walk_aim`이 `None`입니다).
 //! 대상은 Tick마다 다시 정합니다. 보스에게서 `target_range` 안에 있는 살아 있고 자리에 있는 플레이어 가운데 최근 `threat_secs` 동안
 //! 보스에게 가장 많은 피해를 준 플레이어이고, 그런 플레이어가 없으면 마차입니다. 포탑이 준 피해는 세지 않습니다.
 //!
@@ -25,6 +26,7 @@ use std::collections::VecDeque;
 use crate::collision::move_circle;
 use crate::ids::{MonsterId, PlayerId};
 use crate::math::Vec2;
+use crate::monster::Order;
 use crate::spawn::SpawnPlan;
 use crate::sweep;
 use crate::telegraph::{self, Telegraph, Zone};
@@ -54,6 +56,8 @@ pub enum Act {
     },
     /// 예고한 띠를 따라 달리는 중입니다.
     Charging(Charge),
+    /// 졸개를 부르려고 포효하는 중입니다. 보스는 서 있습니다. `ticks_left`가 0이 되면 졸개가 나타나기 시작합니다.
+    Roaring { ticks_left: u32, total_ticks: u32 },
 }
 
 /// 돌진입니다. 예고할 때 띠를 한 번 정하고, 달리는 동안 이미 맞힌 대상을 기억합니다.
@@ -72,6 +76,15 @@ pub struct Charge {
     travelled: f32,
     /// 이번 돌진이 이미 맞힌 대상입니다. 한 번 가로지르는 돌진이 같은 대상을 두 번 맞히지 않습니다.
     struck: Vec<Target>,
+}
+
+/// 보스가 부른 졸개 가운데 아직 나타나지 않은 것입니다. 밤의 무리와 같은 규칙(`SpawnPlan::night_spot`, 동시에 살아 있는 수의 상한, 한 마리씩 나타남)으로 나타납니다.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Muster {
+    to_spawn: u32,
+    /// 이번 부름에서 이미 나타난 졸개의 수입니다. 같은 방향의 줄 가운데 어느 자리에 설지를 정합니다.
+    spawned: u32,
+    spawn_in_ticks: u32,
 }
 
 /// 최근에 플레이어가 보스에게 준 피해입니다. 플레이어마다 따로 모으지 않고 피해 하나하나를 시간순으로 적으므로, 오래된 피해가 빠지는 때가 Tick 단위로 정확합니다.
@@ -142,17 +155,23 @@ pub struct Boss {
     /// 순서에서 지금 하고 있거나 다음에 할 행동의 자리입니다.
     step: usize,
     threat: Threat,
+    /// 한 번 부를 때 나타나는 졸개의 수입니다. 이 밤의 인원에 맞춰 보스가 나타날 때 정해집니다.
+    call_size: u32,
+    /// 졸개를 부른 횟수입니다. 부를 때마다 졸개가 나타나는 방향이 달라집니다.
+    calls: u32,
+    muster: Muster,
 }
 
 impl Boss {
-    /// 방에 플레이어가 `party`명 있는 밤에 막 나타난 보스입니다. 최대 HP가 인원에 비례합니다. 마차를 노리고, 걷는 시간부터 시작합니다.
+    /// 방에 플레이어가 `party`명 있는 밤에 막 나타난 보스입니다. 최대 HP와 졸개의 수가 인원에 비례합니다. 마차를 노리고, 걷는 시간부터 시작합니다.
     pub(crate) fn new(id: MonsterId, party: u32, cfg: &BossTuning, t: &Tuning) -> Boss {
+        let max_hp = t.nights.scaled(t.monsters.boss.max_hp, party);
         Boss {
             id,
-            max_hp: t.nights.scaled(t.monsters.boss.max_hp, party),
+            max_hp,
             aim: Aim::Wagon,
             act: Act::Walking {
-                ticks_left: t.ticks(cfg.rest_secs),
+                ticks_left: rest_ticks(max_hp, max_hp, cfg, t),
             },
             step: 0,
             threat: Threat {
@@ -160,6 +179,9 @@ impl Boss {
                 window_ticks: t.ticks(cfg.threat_secs),
                 entries: VecDeque::new(),
             },
+            call_size: t.nights.scaled(cfg.summon.count, party),
+            calls: 0,
+            muster: Muster::default(),
         }
     }
 
@@ -175,13 +197,23 @@ impl Boss {
         matches!(self.act, Act::Walking { .. }).then_some(self.aim)
     }
 
-    /// 한 행동이 끝났습니다. 순서가 한 칸 나아가고 걷는 시간이 시작됩니다.
-    fn finish(&mut self, cfg: &BossTuning, t: &Tuning) -> Act {
+    /// 한 행동이 끝났습니다. 순서가 한 칸 나아가고 걷는 시간이 시작됩니다. `hp`는 보스의 몸이 지금 가진 HP이고, 걷는 시간이 이 값으로 정해집니다.
+    fn finish(&mut self, hp: u32, cfg: &BossTuning, t: &Tuning) -> Act {
         self.step = (self.step + 1) % cfg.script.len();
         Act::Walking {
-            ticks_left: t.ticks(cfg.rest_secs),
+            ticks_left: rest_ticks(hp, self.max_hp, cfg, t),
         }
     }
+}
+
+/// 걷는 시간(Tick)입니다. 걷는 시간이 시작될 때 HP가 최대 HP의 절반 이하이면 줄어든 시간을 씁니다. 저장하지 않고 시작할 때마다 계산합니다.
+fn rest_ticks(hp: u32, max_hp: u32, cfg: &BossTuning, t: &Tuning) -> u32 {
+    let enraged = u64::from(hp) * 2 <= u64::from(max_hp);
+    t.ticks(if enraged {
+        cfg.enraged_rest_secs
+    } else {
+        cfg.rest_secs
+    })
 }
 
 /// 보스가 나타날 자리입니다. 밤의 무리가 나타나는 자리 가운데 마지막 무리 다음 순번의 방향에서 첫째 자리입니다.
@@ -214,6 +246,7 @@ fn step(
     hits: &mut Vec<Hit>,
     shoves: &mut Vec<Shove>,
 ) {
+    let hp = world.monsters[index].hp;
     boss.threat.advance();
     boss.aim = choose_aim(world, boss, world.monsters[index].pos, cfg);
 
@@ -231,7 +264,7 @@ fn step(
         Act::Slamming(mut telegraph) => {
             if telegraph.tick() {
                 telegraph::strike(world, &telegraph.zone, &cfg.slam.strike, hits);
-                boss.finish(cfg, t)
+                boss.finish(hp, cfg, t)
             } else {
                 Act::Slamming(telegraph)
             }
@@ -248,9 +281,25 @@ fn step(
         }
         Act::Charging(mut charge) => {
             if run(world, index, &mut charge, cfg, t, hits, shoves) {
-                boss.finish(cfg, t)
+                boss.finish(hp, cfg, t)
             } else {
                 Act::Charging(charge)
+            }
+        }
+        Act::Roaring {
+            ticks_left,
+            total_ticks,
+        } => {
+            if ticks_left > 1 {
+                Act::Roaring {
+                    ticks_left: ticks_left - 1,
+                    total_ticks,
+                }
+            } else {
+                boss.muster.to_spawn += boss.call_size;
+                boss.muster.spawned = 0;
+                boss.calls += 1;
+                boss.finish(hp, cfg, t)
             }
         }
     };
@@ -316,6 +365,13 @@ fn start(world: &mut World, index: usize, boss: &Boss, cfg: &BossTuning, t: &Tun
             Act::Winding {
                 telegraph: Telegraph::new(charge.zone(), t.ticks(cfg.charge.windup_secs)),
                 charge,
+            }
+        }
+        Move::Summon => {
+            let ticks = t.ticks(cfg.summon.roar_secs);
+            Act::Roaring {
+                ticks_left: ticks,
+                total_ticks: ticks,
             }
         }
     }
@@ -403,4 +459,29 @@ fn run(
         }
     }
     charge.travelled >= charge.length - 1e-3 || moved < wanted * 0.5
+}
+
+/// 부른 졸개가 남아 있으면 때가 되었을 때 한 마리를 나타나게 합니다. 보스와 싸우는 동안 Tick의 처음에 부릅니다(`expedition::advance_phase`).
+/// 밤의 무리와 같이 살아 있는 몬스터가 상한에 이르면 기다렸다가 한 마리가 줄면 이어서 나타나고, 한 마리씩 `spawn_interval_secs` 간격으로 나타납니다.
+pub(crate) fn spawn_called(world: &mut World, spawns: &SpawnPlan, t: &Tuning) {
+    let Finale::Boss(cfg) = &t.nights.finale else {
+        return;
+    };
+    let Some(boss) = world.boss.as_mut() else {
+        return;
+    };
+    let muster = &mut boss.muster;
+    if muster.to_spawn == 0 || world.monsters.len() as u32 >= t.nights.max_alive {
+        return;
+    }
+    if muster.spawn_in_ticks > 0 {
+        muster.spawn_in_ticks -= 1;
+        return;
+    }
+    let serial = t.nights.wave_total() + boss.calls;
+    let spot = spawns.night_spot(serial, muster.spawned);
+    muster.to_spawn -= 1;
+    muster.spawned += 1;
+    muster.spawn_in_ticks = t.ticks(t.nights.spawn_interval_secs).saturating_sub(1);
+    world.spawn_monster(cfg.summon.kind, Order::Raid, spot, t);
 }

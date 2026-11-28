@@ -1298,3 +1298,34 @@ fn a_charge_that_crosses_more_than_sixty_four_body_radii_in_one_tick_is_rejected
         Ok(())
     );
 }
+
+#[test]
+fn a_summon_that_calls_nobody_or_something_that_cannot_walk_in_a_wave_is_rejected() {
+    for (name, t) in [
+        (
+            "summon roar_secs",
+            tuning_with_boss(|c| c.summon.roar_secs = 0.0),
+        ),
+        (
+            "enraged_rest_secs",
+            tuning_with_boss(|c| c.enraged_rest_secs = -1.0),
+        ),
+        ("summon count", tuning_with_boss(|c| c.summon.count = 0)),
+        (
+            "summons only monsters",
+            tuning_with_boss(|c| c.summon.kind = crate::kind::MonsterKind::Boss),
+        ),
+        (
+            "summons only monsters",
+            tuning_with_boss(|c| c.summon.kind = crate::kind::MonsterKind::Scarecrow),
+        ),
+    ] {
+        let why = t.validate().expect_err(name);
+        assert!(why.contains(name), "{name}: {why}");
+    }
+    assert_eq!(
+        tuning_with_boss(|c| c.enraged_rest_secs = 0.0).validate(),
+        Ok(()),
+        "a boss that never rests once it is hurt is a valid one"
+    );
+}

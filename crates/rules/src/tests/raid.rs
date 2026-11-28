@@ -48,7 +48,7 @@ struct Bot {
 fn zone_now(sim: &Sim) -> Option<Zone> {
     match &sim.boss()?.act {
         Act::Slamming(telegraph) => Some(telegraph.zone),
-        Act::Walking { .. } | Act::Winding { .. } | Act::Charging(_) => None,
+        Act::Walking { .. } | Act::Winding { .. } | Act::Charging(_) | Act::Roaring { .. } => None,
     }
 }
 
