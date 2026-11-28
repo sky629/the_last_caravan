@@ -259,7 +259,7 @@ pub enum Prey {
     Wagon,
 }
 
-/// 몬스터 종류가 피해와 효과를 받는 방식입니다. 보통 몬스터는 모두 받으므로 `Resist::NONE`입니다.
+/// 몬스터 종류가 피해와 효과를 받는 방식입니다. 기본 몬스터와 허수아비는 모두 받으므로 `Resist::NONE`이고, 돌격병은 포탑의 피해만 줄여서 받고, 보스는 그에 더해 효과도 줄여서 받습니다.
 /// 이 값을 읽는 곳은 `World::apply_hits`(피해)와 `MonsterEffects`의 `would_take`와 `apply`(효과) 셋이고, 규칙의 다른 곳은 종류를 보고 갈라지지 않습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Resist {
@@ -315,7 +315,8 @@ pub struct MonsterTable {
     /// 마지막 밤의 보스입니다. 걷는 몸은 `grunt`와 같아서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않고, 맞는 몸만 큽니다.
     /// `max_hp`는 밤의 무리와 같은 기준 인원(`WaveScaling`)일 때의 값입니다.
     pub boss: MonsterTuning,
-    /// 마차로 곧장 달려가는 약하고 빠른 몬스터입니다. 걷는 몸과 공격 거리는 `grunt` 이하여서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
+    /// 마차로 곧장 달려가는 약하고 빠른 몬스터입니다. 포탑의 피해를 줄여서 받으므로 포탑이 대신 잡아 주지 못하고 플레이어가 잡아야 합니다.
+    /// 걷는 몸과 공격 거리는 `grunt` 이하여서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
     pub runner: MonsterTuning,
 }
 
@@ -1810,11 +1811,15 @@ impl Default for Tuning {
                     separation_speed: 1.0,
                 },
                 // 기본 몬스터의 반값의 HP와 1.45배의 속도입니다. 플레이어가 걷는 속도(4.0)보다는 느립니다. 플레이어와 포탑을 쫓지 않고 마차로 곧장 가므로 `aggro_range`는 읽히지 않습니다.
+                // 포탑의 피해는 4분의 1만 받습니다. 포탑이 빠른 몬스터를 모두 잡아 주면 마차를 지키는 사람이 필요 없으므로, 사람이 잡아야 하는 몬스터로 만드는 값입니다.
                 runner: MonsterTuning {
                     max_hp: 30,
                     radius: 0.3,
                     hit_margin: 0.0,
-                    resist: Resist::NONE,
+                    resist: Resist {
+                        tower_damage_percent: 25,
+                        ..Resist::NONE
+                    },
                     speed: 3.2,
                     attack_damage: 8,
                     attack_reach: 0.5,

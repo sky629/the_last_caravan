@@ -11,6 +11,7 @@ use crate::kind::MonsterKind;
 use crate::tuning::{
     Debuff, Finale, NightPlan, NightTuning, Pack, Prey, Tuning, Wave, WaveScaling,
 };
+use crate::world::{Hit, Source, Target};
 
 fn wave_of(packs: &[(MonsterKind, u32)]) -> Wave {
     Wave {
@@ -381,6 +382,75 @@ fn a_bleeding_runner_loses_hp_once_a_second() {
     assert_eq!(s.monster(runner).unwrap().hp, full, "not yet");
     s.run_ticks(1);
     assert_eq!(s.monster(runner).unwrap().hp, full - 5);
+}
+
+/// 몬스터 하나가 피해 `amount` 하나를 `by`가 준 것으로 받았을 때 잃은 HP입니다. 몬스터는 죽지 않게 HP를 크게 합니다.
+fn hp_lost_to_one_hit(kind: MonsterKind, by: fn(PlayerId) -> Source, amount: u32) -> u32 {
+    let mut s = Scenario::with_tuning(|t| {
+        t.monsters.grunt.max_hp = 1000;
+        t.monsters.runner.max_hp = 1000;
+    });
+    let owner = s.player_at(2.0, 2.0);
+    let monster = s.monster_of(kind, START.0, START.1);
+    let t = s.sim.tuning().clone();
+
+    s.sim.world_mut().apply_hits(
+        &[Hit {
+            target: Target::Monster(monster),
+            amount,
+            by: by(owner),
+            debuff: None,
+        }],
+        &t,
+    );
+
+    1000 - s.monster(monster).expect("alive").hp
+}
+
+#[test]
+fn a_tower_hit_takes_a_quarter_of_the_damage_off_a_runner_rounded_up_and_all_of_it_off_a_grunt() {
+    let by_tower: fn(PlayerId) -> Source = |_| Source::Tower;
+
+    assert_eq!(hp_lost_to_one_hit(MonsterKind::Runner, by_tower, 100), 25);
+    assert_eq!(
+        hp_lost_to_one_hit(MonsterKind::Runner, by_tower, 15),
+        4,
+        "a quarter of the watchtower's 15 is 3.75, rounded up to 4"
+    );
+    assert_eq!(hp_lost_to_one_hit(MonsterKind::Runner, by_tower, 1), 1);
+    assert_eq!(hp_lost_to_one_hit(MonsterKind::Grunt, by_tower, 100), 100);
+    assert_eq!(hp_lost_to_one_hit(MonsterKind::Grunt, by_tower, 15), 15);
+}
+
+#[test]
+fn a_player_hit_takes_all_of_the_damage_off_a_runner() {
+    assert_eq!(
+        hp_lost_to_one_hit(MonsterKind::Runner, Source::Player, 100),
+        100
+    );
+    assert_eq!(
+        hp_lost_to_one_hit(MonsterKind::Runner, Source::Player, 15),
+        15
+    );
+}
+
+#[test]
+fn a_watchtower_shot_takes_four_hp_off_a_runner_and_fifteen_off_a_grunt() {
+    let hp_lost_to_one_shot = |kind| {
+        let mut s = Scenario::with_tuning(|t| {
+            t.monsters.grunt.max_hp = 1000;
+            t.monsters.runner.max_hp = 1000;
+        });
+        s.tower_at(1, 17);
+        let monster = s.monster_of(kind, 4.0, 17.5);
+
+        s.run_ticks(1);
+
+        1000 - s.monster(monster).expect("alive").hp
+    };
+
+    assert_eq!(hp_lost_to_one_shot(MonsterKind::Runner), 4);
+    assert_eq!(hp_lost_to_one_shot(MonsterKind::Grunt), 15);
 }
 
 #[test]
