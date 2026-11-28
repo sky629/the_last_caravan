@@ -17,11 +17,11 @@ use crate::boss::Act;
 use crate::expedition::{NightStep, Phase};
 use crate::ids::{MonsterId, PlayerId, TowerId};
 use crate::input::{AimDir, PlayerInput};
-use crate::kind::{StructureKind, WeaponKind};
+use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::math::Vec2;
 use crate::player::Life;
 use crate::structures::{Tower, TowerState};
-use crate::tuning::{Debuff, Finale, Tuning};
+use crate::tuning::{Debuff, Finale, NightPlan, Pack, Tuning, Wave};
 use crate::world::Tile;
 
 /// 몬스터 300마리가 1 Tick마다 한 마리씩 나타나서 마차로 몰려드는 기본 맵입니다. 마차와 플레이어는 죽지 않습니다.
@@ -126,6 +126,65 @@ fn perf_the_average_tick_with_the_tower_cap_and_300_monsters_is_a_tenth_of_the_i
     let interval = Duration::from_secs_f32(defaults.dt());
     println!("slowest of 1000 ticks: {slowest:?}");
     check_limit("average of 1000 ticks", total / 1000, interval / 10);
+}
+
+#[test]
+fn perf_the_average_tick_with_the_tower_cap_and_300_grunts_and_runners_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    // 기본 몬스터 200마리와 돌격병 100마리가 한 무리에 섞여 나옵니다. 돌격병은 포탑을 쫓지 않고 마차로 곧장 갑니다.
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| {
+        t.nights.plans = vec![NightPlan {
+            waves: vec![Wave {
+                packs: vec![
+                    Pack {
+                        kind: MonsterKind::Grunt,
+                        count: 200,
+                    },
+                    Pack {
+                        kind: MonsterKind::Runner,
+                        count: 100,
+                    },
+                ],
+            }],
+        }];
+    });
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    let runners = |s: &Scenario| {
+        s.sim
+            .monsters()
+            .filter(|monster| monster.kind == MonsterKind::Runner)
+            .count()
+    };
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+    assert_eq!(runners(&s), 100, "a third of the crowd runs");
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+
+    let mut total = Duration::ZERO;
+    let mut slowest = Duration::ZERO;
+    for _ in 0..1000 {
+        let took = timed_tick(&mut s);
+        total += took;
+        slowest = slowest.max(took);
+    }
+    assert_eq!(
+        s.sim.monsters().count(),
+        300,
+        "300 monsters in every sampled tick"
+    );
+    assert_eq!(runners(&s), 100, "100 runners in every sampled tick");
+    assert_eq!(standing_towers(&s), cap, "the cap in every sampled tick");
+
+    let interval = Duration::from_secs_f32(defaults.dt());
+    println!("slowest of 1000 ticks: {slowest:?}");
+    check_limit(
+        "average of 1000 ticks with 200 grunts and 100 runners",
+        total / 1000,
+        interval / 10,
+    );
 }
 
 #[test]

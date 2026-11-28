@@ -23,6 +23,7 @@ use crate::ids::PlayerId;
 use crate::input::{AimDir, MoveDir, PlayerInput};
 use crate::kind::{MonsterKind, WeaponKind};
 use crate::math::{Rect, Vec2};
+use crate::monster::Monster;
 use crate::sim::Sim;
 use crate::telegraph::Zone;
 use crate::tuning::{Delivery, MapSpec, Tuning, WaveScaling};
@@ -181,7 +182,7 @@ impl Bot {
         let waits_for_the_strike = delayed.is_some();
 
         if self.role == Role::Fighter
-            && let Some(minion) = grunt_within(sim, player.pos, SELF_DEFENCE_REACH)
+            && let Some(minion) = minion_within(sim, player.pos, SELF_DEFENCE_REACH)
         {
             // 졸개가 곁에서 때리면 보스를 때리던 것을 멈추고 그 졸개를 처치합니다. 제자리에서 때립니다.
             return walking(Vec2::ZERO, minion - player.pos, true);
@@ -273,9 +274,9 @@ impl Bot {
             Role::Guard => {
                 let wagon = sim.wagon().rect;
                 match nearest_minion(sim, wagon, from) {
-                    Some(at) => Mission::Strike {
+                    Some((at, kind)) => Mission::Strike {
                         at,
-                        radius: t.monsters.grunt.radius,
+                        radius: t.monsters.get(kind).hit_radius(),
                     },
                     None => Mission::Wait {
                         at: post_beside(wagon, boss),
@@ -294,10 +295,15 @@ enum Mission {
     Wait { at: Vec2 },
 }
 
+/// 보스가 부른 졸개입니다. 이 모의 전투에는 보스와 졸개 말고 다른 몬스터가 없습니다.
+fn is_minion(monster: &Monster) -> bool {
+    monster.kind != MonsterKind::Boss
+}
+
 /// `from`에서 `reach`타일 안에 있는 졸개 가운데 가장 가까운 졸개의 자리입니다.
-fn grunt_within(sim: &Sim, from: Vec2, reach: f32) -> Option<Vec2> {
+fn minion_within(sim: &Sim, from: Vec2, reach: f32) -> Option<Vec2> {
     sim.monsters()
-        .filter(|monster| monster.kind == MonsterKind::Grunt)
+        .filter(|monster| is_minion(monster))
         .map(|monster| monster.pos)
         .filter(|pos| pos.distance(from) < reach)
         .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
@@ -311,13 +317,13 @@ fn nearest_helper(sim: &Sim, at: Vec2) -> Option<PlayerId> {
         .map(|player| player.id)
 }
 
-/// 마차의 가장자리에서 `GUARD_REACH` 안에 있는 졸개 가운데 `from`에서 가장 가까운 졸개의 자리입니다.
-fn nearest_minion(sim: &Sim, wagon: Rect, from: Vec2) -> Option<Vec2> {
+/// 마차의 가장자리에서 `GUARD_REACH` 안에 있는 졸개 가운데 `from`에서 가장 가까운 졸개의 자리와 종류입니다.
+fn nearest_minion(sim: &Sim, wagon: Rect, from: Vec2) -> Option<(Vec2, MonsterKind)> {
     sim.monsters()
-        .filter(|monster| monster.kind == MonsterKind::Grunt)
+        .filter(|monster| is_minion(monster))
         .filter(|monster| wagon.distance_to(monster.pos) < GUARD_REACH)
-        .map(|monster| monster.pos)
-        .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
+        .map(|monster| (monster.pos, monster.kind))
+        .min_by(|(a, _), (b, _)| a.distance(from).total_cmp(&b.distance(from)))
 }
 
 /// 졸개를 막는 플레이어가 기다리는 자리입니다. 마차의 가장자리에서 `GUARD_POST_GAP`만큼 떨어진 곳 가운데 보스 쪽에 가까운 곳입니다.
@@ -457,7 +463,7 @@ fn a_mock_raid_of_each_party_size_and_weapon_against_the_default_numbers() {
 #[test]
 fn a_mock_raid_with_and_without_a_guard_and_with_fewer_towers_is_printed_for_comparison() {
     // 마차 곁에서 졸개를 막는 한 명이 결과를 바꾸는지를 봅니다. 감시탑이 적을수록 졸개가 마차에 닿기 쉽습니다. 출력만 하고 단언하지 않습니다.
-    for towers in [5, 10, 15] {
+    for towers in [3, 5, 10, 15] {
         for guarded in [true, false] {
             let setup = Setup {
                 towers,
