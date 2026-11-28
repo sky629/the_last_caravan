@@ -1258,8 +1258,10 @@ fn a_pack_that_joins_from_a_party_needs_a_pack_of_the_kind_it_stands_in_with_tha
     assert!(why.contains("Scarecrow"), "{why}");
 
     // 정원이 한 명인 방은 파괴병이 나오는 인원에 닿지 못하지만, 파괴병의 수는 언제나 기본 몬스터로 가므로 수치는 성립합니다.
-    let mut t = Tuning::default();
-    t.max_players = 1;
+    let t = Tuning {
+        max_players: 1,
+        ..Tuning::default()
+    };
     assert_eq!(t.validate(), Ok(()), "a room that never has two players");
 
     // 갈 곳이 다른 묶음도 인원에 따라 나오지 않을 수 있으면 그 묶음의 수가 갈 곳을 잃습니다.
