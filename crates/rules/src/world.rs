@@ -229,11 +229,9 @@ impl World {
         }
     }
 
-    /// 플레이어가 내놓은 무기를 `pos`의 바닥에 놓습니다. 시작 무기(`PlayerTuning::start_loadout`)에 있는 종류의 무기는 놓지 않고 사라지게 합니다.
-    /// 입장하는 플레이어가 공짜로 받는 무기이므로, 바닥에 놓이면 입장과 퇴장을 되풀이해서 바닥의 무기를 끝없이 늘릴 수 있기 때문입니다.
-    /// 그래서 바닥의 무기는 모두 상자에서 나온 것입니다.
+    /// 플레이어가 내놓은 무기를 `pos`의 바닥에 놓습니다. 바닥에 놓일 수 없는 종류(`PlayerTuning::may_lie_on_ground`)는 놓지 않고 사라지게 합니다.
     pub(crate) fn set_down_weapon(&mut self, pos: Vec2, kind: WeaponKind, t: &Tuning) {
-        if !t.player.start_loadout.holds(kind) {
+        if t.player.may_lie_on_ground(kind) {
             self.drop_weapon(pos, kind);
         }
     }
@@ -321,7 +319,7 @@ pub(crate) struct Ctx<'a> {
     pub inputs: &'a PlayerInputs,
     pub grid: &'a MonsterGrid,
     pub tick: u64,
-    /// 야영지의 Tick이면 참입니다. 건설 요청(`build::start_builds`)과 무기 버리기(`loot::apply_drops`)를 받지 않습니다.
+    /// 야영지의 Tick이면 참입니다. 건설 요청(`build::start_builds`)과 무기 버리기(`loot::drops_this_tick`)를 받지 않습니다.
     pub practice: bool,
 }
 
