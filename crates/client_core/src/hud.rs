@@ -32,6 +32,8 @@ pub struct Hud {
     pub carry: Option<String>,
     /// 내가 들고 있는 무기와 바꾸는 키입니다. 내 캐릭터가 화면에 있으면 항상 있고, 쓰러졌어도 무기는 들고 있습니다.
     pub weapon: Option<String>,
+    /// 무기를 버리는 키의 안내입니다. `G  DROP`이고, 버릴 수 있을 때만 있습니다. 원정 중에 살아 있고 두 칸에 모두 무기가 있어야 합니다.
+    pub drop_weapon: Option<String>,
     /// 내가 받은 버프의 이름입니다. `HASTE`(공격 속도)와 `SWIFT`(이동 속도) 가운데 받은 것을 두 칸 띄워 적습니다.
     /// 살아 있고 버프가 있을 때만 있고, 결과를 보여 주는 동안에도 없습니다. 다른 플레이어의 버프는 보이지 않습니다.
     pub buffs: Option<String>,
@@ -45,6 +47,8 @@ pub struct Hud {
     pub camp: Option<CampPanel>,
     /// 결과 화면의 가운데에 띄우는 원정의 요약과 개인별 기록의 표입니다. 결과 화면일 때만 있습니다.
     pub debrief: Option<DebriefPanel>,
+    /// 방에서 Esc를 눌렀을 때 화면 가운데에 띄우는 나가기 확인 창입니다. 창이 떠 있는 동안만 있고, 게임은 멈추지 않습니다.
+    pub leave: Option<LeavePanel>,
     pub me: Option<Meter>,
     /// 내 달리기 게이지입니다. 살아 있을 때만 있습니다.
     pub stamina: Option<Meter>,
@@ -90,6 +94,15 @@ pub struct DebriefPanel {
     pub action: String,
     /// 모두가 확인하지 않아도 야영지로 돌아가기까지 남은 시간입니다.
     pub countdown: String,
+}
+
+/// 나가기 확인 창입니다. 질문 한 줄과 두 키가 하는 일입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeavePanel {
+    /// `LEAVE THE ROOM?`입니다.
+    pub title: String,
+    /// `ENTER  LEAVE      ESC  STAY`입니다.
+    pub action: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -167,12 +180,14 @@ impl Hud {
             stash: None,
             carry: None,
             weapon: None,
+            drop_weapon: None,
             buffs: None,
             build: None,
             hint: None,
             banner: None,
             camp: None,
             debrief: None,
+            leave: None,
             me: None,
             stamina: None,
             wagon: None,
@@ -192,6 +207,7 @@ impl Hud {
         };
         if let Some(joined) = session.joined() {
             hud.room = Some(format!("ROOM {}", joined.room));
+            hud.leave = joined.leave_prompt.is_open().then(leave_panel);
         }
         hud.banner = session_banner(session, frame);
 
@@ -282,6 +298,8 @@ impl Hud {
                 // 든 자원은 원정의 것이므로 야영지에서는 보이지 않습니다.
                 if !matches!(frame.phase, WirePhase::Camp { .. }) {
                     hud.carry = Some(carry_text(carried, joined.welcome.world.carry_capacity));
+                    // 버리기는 원정 중에만 되고, 무기가 하나뿐이면 맨손이 되므로 버릴 수 없습니다.
+                    hud.drop_weapon = me.loadout.spare.is_some().then(|| DROP_HINT.to_string());
                 }
                 hud.refusal = build_refusal
                     .map(refusal_text)
@@ -301,6 +319,17 @@ impl Hud {
             }
         }
         hud
+    }
+}
+
+/// 무기를 버리는 키의 안내 문구입니다.
+const DROP_HINT: &str = "G  DROP";
+
+/// 나가기 확인 창의 문구입니다. 방에 들어간 뒤라면 첫 스냅샷을 기다리는 동안과 결과 화면에서도 같습니다.
+fn leave_panel() -> LeavePanel {
+    LeavePanel {
+        title: "LEAVE THE ROOM?".to_string(),
+        action: "ENTER  LEAVE      ESC  STAY".to_string(),
     }
 }
 
@@ -792,6 +821,7 @@ mod tests {
 
     use crate::interp::{MonsterView, PlayerView};
     use crate::launch::DEFAULT_SERVER;
+    use crate::leave::LeavePrompt;
     use crate::start::JoinRequest;
 
     const YOU: u32 = 1;
@@ -1064,6 +1094,70 @@ mod tests {
         archer.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
         let bow = Hud::of(&session, Some(&frame(vec![archer])), INVITE);
         assert_eq!(bow.weapon.as_deref(), Some("WEAPON  [BOW]  SWORD  [Q]"));
+    }
+
+    fn with_two_weapons(life: WireLife) -> PlayerView {
+        let mut me = player(YOU, life);
+        me.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
+        me
+    }
+
+    #[test]
+    fn the_drop_key_is_shown_only_while_it_can_drop_a_weapon() {
+        let session = session_in_room();
+        let shown = |me: PlayerView| Hud::of(&session, Some(&frame(vec![me])), INVITE).drop_weapon;
+        assert_eq!(
+            shown(with_two_weapons(alive(100))).as_deref(),
+            Some("G  DROP")
+        );
+        assert_eq!(
+            shown(player(YOU, alive(100))),
+            None,
+            "the only weapon is never dropped"
+        );
+
+        let downed = WireLife::Downed {
+            bleed_secs_left: 20.0,
+            revive_progress: None,
+        };
+        assert_eq!(shown(with_two_weapons(downed)), None, "downed");
+        assert_eq!(shown(with_two_weapons(WireLife::Dead)), None, "dead");
+        assert_eq!(Hud::of(&session, None, INVITE).drop_weapon, None);
+    }
+
+    #[test]
+    fn the_drop_key_is_not_shown_in_the_camp_or_the_result_or_for_an_ally() {
+        let session = session_in_room();
+        let phases = [
+            WirePhase::Camp {
+                ready: vec![],
+                starting_in: None,
+                struck: vec![],
+            },
+            WirePhase::Debrief {
+                outcome: WireOutcome::Victory,
+                secs_left: 5.0,
+                confirmed: vec![],
+            },
+        ];
+        for phase in phases {
+            let mut frame = frame(vec![with_two_weapons(alive(100))]);
+            frame.phase = phase.clone();
+            assert_eq!(
+                Hud::of(&session, Some(&frame), INVITE).drop_weapon,
+                None,
+                "{phase:?}"
+            );
+        }
+
+        let mut ally = player(2, alive(100));
+        ally.loadout = loadout(WireWeaponKind::Bow, Some(WireWeaponKind::Sword));
+        let hud = Hud::of(
+            &session,
+            Some(&frame(vec![player(YOU, alive(100)), ally])),
+            INVITE,
+        );
+        assert_eq!(hud.drop_weapon, None, "only my weapons count");
     }
 
     #[test]
@@ -2333,5 +2427,68 @@ mod tests {
         );
 
         assert_eq!(hud.boss, None);
+    }
+
+    fn with_the_leave_prompt_open(mut session: Session) -> Session {
+        let Session::InRoom(joined) = &mut session else {
+            panic!("in the room");
+        };
+        joined.leave_prompt = LeavePrompt::Open;
+        session
+    }
+
+    #[test]
+    fn the_leave_prompt_asks_and_names_both_keys_only_while_it_is_open() {
+        let frame = frame(vec![player(YOU, alive(100))]);
+
+        let closed = Hud::of(&session_in_room(), Some(&frame), INVITE);
+        assert_eq!(closed.leave, None);
+
+        let session = with_the_leave_prompt_open(session_in_room());
+        let open = Hud::of(&session, Some(&frame), INVITE);
+        assert_eq!(
+            open.leave,
+            Some(LeavePanel {
+                title: "LEAVE THE ROOM?".to_string(),
+                action: "ENTER  LEAVE      ESC  STAY".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn the_leave_prompt_is_asked_in_every_part_of_the_room_and_the_game_behind_it_is_still_shown() {
+        let session = with_the_leave_prompt_open(session_in_room());
+        let phases = [
+            WirePhase::Camp {
+                ready: vec![],
+                starting_in: None,
+                struck: vec![],
+            },
+            WirePhase::Day {
+                day: 1,
+                secs_left: 60.0,
+            },
+            WirePhase::Debrief {
+                outcome: WireOutcome::Defeat,
+                secs_left: 5.0,
+                confirmed: vec![],
+            },
+        ];
+        for phase in phases {
+            let mut frame = frame(vec![player(YOU, alive(100))]);
+            frame.phase = phase.clone();
+
+            let hud = Hud::of(&session, Some(&frame), INVITE);
+
+            assert!(hud.leave.is_some(), "{phase:?}");
+            assert!(
+                hud.wagon.is_some(),
+                "the world goes on behind it: {phase:?}"
+            );
+        }
+        assert!(
+            Hud::of(&session, None, INVITE).leave.is_some(),
+            "before the first snapshot"
+        );
     }
 }

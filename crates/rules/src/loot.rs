@@ -1,11 +1,12 @@
 //! 낮에 찾는 무기입니다. 낮이 시작될 때 후보 자리 가운데 몇 곳에 무기 상자가 놓이고 상자마다 몬스터가 지킵니다.
-//! 바닥에 놓인 무기를 플레이어가 F를 한 번 눌러서 줍습니다.
+//! 바닥에 놓인 무기를 플레이어가 F를 한 번 눌러서 줍고, G를 한 번 눌러서 든 무기를 선 자리의 바닥에 버립니다.
 //!
 //! ```text
 //!   낮이 시작됨 --> 상자(자리와 내용이 씨앗에서 정해짐) + 그 둘레의 몬스터 3마리
 //!   상자 --(F를 1.5초 끊지 않고 누름)--> 사라지고, 그 타일의 중심에 상자 안의 무기가 바닥의 무기로 놓임
 //!   상자 --(밤이 시작됨)--> 사라짐(몬스터는 마차를 향함)
 //!   바닥의 무기 --(F를 누른 순간)--> 플레이어의 빈 칸, 또는 든 무기와 맞바꿈(이전 무기가 그 자리에 놓임, 시작 무기와 같은 종류는 사라짐)
+//!   든 무기(다른 칸에도 무기가 있음) --(G를 누른 순간)--> 플레이어가 선 자리의 바닥의 무기, 다른 칸의 무기를 듦(시작 무기와 같은 종류는 사라짐)
 //!   바닥의 무기 --(원정이 끝남)--> 사라짐
 //!   진열대(야영지) --(F를 누른 순간)--> 플레이어의 빈 칸, 또는 든 무기와 맞바꿈(내준 무기는 사라짐). 진열대는 그대로 남음
 //! ```
@@ -18,6 +19,7 @@
 //! 포탑과 같이 `layout_revision`을 올리므로 몬스터의 이동 경로가 다시 만들어집니다.
 //! 바닥의 무기는 땅에 떨어진 자원(`Pile`)처럼 길을 막지 않고, 원정이 끝날 때까지 그 자리에 남습니다.
 //! 자원은 걸어서 지나가면 자동으로 줍지만 무기는 누른 순간에만 줍습니다. 자동으로 줍으면 서 있기만 해도 두 무기가 계속 서로 바뀌기 때문입니다.
+//! 칸이 모두 찬 채로 줍기만 하면 든 무기가 줍는 무기와 같은 자리에 놓여서 겹치므로, 버리기로 칸을 먼저 비우면 겹치지 않고 원하는 무기를 줍습니다.
 //!
 //! 무작위는 `dice`가 만드는 `Rng`로만 쓰고, `Rng`는 이 모듈 밖에서 만들 수 없습니다. 무작위를 쓰는 함수는 `roll_day` 하나입니다.
 
@@ -37,7 +39,7 @@ use crate::monster::Order;
 use crate::player::{Interaction, Life, Player};
 use crate::spawn::SpawnPlan;
 use crate::tuning::Tuning;
-use crate::world::{Tile, World};
+use crate::world::{Ctx, Tile, World};
 
 /// 무기 상자입니다. 타일 하나를 차지하고 길을 막습니다. 내용은 상자가 놓일 때 정해지고, 스냅샷에는 실리지 않습니다.
 /// `contents`가 이 크레이트 안에서만 보이므로, 프로토콜 크레이트가 내용을 읽으면 컴파일되지 않습니다.
@@ -250,6 +252,41 @@ pub(crate) fn nearest_pickup(
         }
     }
     nearest.map(|(_, pickup, kind)| (pickup, kind))
+}
+
+/// 이번 Tick에 G를 눌러서 든 무기를 버리는 플레이어들을 플레이어 번호 순서로 처리하고, 실제로 버린 플레이어의 번호를 돌려줍니다.
+/// 든 무기가 플레이어가 선 자리의 바닥에 놓이고, 다른 칸의 무기를 듭니다. 다른 칸이 비어 있으면 버리지 않으므로 맨손이 되지 않습니다.
+/// 시작 무기(`PlayerTuning::start_loadout`)와 같은 종류는 바닥에 놓이지 않고 사라집니다(`World::set_down_weapon`). 그래서 바닥의 무기는 여전히 모두 상자에서 나온 것입니다.
+/// 살아 있고, 자리에 있고, 하고 있는 일이 없는 플레이어만 버립니다. 야영지에서는 아무도 버리지 않아서 야영지의 바닥에는 무기가 놓이지 않습니다.
+/// 부르는 쪽은 버린 플레이어의 같은 Tick의 줍기를 하지 않습니다. 버린 무기를 곧바로 다시 줍지 않게 하기 위해서입니다.
+pub(crate) fn apply_drops(world: &mut World, ctx: &Ctx) -> BTreeSet<PlayerId> {
+    let mut dropped = BTreeSet::new();
+    if ctx.practice {
+        return dropped;
+    }
+    let droppers: Vec<PlayerId> = world
+        .players
+        .values()
+        .filter(|player| player.is_free_to_act() && player.is_present())
+        .filter(|player| {
+            ctx.inputs
+                .get(&player.id)
+                .is_some_and(|input| input.drop_weapon)
+        })
+        .map(|player| player.id)
+        .collect();
+    for id in droppers {
+        let Some(player) = world.players.get_mut(&id) else {
+            continue;
+        };
+        let Some(left_behind) = player.loadout.drop_held() else {
+            continue;
+        };
+        let pos = player.pos;
+        world.set_down_weapon(pos, left_behind, ctx.t);
+        dropped.insert(id);
+    }
+    dropped
 }
 
 /// 이번 Tick에 F를 눌러서 바닥의 무기를 줍는 플레이어들을 플레이어 번호 순서로 처리합니다.

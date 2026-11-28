@@ -212,6 +212,7 @@ fn run(options: &Options) -> Result<(), String> {
                     toggle_ready,
                     confirm,
                     cycle_tower: false,
+                    drop_weapon: false,
                 }),
             )?;
             next_input += tick_period;

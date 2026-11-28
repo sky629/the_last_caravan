@@ -392,7 +392,7 @@ impl Player {
     }
 }
 
-/// 상호작용 키(F)와 건설 키(B)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활, 수리, 채집, 건설을 계속하거나, 새로 시작하거나, 취소합니다.
+/// 상호작용 키(F)와 건설 키(B)와 무기 버리기 키(G)를 처리합니다. 키를 누르고 있는 살아 있는 플레이어마다 부활, 수리, 채집, 건설을 계속하거나, 새로 시작하거나, 취소합니다.
 ///
 /// 진행 중인 부활은 키를 누르고 있고, 대상이 여전히 쓰러진 동료이고, 거리가 범위 안인 동안만 이어집니다.
 /// 공격받는 것은 조건이 아닙니다. 조건이 하나라도 깨지면 `Interaction` 값을 버리므로 진행도가 처음으로 돌아갑니다.
@@ -407,6 +407,9 @@ impl Player {
 /// F로 할 일이 있으면 B보다 먼저입니다. 이미 짓고 있는 건설은 B를 누르고 있는 한 이어지고, F를 눌러도 바뀌지 않습니다.
 /// F로 할 일이 없고 B를 누르고 있으면 건설 요청으로 모아서 `build::start_builds`가 번호 순서로 하나씩 판정합니다.
 /// 건설의 진행과 완료와 취소는 `structures::advance_construction`이 정합니다.
+///
+/// 무기 버리기(G)는 이번 Tick의 하는 일이 정해진 뒤에, 하고 있는 일이 없는 플레이어에게만 하고(`loot::apply_drops`), 줍기보다 먼저입니다.
+/// 버린 플레이어의 같은 Tick의 줍기는 하지 않으므로, 같은 Tick에 G와 F가 함께 와도 버리기만 합니다.
 pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
     let holding = |id: PlayerId| ctx.inputs.get(&id).is_some_and(|input| input.interact);
@@ -561,6 +564,8 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
     }
     apply_repairs(world, &repairs, t);
     resources::apply_gathers(world, &gathers, t);
+    let dropped = loot::apply_drops(world, ctx);
+    pickups.retain(|(id, _)| !dropped.contains(id));
     loot::apply_pickups(world, &pickups, t);
     build::start_builds(world, ctx, &build_requests);
 }
