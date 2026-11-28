@@ -894,29 +894,36 @@ fn perf_the_average_tick_with_the_boss_in_a_crowd_of_300_the_tower_cap_and_four_
     assert_eq!(s.sim.monsters().count(), 300, "the boss is the 300th");
     assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
 
-    // 보스가 걷고 내려찍기를 거듭하는 동안을 잽니다.
+    // 보스가 걷고, 내려찍고, 돌진하고, 졸개를 부르기를 거듭하는 동안을 잽니다. 졸개를 부르는 시점에는 몬스터가 이미 상한이라서 더 나타나지 못합니다.
     let mut total = Duration::ZERO;
     let mut slowest = Duration::ZERO;
-    let mut slams = 0;
-    let mut was_slamming = false;
+    let (mut slams, mut charges, mut roars) = (0, 0, 0);
+    let mut before = None;
     for _ in 0..3000 {
         let took = timed_tick(&mut s);
         total += took;
         slowest = slowest.max(took);
-        let slamming = matches!(s.sim.boss().map(|boss| &boss.act), Some(Act::Slamming(_)));
-        if slamming && !was_slamming {
-            slams += 1;
+        let now = s.sim.boss().map(|boss| std::mem::discriminant(&boss.act));
+        if now != before {
+            match s.sim.boss().map(|boss| &boss.act) {
+                Some(Act::Slamming(_)) => slams += 1,
+                Some(Act::Winding { .. }) => charges += 1,
+                Some(Act::Roaring { .. }) => roars += 1,
+                Some(Act::Walking { .. } | Act::Charging(_)) | None => {}
+            }
         }
-        was_slamming = slamming;
+        before = now;
     }
     assert!(s.sim.boss().is_some(), "the boss lived");
     assert!(slams >= 5, "the boss slammed again and again: {slams}");
+    assert!(charges >= 3, "the boss charged again and again: {charges}");
+    assert!(roars >= 3, "the boss roared again and again: {roars}");
     assert_eq!(
         s.sim.monsters().count(),
         300,
         "300 monsters in every sampled tick"
     );
-    println!("slowest of 3000 ticks: {slowest:?}; {slams} slams");
+    println!("slowest of 3000 ticks: {slowest:?}; {slams} slams, {charges} charges, {roars} roars");
     let interval = Duration::from_secs_f32(defaults.dt());
     check_limit(
         "average of 3000 ticks with the boss in the crowd",
