@@ -216,7 +216,7 @@ fn rest_ticks(hp: u32, max_hp: u32, cfg: &BossTuning, t: &Tuning) -> u32 {
     })
 }
 
-/// 보스가 나타날 자리입니다. 밤의 무리가 나타나는 자리 가운데 마지막 무리 다음 순번의 방향에서 첫째 자리입니다.
+/// 보스가 나타날 자리입니다. 마지막 무리 다음 순번의 방향에서 보스 종류의 `spawn_side`가 정하는 쪽(그 방향이나 정반대 방향)의 첫째 자리입니다.
 pub(crate) fn arrival_spot(spawns: &SpawnPlan, t: &Tuning) -> Vec2 {
     spawns.night_spot(t.nights.wave_total(), 0, t.monsters.boss.spawn_side)
 }
