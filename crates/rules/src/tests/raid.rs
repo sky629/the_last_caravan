@@ -53,6 +53,9 @@ const GUARD_POST_GAP: f32 = 1.5;
 /// 보스를 때리는 사람이 아무도 서 있지 않을 때만 마차를 지키는 사람이 갑니다(`reviver_of`).
 const GUARD_REACH: f32 = 6.0;
 
+/// 곧장 가는 선 위에 막힌 타일이 있는지 살피는 간격(타일)입니다. 타일 한 칸보다 훨씬 작아서 모서리를 지나치지 않습니다.
+const CLEAR_LINE_STEP: f32 = 0.25;
+
 /// 마차를 지키는 한 명이 있는 쪽과 없는 쪽이 둘 다 보스를 잡았을 때, 있는 쪽이 낫다고 보는 마차의 HP 차이입니다.
 const GUARD_WORTH: u32 = 50;
 
@@ -70,18 +73,18 @@ struct Raid {
 
 /// 모의 전투의 플레이어가 하는 일입니다.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Role {
+pub(super) enum Role {
     /// 보스에게 다가가서 때립니다.
     Fighter,
     /// 마차를 지킵니다.
     Guard,
 }
 
-struct Bot {
-    id: PlayerId,
-    role: Role,
+pub(super) struct Bot {
+    pub(super) id: PlayerId,
+    pub(super) role: Role,
     /// 예고된 영역의 기록입니다. 앞에 있는 것이 `REACTION_TICKS` Tick 전에 보인 영역이고 그것을 보고 움직입니다.
-    seen: VecDeque<Option<Zone>>,
+    pub(super) seen: VecDeque<Option<Zone>>,
 }
 
 /// 보스가 지금 예고하거나 달리는 영역입니다. 걷거나 포효하는 동안에는 없습니다.
@@ -154,7 +157,7 @@ fn stand_off(t: &Tuning, weapon: WeaponKind, target_radius: f32) -> f32 {
     }
 }
 
-fn walking(step: Vec2, aim: Vec2, attack: bool) -> PlayerInput {
+pub(super) fn walking(step: Vec2, aim: Vec2, attack: bool) -> PlayerInput {
     PlayerInput {
         move_dir: MoveDir::new(step.x, step.y),
         aim: AimDir::new(aim.x, aim.y),
@@ -165,7 +168,7 @@ fn walking(step: Vec2, aim: Vec2, attack: bool) -> PlayerInput {
 
 impl Bot {
     /// 이번 Tick의 입력입니다. `roster`는 방에 있는 모든 플레이어의 번호와 하는 일이고, 누가 쓰러진 동료를 부활시키러 가는지 정하는 데 읽습니다.
-    fn input(&mut self, sim: &Sim, roster: &[(PlayerId, Role)]) -> PlayerInput {
+    pub(super) fn input(&mut self, sim: &Sim, roster: &[(PlayerId, Role)]) -> PlayerInput {
         self.seen.push_back(zone_now(sim));
         let Some(player) = sim.player(self.id).filter(|player| player.is_alive()) else {
             return PlayerInput::default();
@@ -198,30 +201,8 @@ impl Bot {
             // 졸개가 곁에서 때리면 보스를 때리던 것을 멈추고 그 졸개를 처치합니다.
             return swing;
         }
-        let downed_ally = sim
-            .players()
-            .filter(|other| other.id != self.id && other.is_downed())
-            .filter(|other| reviver_of(sim, roster, other) == Some(self.id))
-            .min_by(|a, b| {
-                (a.pos - player.pos)
-                    .length()
-                    .total_cmp(&(b.pos - player.pos).length())
-            });
-        if let Some(ally) = downed_ally {
-            // 쓰러진 동료에게 가서 F를 누르고 있습니다. 부활시키는 동안에는 공격하지 않습니다.
-            let to = ally.pos - player.pos;
-            let reach = t.revive.range * 0.6;
-            let step = if to.length() > reach {
-                to.normalize_or_zero()
-            } else {
-                Vec2::ZERO
-            };
-            return PlayerInput {
-                move_dir: MoveDir::new(step.x, step.y),
-                aim: AimDir::new(to.x, to.y),
-                interact: true,
-                ..PlayerInput::default()
-            };
+        if let Some(revive) = revive_input(sim, roster, player) {
+            return revive;
         }
         match self.role {
             Role::Fighter => strike_the_boss(sim, player, boss, waits_for_the_strike),
@@ -230,8 +211,38 @@ impl Bot {
     }
 }
 
+/// `me`가 쓰러진 동료를 부활시키러 가는 사람(`reviver_of`)이면 가장 가까운 그 동료에게 가서 F를 누르고 있는 입력입니다. 부활시키는 동안에는 공격하지 않습니다.
+pub(super) fn revive_input(
+    sim: &Sim,
+    roster: &[(PlayerId, Role)],
+    me: &Player,
+) -> Option<PlayerInput> {
+    let ally = sim
+        .players()
+        .filter(|other| other.id != me.id && other.is_downed())
+        .filter(|other| reviver_of(sim, roster, other) == Some(me.id))
+        .min_by(|a, b| {
+            (a.pos - me.pos)
+                .length()
+                .total_cmp(&(b.pos - me.pos).length())
+        })?;
+    let to = ally.pos - me.pos;
+    let reach = sim.tuning().revive.range * 0.6;
+    let step = if to.length() > reach {
+        to.normalize_or_zero()
+    } else {
+        Vec2::ZERO
+    };
+    Some(PlayerInput {
+        move_dir: MoveDir::new(step.x, step.y),
+        aim: AimDir::new(to.x, to.y),
+        interact: true,
+        ..PlayerInput::default()
+    })
+}
+
 /// 보스를 때리는 플레이어의 입력입니다. 보스에게서 마차의 반대쪽에 서서 보스가 따라오며 마차에서 멀어지게 하고, 제자리에서 보스를 때립니다.
-/// 예고된 영역의 밖에서 영역이 사라지기를 기다리는 동안(`waits_for_the_strike`)에는 걷지 않습니다.
+/// 서는 자리까지는 마차와 감시탑을 돌아서 길을 따라 걷습니다. 예고된 영역의 밖에서 영역이 사라지기를 기다리는 동안(`waits_for_the_strike`)에는 걷지 않습니다.
 fn strike_the_boss(
     sim: &Sim,
     player: &Player,
@@ -249,9 +260,8 @@ fn strike_the_boss(
             spot.x.clamp(EDGE_MARGIN, t.map.width - EDGE_MARGIN),
             spot.y.clamp(EDGE_MARGIN, t.map.height - EDGE_MARGIN),
         );
-        let to_spot = spot - player.pos;
-        if to_spot.length() > 0.5 {
-            to_spot.normalize_or_zero()
+        if spot.distance(player.pos) > 0.5 {
+            walk_toward(sim, player.pos, spot)
         } else {
             Vec2::ZERO
         }
@@ -262,7 +272,7 @@ fn strike_the_boss(
 /// 마차를 지키는 플레이어의 입력입니다. 곁에 온 졸개는 제자리에서 벱니다. 곁에 졸개가 없으면 마차에 가장 가까운 졸개가 있는 쪽의 마차 가장자리에서
 /// `GUARD_POST_GAP`타일 떨어진 자리로 길을 따라 걸어가고, 닿으면 그 졸개를 보며 기다립니다. 졸개가 없으면 서 있습니다.
 /// 예고된 영역의 밖에서 영역이 사라지기를 기다리는 동안(`waits_for_the_strike`)에는 걷지 않습니다.
-fn guard_the_wagon(sim: &Sim, at: Vec2, waits_for_the_strike: bool) -> PlayerInput {
+pub(super) fn guard_the_wagon(sim: &Sim, at: Vec2, waits_for_the_strike: bool) -> PlayerInput {
     if let Some(swing) = swing_at_minion_beside(sim, at) {
         return swing;
     }
@@ -291,8 +301,27 @@ fn guard_the_wagon(sim: &Sim, at: Vec2, waits_for_the_strike: bool) -> PlayerInp
     walking(step, threat - at, false)
 }
 
+/// `at`에서 `to`로 향해 걷는 방향입니다. 곧장 가는 선 위에 막힌 타일이 없으면 곧장 걷고, 막혀 있으면(마차나 감시탑 너머로 가는 경우) 길을 따라 돌아갑니다.
+fn walk_toward(sim: &Sim, at: Vec2, to: Vec2) -> Vec2 {
+    let tiles = sim.tiles();
+    let straight = to - at;
+    let samples = (straight.length() / CLEAR_LINE_STEP).ceil() as u32;
+    let is_clear = (1..=samples).all(|n| {
+        let point = at + straight * (n as f32 / samples as f32);
+        tiles.is_free(tiles.tile_at(point))
+    });
+    if is_clear {
+        return straight.normalize_or_zero();
+    }
+    let goal = tiles.nearest_free(to).unwrap_or_else(|| tiles.tile_at(to));
+    FlowField::toward(tiles, &[goal])
+        .next_waypoint(tiles, at)
+        .map_or(straight, |waypoint| waypoint - at)
+        .normalize_or_zero()
+}
+
 /// 곁(`SWING_REACH`타일 안)에 졸개가 있으면 가장 가까운 졸개를 제자리에서 베는 입력입니다.
-fn swing_at_minion_beside(sim: &Sim, at: Vec2) -> Option<PlayerInput> {
+pub(super) fn swing_at_minion_beside(sim: &Sim, at: Vec2) -> Option<PlayerInput> {
     let minion = sim
         .monsters()
         .filter(|monster| is_minion(monster))
@@ -303,14 +332,18 @@ fn swing_at_minion_beside(sim: &Sim, at: Vec2) -> Option<PlayerInput> {
 }
 
 /// 보스가 아닌 몬스터입니다. 보스의 밤에는 보스가 부른 졸개이고, 보스가 없는 밤의 측정에서는 밤의 무리입니다.
-fn is_minion(monster: &Monster) -> bool {
+pub(super) fn is_minion(monster: &Monster) -> bool {
     monster.kind != MonsterKind::Boss
 }
 
 /// 쓰러진 플레이어 `downed`를 부활시키러 가는 사람입니다. 갈 수 있는 서 있는 사람 가운데 가장 가까운 한 명이고, 부활시키러 가는 사람은 이 한 명뿐입니다.
 /// 보스를 때리는 사람은 어디든 가고, 마차를 지키는 사람은 마차 곁(`GUARD_REACH`타일 안)의 동료에게만 갑니다.
 /// 다만 보스를 때리는 사람이 아무도 서 있지 않으면 마차를 지키는 사람이 먼 동료에게도 갑니다. 아무도 가지 않으면 쓰러진 동료가 출혈로 죽기 때문입니다.
-fn reviver_of(sim: &Sim, roster: &[(PlayerId, Role)], downed: &Player) -> Option<PlayerId> {
+pub(super) fn reviver_of(
+    sim: &Sim,
+    roster: &[(PlayerId, Role)],
+    downed: &Player,
+) -> Option<PlayerId> {
     let standing: Vec<(&Player, Role)> = roster
         .iter()
         .filter_map(|&(id, role)| {
@@ -720,5 +753,27 @@ fn a_far_downed_fighter_gets_a_guard_who_walks_to_revive_it_when_it_is_the_only_
     assert!(
         input.move_dir.get().x > 0.0,
         "and walks toward the fighter, away from the wagon"
+    );
+}
+
+#[test]
+fn a_fighter_across_the_wagon_from_the_boss_walks_around_the_wagon_to_reach_it() {
+    // 보스가 마차의 동쪽에 있고 보스를 때리는 사람이 마차의 서쪽에 있으면, 곧장 걸어가면 마차의 벽에 막혀서 서 있게 됩니다. 길을 따라 돌아가야 마차의 동쪽에 닿습니다.
+    let mut s = Scenario::default_game(|_| {});
+    let fighter = s.player_at(28.5, 32.0);
+    let boss = Vec2::new(38.0, 32.0);
+    let wagon_east_edge = s.sim.wagon().rect.max.x;
+
+    for _ in 0..s.ticks(15.0) {
+        let me = s.player(fighter).clone();
+        let input = strike_the_boss(&s.sim, &me, boss, false);
+        s.hold(fighter, input);
+        s.run_ticks(1);
+    }
+
+    assert!(
+        s.player(fighter).pos.x > wagon_east_edge,
+        "the fighter is still at {:?}, on the far side of the wagon",
+        s.player(fighter).pos
     );
 }
