@@ -188,6 +188,78 @@ fn perf_the_average_tick_with_the_tower_cap_and_300_grunts_and_runners_is_a_tent
 }
 
 #[test]
+fn perf_the_average_tick_with_the_tower_cap_and_300_grunts_runners_and_sappers_is_a_tenth_of_the_interval_at_most()
+ {
+    let defaults = Tuning::default();
+    let cap = defaults.village.tower_limit as usize;
+    let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
+    // 기본 몬스터, 돌격병, 파괴병이 백 마리씩 한 무리에 섞여 나옵니다. 감시탑은 부서지지 않아서, 파괴병은 감시탑 곁에서 계속 때립니다.
+    let mut s = village_under_siege_with(towers, u32::MAX, |t| {
+        let pack = |kind| Pack { kind, count: 100 };
+        t.nights.plans = vec![NightPlan {
+            waves: vec![Wave {
+                packs: vec![
+                    pack(MonsterKind::Grunt),
+                    pack(MonsterKind::Runner),
+                    pack(MonsterKind::Sapper),
+                ],
+            }],
+        }];
+    });
+    until_the_crowd_is_there(&mut s);
+    s.run_ticks(600);
+    let of_kind = |s: &Scenario, kind| {
+        s.sim
+            .monsters()
+            .filter(|monster| monster.kind == kind)
+            .count()
+    };
+    assert_eq!(s.sim.monsters().count(), 300, "nobody died");
+    assert_eq!(
+        of_kind(&s, MonsterKind::Sapper),
+        100,
+        "a third of the crowd breaks towers"
+    );
+    assert_eq!(standing_towers(&s), cap, "the tower cap is reached");
+    let sappers_hitting = s
+        .sim
+        .monsters()
+        .filter(|monster| monster.kind == MonsterKind::Sapper && monster.last_attack_tick.is_some())
+        .count();
+    assert!(
+        sappers_hitting > 0,
+        "the sappers reached the towers and hit them"
+    );
+
+    let mut total = Duration::ZERO;
+    let mut slowest = Duration::ZERO;
+    for _ in 0..1000 {
+        let took = timed_tick(&mut s);
+        total += took;
+        slowest = slowest.max(took);
+    }
+    assert_eq!(
+        s.sim.monsters().count(),
+        300,
+        "300 monsters in every sampled tick"
+    );
+    assert_eq!(
+        of_kind(&s, MonsterKind::Sapper),
+        100,
+        "100 sappers in every sampled tick"
+    );
+    assert_eq!(standing_towers(&s), cap, "the cap in every sampled tick");
+
+    let interval = Duration::from_secs_f32(defaults.dt());
+    println!("slowest of 1000 ticks: {slowest:?}");
+    check_limit(
+        "average of 1000 ticks with 100 grunts, 100 runners and 100 sappers",
+        total / 1000,
+        interval / 10,
+    );
+}
+
+#[test]
 fn perf_the_average_tick_with_300_monsters_under_every_effect_is_a_tenth_of_the_interval_at_most() {
     let defaults = Tuning::default();
     let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
