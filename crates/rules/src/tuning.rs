@@ -232,7 +232,9 @@ pub struct MonsterTuning {
     /// 몬스터의 가장자리에서 대상의 가장자리까지 잰 근접 공격 거리입니다. 근접 공격을 하지 않는 몬스터에게는 대상에게 다가가서 멈추는 거리입니다.
     pub attack_reach: f32,
     pub attack_cooldown_secs: f32,
-    /// 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 포탑을 쫓습니다.
+    /// 마차로 가는 도중에 무엇을 쫓는지입니다.
+    pub prey: Prey,
+    /// `Prey::Nearby`인 몬스터가 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 포탑을 쫓습니다. 다른 몬스터는 읽지 않습니다.
     /// 몬스터의 중심에서 대상의 가장자리까지 잰 거리입니다.
     pub aggro_range: f32,
     /// 몬스터끼리 겹쳤을 때 서로 밀려나는 최대 속도입니다. 걷는 속도와 더한 값으로 한 Tick에 움직이는 거리가
@@ -245,6 +247,16 @@ impl MonsterTuning {
     pub fn hit_radius(&self) -> f32 {
         self.radius + self.hit_margin
     }
+}
+
+/// 마차로 가는 몬스터가 가는 도중에 무엇을 쫓는지입니다. 이 값을 읽는 곳은 `monster::raid_goal` 하나입니다.
+/// 맞아도 쫓는 대상이 바뀌지 않는 것은 별도의 규칙이 아니라, 몬스터가 목표를 기억하지 않고 Tick마다 이 값으로 새로 고르기 때문입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prey {
+    /// 추적 거리(`MonsterTuning::aggro_range`) 안의 가장 가까운 플레이어나 포탑을 쫓고, 없으면 마차로 갑니다.
+    Nearby,
+    /// 아무것도 쫓지 않고 마차로 곧장 갑니다.
+    Wagon,
 }
 
 /// 몬스터 종류가 피해와 효과를 받는 방식입니다. 보통 몬스터는 모두 받으므로 `Resist::NONE`입니다.
@@ -1684,6 +1696,7 @@ impl Default for Tuning {
                     attack_damage: 10,
                     attack_reach: 0.5,
                     attack_cooldown_secs: 1.0,
+                    prey: Prey::Nearby,
                     aggro_range: 5.0,
                     separation_speed: 1.0,
                 },
@@ -1696,6 +1709,7 @@ impl Default for Tuning {
                     attack_damage: 0,
                     attack_reach: 0.0,
                     attack_cooldown_secs: 1.0,
+                    prey: Prey::Nearby,
                     aggro_range: 0.0,
                     separation_speed: 0.0,
                 },
@@ -1714,6 +1728,7 @@ impl Default for Tuning {
                     attack_damage: 0,
                     attack_reach: 0.5,
                     attack_cooldown_secs: 1.0,
+                    prey: Prey::Nearby,
                     aggro_range: 0.0,
                     separation_speed: 1.0,
                 },
