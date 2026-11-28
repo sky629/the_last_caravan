@@ -21,10 +21,10 @@ fn raid_tuning() -> Tuning {
     tuning.nights.spawn_interval_secs = 0.05;
     tuning.nights.plans = vec![caravan_rules::NightPlan {
         waves: vec![caravan_rules::Wave {
-            packs: vec![caravan_rules::Pack {
-                kind: caravan_rules::MonsterKind::Grunt,
-                count: 20,
-            }],
+            packs: vec![caravan_rules::Pack::always(
+                caravan_rules::MonsterKind::Grunt,
+                20,
+            )],
         }],
     }];
     tuning

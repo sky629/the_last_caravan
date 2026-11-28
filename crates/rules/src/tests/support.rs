@@ -552,10 +552,7 @@ pub(crate) fn nights(counts: &[&[u32]]) -> Vec<NightPlan> {
             waves: waves
                 .iter()
                 .map(|&count| Wave {
-                    packs: vec![Pack {
-                        kind: MonsterKind::Grunt,
-                        count,
-                    }],
+                    packs: vec![Pack::always(MonsterKind::Grunt, count)],
                 })
                 .collect(),
         })

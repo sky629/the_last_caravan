@@ -139,14 +139,8 @@ fn perf_the_average_tick_with_the_tower_cap_and_300_grunts_and_runners_is_a_tent
         t.nights.plans = vec![NightPlan {
             waves: vec![Wave {
                 packs: vec![
-                    Pack {
-                        kind: MonsterKind::Grunt,
-                        count: 200,
-                    },
-                    Pack {
-                        kind: MonsterKind::Runner,
-                        count: 100,
-                    },
+                    Pack::always(MonsterKind::Grunt, 200),
+                    Pack::always(MonsterKind::Runner, 100),
                 ],
             }],
         }];
@@ -195,7 +189,7 @@ fn perf_the_average_tick_with_the_tower_cap_and_300_grunts_runners_and_sappers_i
     let towers = defaults.spread_tower_sites(defaults.village.tower_limit);
     // 기본 몬스터, 돌격병, 파괴병이 백 마리씩 한 무리에 섞여 나옵니다. 감시탑은 부서지지 않아서, 파괴병은 감시탑 곁에서 계속 때립니다.
     let mut s = village_under_siege_with(towers, u32::MAX, |t| {
-        let pack = |kind| Pack { kind, count: 100 };
+        let pack = |kind| Pack::always(kind, 100);
         t.nights.plans = vec![NightPlan {
             waves: vec![Wave {
                 packs: vec![
