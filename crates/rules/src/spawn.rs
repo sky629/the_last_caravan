@@ -1,14 +1,14 @@
 //! 몬스터가 나타나는 자리입니다. 밤의 몬스터가 나타나는 자리와, 낮의 몬스터가 채집 지점과 무기 상자를 지키는 자리가 있습니다.
 //!
 //! 밤의 자리는 마차를 둘러싼 여덟 방향마다 정합니다. 마차의 가장자리에서 `spawn_distance`만큼 떨어진 곳에,
-//! 방향에 수직으로 `spawn_lanes`줄이 나란히 섭니다. 낮의 자리는 채집 지점과 상자의 후보 자리마다 그 타일에 이웃한 빈 타일입니다.
+//! 방향에 수직으로 `spawn_lanes`줄이 나란히 섭니다. 무리마다 방향이 하나 정해지고, 종류에 따라 그 방향이나 정반대 방향의 자리에 섭니다(`SpawnSide`). 낮의 자리는 채집 지점과 상자의 후보 자리마다 그 타일에 이웃한 빈 타일입니다.
 //! 자리는 바뀌지 않는 지형(장애물, 마차, 채집 지점, 상자의 후보 자리)만 보고 정하므로 원정을 시작할 때 한 번 만듭니다.
 //! 포탑은 마을의 범위 안에만 서고 밤의 자리는 그 범위 밖에 있으며, 채집 지점도 마을의 범위 밖에 있으므로, 포탑이 어느 자리도 막지 못합니다.
 
 use std::collections::BTreeSet;
 
 use crate::math::Vec2;
-use crate::tuning::Tuning;
+use crate::tuning::{SpawnSide, Tuning};
 use crate::world::{Tile, TileMap};
 
 /// 밤의 무리가 나타나는 여덟 방향입니다. 삼각함수를 쓰지 않도록 상수로 적습니다.
@@ -23,10 +23,19 @@ const DIRECTIONS: [Vec2; 8] = [
     Vec2::new(0.707_106_77, -0.707_106_77),
 ];
 
+/// 밤의 무리가 나타나는 한 방향입니다.
+struct Front {
+    /// 그 방향의 자리들입니다.
+    spots: Vec<Vec2>,
+    /// 정반대 방향의 번호입니다(`SpawnPlan::night_fronts`의 번호). 정반대 방향에 자리가 없는 맵에서는 가장 반대에 가까운 방향이고,
+    /// 방향이 하나뿐이면 자기 자신입니다.
+    opposite: usize,
+}
+
 pub(crate) struct SpawnPlan {
     /// 자리가 있는 방향마다 그 방향의 자리들입니다. 마차가 맵의 한쪽에 치우친 맵에서는 맵 밖으로 나가는 방향이 빠지고,
     /// 기본 맵에서는 여덟 방향이 모두 있습니다.
-    night_spots: Vec<Vec<Vec2>>,
+    night_fronts: Vec<Front>,
     /// 채집 지점마다 낮의 몬스터가 서는 타일입니다. 지점의 순서(맵에 적힌 순서)입니다.
     guard_posts: Vec<Vec<Tile>>,
     /// 상자의 후보 자리마다 낮의 몬스터가 서는 타일입니다. 후보 자리의 순서(맵에 적힌 순서)입니다.
@@ -74,7 +83,7 @@ impl SpawnPlan {
                 }
             }
             if !spots.is_empty() {
-                night_spots.push(spots);
+                night_spots.push((direction, spots));
             }
         }
         if night_spots.is_empty() {
@@ -103,8 +112,19 @@ impl SpawnPlan {
             t,
             &mut taken,
         )?;
+        let directions: Vec<Vec2> = night_spots
+            .iter()
+            .map(|(direction, _)| *direction)
+            .collect();
+        let night_fronts = night_spots
+            .into_iter()
+            .map(|(direction, spots)| Front {
+                spots,
+                opposite: most_opposite(&directions, direction),
+            })
+            .collect();
         Ok(SpawnPlan {
-            night_spots,
+            night_fronts,
             guard_posts,
             chest_posts,
         })
@@ -120,16 +140,32 @@ impl SpawnPlan {
         &self.chest_posts[site]
     }
 
-    /// 원정의 `serial`번째 무리(0부터 셉니다)의 `nth`번째 몬스터가 나타날 자리입니다.
+    /// 원정의 `serial`번째 무리(0부터 셉니다)의 `nth`번째 몬스터가 나타날 자리입니다. `side`가 그 몬스터의 종류가 서는 쪽입니다.
     ///
     /// 무리마다 방향을 세 칸씩 건너뛰며 고릅니다. 방향이 여덟이면 3과 8이 서로소이므로 이어지는 두 무리는 135도 떨어지고,
     /// 여덟 방향을 모두 쓴 뒤에야 같은 방향이 다시 나옵니다. 방향의 수가 3의 배수이면 한 칸씩 건너뜁니다(그래야 모든 방향을 씁니다).
-    pub fn night_spot(&self, serial: u32, nth: u32) -> Vec2 {
-        let count = self.night_spots.len();
+    /// `SpawnSide::OppositeWave`인 종류는 그 방향의 정반대 방향에 섭니다. 무리의 순번과 몬스터의 순번만으로 정해지므로 저장하는 상태가 없습니다.
+    pub fn night_spot(&self, serial: u32, nth: u32, side: SpawnSide) -> Vec2 {
+        let count = self.night_fronts.len();
         let stride = if count.is_multiple_of(3) { 1 } else { 3 };
-        let spots = &self.night_spots[(serial as usize * stride) % count];
-        spots[nth as usize % spots.len()]
+        let wave_front = &self.night_fronts[(serial as usize * stride) % count];
+        let front = match side {
+            SpawnSide::WithWave => wave_front,
+            SpawnSide::OppositeWave => &self.night_fronts[wave_front.opposite],
+        };
+        front.spots[nth as usize % front.spots.len()]
     }
+}
+
+/// `directions` 가운데 `from`의 정반대에 가장 가까운 방향의 번호입니다. 같은 거리이면 앞의 방향입니다.
+fn most_opposite(directions: &[Vec2], from: Vec2) -> usize {
+    let mut best = 0;
+    for (index, direction) in directions.iter().enumerate() {
+        if direction.dot(from) < directions[best].dot(from) {
+            best = index;
+        }
+    }
+    best
 }
 
 /// `places`의 타일마다 이웃한 빈 타일 `wanted`개를 낮의 몬스터가 설 자리로 정합니다. 마을의 범위 밖에서만 고르고,

@@ -1,8 +1,12 @@
 //! 날의 흐름을 확인합니다: 낮과 밤, 밤의 무리와 등장하는 자리, 새벽에 낮이 시작될 때 이어지는 것과 회복되는 것, 성공과 새 원정.
 
+use std::collections::BTreeSet;
+
 use super::support::{Scenario, nights, outcome, phase};
 use crate::expedition::{NightStep, Outcome, Phase};
-use crate::tuning::{Tuning, Wave};
+use crate::kind::MonsterKind;
+use crate::math::Rect;
+use crate::tuning::{NightPlan, Pack, Tuning, Wave};
 
 /// 밤의 무리가 모두 나타날 때까지 진행합니다.
 fn run_until_fully_spawned(s: &mut Scenario) {
@@ -316,6 +320,89 @@ fn every_wave_comes_from_another_direction_and_all_eight_are_used() {
             .all(|pair| (pair[1] - pair[0]).rem_euclid(8) == 3),
         "the next wave comes from 135 degrees away, got {eighths:?}"
     );
+}
+
+/// 기본 몬스터 6마리와 돌격병 3마리와 파괴병 4마리가 섞인 무리를 `waves`번 나타나게 하고, 무리마다 `(기본 몬스터와 돌격병이 선 방향, 파괴병이 선 방향)`을 적습니다.
+/// 방향은 마차의 중심에서 본 여덟 방향의 번호이고, 동쪽이 0이며 시계 반대 방향으로 셉니다. 몬스터가 걷지 않게 해서 나타난 자리에 서 있습니다.
+/// 무리마다 같은 종류가 모두 한 방향에 서야 하고, 그렇지 않으면 테스트가 실패합니다.
+fn directions_of_mixed_waves(waves: usize, adjust: impl FnOnce(&mut Tuning)) -> Vec<(i32, i32)> {
+    let pack = |kind, count| Pack { kind, count };
+    let mixed = Wave {
+        packs: vec![
+            pack(MonsterKind::Grunt, 6),
+            pack(MonsterKind::Runner, 3),
+            pack(MonsterKind::Sapper, 4),
+        ],
+    };
+    let mut s = Scenario::default_game(|t| {
+        t.cycle.day_secs = 0.05;
+        t.nights.plans = vec![NightPlan {
+            waves: vec![mixed; waves],
+        }];
+        t.nights.first_wave_delay_secs = 0.05;
+        t.nights.between_waves_secs = 0.05;
+        t.nights.spawn_interval_secs = 0.05;
+        t.guards.per_node = 0;
+        t.loot.chests_per_day = 0;
+        for kind in [
+            &mut t.monsters.grunt,
+            &mut t.monsters.runner,
+            &mut t.monsters.sapper,
+        ] {
+            kind.speed = 0.0;
+            kind.separation_speed = 0.0;
+        }
+        adjust(t);
+    });
+    let center = s.sim.wagon().rect.center();
+    let mut found = Vec::new();
+    for wave in 1..=waves {
+        run_until_fully_spawned(&mut s);
+        let (mut with_the_wave, mut opposite) = (BTreeSet::new(), BTreeSet::new());
+        for monster in s.sim.monsters() {
+            let angle = (monster.pos.y - center.y).atan2(monster.pos.x - center.x);
+            let direction = ((angle / std::f32::consts::FRAC_PI_4).round() as i32).rem_euclid(8);
+            if monster.kind == MonsterKind::Sapper {
+                opposite.insert(direction);
+            } else {
+                with_the_wave.insert(direction);
+            }
+        }
+        assert_eq!(monster_count(&s), 13, "wave {wave} came out whole");
+        assert!(
+            with_the_wave.len() == 1 && opposite.len() == 1,
+            "wave {wave}: one direction for each of the two groups, got {with_the_wave:?} and {opposite:?}"
+        );
+        found.push((
+            with_the_wave.into_iter().next().unwrap(),
+            opposite.into_iter().next().unwrap(),
+        ));
+        defeat_the_current_wave(&mut s);
+    }
+    found
+}
+
+#[test]
+fn a_sapper_comes_from_the_side_of_the_wagon_opposite_the_rest_of_its_wave() {
+    // 무리는 135도씩 돌아가며 나타나고(0, 3, 6, 1번째 방향), 파괴병은 그 무리의 방향에서 정반대로 4칸 떨어진 방향에서 나타납니다.
+    assert_eq!(
+        directions_of_mixed_waves(4, |_| {}),
+        [(0, 4), (3, 7), (6, 2), (1, 5)]
+    );
+}
+
+#[test]
+fn where_the_wagon_has_no_spots_on_some_sides_a_sapper_comes_from_the_nearest_side_to_the_opposite()
+{
+    // 마차가 서쪽 끝에 붙어 있어서 서쪽 세 방향(북서, 서, 남서)에는 자리가 없고, 동쪽, 북동, 북, 남, 남동의 다섯 방향이 남습니다.
+    // 무리의 방향이 남쪽(6번)이면 정반대인 북쪽(2번)에, 북동쪽(1번)이면 정반대인 남서쪽에 자리가 없으므로 가장 가까운 남쪽(6번)에 섭니다.
+    // 남동쪽(7번)과 북쪽(2번)도 같은 식입니다.
+    let found = directions_of_mixed_waves(5, |t| {
+        t.map.wagon = Rect::new(8.0, 31.0, 12.0, 33.0);
+        t.map.nodes.retain(|node| node.x > 20);
+        t.map.chest_sites.retain(|site| site.x > 20);
+    });
+    assert_eq!(found, [(0, 2), (6, 2), (1, 6), (7, 2), (2, 6)]);
 }
 
 #[test]

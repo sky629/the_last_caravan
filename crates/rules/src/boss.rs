@@ -218,7 +218,7 @@ fn rest_ticks(hp: u32, max_hp: u32, cfg: &BossTuning, t: &Tuning) -> u32 {
 
 /// 보스가 나타날 자리입니다. 밤의 무리가 나타나는 자리 가운데 마지막 무리 다음 순번의 방향에서 첫째 자리입니다.
 pub(crate) fn arrival_spot(spawns: &SpawnPlan, t: &Tuning) -> Vec2 {
-    spawns.night_spot(t.nights.wave_total(), 0)
+    spawns.night_spot(t.nights.wave_total(), 0, t.monsters.boss.spawn_side)
 }
 
 /// Tick마다 보스의 한 걸음입니다. 대상을 다시 정하고, 하고 있는 일을 한 Tick 진행하고, 끝나는 일이 있으면 피해를 `hits`에 더하고
@@ -491,7 +491,8 @@ pub(crate) fn spawn_called(world: &mut World, spawns: &SpawnPlan, t: &Tuning) {
         return;
     }
     let serial = t.nights.wave_total() + boss.calls;
-    let spot = spawns.night_spot(serial, muster.spawned);
+    let side = t.monsters.get(cfg.summon.kind).spawn_side;
+    let spot = spawns.night_spot(serial, muster.spawned, side);
     muster.to_spawn -= 1;
     muster.spawned += 1;
     muster.spawn_in_ticks = t.ticks(t.nights.spawn_interval_secs).saturating_sub(1);

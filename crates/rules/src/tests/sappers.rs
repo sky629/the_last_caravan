@@ -1,5 +1,6 @@
 //! 파괴병을 확인합니다: 플레이어를 지나쳐서 거리와 관계없이 걸어서 가장 가까운 포탑으로 가는 것, 포탑이 부서지거나 새로 서면 목표가 바뀌는 것,
-//! 닿을 포탑이 없으면 마차로 가는 것, 포탑에 주는 피해, 수치, 효과, 건설 규칙이 허락하는 가장 빽빽한 마을에서도 포탑이나 마차에 닿는 것.
+//! 닿을 포탑이 없으면 마차로 가는 것, 포탑에 주는 피해와 포탑에게서 받는 피해, 수치, 효과, 건설 규칙이 허락하는 가장 빽빽한 마을에서도 포탑이나 마차에 닿는 것.
+//! 파괴병이 무리의 반대쪽에서 나타나는 것은 `days.rs`가 확인합니다.
 
 use std::cmp::Ordering;
 
@@ -485,7 +486,7 @@ fn a_sapper_hits_a_tower_or_the_wagon_from_every_free_tile_of_the_densest_villag
 }
 
 #[test]
-fn a_sapper_takes_all_of_a_towers_damage_and_all_of_a_players_damage() {
+fn a_sapper_takes_half_of_a_towers_damage_rounded_up_and_all_of_a_players_damage() {
     let mut s = field(|t| t.monsters.sapper.max_hp = 1000);
     let owner = s.player_at(2.0, 2.0);
     let sapper = s.monster_of(MonsterKind::Sapper, 10.0, 10.0);
@@ -504,7 +505,23 @@ fn a_sapper_takes_all_of_a_towers_damage_and_all_of_a_players_damage() {
         before - s.monster(sapper).unwrap().hp
     };
 
-    assert_eq!(lost_to(&mut s, Source::Tower, 100), 100);
-    assert_eq!(lost_to(&mut s, Source::Tower, 15), 15);
+    assert_eq!(lost_to(&mut s, Source::Tower, 100), 50);
+    assert_eq!(
+        lost_to(&mut s, Source::Tower, 15),
+        8,
+        "half of the watchtower's 15 is 7.5, rounded up to 8"
+    );
     assert_eq!(lost_to(&mut s, Source::Player(owner), 100), 100);
+    assert_eq!(lost_to(&mut s, Source::Player(owner), 15), 15);
+}
+
+#[test]
+fn a_watchtower_shot_takes_eight_hp_off_a_sapper() {
+    let mut s = field(|_| {});
+    s.tower_at(1, 17);
+    let sapper = s.monster_of(MonsterKind::Sapper, 4.0, 17.5);
+
+    s.run_ticks(1);
+
+    assert_eq!(100_000 - s.monster(sapper).expect("alive").hp, 8);
 }

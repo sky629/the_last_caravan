@@ -9,7 +9,7 @@ use crate::ids::{MonsterId, PlayerId};
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::MonsterKind;
 use crate::tuning::{
-    Debuff, Finale, NightPlan, NightTuning, Pack, Prey, Tuning, Wave, WaveScaling,
+    Debuff, Finale, NightPlan, NightTuning, Pack, Prey, SpawnSide, Tuning, Wave, WaveScaling,
 };
 use crate::world::{Hit, Source, Target};
 
@@ -690,5 +690,20 @@ fn only_the_sapper_hits_a_tower_harder_than_it_hits_the_wagon_at_the_default_num
             MonsterKind::Sapper => 400,
         };
         assert_eq!(monsters.get(kind).siege_percent, expected, "{kind:?}");
+    }
+}
+
+#[test]
+fn only_the_sapper_stands_opposite_the_rest_of_its_wave_at_the_default_numbers() {
+    let monsters = Tuning::default().monsters;
+    for kind in MonsterKind::ALL {
+        let expected = match kind {
+            MonsterKind::Grunt
+            | MonsterKind::Scarecrow
+            | MonsterKind::Boss
+            | MonsterKind::Runner => SpawnSide::WithWave,
+            MonsterKind::Sapper => SpawnSide::OppositeWave,
+        };
+        assert_eq!(monsters.get(kind).spawn_side, expected, "{kind:?}");
     }
 }
