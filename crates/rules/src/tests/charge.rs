@@ -5,11 +5,13 @@ use super::boss::{act, boss_tuning, hit_boss, hp_of_player, put_boss, skip_the_r
 use super::support::{Scenario, close, nights};
 use crate::boss::Act;
 use crate::ids::PlayerId;
+use crate::kind::StructureKind;
 use crate::math::{Rect, Vec2};
 use crate::player::Presence;
 use crate::structures::Tower;
 use crate::telegraph::Zone;
 use crate::tuning::{Move, Tuning};
+use crate::world::Tile;
 
 /// 돌진만 되풀이하는 보스와 서 있기만 하는 몬스터가 있는 20 x 20 들판입니다. 마차는 죽지 않습니다. `adjust`가 지형을 더합니다.
 pub(super) fn charge_field(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
@@ -232,4 +234,41 @@ fn a_player_who_is_away_in_the_lane_is_not_hit_and_a_monster_in_it_is_not_either
         s.monster(grunt).expect("alive").hp,
         s.sim.tuning().monsters.grunt.max_hp
     );
+}
+
+#[test]
+fn a_tower_raised_beside_the_middle_of_a_shown_lane_stops_the_charge_instead_of_bending_it() {
+    for gap in [0.05_f32, 0.15, 0.3] {
+        let mut s = charge_field(|_| {});
+        let line = 10.0 - gap;
+        let target = s.player_at(8.0, line);
+        // 구경꾼은 예고된 띠의 경계에서 0.05타일 바깥에 서 있습니다.
+        let bystander = s.player_at(9.5, line - 1.05);
+        put_boss(&mut s, 3.0, line, 4);
+        hit_boss(&mut s, target, 10);
+        s.run_ticks(1);
+        skip_the_rest(&mut s);
+        s.run_until(5, |sim| {
+            matches!(sim.boss().map(|boss| &boss.act), Some(Act::Winding { .. }))
+        });
+        // 예고가 보인 뒤에 띠의 가운데 선 곁의 타일에 포탑이 섭니다. 보스의 걷는 몸이 그 모서리에 걸립니다.
+        let state = Tower::standing_state(StructureKind::Watchtower, s.sim.tuning());
+        s.sim
+            .world_mut()
+            .add_tower(StructureKind::Watchtower, Tile::new(6, 10), state);
+        let boss = s.sim.boss().expect("the boss").id;
+
+        run_until_walking(&mut s);
+
+        let end = s.monster(boss).expect("the boss body").pos;
+        assert!(
+            end.x < 6.0,
+            "gap {gap}: the boss stops before the tower, at {end:?}"
+        );
+        assert!(
+            close(end.y, line),
+            "gap {gap}: the boss stays on the line, at {end:?}"
+        );
+        assert_eq!(hp_of_player(&s, bystander), 100, "gap {gap}");
+    }
 }

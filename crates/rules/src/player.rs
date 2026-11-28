@@ -861,7 +861,7 @@ pub(crate) fn apply_shoves(world: &mut World, shoves: &[Shove]) {
 
 /// 밀려나는 플레이어를 한 걸음 옮깁니다. 걷는 것과 같은 충돌 규칙(`move_circle`)을 쓰므로, 지형과 포탑과 마차와 맵의 끝은 지나가지 못하고
 /// 비스듬히 부딪히면 벽을 따라 미끄러집니다. 다른 플레이어와 몬스터의 몸은 걸을 때와 같이 막지 않습니다.
-/// 걸음이 막혀서 절반도 나아가지 못하면 남은 걸음이 있어도 밀려나기를 마칩니다.
+/// 막혀서 나아가지 못해도 밀려나는 시간은 그대로이므로, 벽에 등을 댄 플레이어도 같은 시간 동안 조작하지 못합니다.
 /// 밀려나는 플레이어는 하고 있는 일이 있어서 이동 속도가 0이므로 `move_players`는 그 플레이어를 움직이지 않습니다. 그래서 `move_players`보다 먼저 불러도 됩니다.
 pub(crate) fn slide_knocked(world: &mut World, ctx: &Ctx) {
     let t = ctx.t;
@@ -876,7 +876,6 @@ pub(crate) fn slide_knocked(world: &mut World, ctx: &Ctx) {
         };
         let steps = (step.length() / t.player.radius) as u32 + 1;
         let part = *step * (1.0 / steps as f32);
-        let before = player.pos;
         for _ in 0..steps {
             player.pos = move_circle(
                 player.pos,
@@ -886,12 +885,7 @@ pub(crate) fn slide_knocked(world: &mut World, ctx: &Ctx) {
                 &mut scratch,
             );
         }
-        let blocked = player.pos.distance(before) < step.length() * 0.5;
-        *ticks_left = if blocked {
-            0
-        } else {
-            ticks_left.saturating_sub(1)
-        };
+        *ticks_left = ticks_left.saturating_sub(1);
     }
 }
 

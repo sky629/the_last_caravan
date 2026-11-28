@@ -689,7 +689,8 @@ pub struct ChargeTuning {
     pub windup_secs: f32,
     /// 띠의 폭(타일)입니다.
     pub width: f32,
-    /// 띠의 길이(타일)입니다. 보스의 걷는 몸이 막힌 타일이나 맵의 끝에 막히는 곳이 이보다 가까우면 그곳까지만 뻗습니다.
+    /// 보스의 중심이 달리는 가장 긴 거리(타일)입니다. 보스의 걷는 몸이 막힌 타일이나 맵의 끝에 막히는 곳이 이보다 가까우면 그곳까지만 달립니다.
+    /// 예고하는 띠는 보스의 몸이 덮는 곳까지 보이도록 달리는 거리보다 띠의 반폭만큼 더 깁니다.
     pub length: f32,
     /// 띠를 따라 달리는 초당 타일 수입니다.
     pub speed: f32,
@@ -1166,6 +1167,12 @@ impl Tuning {
         check_not_negative("boss rest_secs", boss.rest_secs)?;
         check_not_negative("boss enraged_rest_secs", boss.enraged_rest_secs)?;
         check_not_negative("boss charge push_tiles", boss.charge.push_tiles)?;
+        if boss.charge.push_tiles > boss.charge.length {
+            return Err(format!(
+                "boss charge push_tiles {} must not be longer than the charge length {}",
+                boss.charge.push_tiles, boss.charge.length
+            ));
+        }
         let radii = boss.charge.speed * self.dt() / self.monsters.boss.radius;
         if radii >= MAX_PLAYER_STEPS_PER_TICK {
             return Err(format!(

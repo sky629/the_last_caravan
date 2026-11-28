@@ -288,3 +288,34 @@ fn a_push_cancels_a_revive_in_progress_and_the_revive_starts_over_after_it() {
         "from the beginning: {after} against {before} before the push"
     );
 }
+
+#[test]
+fn a_player_pinned_against_a_wall_cannot_act_for_as_long_as_one_pushed_in_the_open() {
+    let locked_ticks = |wall: bool| {
+        let mut s = charge_field(|t| {
+            if wall {
+                t.map.obstacles.push(Rect::new(10.0, 9.0, 11.0, 11.0));
+                t.map.player_spawns = vec![Vec2::new(5.0, 5.0)];
+            }
+        });
+        let at = if wall { (9.64, 10.0) } else { (7.0, 10.0) };
+        let player = winding_toward(&mut s, (3.0, 10.0), at);
+        run_until_knocked(&mut s, player);
+        let mut locked = 1;
+        while is_knocked(&s, player) && locked < 100 {
+            s.run_ticks(1);
+            locked += 1;
+        }
+        locked
+    };
+
+    assert_eq!(locked_ticks(true), locked_ticks(false));
+}
+
+#[test]
+fn a_push_longer_than_the_charge_is_rejected() {
+    let mut t = crate::tuning::Tuning::default();
+    boss_tuning(&mut t).charge.push_tiles = 1.0e9;
+    let why = t.validate().expect_err("a push of a billion tiles");
+    assert!(why.contains("push_tiles"), "{why}");
+}

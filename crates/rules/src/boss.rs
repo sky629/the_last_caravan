@@ -411,9 +411,12 @@ impl Charge {
     }
 }
 
+/// 돌진하는 보스의 중심이 띠의 가운데 선에서 이 거리(타일)보다 멀어지면 가로막힌 것으로 봅니다.
+const OFF_THE_LANE: f32 = 0.02;
+
 /// 돌진을 한 Tick 달립니다. 보스의 걷는 몸은 걷는 것과 같은 충돌 규칙으로 움직이고, 이번 Tick에 지나간 띠(앞쪽 반폭 포함)에 든 대상을 맞힙니다.
 /// 새로 맞은 플레이어는 돌진의 방향으로 밀려나도록 `shoves`에 더합니다.
-/// 목표까지 달렸거나 가로막혀서 나아가지 못하면 끝나고 참을 돌려줍니다.
+/// 목표까지 달렸거나, 가로막혀서 나아가지 못하거나, 예고한 뒤에 생긴 포탑처럼 띠의 가운데 선을 비켜 가야 하는 것에 걸리면 끝나고 참을 돌려줍니다.
 fn run(
     world: &mut World,
     index: usize,
@@ -433,8 +436,17 @@ fn run(
     let part = charge.dir * (wanted / steps as f32);
     let mut scratch = Vec::new();
     let mut pos = before;
+    // 막힌 타일의 모서리에 비스듬히 걸리면 충돌 규칙이 몸을 옆으로 밀어냅니다. 그러면 예고한 띠에서 벗어나므로, 옆으로 밀리는 걸음 앞에서 멈춥니다.
+    let mut turned_aside = false;
     for _ in 0..steps {
-        pos = move_circle(pos, radius, part, &world.tiles, &mut scratch);
+        let next = move_circle(pos, radius, part, &world.tiles, &mut scratch);
+        let along = next - charge.from;
+        let aside = along - charge.dir * along.dot(charge.dir);
+        if aside.length() > OFF_THE_LANE {
+            turned_aside = true;
+            break;
+        }
+        pos = next;
     }
     world.monsters[index].pos = pos;
     let moved = pos.distance(before);
@@ -458,7 +470,7 @@ fn run(
             });
         }
     }
-    charge.travelled >= charge.length - 1e-3 || moved < wanted * 0.5
+    charge.travelled >= charge.length - 1e-3 || turned_aside || moved < wanted * 0.5
 }
 
 /// 부른 졸개가 남아 있으면 때가 되었을 때 한 마리를 나타나게 합니다. 보스와 싸우는 동안 Tick의 처음에 부릅니다(`expedition::advance_phase`).
