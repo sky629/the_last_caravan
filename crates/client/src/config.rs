@@ -133,9 +133,12 @@ pub const MONSTER: Color = Color::srgb(0.85, 0.22, 0.28);
 pub const SCARECROW: Color = Color::srgb(0.82, 0.70, 0.40);
 /// 보스는 몬스터(빨강)보다 어두운 검붉은색이어서, 무리 속에서도 한눈에 구분됩니다. 효과에 걸린 색과도 구분됩니다.
 pub const BOSS: Color = Color::srgb(0.55, 0.05, 0.05);
-/// 보스가 예고한 자리의 색입니다. 테두리는 진하게 그리고, 안쪽은 피해가 날 때가 가까울수록 넓게 채웁니다.
+/// 보스가 예고한 자리의 색입니다. 테두리는 진하게 그리고, 안쪽은 피해가 나거나 보스가 달릴 때가 가까울수록 넓게 채웁니다.
 pub const DANGER: Color = Color::srgba(1.00, 0.30, 0.15, 0.95);
 pub const DANGER_FILL: Color = Color::srgba(1.00, 0.30, 0.15, 0.45);
+/// 포효하는 동안 보스의 발밑에서 넓어지는 고리의 가장 큰 반지름(타일)과, 포효가 시작될 때 고리가 보이도록 정한 가장 작은 진행도입니다.
+pub const ROAR_RING_TILES: f32 = 4.0;
+pub const ROAR_RING_MIN_FILL: f32 = 0.1;
 /// 보스가 노리는 플레이어의 머리 위에 그리는 표시입니다.
 pub const BOSS_TARGET: Color = Color::srgb(1.00, 0.25, 0.25);
 /// 보스가 노리는 플레이어의 발에서 위로 표시를 띄우는 높이(픽셀)와 표시의 크기입니다. 표시의 끝이 이름 위에 있어야 이름과 겹치지 않습니다.

@@ -661,11 +661,15 @@ pub enum Finale {
 }
 
 /// 보스의 행동 하나입니다. 행동마다 그 행동에서만 의미 있는 수치를 `BossTuning`의 필드 하나로 가집니다.
-/// 행동을 추가하려면 변형을 하나 더하고, `BossTuning`에 수치를 더하고, `boss::start`의 `match`에 갈래를 더합니다.
+/// 행동을 추가하려면 변형을 하나 더하고, `BossTuning`에 수치를 더하고, `boss::start`의 `match`와 `Tuning::validate_finale`에 갈래를 하나씩 더합니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Move {
     /// 대상이 서 있던 자리에 원을 예고하고, 시간이 지나면 원 안의 모든 것에 피해를 줍니다.
     Slam,
+    /// 보스에서 대상 쪽으로 뻗는 띠를 예고하고, 시간이 지나면 띠를 따라 달리며 띠 위의 모든 것에 피해를 주고 플레이어를 밀어냅니다.
+    Charge,
+    /// 제자리에서 포효하고, 포효가 끝나면 밤의 무리가 나타나는 자리에 졸개를 부릅니다.
+    Summon,
 }
 
 /// 내려찍기의 수치입니다.
@@ -678,6 +682,35 @@ pub struct SlamTuning {
     pub strike: StrikeTuning,
 }
 
+/// 돌진의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChargeTuning {
+    /// 띠가 보이기 시작해서 보스가 달리기 시작하기까지의 시간입니다.
+    pub windup_secs: f32,
+    /// 띠의 폭(타일)입니다.
+    pub width: f32,
+    /// 보스의 중심이 달리는 가장 긴 거리(타일)입니다. 보스의 걷는 몸이 막힌 타일이나 맵의 끝에 막히는 곳이 이보다 가까우면 그곳까지만 달립니다.
+    /// 예고하는 띠는 보스의 몸이 덮는 곳까지 보이도록 달리는 거리보다 띠의 반폭만큼 더 깁니다.
+    pub length: f32,
+    /// 띠를 따라 달리는 초당 타일 수입니다.
+    pub speed: f32,
+    pub strike: StrikeTuning,
+    /// 맞은 플레이어가 돌진의 방향으로 밀려나는 거리(타일)입니다.
+    pub push_tiles: f32,
+    /// 밀려나는 동안의 시간입니다. 이 시간 동안 플레이어는 조작할 수 없습니다.
+    pub push_secs: f32,
+}
+
+/// 졸개 부르기의 수치입니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SummonTuning {
+    /// 보스가 멈춰서 포효하는 시간입니다. 이 시간이 끝나면 졸개가 나타나기 시작합니다.
+    pub roar_secs: f32,
+    /// 기준 인원일 때 한 번에 부르는 졸개의 수입니다. 인원에 비례해서 줄어듭니다(`NightTuning::scaled`).
+    pub count: u32,
+    pub kind: MonsterKind,
+}
+
 /// 마지막 밤의 보스에 관한 수치입니다. 보스의 몸과 HP와 걷는 속도는 몬스터 종류표(`MonsterTable::boss`)에 있습니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BossTuning {
@@ -687,12 +720,16 @@ pub struct BossTuning {
     pub script: Vec<Move>,
     /// 한 행동이 끝난 뒤 다음 행동을 시작하기까지 걷는 시간입니다. 보스가 나타난 뒤 첫 행동까지도 같습니다.
     pub rest_secs: f32,
+    /// 걷는 시간이 시작될 때 보스의 HP가 최대 HP의 절반 이하이면 `rest_secs` 대신 이 시간을 씁니다.
+    pub enraged_rest_secs: f32,
     /// 보스가 대상으로 삼을 수 있는 플레이어와 행동을 시작할 수 있는 대상까지의 가장 먼 거리(타일)입니다.
     /// 플레이어는 보스의 중심에서 플레이어의 중심까지, 마차는 보스의 중심에서 마차의 가장자리까지 잽니다.
     pub target_range: f32,
     /// 보스가 가장 많이 맞은 플레이어를 고를 때 되돌아보는 시간입니다.
     pub threat_secs: f32,
     pub slam: SlamTuning,
+    pub charge: ChargeTuning,
+    pub summon: SummonTuning,
 }
 
 /// 예고된 공격의 영역 안에 있던 대상이 한 번 맞을 때 받는 피해입니다. 대상의 종류마다 다릅니다.
@@ -1101,7 +1138,10 @@ impl Tuning {
     ///
     /// - 행동의 순서는 비어 있지 않아야 합니다. 비어 있으면 보스가 아무것도 하지 않습니다.
     /// - 경고와 되돌아보는 시간과 예고의 시간은 유한하고 0보다 길어야 하고, 걷는 시간은 유한하고 0 이상이어야 합니다. 예고가 0초이면 보고 피할 수 없습니다.
-    /// - 보스가 대상으로 삼는 거리와 원의 반지름은 유한하고 0보다 길어야 합니다.
+    /// - 보스가 대상으로 삼는 거리, 원의 반지름, 띠의 폭과 길이와 속도, 밀려나는 시간은 유한하고 0보다 길어야 하고, 밀려나는 거리는 유한하고 0 이상이어야 합니다.
+    /// - 돌진이 한 Tick에 달리는 거리는 보스의 걷는 몸의 반지름의 `MAX_PLAYER_STEPS_PER_TICK`배보다 짧아야 합니다. 돌진은 걷는 몸의 반지름보다 짧은 걸음으로 나누어 움직이므로 걸음의 수에 끝이 있어야 합니다.
+    /// - 졸개는 한 번에 한 마리 이상이고, 야영지의 허수아비나 보스가 아닙니다.
+    /// - 순서에 들어 있는 행동만이 아니라 모든 행동의 수치를 검사합니다. 순서는 수치를 바꾸지 않고 고칠 수 있어야 하기 때문입니다.
     fn validate_finale(&self) -> Result<(), String> {
         let Finale::Boss(boss) = &self.nights.finale else {
             return Ok(());
@@ -1113,12 +1153,40 @@ impl Tuning {
             ("warning_secs", boss.warning_secs),
             ("threat_secs", boss.threat_secs),
             ("slam windup_secs", boss.slam.windup_secs),
+            ("charge windup_secs", boss.charge.windup_secs),
+            ("charge push_secs", boss.charge.push_secs),
+            ("summon roar_secs", boss.summon.roar_secs),
             ("target_range", boss.target_range),
             ("slam radius", boss.slam.radius),
+            ("charge width", boss.charge.width),
+            ("charge length", boss.charge.length),
+            ("charge speed", boss.charge.speed),
         ] {
             check_positive(&format!("boss {name}"), value)?;
         }
-        check_not_negative("boss rest_secs", boss.rest_secs)
+        check_not_negative("boss rest_secs", boss.rest_secs)?;
+        check_not_negative("boss enraged_rest_secs", boss.enraged_rest_secs)?;
+        check_not_negative("boss charge push_tiles", boss.charge.push_tiles)?;
+        if boss.charge.push_tiles > boss.charge.length {
+            return Err(format!(
+                "boss charge push_tiles {} must not be longer than the charge length {}",
+                boss.charge.push_tiles, boss.charge.length
+            ));
+        }
+        let radii = boss.charge.speed * self.dt() / self.monsters.boss.radius;
+        if radii >= MAX_PLAYER_STEPS_PER_TICK {
+            return Err(format!(
+                "boss charge speed {} moves the boss {radii} walking radii in one tick, which must be fewer than {MAX_PLAYER_STEPS_PER_TICK}",
+                boss.charge.speed
+            ));
+        }
+        if boss.summon.count == 0 {
+            return Err("boss summon count must be at least 1".to_string());
+        }
+        if matches!(boss.summon.kind, MonsterKind::Scarecrow | MonsterKind::Boss) {
+            return Err("the boss summons only monsters that walk in the waves".to_string());
+        }
+        Ok(())
     }
 
     /// 야영지의 배치를 검사합니다. 허수아비와 진열대는 맵 안에 있고 장애물과 마차에 겹치지 않아야 합니다.
@@ -1774,8 +1842,9 @@ impl Default for Tuning {
                 // 예고는 걸어서 피할 수 있는 시간입니다. 원의 한가운데에서 걸어 나가는 데 0.65초가 걸리므로, 0.4초 늦게 움직여도 내려찍기를 피합니다.
                 finale: Finale::Boss(BossTuning {
                     warning_secs: 5.0,
-                    script: vec![Move::Slam],
+                    script: vec![Move::Slam, Move::Charge, Move::Slam, Move::Summon],
                     rest_secs: 3.0,
+                    enraged_rest_secs: 2.0,
                     target_range: 8.0,
                     threat_secs: 5.0,
                     slam: SlamTuning {
@@ -1786,6 +1855,24 @@ impl Default for Tuning {
                             tower: 100,
                             wagon: 60,
                         },
+                    },
+                    charge: ChargeTuning {
+                        windup_secs: 1.5,
+                        width: 2.0,
+                        length: 10.0,
+                        speed: 14.0,
+                        strike: StrikeTuning {
+                            player: 40,
+                            tower: 100,
+                            wagon: 80,
+                        },
+                        push_tiles: 3.0,
+                        push_secs: 0.3,
+                    },
+                    summon: SummonTuning {
+                        roar_secs: 2.0,
+                        count: 12,
+                        kind: MonsterKind::Grunt,
                     },
                 }),
             },

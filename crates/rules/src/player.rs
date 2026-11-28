@@ -16,7 +16,7 @@ use crate::stamina::Stamina;
 use crate::stats::UnitStats;
 use crate::structures::TowerState;
 use crate::tuning::{Buff, RepairTuning, Tuning};
-use crate::world::{Ctx, World};
+use crate::world::{Ctx, Shove, World};
 
 /// 플레이어가 자리에 있는지입니다. 규칙은 접속을 알지 못하고, 서버가 접속과 입력을 보고 `Sim::set_presence`로 알려 줍니다.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -100,7 +100,7 @@ pub enum Life {
         hp: u32,
         /// 다음 공격까지 남은 Tick입니다.
         cooldown_ticks: u32,
-        /// 상호작용 키(F)나 건설 키(B)가 지금 하고 있는 일입니다. 값이 있으면 이동과 공격을 할 수 없습니다.
+        /// 상호작용 키(F)나 건설 키(B)가 지금 하고 있는 일이거나 공격에 밀려나는 중이라는 표시입니다. 값이 있으면 이동과 공격을 할 수 없습니다.
         interaction: Option<Interaction>,
         /// 건설 키를 누르고 있지만 세울 수 없을 때의 이유입니다. 이벤트가 아니라 상태이고, 키를 누르고 있는 동안 Tick마다 다시 정해집니다.
         build_refusal: Option<BuildRefusal>,
@@ -121,7 +121,7 @@ pub enum Life {
     Dead,
 }
 
-/// 상호작용 키(F)나 건설 키(B)를 누르고 있는 동안의 행동입니다. 그 행동을 하는 플레이어가 가지고 있습니다.
+/// 상호작용 키(F)나 건설 키(B)를 누르고 있는 동안의 행동이거나 공격에 밀려나는 일입니다. 그 일을 하는 플레이어가 가지고 있습니다.
 ///
 /// 부활의 진행도는 부활시키는 플레이어의 `Interaction`에만 있고, 건설의 진행도는 짓는 중인 포탑(`TowerState::Building`)에만 있습니다.
 /// 채집 지점의 남은 양은 지점(`GatherNode`)에만 있습니다.
@@ -154,6 +154,15 @@ pub enum Interaction {
         chest: ChestId,
         /// 키를 끊지 않고 누른 Tick 수입니다. 누르기 시작한 Tick을 포함합니다.
         elapsed_ticks: u32,
+    },
+    /// 공격에 맞아서 `step`씩 밀려나는 중입니다. 키를 누르고 있어서 하는 일이 아니라 서버가 강제로 정한 일이지만,
+    /// 이동과 공격과 건설과 부활과 수리가 모두 「하고 있는 일이 없을 때만」 할 수 있으므로 같은 자리에 두면 그 규칙이 그대로 적용됩니다.
+    /// 하고 있던 일은 이 값으로 바뀌면서 버려집니다. 건설하던 포탑은 짓는 사람의 상호작용이 그 포탑을 가리키지 않게 되어 취소되고 자원이 돌아갑니다(`structures::advance_construction`).
+    Knocked {
+        /// 한 Tick에 옮기는 거리와 방향입니다.
+        step: Vec2,
+        /// 앞으로 밀릴 걸음의 수입니다. 0이면 마지막 걸음을 마친 Tick이고, 다음 Tick의 `update_interactions`가 이 값을 버립니다.
+        ticks_left: u32,
     },
 }
 
@@ -243,6 +252,14 @@ impl Player {
         self.is_alive() && self.is_present()
     }
 
+    /// 공격에 맞아서 밀려나는 중이고 밀릴 걸음이 남았습니다. 마지막 걸음을 마친 Tick의 값(`ticks_left`가 0)은 다음 Tick에 버려지므로 이미 조작이 듣습니다.
+    pub(crate) fn is_knocked(&self) -> bool {
+        matches!(
+            self.interaction(),
+            Some(Interaction::Knocked { ticks_left, .. }) if *ticks_left > 0
+        )
+    }
+
     pub fn is_downed(&self) -> bool {
         matches!(self.life, Life::Downed { .. })
     }
@@ -303,7 +320,7 @@ impl Player {
                 ..
             } => t.player.speed * buffs.speed_factor(),
             Life::Downed { .. } => t.player.crawl_speed,
-            // 부활이나 수리를 하는 동안과 사망한 뒤에는 움직이지 못합니다.
+            // 부활이나 수리를 하는 동안, 밀려나는 동안, 사망한 뒤에는 스스로 움직이지 못합니다.
             Life::Alive {
                 interaction: Some(_),
                 ..
@@ -330,7 +347,7 @@ impl Player {
         }
     }
 
-    /// 공격할 수 있는 상태입니다. 살아 있고, 부활, 수리, 채집, 건설, 상자 열기를 하고 있지 않습니다.
+    /// 공격할 수 있는 상태입니다. 살아 있고, 부활, 수리, 채집, 건설, 상자 열기를 하고 있지 않고, 밀려나는 중이 아닙니다.
     pub(crate) fn is_free_to_act(&self) -> bool {
         matches!(
             self.life,
@@ -429,6 +446,14 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
         if !player.is_alive() || next.contains_key(&player.id) {
             continue;
         }
+        // 밀려나는 동안에는 키를 누르고 있어도 새 일을 시작하지 못합니다. 마지막 걸음을 마친 값(`ticks_left`가 0)은 여기서 버려지고,
+        // 이 Tick부터 조작이 듣습니다. 밀려나는 일을 줄이는 곳은 `slide_knocked`입니다.
+        if let Some(knocked @ Interaction::Knocked { ticks_left, .. }) = player.interaction()
+            && *ticks_left > 0
+        {
+            next.insert(player.id, Some(knocked.clone()));
+            continue;
+        }
         if let Some(Interaction::Building { tower }) = player.interaction()
             && holding_build(player.id)
             && build::is_building(world, *tower, player.id)
@@ -507,7 +532,10 @@ pub(crate) fn update_interactions(world: &mut World, ctx: &Ctx) {
                     since_pulse_ticks,
                 });
             }
-            Some(Interaction::Building { .. }) | Some(Interaction::Opening { .. }) | None => {}
+            Some(Interaction::Building { .. })
+            | Some(Interaction::Opening { .. })
+            | Some(Interaction::Knocked { .. })
+            | None => {}
         }
         if chosen.is_none() && holding_build(player.id) {
             build_requests.push(player.id);
@@ -811,6 +839,53 @@ pub(crate) fn update_sprint(world: &mut World, ctx: &Ctx) {
         } else if !holding {
             stamina.refill(t);
         }
+    }
+}
+
+/// 이번 Tick에 플레이어를 밀어내기로 정한 기록(`Shove`)을 적용합니다. 피해를 적용한 뒤에 부르므로, 같은 Tick에 쓰러진 플레이어는 밀려나지 않습니다.
+/// 맞은 플레이어가 하고 있던 일은 `Knocked`로 바뀌면서 버려집니다. 이미 밀려나는 중이면 새 밀어내기가 이어받아 처음부터 다시 밀려납니다.
+pub(crate) fn apply_shoves(world: &mut World, shoves: &[Shove]) {
+    for shove in shoves {
+        if let Some(Player {
+            life: Life::Alive { interaction, .. },
+            ..
+        }) = world.players.get_mut(&shove.player)
+        {
+            *interaction = Some(Interaction::Knocked {
+                step: shove.step,
+                ticks_left: shove.ticks,
+            });
+        }
+    }
+}
+
+/// 밀려나는 플레이어를 한 걸음 옮깁니다. 걷는 것과 같은 충돌 규칙(`move_circle`)을 쓰므로, 지형과 포탑과 마차와 맵의 끝은 지나가지 못하고
+/// 비스듬히 부딪히면 벽을 따라 미끄러집니다. 다른 플레이어와 몬스터의 몸은 걸을 때와 같이 막지 않습니다.
+/// 막혀서 나아가지 못해도 밀려나는 시간은 그대로이므로, 벽에 등을 댄 플레이어도 같은 시간 동안 조작하지 못합니다.
+/// 밀려나는 플레이어는 하고 있는 일이 있어서 이동 속도가 0이므로 `move_players`는 그 플레이어를 움직이지 않습니다. 그래서 `move_players`보다 먼저 불러도 됩니다.
+pub(crate) fn slide_knocked(world: &mut World, ctx: &Ctx) {
+    let t = ctx.t;
+    let mut scratch = Vec::new();
+    for player in world.players.values_mut() {
+        let Life::Alive {
+            interaction: Some(Interaction::Knocked { step, ticks_left }),
+            ..
+        } = &mut player.life
+        else {
+            continue;
+        };
+        let steps = (step.length() / t.player.radius) as u32 + 1;
+        let part = *step * (1.0 / steps as f32);
+        for _ in 0..steps {
+            player.pos = move_circle(
+                player.pos,
+                t.player.radius,
+                part,
+                &world.tiles,
+                &mut scratch,
+            );
+        }
+        *ticks_left = ticks_left.saturating_sub(1);
     }
 }
 

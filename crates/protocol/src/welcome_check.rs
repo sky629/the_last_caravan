@@ -113,11 +113,15 @@ pub fn check_welcome(welcome: &Welcome) -> Result<(), String> {
     }
 
     if let Some(boss) = &world.boss {
-        let tiles = boss.slam_radius;
-        if !(tiles > 0.0 && tiles <= MAX_MAP_SIDE_TILES) {
-            return Err(format!(
-                "a boss slam radius of {tiles} tiles is outside 0 to {MAX_MAP_SIDE_TILES} tiles"
-            ));
+        for (name, tiles) in [
+            ("boss slam radius", boss.slam_radius),
+            ("boss charge width", boss.charge_width),
+        ] {
+            if !(tiles > 0.0 && tiles <= MAX_MAP_SIDE_TILES) {
+                return Err(format!(
+                    "a {name} of {tiles} tiles is outside 0 to {MAX_MAP_SIDE_TILES} tiles"
+                ));
+            }
         }
     }
 
@@ -438,7 +442,10 @@ mod tests {
     fn a_boss_slam_that_is_not_a_positive_number_within_the_map_is_refused() {
         for bad in [0.0, -1.0, f32::NAN, f32::INFINITY, MAX_MAP_SIDE_TILES + 1.0] {
             let mut welcome = normal();
-            welcome.world.boss = Some(BossInfo { slam_radius: bad });
+            welcome.world.boss = Some(BossInfo {
+                slam_radius: bad,
+                charge_width: 2.0,
+            });
             assert!(
                 refused(&welcome).contains("boss slam radius"),
                 "slam radius {bad}"
@@ -447,9 +454,31 @@ mod tests {
         let mut welcome = normal();
         welcome.world.boss = Some(BossInfo {
             slam_radius: MAX_MAP_SIDE_TILES,
+            charge_width: 2.0,
         });
         assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
         welcome.world.boss = None;
         assert_eq!(check_welcome(&welcome), Ok(()), "no boss is fine");
+    }
+
+    #[test]
+    fn a_boss_charge_width_that_is_not_a_positive_number_within_the_map_is_refused() {
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY, MAX_MAP_SIDE_TILES + 1.0] {
+            let mut welcome = normal();
+            welcome.world.boss = Some(BossInfo {
+                slam_radius: 2.5,
+                charge_width: bad,
+            });
+            assert!(
+                refused(&welcome).contains("boss charge width"),
+                "charge width {bad}"
+            );
+        }
+        let mut welcome = normal();
+        welcome.world.boss = Some(BossInfo {
+            slam_radius: 2.5,
+            charge_width: MAX_MAP_SIDE_TILES,
+        });
+        assert_eq!(check_welcome(&welcome), Ok(()), "the limit itself is fine");
     }
 }

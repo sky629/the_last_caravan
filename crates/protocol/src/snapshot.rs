@@ -11,8 +11,8 @@
 use caravan_rules::{
     Act, Aim, Boss, BuildRefusal, CannotBuild, Chest, GatherNode, GroundWeapon, Interaction, Life,
     Loadout, Monster, MonsterKind, NightStep, Outcome, Phase, Pile, Player, PlayerBuffs,
-    Projectile, Prompt, RepairTarget, Sim, Stage, StructureKind, Tower, TowerState, Tuning,
-    WeaponKind, Zone,
+    Projectile, Prompt, RepairTarget, Sim, Stage, StructureKind, Telegraph, Tower, TowerState,
+    Tuning, WeaponKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -119,13 +119,23 @@ pub enum WireAim {
 }
 
 /// 보스가 지금 하는 일입니다. 영역의 크기는 `Welcome`의 `BossInfo`에 있고 여기에는 자리와 진행도만 있습니다.
-/// 진행도는 0.0에서 1.0이고, 1.0을 실은 스냅샷의 다음 Tick에 피해가 납니다.
+/// 진행도는 0.0에서 1.0이고, 1.0을 실은 스냅샷의 다음 Tick에 피해가 나거나 행동이 시작됩니다.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WireBossAct {
     /// 걷는 중입니다.
     Walking,
     /// 내려찍기를 예고하는 중입니다. `center`가 원의 중심입니다.
     Slam { center: WirePos, progress: f32 },
+    /// 돌진을 예고하는 중입니다. 띠는 `from`에서 `to`까지의 선분이고 폭은 `Welcome`의 `BossInfo`에 있습니다.
+    Charge {
+        from: WirePos,
+        to: WirePos,
+        progress: f32,
+    },
+    /// 예고한 띠를 따라 달리는 중입니다. 띠는 예고한 그대로입니다.
+    Dash { from: WirePos, to: WirePos },
+    /// 졸개를 부르려고 포효하는 중입니다.
+    Roar { progress: f32 },
 }
 
 impl WireBoss {
@@ -136,15 +146,27 @@ impl WireBoss {
                 Aim::Player(id) => WireAim::Player(id.0),
                 Aim::Wagon => WireAim::Wagon,
             },
-            act: match boss.act {
+            act: match &boss.act {
                 Act::Walking { .. } => WireBossAct::Walking,
-                Act::Slamming(telegraph) => {
-                    let Zone::Circle { center, .. } = telegraph.zone;
-                    WireBossAct::Slam {
-                        center: WirePos::from_tiles(center),
-                        progress: clamp_progress(telegraph.progress()),
-                    }
-                }
+                Act::Slamming(telegraph) => WireBossAct::Slam {
+                    center: WirePos::from_tiles(telegraph.zone.center()),
+                    progress: clamp_progress(telegraph.progress()),
+                },
+                Act::Winding { telegraph, charge } => WireBossAct::Charge {
+                    from: WirePos::from_tiles(charge.from),
+                    to: WirePos::from_tiles(charge.to),
+                    progress: clamp_progress(telegraph.progress()),
+                },
+                Act::Charging(charge) => WireBossAct::Dash {
+                    from: WirePos::from_tiles(charge.from),
+                    to: WirePos::from_tiles(charge.to),
+                },
+                Act::Roaring {
+                    ticks_left,
+                    total_ticks,
+                } => WireBossAct::Roar {
+                    progress: clamp_progress(Telegraph::progress_at(*ticks_left, *total_ticks)),
+                },
             },
         }
     }
@@ -408,6 +430,8 @@ pub enum WireInteraction {
         /// 열기의 진행도(0.0에서 1.0)입니다. 진행도는 상자가 아니라 여는 플레이어에게 있습니다.
         progress: f32,
     },
+    /// 공격에 맞아서 밀려나는 중입니다. 위치는 서버가 Tick마다 조금씩 옮기므로, 클라이언트가 보간하면 미끄러지듯 움직입니다.
+    Knocked,
 }
 
 /// 수리하는 대상입니다.
@@ -733,6 +757,7 @@ fn wire_interaction(sim: &Sim, player: &Player, interaction: &Interaction) -> Wi
         },
         Interaction::Gathering { node, .. } => WireInteraction::Gathering { node: node.0 },
         Interaction::Building { tower } => WireInteraction::Building { tower: tower.0 },
+        Interaction::Knocked { .. } => WireInteraction::Knocked,
         Interaction::Opening { chest, .. } => WireInteraction::Opening {
             chest: chest.0,
             // 진행도는 여는 플레이어에게 있으므로 `Sim`이 그 플레이어의 열기에서 계산합니다.

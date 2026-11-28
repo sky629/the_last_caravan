@@ -69,6 +69,8 @@ pub struct WorldInfo {
 pub struct BossInfo {
     /// 내려찍기의 원의 반지름(타일)입니다.
     pub slam_radius: f32,
+    /// 돌진의 띠의 폭(타일)입니다.
+    pub charge_width: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,6 +220,7 @@ impl Welcome {
                 boss: match &tuning.nights.finale {
                     Finale::Boss(boss) => Some(BossInfo {
                         slam_radius: boss.slam.radius,
+                        charge_width: boss.charge.width,
                     }),
                     Finale::LastWave => None,
                 },

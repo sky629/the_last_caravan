@@ -1,5 +1,5 @@
 //! 짧게 보이는 효과입니다. 플레이어의 부채꼴 공격, 소총의 사격 선, 활과 석궁의 탄환, 포탑의 사격, 범위형 포탑의 범위, 포탑이 놓일 타일과 건설이 거절된 타일을 선으로 그립니다.
-//! 보스가 예고한 원과 보스가 노리는 플레이어의 표시도 선으로 그립니다.
+//! 보스가 예고한 자리(내려찍기의 원, 돌진의 띠, 포효의 고리)와 보스가 노리는 플레이어의 표시도 선으로 그립니다.
 //!
 //! 효과는 이벤트가 아니라 상태에서 그립니다. 스냅샷에 마지막 공격 Tick(소총이면 사격 선이 끝난 자리도)과 마지막 사격이 들어 있으므로,
 //! 화면에 그리는 Tick이 그 직후이면 효과를 그립니다. 탄환은 스냅샷의 탄환 목록에서 그립니다.
@@ -9,7 +9,7 @@
 use bevy::prelude::*;
 use caravan_client_core::{
     BossView, Danger, Frame, PlayerView, ProjectileView, RangeRing, boss_view, build_preview,
-    circle_to_screen_radii, effect_progress, range_preview, range_rings,
+    circle_to_screen_radii, effect_progress, lane_corners, range_preview, range_rings,
 };
 use caravan_protocol::{
     WireDelivery, WireLife, WirePhase, WireStructureKind, WireTowerState, WireWeaponKind, WorldInfo,
@@ -133,26 +133,46 @@ fn draw_range(gizmos: &mut Gizmos, ring: RangeRing) {
     );
 }
 
-/// 보스가 예고한 원과 보스가 노리는 플레이어의 표시를 그립니다. 바깥 테두리는 예고가 시작될 때부터 끝까지 같고,
-/// 안쪽의 원이 테두리까지 차오르면 피해가 납니다. 원의 자리와 진행도는 서버가 정한 값을 그대로 씁니다.
+/// 보스가 예고한 자리와 보스가 노리는 플레이어의 표시를 그립니다. 바깥 테두리는 예고가 시작될 때부터 끝까지 같고,
+/// 안쪽이 테두리까지 차오르면 피해가 나거나 보스가 달리기 시작합니다. 돌진하는 동안에는 띠가 가득 찬 채로 남습니다.
+/// 포효는 보스의 발밑에서 퍼져 나가는 고리입니다. 자리와 진행도는 서버가 정한 값을 그대로 씁니다.
 fn draw_boss(gizmos: &mut Gizmos, frame: &Frame, boss: &BossView, world: &WorldInfo) {
-    if let Some(Danger::Circle {
-        center,
-        radius,
-        fill,
-    }) = boss.danger(world)
-    {
-        let at = Isometry2d::from_translation(convert::screen_pos(center));
-        gizmos.ellipse_2d(
-            at,
-            convert::from_rules(circle_to_screen_radii(radius)),
-            config::DANGER,
-        );
-        gizmos.ellipse_2d(
-            at,
-            convert::from_rules(circle_to_screen_radii(radius * fill)),
-            config::DANGER_FILL,
-        );
+    match boss.danger(world) {
+        Some(Danger::Circle {
+            center,
+            radius,
+            fill,
+        }) => {
+            let at = Isometry2d::from_translation(convert::screen_pos(center));
+            gizmos.ellipse_2d(
+                at,
+                convert::from_rules(circle_to_screen_radii(radius)),
+                config::DANGER,
+            );
+            gizmos.ellipse_2d(
+                at,
+                convert::from_rules(circle_to_screen_radii(radius * fill)),
+                config::DANGER_FILL,
+            );
+        }
+        Some(Danger::Lane {
+            from,
+            to,
+            width,
+            fill,
+        }) => {
+            gizmos.linestrip_2d(lane_outline(from, to, width), config::DANGER);
+            let front = from + (to - from) * fill;
+            gizmos.linestrip_2d(lane_outline(from, front, width), config::DANGER_FILL);
+        }
+        Some(Danger::Roar { center, fill }) => {
+            gizmos.ellipse_2d(
+                Isometry2d::from_translation(convert::screen_pos(center)),
+                convert::from_rules(circle_to_screen_radii(roar_ring_tiles(fill))),
+                config::DANGER,
+            );
+        }
+        None => {}
     }
     let aimed = boss
         .aimed_player()
@@ -160,6 +180,17 @@ fn draw_boss(gizmos: &mut Gizmos, frame: &Frame, boss: &BossView, world: &WorldI
     if let Some(player) = aimed {
         gizmos.linestrip_2d(aim_mark(player.pos), config::BOSS_TARGET);
     }
+}
+
+/// 띠의 테두리를 지면에서 한 바퀴 돈 화면 좌표의 닫힌 선입니다. 폭은 `from`에서 `to`로 가는 선의 양옆으로 퍼집니다.
+fn lane_outline(from: Ground, to: Ground, width: f32) -> [Vec2; 5] {
+    let [a, b, c, d] = lane_corners(from, to, width);
+    [a, b, c, d, a].map(convert::screen_pos)
+}
+
+/// 포효의 고리가 지금 지면에서 가지는 반지름(타일)입니다. 포효가 시작된 Tick에도 고리가 보이도록 아주 작지는 않습니다.
+fn roar_ring_tiles(fill: f32) -> f32 {
+    config::ROAR_RING_TILES * fill.max(config::ROAR_RING_MIN_FILL)
 }
 
 /// 보스가 노리는 플레이어의 머리 위에서 아래를 가리키는 삼각형의 꼭짓점입니다(화면 좌표, 닫힌 선).
@@ -408,6 +439,32 @@ mod tests {
             );
             assert!(side.dot(to - from).abs() < 1e-2, "{end:?}: {side:?}");
         }
+    }
+
+    #[test]
+    fn a_lane_is_outlined_by_its_four_corners_on_the_ground_and_closed() {
+        let outline = lane_outline(Ground::new(2.0, 3.0), Ground::new(12.0, 3.0), 2.0);
+
+        assert_eq!(
+            outline[0], outline[4],
+            "the line comes back to where it began"
+        );
+        let corners = [
+            Ground::new(2.0, 4.0),
+            Ground::new(12.0, 4.0),
+            Ground::new(12.0, 2.0),
+            Ground::new(2.0, 2.0),
+        ];
+        for (point, corner) in outline.iter().zip(corners) {
+            assert_eq!(*point, convert::screen_pos(corner));
+        }
+    }
+
+    #[test]
+    fn the_roar_ring_widens_with_the_progress_and_is_never_a_point() {
+        assert!(roar_ring_tiles(0.0) > 0.0, "visible on the first tick");
+        assert!(roar_ring_tiles(0.5) > roar_ring_tiles(0.25));
+        assert_eq!(roar_ring_tiles(1.0), config::ROAR_RING_TILES);
     }
 
     #[test]

@@ -11,9 +11,10 @@ use crate::kind::{MonsterKind, StructureKind, WeaponKind};
 use crate::math::Vec2;
 use crate::monster::Order;
 use crate::player::Presence;
+use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::telegraph::{self, Zone};
-use crate::tuning::{BossTuning, Debuff, Finale, StrikeTuning, Tuning, WaveScaling};
+use crate::tuning::{BossTuning, Debuff, Finale, Move, StrikeTuning, Tuning, WaveScaling};
 use crate::world::{Hit, Source, Target, Tile};
 
 /// 기본 수치에서 인원이 넷일 때 보스의 최대 HP입니다.
@@ -22,22 +23,23 @@ fn full_hp() -> u32 {
 }
 
 /// 보스의 수치를 켭니다. 원정을 시험하는 시나리오는 보스를 꺼 두고 시작하므로, 보스가 필요한 테스트가 부릅니다.
-fn with_boss(t: &mut Tuning) {
+pub(super) fn with_boss(t: &mut Tuning) {
     t.nights.finale = Tuning::default().nights.finale;
 }
 
 /// 시나리오의 수치에서 보스의 행동을 바꿉니다. 보스가 켜져 있어야 합니다.
-fn boss_tuning(t: &mut Tuning) -> &mut BossTuning {
+pub(super) fn boss_tuning(t: &mut Tuning) -> &mut BossTuning {
     match &mut t.nights.finale {
         Finale::Boss(cfg) => cfg,
         Finale::LastWave => panic!("the scenario has a boss"),
     }
 }
 
-/// 보스와 보통 몬스터가 놓인 자리에 서 있기만 하는 20 x 20 빈 들판입니다. 보스의 행동만 시험할 때 씁니다.
+/// 보스와 보통 몬스터가 놓인 자리에 서 있기만 하는 20 x 20 빈 들판입니다. 보스의 행동만 시험할 때 씁니다. 보스는 내려찍기만 되풀이합니다.
 fn still_field() -> Scenario {
     Scenario::with_tuning(|t| {
         with_boss(t);
+        boss_tuning(t).script = vec![Move::Slam];
         t.monsters.boss.speed = 0.0;
         t.monsters.grunt.speed = 0.0;
     })
@@ -52,7 +54,7 @@ fn put_boss_body(s: &mut Scenario, x: f32, y: f32) -> MonsterId {
 }
 
 /// 보스를 `(x, y)`에 놓고 보스의 단계로 바꿉니다. 방에 `party`명이 있는 밤입니다.
-fn put_boss(s: &mut Scenario, x: f32, y: f32, party: u32) -> MonsterId {
+pub(super) fn put_boss(s: &mut Scenario, x: f32, y: f32, party: u32) -> MonsterId {
     let t = s.sim.tuning().clone();
     let Finale::Boss(cfg) = &t.nights.finale else {
         panic!("the scenario has a boss");
@@ -82,7 +84,7 @@ fn hp_of(s: &Scenario, id: MonsterId) -> u32 {
     s.monster(id).expect("the monster is alive").hp
 }
 
-fn boss_hp(s: &Scenario) -> u32 {
+pub(super) fn boss_hp(s: &Scenario) -> u32 {
     hp_of(s, s.sim.boss().expect("a boss").id)
 }
 
@@ -90,12 +92,12 @@ fn aim(s: &Scenario) -> Aim {
     s.sim.boss().expect("a boss").aim
 }
 
-fn act(s: &Scenario) -> Act {
-    s.sim.boss().expect("a boss").act
+pub(super) fn act(s: &Scenario) -> Act {
+    s.sim.boss().expect("a boss").act.clone()
 }
 
 /// 플레이어 `by`가 보스에게 `amount`의 피해를 준 것으로 만듭니다. 무기를 거치지 않고 대상을 고르는 규칙만 시험할 때 씁니다.
-fn hit_boss(s: &mut Scenario, by: PlayerId, amount: u32) {
+pub(super) fn hit_boss(s: &mut Scenario, by: PlayerId, amount: u32) {
     let t = s.sim.tuning().clone();
     let id = s.sim.boss().expect("a boss").id;
     s.sim.world_mut().apply_hits(
@@ -110,7 +112,7 @@ fn hit_boss(s: &mut Scenario, by: PlayerId, amount: u32) {
 }
 
 /// 걷는 시간이 남지 않았다고 정해서 다음 Tick에 행동을 시작하게 합니다.
-fn skip_the_rest(s: &mut Scenario) {
+pub(super) fn skip_the_rest(s: &mut Scenario) {
     let boss = s.sim.world_mut().boss.as_mut().expect("a boss");
     boss.act = Act::Walking { ticks_left: 1 };
 }
@@ -118,20 +120,18 @@ fn skip_the_rest(s: &mut Scenario) {
 fn run_until_slamming(s: &mut Scenario) {
     skip_the_rest(s);
     s.run_until(5, |sim| {
-        matches!(sim.boss().map(|boss| boss.act), Some(Act::Slamming(_)))
+        matches!(sim.boss().map(|boss| &boss.act), Some(Act::Slamming(_)))
     });
 }
 
 fn slam_center(s: &Scenario) -> Vec2 {
     match act(s) {
-        Act::Slamming(telegraph) => match telegraph.zone {
-            Zone::Circle { center, .. } => center,
-        },
+        Act::Slamming(telegraph) => telegraph.zone.center(),
         other => panic!("the boss is not slamming: {other:?}"),
     }
 }
 
-fn hp_of_player(s: &Scenario, id: PlayerId) -> u32 {
+pub(super) fn hp_of_player(s: &Scenario, id: PlayerId) -> u32 {
     s.player(id).hp()
 }
 
@@ -227,6 +227,84 @@ fn a_night_that_is_not_the_last_has_no_boss() {
     assert!(matches!(phase(&s.sim), Phase::Dawn { .. }));
     s.run_ticks(2 * s.ticks(5.0));
     assert!(s.sim.boss().is_none());
+}
+
+/// 마지막 밤의 마지막 무리를 처치한 뒤 경고, 보스, 원정의 끝, 결과 화면, 야영지, 다음 원정의 첫날까지를 자연스러운 진행으로 따라갑니다.
+/// 원정이 어떻게 끝나든 보스의 상태와 몸이 야영지와 다음 원정에 남지 않고, 다음 원정의 보스는 처음의 모습으로 나타나야 합니다.
+#[test]
+fn whichever_way_the_last_night_ends_no_boss_state_or_body_is_left_in_the_camp_and_the_next_expedition()
+ {
+    for victory in [true, false] {
+        let mut s = Scenario::with_cycle(|t| {
+            with_boss(t);
+            t.cycle.day_secs = t.dt();
+            t.nights.plans = nights(&[&[2]]);
+        });
+        let player = s.player_at(10.0, 10.0);
+        run_until_the_last_wave_is_out(&mut s);
+        s.clear_monsters();
+        s.run_until(500, |sim| sim.boss().is_some());
+        assert!(matches!(
+            phase(&s.sim),
+            Phase::Night {
+                step: NightStep::Boss,
+                ..
+            }
+        ));
+        let first_boss = s.sim.boss().expect("a boss").id;
+
+        if victory {
+            hit_boss(&mut s, player, u32::MAX);
+        } else {
+            s.set_wagon_hp(0);
+        }
+        s.run_ticks(1);
+        let expected = if victory {
+            Outcome::Victory
+        } else {
+            Outcome::Defeat
+        };
+        assert_eq!(outcome(&s.sim), Some(expected), "victory: {victory}");
+        assert!(s.sim.debrief().is_some(), "the result screen is open");
+
+        s.tap_confirm(player);
+        assert!(
+            matches!(s.sim.stage(), Stage::Camp(_)),
+            "the result screen is followed by the camp"
+        );
+        assert!(s.sim.boss().is_none(), "no boss state in the camp");
+        assert!(
+            s.sim.monsters().all(|m| m.kind != MonsterKind::Boss),
+            "no boss body in the camp"
+        );
+
+        s.tap_ready(player);
+        s.run_until(s.ticks(10.0), |sim| sim.phase().is_some());
+        assert!(
+            matches!(phase(&s.sim), Phase::Day { day: 1, .. }),
+            "the next expedition starts on its first day"
+        );
+        assert!(s.sim.boss().is_none(), "no boss state on the first day");
+        assert!(
+            s.sim.monsters().all(|m| m.kind != MonsterKind::Boss),
+            "no boss body on the first day"
+        );
+
+        // 다음 원정의 마지막 밤에 나타나는 보스는 처음의 모습입니다. 이전 보스에서 이어받은 것이 없습니다.
+        run_until_the_last_wave_is_out(&mut s);
+        s.clear_monsters();
+        s.run_until(500, |sim| sim.boss().is_some());
+        let second = s.sim.boss().expect("a boss in the next expedition").clone();
+        assert_ne!(second.id, first_boss, "a new body, not the one that ended");
+        assert_eq!(second.max_hp, full_hp());
+        assert_eq!(boss_hp(&s), full_hp());
+        assert_eq!(second.aim, Aim::Wagon);
+        assert!(
+            matches!(second.act, Act::Walking { ticks_left } if ticks_left > s.ticks(2.0)),
+            "it starts with the three-second walk before its first act, not the shortened one: {:?}",
+            second.act
+        );
+    }
 }
 
 #[test]
@@ -987,7 +1065,8 @@ fn turned(degrees: f32) -> (f32, f32) {
 }
 
 #[test]
-fn a_spear_aimed_beside_the_middle_of_the_boss_hits_the_body_it_crosses_and_misses_past_it() {
+fn a_spear_aimed_beside_the_middle_of_the_boss_hits_the_body_it_crosses_and_misses_past_its_margin()
+{
     let full = 100_000;
     let from = Vec2::new(13.0, 10.0);
     // 창의 반각은 15도입니다. 2타일 떨어진 보스의 맞는 몸의 여유 0.6타일은 양쪽으로 약 17도를 더 덮습니다.

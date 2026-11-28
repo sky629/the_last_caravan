@@ -206,14 +206,14 @@ pub(crate) fn is_building(world: &World, tower: TowerId, by: PlayerId) -> bool {
 }
 
 /// 종류를 바꾸는 키(E)를 누른 플레이어마다 지을 종류를 `StructureKind::ALL`의 다음 종류로 바꿉니다. 원정의 Tick에서 건설 키를 처리하기 전에 부르므로,
-/// 같은 Tick에 누른 B는 바뀐 종류를 짓습니다. 쓰러졌거나 사망한 플레이어는 바꿀 수 없고, 이미 짓고 있는 포탑의 종류는 바뀌지 않습니다.
+/// 같은 Tick에 누른 B는 바뀐 종류를 짓습니다. 쓰러졌거나 사망한 플레이어와 밀려나는 플레이어는 바꿀 수 없고, 이미 짓고 있는 포탑의 종류는 바뀌지 않습니다.
 pub(crate) fn cycle_kinds(world: &mut World, ctx: &Ctx) {
     for player in world.players.values_mut() {
         let pressed = ctx
             .inputs
             .get(&player.id)
             .is_some_and(|input| input.cycle_tower);
-        if pressed && player.is_alive() {
+        if pressed && player.is_alive() && !player.is_knocked() {
             player.build_kind = player.build_kind.next();
         }
     }

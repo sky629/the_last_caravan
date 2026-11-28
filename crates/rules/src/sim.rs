@@ -253,17 +253,19 @@ impl Sim {
         };
         let mut hits = Vec::new();
         let mut afflictions = Vec::new();
+        let mut shoves = Vec::new();
         build::cycle_kinds(&mut self.world, &ctx);
         player::update_interactions(&mut self.world, &ctx);
         structures::advance_construction(&mut self.world, &ctx);
         self.paths.sync(&self.world, &self.tuning);
         player::update_sprint(&mut self.world, &ctx);
+        player::slide_knocked(&mut self.world, &ctx);
         player::move_players(&mut self.world, &ctx);
         resources::deposit_and_pickup(&mut self.world, &ctx);
         weapon::use_weapons(&mut self.world, &ctx, &mut hits);
         projectile::advance_projectiles(&mut self.world, &ctx, &mut hits);
         structures::towers_act(&mut self.world, &ctx, &mut hits, &mut afflictions);
-        boss::act(&mut self.world, &ctx, &mut hits);
+        boss::act(&mut self.world, &ctx, &mut hits, &mut shoves);
         monster::monsters_act(
             &mut self.world,
             &ctx,
@@ -274,6 +276,7 @@ impl Sim {
         effect::advance_effects(&mut self.world, &ctx, &mut hits);
         self.world.apply_hits(&hits, &self.tuning);
         effect::apply_afflictions(&mut self.world, &afflictions, &self.tuning);
+        player::apply_shoves(&mut self.world, &shoves);
         player::recover_near_wagon(&mut self.world, &ctx);
         player::advance_life_timers(&mut self.world, &self.tuning);
         loot::finish_openings(&mut self.world, &self.tuning);
