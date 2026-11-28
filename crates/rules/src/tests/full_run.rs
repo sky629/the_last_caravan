@@ -91,6 +91,16 @@ impl Numbers {
             tuning,
         }
     }
+
+    /// 같은 수치에서 파괴병이 포탑이 준 피해의 몇 %를 받는지를 `percent`로 바꾼 수치입니다.
+    fn with_sapper_tower_damage_percent(&self, percent: u32) -> Numbers {
+        let mut tuning = self.tuning.clone();
+        tuning.monsters.sapper.resist.tower_damage_percent = percent;
+        Numbers {
+            name: format!("{}, sappers take {percent}% of a tower hit", self.name),
+            tuning,
+        }
+    }
 }
 
 /// 기본 수치 그대로입니다.
@@ -111,7 +121,7 @@ fn runners_take_every_tower_hit() -> Numbers {
     }
 }
 
-/// 돌격병이 없는 무리입니다. 밤마다 무리의 크기는 기본 수치와 같은 합이고 모두 기본 몬스터이며, 보스의 졸개도 기본 몬스터입니다.
+/// 돌격병과 파괴병이 없는 무리입니다. 밤마다 무리의 크기는 기본 수치와 같은 합이고 모두 기본 몬스터이며, 보스의 졸개도 기본 몬스터입니다.
 fn grunts_only() -> Numbers {
     let mut tuning = Tuning::default();
     tuning.nights.plans = nights(&[&[8, 12], &[20, 30, 40], &[60, 90, 150]]);
@@ -119,7 +129,7 @@ fn grunts_only() -> Numbers {
         boss.summon.kind = MonsterKind::Grunt;
     }
     Numbers {
-        name: "grunts only (no runners, grunt minions)".to_string(),
+        name: "grunts only (no runners, no sappers, grunt minions)".to_string(),
         tuning,
     }
 }
@@ -801,6 +811,17 @@ fn a_full_mock_expedition_with_at_most_so_many_towers_is_printed_to_find_where_a
             for limit in [2, 4, 6, 8, 11] {
                 print_all_seeds(&numbers.with_tower_limit(limit), party);
             }
+        }
+    }
+}
+
+#[test]
+#[ignore = "every seed of every party size at every tower damage takes minutes; run with --ignored"]
+fn a_full_mock_expedition_is_printed_for_each_tower_damage_a_sapper_takes() {
+    for percent in [25, 30, 35, 40, 45, 50] {
+        let numbers = as_shipped().with_sapper_tower_damage_percent(percent);
+        for party in [1, 2, 4] {
+            print_all_seeds(&numbers, party);
         }
     }
 }

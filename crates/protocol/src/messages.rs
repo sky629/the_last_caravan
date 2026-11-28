@@ -12,7 +12,7 @@ use crate::snapshot::Snapshot;
 use crate::welcome::Welcome;
 
 /// 전송 형식이 바뀔 때 올리는 번호입니다. 서버는 다른 번호로 입장을 요청한 클라이언트를 거절합니다.
-pub const PROTOCOL_VERSION: u32 = 18;
+pub const PROTOCOL_VERSION: u32 = 19;
 
 /// 클라이언트에서 서버로 가는 메시지입니다. 이 열거형이 클라이언트가 서버에 할 수 있는 말의 전부입니다.
 /// 위치, 피해량, 공격 대상, 명중 여부는 어디에도 없습니다. 서버가 모든 결과를 판정합니다.

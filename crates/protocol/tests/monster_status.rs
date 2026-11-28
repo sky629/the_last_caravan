@@ -46,6 +46,10 @@ fn the_layout_is_the_kind_in_the_low_bits_and_one_bit_per_effect_above_it() {
         0b0000_0011
     );
     assert_eq!(
+        byte_of(WireMonsterStatus::plain(WireMonsterKind::Sapper)),
+        0b0000_0100
+    );
+    assert_eq!(
         byte_of(WireMonsterStatus::new(grunt, effects(true, false, false))),
         0b0001_0000,
         "stunned"

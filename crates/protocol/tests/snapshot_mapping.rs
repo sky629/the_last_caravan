@@ -263,8 +263,8 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
         .collect();
     assert_eq!(sites, expected, "the nodes of the map, numbered from 1");
     assert_eq!(world.player_radius, 0.35);
-    let [grunt, scarecrow, boss, runner] = world.monster_kinds[..] else {
-        panic!("the grunt, the scarecrow, the boss and the runner expected");
+    let [grunt, scarecrow, boss, runner, sapper] = world.monster_kinds[..] else {
+        panic!("the grunt, the scarecrow, the boss, the runner and the sapper expected");
     };
     assert_eq!(grunt.kind, WireMonsterKind::Grunt);
     assert_eq!((grunt.radius, grunt.max_hp), (0.4, 60));
@@ -278,6 +278,8 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
     );
     assert_eq!(runner.kind, WireMonsterKind::Runner);
     assert_eq!((runner.radius, runner.max_hp), (0.3, 30));
+    assert_eq!(sapper.kind, WireMonsterKind::Sapper);
+    assert_eq!((sapper.radius, sapper.max_hp), (0.4, 120));
     let info = world.boss.expect("the default tuning has a boss");
     assert_eq!(info.slam_radius, 2.5);
 }

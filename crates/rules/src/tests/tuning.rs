@@ -1263,6 +1263,36 @@ fn a_guard_has_to_be_a_kind_that_chases_players_and_the_reason_names_the_row() {
 }
 
 #[test]
+fn a_sapper_cannot_guard_but_may_come_in_a_wave_and_a_boss_may_call_it() {
+    use crate::kind::MonsterKind;
+    use crate::tuning::Prey;
+
+    let mut t = Tuning::default();
+    t.guards.kind = MonsterKind::Sapper;
+    let why = t.validate().expect_err("a sapper that guards");
+    assert!(why.contains("guards.kind"), "{why}");
+
+    // 종류의 수치가 정합니다. 기본 몬스터도 포탑만 노리면 경비가 될 수 없습니다.
+    let mut t = Tuning::default();
+    t.monsters.grunt.prey = Prey::Towers;
+    assert!(
+        t.validate()
+            .expect_err("a grunt that goes only for towers")
+            .contains("guards.kind")
+    );
+
+    let mut t = Tuning::default();
+    t.nights.plans[0].waves[0].packs[0].kind = MonsterKind::Sapper;
+    assert_eq!(t.validate(), Ok(()), "a sapper in a wave");
+
+    let mut t = Tuning::default();
+    if let Finale::Boss(boss) = &mut t.nights.finale {
+        boss.summon.kind = MonsterKind::Sapper;
+    }
+    assert_eq!(t.validate(), Ok(()), "a sapper among the boss's minions");
+}
+
+#[test]
 fn a_wave_that_adds_up_to_more_monsters_than_a_u32_counts_is_rejected_and_one_that_just_fits_is_not()
  {
     use crate::kind::MonsterKind;

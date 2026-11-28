@@ -37,6 +37,14 @@ pub const MONSTER_BODY: Vec2 = Vec2::new(12.0, 20.0);
 /// 돌격병은 몬스터보다 작아서, 무리 속에서도 몸집으로 구분됩니다. 걷는 몸과 맞는 몸의 반지름이 몬스터보다 작은 것과 같은 방향입니다.
 pub const RUNNER_BODY: Vec2 = Vec2::new(9.0, 15.0);
 const _: () = assert!(RUNNER_BODY.x < MONSTER_BODY.x && RUNNER_BODY.y < MONSTER_BODY.y);
+/// 파괴병은 몬스터보다 크지만 보스보다 작아서, 무리 속에서도 몸집으로 구분됩니다. 걷는 몸의 반지름은 몬스터와 같고 그리는 크기만 큽니다.
+pub const SAPPER_BODY: Vec2 = Vec2::new(17.0, 26.0);
+const _: () = assert!(
+    SAPPER_BODY.x > MONSTER_BODY.x
+        && SAPPER_BODY.y > MONSTER_BODY.y
+        && SAPPER_BODY.x < BOSS_BODY.x
+        && SAPPER_BODY.y < BOSS_BODY.y
+);
 /// 야영지의 허수아비입니다. 몬스터보다 키가 크고 막대기에 걸린 모습이라 가늘어서, 몬스터와 한눈에 구분됩니다.
 pub const SCARECROW_BODY: Vec2 = Vec2::new(10.0, 34.0);
 /// 보스는 플레이어보다 두 배쯤 크게 그립니다. 그림자는 맞는 몸의 원이므로 몸통도 그 폭에 가깝습니다.
@@ -139,6 +147,9 @@ pub const RUNNER: Color = Color::srgb(1.00, 0.68, 0.00);
 pub const SCARECROW: Color = Color::srgb(0.82, 0.70, 0.40);
 /// 보스는 몬스터(빨강)보다 어두운 검붉은색이어서, 무리 속에서도 한눈에 구분됩니다. 효과에 걸린 색과도 구분됩니다.
 pub const BOSS: Color = Color::srgb(0.55, 0.05, 0.05);
+/// 파괴병은 몬스터(빨강)와 돌격병(주황)과 달리 어두운 갈색이어서, 포탑을 부수러 가는 크고 느린 몸이 무리 속에서 구분됩니다.
+/// 보스(검붉은색), 마차(밝은 갈색), 바닥(어두운 녹색)과 모두 테스트가 확인하는 거리만큼 떨어져 있습니다.
+pub const SAPPER: Color = Color::srgb(0.47, 0.33, 0.05);
 /// 보스가 예고한 자리의 색입니다. 테두리는 진하게 그리고, 안쪽은 피해가 나거나 보스가 달릴 때가 가까울수록 넓게 채웁니다.
 pub const DANGER: Color = Color::srgba(1.00, 0.30, 0.15, 0.95);
 pub const DANGER_FILL: Color = Color::srgba(1.00, 0.30, 0.15, 0.45);
@@ -206,6 +217,7 @@ mod tests {
         let others = [
             MONSTER,
             RUNNER,
+            SAPPER,
             SCARECROW,
             EFFECT_STUN,
             EFFECT_SLOW,
@@ -230,6 +242,7 @@ mod tests {
      {
         let others = [
             MONSTER,
+            SAPPER,
             SCARECROW,
             BOSS,
             EFFECT_STUN,
@@ -251,6 +264,41 @@ mod tests {
     }
 
     #[test]
+    fn the_sapper_stands_apart_from_the_other_monsters_the_boss_the_effects_the_players_the_towers_the_wagon_and_the_ground()
+     {
+        let others = [
+            MONSTER,
+            RUNNER,
+            SCARECROW,
+            BOSS,
+            EFFECT_STUN,
+            EFFECT_SLOW,
+            EFFECT_BLEED,
+            YOU,
+            ALLY,
+            HOSTILE_PLAYER,
+            DOWNED,
+            DEAD,
+            SHADOW,
+            WATCHTOWER,
+            SLOW_TOWER,
+            STUN_TOWER,
+            HASTE_TOWER,
+            SWIFT_TOWER,
+            OBSTACLE,
+            WAGON,
+            NODE,
+            NODE_EMPTY,
+            CHEST,
+            GROUND_A,
+            GROUND_B,
+        ];
+        for other in others {
+            assert!(apart(SAPPER, other) >= 0.25, "{other:?}");
+        }
+    }
+
+    #[test]
     fn the_colours_of_the_kinds_other_than_the_watchtower_stand_apart_from_the_bodies_that_stand_beside_them()
      {
         let other_kinds = [SLOW_TOWER, STUN_TOWER, HASTE_TOWER, SWIFT_TOWER];
@@ -262,6 +310,7 @@ mod tests {
             DEAD,
             MONSTER,
             RUNNER,
+            SAPPER,
             SCARECROW,
             BOSS,
         ];

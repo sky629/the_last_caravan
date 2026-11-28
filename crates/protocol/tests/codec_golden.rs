@@ -34,7 +34,7 @@ fn assert_server_wire(msg: ServerMsg, bytes: &[u8]) {
 
 #[test]
 fn the_protocol_version_matches_these_golden_bytes() {
-    assert_eq!(PROTOCOL_VERSION, 18);
+    assert_eq!(PROTOCOL_VERSION, 19);
 }
 
 /// 값이 눈에 띄도록 0x10부터 이어지는 바이트로 만든 표식입니다.
@@ -54,7 +54,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
         },
         &[
             0x00, // Join 변형
-            0x12, // version
+            0x13, // version
             0x01, 0x04, b't', b'e', b's', b't', // room: 있음, 글자 4개
             0x04, b'K', b'A', b'N', b'G', // name: 글자 4개
             0x00, // token: 없음
@@ -68,7 +68,7 @@ fn join_is_variant_zero_then_version_then_the_optional_room_then_the_name_then_t
             token: Some(TOKEN),
         },
         &[
-            0x00, 0x12, 0x00, 0x04, b'K', b'A', b'N', b'G', //
+            0x00, 0x13, 0x00, 0x04, b'K', b'A', b'N', b'G', //
             0x01, // token: 있음
             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 길이 없이 16바이트
             0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -1104,6 +1104,39 @@ fn a_boss_body_is_a_monster_of_kind_two() {
         0x80, 0x18, 0x80, 0x01, // pos 3072, 128
         0x80, // facing 128
         0xE0, 0x5D, // hp 12000
+        0x00, 0x00, 0x00, // chests, ground_weapons, projectiles 비어 있음
+    ]);
+    assert_eq!(
+        encode_server(&ServerMsg::Snapshot(Box::new(snapshot))),
+        expected
+    );
+}
+
+#[test]
+fn a_sapper_body_is_a_monster_of_kind_four() {
+    let mut snapshot = quiet_snapshot(WirePhase::Day {
+        day: 1,
+        secs_left: 3.0,
+    });
+    snapshot.monsters = vec![WireMonster {
+        id: 6,
+        status: WireMonsterStatus::plain(WireMonsterKind::Sapper),
+        pos: WirePos { x: 3072, y: 128 },
+        facing: WireAngle(128),
+        hp: 120,
+    }];
+    // Snapshot, tick 1, expedition 1, 낮(날 1, 3.0초), 마차 0/0, 보관함 0, 탑과 지점과 더미와 플레이어는 빈 목록 넷
+    let mut expected = vec![
+        0x02, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ];
+    expected.extend_from_slice(&[
+        0x01, // monsters: 길이 1
+        0x06, // id 6
+        0x04, // 종류 Sapper, 효과 없음
+        0x80, 0x18, 0x80, 0x01, // pos 3072, 128
+        0x80, // facing 128
+        0x78, // hp 120
         0x00, 0x00, 0x00, // chests, ground_weapons, projectiles 비어 있음
     ]);
     assert_eq!(

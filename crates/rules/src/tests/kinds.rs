@@ -9,7 +9,7 @@ use crate::ids::{MonsterId, PlayerId};
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::MonsterKind;
 use crate::tuning::{
-    Debuff, Finale, NightPlan, NightTuning, Pack, Prey, Tuning, Wave, WaveScaling,
+    Debuff, Finale, NightPlan, NightTuning, Pack, Prey, SpawnSide, Tuning, Wave, WaveScaling,
 };
 use crate::world::{Hit, Source, Target};
 
@@ -558,7 +558,7 @@ fn the_first_night_has_only_grunts_and_the_second_and_third_mix_in_runners_with_
     );
     assert_eq!(
         [composition(3, 1), composition(3, 2), composition(3, 3)],
-        [(40, 20), (70, 20), (110, 40)]
+        [(40, 20), (60, 20), (90, 40)]
     );
     let total = |day| -> u32 {
         (1..=nights.wave_count(day))
@@ -566,6 +566,40 @@ fn the_first_night_has_only_grunts_and_the_second_and_third_mix_in_runners_with_
             .sum()
     };
     assert_eq!([total(1), total(2), total(3)], [20, 90, 300]);
+}
+
+#[test]
+fn sappers_come_only_in_the_second_and_third_wave_of_the_third_night_at_every_party_size() {
+    let nights = Tuning::default().nights;
+    let sappers =
+        |day, wave, party| count_of(&order_of(&nights, day, wave, party), MonsterKind::Sapper);
+
+    for party in 1..=4 {
+        for (day, waves) in [(1, 2), (2, 3), (3, 3)] {
+            for wave in 1..=waves {
+                let expected = if day == 3 && wave >= 2 {
+                    nights.scaled(if wave == 2 { 10 } else { 20 }, party)
+                } else {
+                    0
+                };
+                assert_eq!(
+                    sappers(day, wave, party),
+                    expected,
+                    "night {day} wave {wave}, {party} players"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        [sappers(3, 2, 4), sappers(3, 3, 4)],
+        [10, 20],
+        "ten and then twenty with four players"
+    );
+    assert_eq!(
+        [sappers(3, 2, 1), sappers(3, 3, 1)],
+        [3, 5],
+        "a lone player meets three and then five"
+    );
 }
 
 #[test]
@@ -579,4 +613,97 @@ fn the_boss_calls_runners_in_proportion_to_the_party() {
         [1, 2, 3, 4].map(|party| t.nights.scaled(boss.summon.count, party)),
         [3, 6, 9, 12]
     );
+}
+
+/// 마차 곁, 플레이어 곁, 포탑 곁에 선 기본 몬스터가 한 번씩 공격해서 대상이 잃은 HP입니다. 순서는 포탑, 마차, 플레이어입니다.
+/// 감시탑은 사격하지 않게 해서 몬스터가 한 번의 공격을 마치기 전에 쓰러지지 않습니다.
+fn damage_to_a_tower_the_wagon_and_a_player(adjust: impl Fn(&mut Tuning)) -> [u32; 3] {
+    let quiet = |t: &mut Tuning| {
+        watchtower_shot(t).damage = 0;
+        t.monsters.grunt.max_hp = 1000;
+        adjust(t);
+    };
+
+    let mut s = Scenario::with_tuning(quiet);
+    s.tower_at(5, 5);
+    s.monster_at(6.5, 5.5);
+    s.run_ticks(1);
+    let tower = s.sim.tuning().structures.watchtower.max_hp - s.tower().hp();
+
+    let mut s = Scenario::with_tuning(quiet);
+    s.monster_at(16.5, 18.0);
+    s.run_ticks(1);
+    let wagon = s.sim.tuning().wagon.max_hp - s.sim.wagon().hp;
+
+    let mut s = Scenario::with_tuning(quiet);
+    let player = s.player_at(5.0, 5.0);
+    s.monster_at(5.8, 5.0);
+    s.run_ticks(1);
+    let player = s.sim.tuning().player.max_hp - s.player(player).hp();
+
+    [tower, wagon, player]
+}
+
+#[test]
+fn a_monster_hits_a_tower_for_its_damage_times_its_siege_percent_and_the_wagon_and_a_player_for_its_damage()
+ {
+    assert_eq!(
+        damage_to_a_tower_the_wagon_and_a_player(|_| {}),
+        [10, 10, 10],
+        "a grunt at the default numbers: 10 damage to everything"
+    );
+    assert_eq!(
+        damage_to_a_tower_the_wagon_and_a_player(|t| t.monsters.grunt.siege_percent = 400),
+        [40, 10, 10],
+        "four times only against the tower"
+    );
+    assert_eq!(
+        damage_to_a_tower_the_wagon_and_a_player(|t| t.monsters.grunt.siege_percent = 50),
+        [5, 10, 10],
+        "and less than the damage when the percent is below 100"
+    );
+}
+
+#[test]
+fn the_siege_percent_rounds_up_so_that_a_hit_that_does_any_damage_takes_something_off_a_tower() {
+    let tower_damage = |attack_damage, siege_percent| {
+        damage_to_a_tower_the_wagon_and_a_player(|t| {
+            t.monsters.grunt.attack_damage = attack_damage;
+            t.monsters.grunt.siege_percent = siege_percent;
+        })[0]
+    };
+
+    assert_eq!(tower_damage(5, 150), 8, "7.5 rounds up to 8");
+    assert_eq!(tower_damage(10, 1), 1, "0.1 rounds up to 1");
+    assert_eq!(tower_damage(10, 0), 0, "a percent of 0 takes nothing");
+}
+
+#[test]
+fn only_the_sapper_hits_a_tower_harder_than_it_hits_the_wagon_at_the_default_numbers() {
+    let monsters = Tuning::default().monsters;
+    for kind in MonsterKind::ALL {
+        let expected = match kind {
+            MonsterKind::Grunt
+            | MonsterKind::Scarecrow
+            | MonsterKind::Boss
+            | MonsterKind::Runner => 100,
+            MonsterKind::Sapper => 400,
+        };
+        assert_eq!(monsters.get(kind).siege_percent, expected, "{kind:?}");
+    }
+}
+
+#[test]
+fn only_the_sapper_stands_opposite_the_rest_of_its_wave_at_the_default_numbers() {
+    let monsters = Tuning::default().monsters;
+    for kind in MonsterKind::ALL {
+        let expected = match kind {
+            MonsterKind::Grunt
+            | MonsterKind::Scarecrow
+            | MonsterKind::Boss
+            | MonsterKind::Runner => SpawnSide::WithWave,
+            MonsterKind::Sapper => SpawnSide::OppositeWave,
+        };
+        assert_eq!(monsters.get(kind).spawn_side, expected, "{kind:?}");
+    }
 }

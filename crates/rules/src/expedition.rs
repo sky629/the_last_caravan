@@ -250,7 +250,8 @@ fn spawn_next(phase: &mut Phase, world: &mut World, spawns: &SpawnPlan, t: &Tuni
     let Some(kind) = plan.kind_at(t.nights.scaling, party, nth) else {
         return;
     };
-    let spot: Vec2 = spawns.night_spot(t.nights.wave_serial(day, wave), nth);
+    let side = t.monsters.get(kind).spawn_side;
+    let spot: Vec2 = spawns.night_spot(t.nights.wave_serial(day, wave), nth, side);
     world.spawn_monster(kind, Order::Raid, spot, t);
     *phase = fighting(
         to_spawn - 1,

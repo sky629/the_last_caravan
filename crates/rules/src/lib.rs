@@ -74,8 +74,8 @@ pub use tuning::{
     CycleTuning, Debuff, Delivery, EffectTuning, Finale, GuardTuning, HealTuning, HitscanTuning,
     LootTuning, MapSpec, MonsterTable, MonsterTuning, Move, NightPlan, NightTuning, Pack,
     PlayerTuning, Prey, ProjectileTuning, PulseTuning, RepairTuning, Resist, ResourceTuning,
-    ReviveTuning, ShootTuning, SlamTuning, SprintTuning, Start, StrikeTuning, StructureTable,
-    StructureTuning, SummonTuning, TowerAction, Tuning, VillageTuning, WagonTuning, Wave,
-    WaveScaling, WeaponTable, WeaponTuning,
+    ReviveTuning, ShootTuning, SlamTuning, SpawnSide, SprintTuning, Start, StrikeTuning,
+    StructureTable, StructureTuning, SummonTuning, TowerAction, Tuning, VillageTuning, WagonTuning,
+    Wave, WaveScaling, WeaponTable, WeaponTuning,
 };
 pub use world::Tile;
