@@ -138,9 +138,9 @@ pub const DANGER: Color = Color::srgba(1.00, 0.30, 0.15, 0.95);
 pub const DANGER_FILL: Color = Color::srgba(1.00, 0.30, 0.15, 0.45);
 /// 보스가 노리는 플레이어의 머리 위에 그리는 표시입니다.
 pub const BOSS_TARGET: Color = Color::srgb(1.00, 0.25, 0.25);
-/// 보스가 노리는 플레이어의 발에서 위로 표시를 띄우는 높이(픽셀)와 표시의 크기입니다.
-pub const BOSS_TARGET_LIFT_PX: f32 = 46.0;
-pub const BOSS_TARGET_SIZE_PX: f32 = 9.0;
+/// 보스가 노리는 플레이어의 발에서 위로 표시를 띄우는 높이(픽셀)와 표시의 크기입니다. 표시의 끝이 이름 위에 있어야 이름과 겹치지 않습니다.
+pub const BOSS_TARGET_LIFT_PX: f32 = 72.0;
+pub const BOSS_TARGET_SIZE_PX: f32 = 13.0;
 /// 몬스터와 허수아비의 몸통이 효과에 걸렸을 때의 색입니다. 여러 효과가 함께 걸리면 스턴, 감속, 출혈의 순서로 앞선 하나만 보입니다.
 /// 몬스터(빨강), 허수아비(밀짚), 내 캐릭터(노랑), 동료(파랑), 다른 편 플레이어(연보라)와 어느 쪽과도 구분됩니다.
 pub const EFFECT_STUN: Color = Color::srgb(0.97, 0.97, 1.00);
