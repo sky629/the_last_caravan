@@ -515,7 +515,7 @@ fn a_sapper_hits_a_tower_or_the_wagon_from_every_free_tile_of_the_densest_villag
 }
 
 #[test]
-fn a_sapper_takes_half_of_a_towers_damage_rounded_up_and_all_of_a_players_damage() {
+fn a_sapper_takes_thirty_percent_of_a_towers_damage_rounded_up_and_all_of_a_players_damage() {
     let mut s = field(|t| t.monsters.sapper.max_hp = 1000);
     let owner = s.player_at(2.0, 2.0);
     let sapper = s.monster_of(MonsterKind::Sapper, 10.0, 10.0);
@@ -534,23 +534,23 @@ fn a_sapper_takes_half_of_a_towers_damage_rounded_up_and_all_of_a_players_damage
         before - s.monster(sapper).unwrap().hp
     };
 
-    assert_eq!(lost_to(&mut s, Source::Tower, 100), 50);
+    assert_eq!(lost_to(&mut s, Source::Tower, 100), 30);
     assert_eq!(
         lost_to(&mut s, Source::Tower, 15),
-        8,
-        "half of the watchtower's 15 is 7.5, rounded up to 8"
+        5,
+        "30% of the watchtower's 15 is 4.5, rounded up to 5"
     );
     assert_eq!(lost_to(&mut s, Source::Player(owner), 100), 100);
     assert_eq!(lost_to(&mut s, Source::Player(owner), 15), 15);
 }
 
 #[test]
-fn a_watchtower_shot_takes_eight_hp_off_a_sapper() {
+fn a_watchtower_shot_takes_five_hp_off_a_sapper() {
     let mut s = field(|_| {});
     s.tower_at(1, 17);
     let sapper = s.monster_of(MonsterKind::Sapper, 4.0, 17.5);
 
     s.run_ticks(1);
 
-    assert_eq!(100_000 - s.monster(sapper).expect("alive").hp, 8);
+    assert_eq!(100_000 - s.monster(sapper).expect("alive").hp, 5);
 }

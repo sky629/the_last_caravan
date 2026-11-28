@@ -1226,6 +1226,63 @@ fn a_wave_without_a_monster_is_rejected() {
     );
 }
 
+/// 기본 수치에서 셋째 밤의 둘째 무리의 파괴병 묶음(`packs[2]`)이 나오는 인원을 `joins`로 바꾼 수치입니다.
+fn tuning_with_the_sappers_joining(joins: crate::tuning::Joins) -> Tuning {
+    let mut t = Tuning::default();
+    t.nights.plans[2].waves[1].packs[2].joins = joins;
+    t
+}
+
+#[test]
+fn a_pack_that_joins_from_a_party_needs_a_pack_of_the_kind_it_stands_in_with_that_joins_everywhere()
+{
+    use crate::kind::MonsterKind;
+    use crate::tuning::{Joins, Pack};
+
+    let from = |min_party, instead| Joins::FromParty { min_party, instead };
+    assert_eq!(
+        tuning_with_the_sappers_joining(from(2, MonsterKind::Grunt)).validate(),
+        Ok(()),
+        "the default: sappers from two players, grunts in their place"
+    );
+    assert_eq!(
+        tuning_with_the_sappers_joining(from(3, MonsterKind::Runner)).validate(),
+        Ok(()),
+        "any kind the wave has beside the pack will do"
+    );
+
+    let why = tuning_with_the_sappers_joining(from(2, MonsterKind::Scarecrow))
+        .validate()
+        .expect_err("a kind the wave does not have");
+    assert!(why.contains("night 3 wave 2"), "{why}");
+    assert!(why.contains("Scarecrow"), "{why}");
+
+    // 정원이 한 명인 방은 파괴병이 나오는 인원에 닿지 못하지만, 파괴병의 수는 언제나 기본 몬스터로 가므로 수치는 성립합니다.
+    let mut t = Tuning::default();
+    t.max_players = 1;
+    assert_eq!(t.validate(), Ok(()), "a room that never has two players");
+
+    // 갈 곳이 다른 묶음도 인원에 따라 나오지 않을 수 있으면 그 묶음의 수가 갈 곳을 잃습니다.
+    let mut t = tuning_with_the_sappers_joining(from(2, MonsterKind::Runner));
+    t.nights.plans[2].waves[1].packs[1].joins = from(3, MonsterKind::Grunt);
+    let why = t
+        .validate()
+        .expect_err("a stand-in that does not join everywhere");
+    assert!(why.contains("night 3 wave 2"), "{why}");
+
+    // 어느 묶음도 모든 인원의 방에서 나오지 않는 무리는 한 명이 있는 방에서 몬스터가 나오지 않습니다.
+    let mut t = Tuning::default();
+    t.nights.plans[0].waves[0].packs = vec![Pack {
+        kind: MonsterKind::Grunt,
+        count: 8,
+        joins: from(2, MonsterKind::Grunt),
+    }];
+    let why = t
+        .validate()
+        .expect_err("a wave that comes to no room of one");
+    assert!(why.contains("night 1 wave 1"), "{why}");
+}
+
 #[test]
 fn the_boss_cannot_come_in_a_wave_or_as_a_guard() {
     let mut t = Tuning::default();
@@ -1301,14 +1358,8 @@ fn a_wave_that_adds_up_to_more_monsters_than_a_u32_counts_is_rejected_and_one_th
     let wave_of_two = |grunts, runners| {
         let mut t = Tuning::default();
         t.nights.plans[1].waves[2].packs = vec![
-            Pack {
-                kind: MonsterKind::Grunt,
-                count: grunts,
-            },
-            Pack {
-                kind: MonsterKind::Runner,
-                count: runners,
-            },
+            Pack::always(MonsterKind::Grunt, grunts),
+            Pack::always(MonsterKind::Runner, runners),
         ];
         t
     };

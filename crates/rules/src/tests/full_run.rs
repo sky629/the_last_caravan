@@ -793,9 +793,9 @@ fn print_all_seeds(numbers: &Numbers, party: u32) -> usize {
 
 #[test]
 #[ignore = "every seed of every party size and set of numbers takes about a minute and a half; run with --ignored"]
-fn a_full_mock_expedition_of_one_two_and_four_players_is_printed_for_each_set_of_numbers() {
+fn a_full_mock_expedition_of_one_to_four_players_is_printed_for_each_set_of_numbers() {
     for numbers in [as_shipped(), runners_take_every_tower_hit(), grunts_only()] {
-        for party in [1, 2, 4] {
+        for party in [1, 2, 3, 4] {
             print_all_seeds(&numbers, party);
         }
     }
@@ -807,7 +807,7 @@ fn a_full_mock_expedition_with_at_most_so_many_towers_is_printed_to_find_where_a
 {
     // 낮에 모은 자원으로 짓는 감시탑의 수가 얼마나 되어야 원정을 끝내는지를 봅니다. 포탑의 상한을 낮추면 그 수를 넘게 짓지 못하므로, 자원이나 시간이 모자란 방을 흉내 냅니다.
     for numbers in [as_shipped(), runners_take_every_tower_hit(), grunts_only()] {
-        for party in [1, 2, 4] {
+        for party in [1, 2, 3, 4] {
             for limit in [2, 4, 6, 8, 11] {
                 print_all_seeds(&numbers.with_tower_limit(limit), party);
             }
@@ -820,7 +820,7 @@ fn a_full_mock_expedition_with_at_most_so_many_towers_is_printed_to_find_where_a
 fn a_full_mock_expedition_is_printed_for_each_tower_damage_a_sapper_takes() {
     for percent in [25, 30, 35, 40, 45, 50] {
         let numbers = as_shipped().with_sapper_tower_damage_percent(percent);
-        for party in [1, 2, 4] {
+        for party in [1, 2, 3, 4] {
             print_all_seeds(&numbers, party);
         }
     }

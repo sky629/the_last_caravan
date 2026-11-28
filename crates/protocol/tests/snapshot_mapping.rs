@@ -27,10 +27,7 @@ fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
 fn one_monster() -> Vec<NightPlan> {
     vec![NightPlan {
         waves: vec![Wave {
-            packs: vec![Pack {
-                kind: MonsterKind::Grunt,
-                count: 1,
-            }],
+            packs: vec![Pack::always(MonsterKind::Grunt, 1)],
         }],
     }]
 }
@@ -1329,10 +1326,7 @@ fn a_charge_its_dash_the_push_it_causes_and_the_roar_reach_the_wire_in_order() {
         t.nights.plans = vec![NightPlan {
             waves: vec![
                 Wave {
-                    packs: vec![Pack {
-                        kind: MonsterKind::Grunt,
-                        count: 1,
-                    }],
+                    packs: vec![Pack::always(MonsterKind::Grunt, 1)],
                 };
                 2
             ],

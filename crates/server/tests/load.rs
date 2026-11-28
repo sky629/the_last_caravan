@@ -22,10 +22,7 @@ fn crowd_tuning() -> Tuning {
     tuning.cycle.day_secs = 0.1;
     tuning.nights.plans = vec![NightPlan {
         waves: vec![Wave {
-            packs: vec![Pack {
-                kind: MonsterKind::Grunt,
-                count: 300,
-            }],
+            packs: vec![Pack::always(MonsterKind::Grunt, 300)],
         }],
     }];
     // 접속한 클라이언트는 하나이지만 무리는 300마리 그대로 나옵니다.

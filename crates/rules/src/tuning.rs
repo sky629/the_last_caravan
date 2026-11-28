@@ -347,6 +347,7 @@ pub struct MonsterTable {
     pub runner: MonsterTuning,
     /// 걸어서 가장 가까운 포탑으로 가서 포탑만 부수는 느리고 단단한 몬스터입니다. 포탑이 준 피해는 일부만 받고, 같은 무리의 다른 몬스터와 반대쪽에서 나타나므로
     /// 포탑이 모두 처치해 주지 못하고, 막으러 가는 플레이어가 다른 몬스터에게 둘러싸이지 않습니다. 플레이어가 막지 않으면 포탑이 사라집니다.
+    /// 방에 몇 명 이상 있을 때 나오는지는 종류표가 아니라 무리의 묶음이 정합니다(`Pack::joins`).
     /// 걷는 몸과 공격 거리는 `grunt`와 같아서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
     pub sapper: MonsterTuning,
 }
@@ -618,6 +619,40 @@ pub struct Wave {
 pub struct Pack {
     pub kind: MonsterKind,
     pub count: u32,
+    /// 이 묶음이 어느 인원의 방에서 나오는지입니다.
+    pub joins: Joins,
+}
+
+impl Pack {
+    /// 방의 인원과 관계없이 나오는 묶음입니다.
+    pub fn always(kind: MonsterKind, count: u32) -> Pack {
+        Pack {
+            kind,
+            count,
+            joins: Joins::Always,
+        }
+    }
+
+    /// 방에 플레이어가 `party`명 있을 때 이 묶음이 나오는지입니다.
+    fn joins_at(&self, party: u32) -> bool {
+        match self.joins {
+            Joins::Always => true,
+            Joins::FromParty { min_party, .. } => party >= min_party,
+        }
+    }
+}
+
+/// 묶음이 나오는 방의 인원입니다. 묶음이 나오지 않아도 무리의 크기는 그대로이고, 그 묶음의 수가 다른 종류의 묶음으로 갑니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Joins {
+    /// 방의 인원과 관계없이 나옵니다.
+    Always,
+    /// 방에 플레이어가 `min_party`명 이상 있을 때만 나옵니다. 그보다 적으면 이 묶음은 나오지 않고, 이 묶음의 수(`WaveScaling`으로 바꾼 수)만큼 `instead` 종류의 몬스터가 더 나옵니다.
+    /// `instead`는 같은 무리에서 `Joins::Always`인 묶음의 종류입니다(`Tuning::validate`). 그런 묶음이 여럿이면 목록에서 가장 앞의 묶음에 더합니다.
+    FromParty {
+        min_party: u32,
+        instead: MonsterKind,
+    },
 }
 
 impl Wave {
@@ -626,26 +661,24 @@ impl Wave {
         self.packs.iter().map(|pack| pack.count).sum()
     }
 
-    /// 방에 플레이어가 `party`명 있을 때 이 무리의 몬스터 수입니다. 종류마다 `scaling`으로 바꾼 수의 합이므로, 묶음이 하나 이상이면 인원이 몇 명이어도 한 마리 이상입니다.
+    /// 방에 플레이어가 `party`명 있을 때 이 무리의 몬스터 수입니다. 묶음마다 `scaling`으로 바꾼 수의 합이므로, 묶음이 하나 이상이면 인원이 몇 명이어도 한 마리 이상입니다.
+    /// 방에 나오지 않는 묶음(`Joins::FromParty`)의 수도 다른 종류로 나오므로 합에 들어 있습니다.
     pub fn size(&self, scaling: WaveScaling, party: u32) -> u32 {
-        self.packs
-            .iter()
-            .map(|pack| scaling.scaled(pack.count, party))
-            .sum()
+        self.counts(scaling, party).iter().sum()
     }
 
     /// 방에 플레이어가 `party`명 있을 때 `nth`번째(0부터 셉니다)로 나올 몬스터의 종류입니다. 모두 나온 뒤의 순서는 `None`입니다.
     ///
-    /// 순서는 「아직 나오지 않은 비율이 가장 큰 종류를 고르고, 같으면 목록의 앞쪽」입니다. 종류마다 나올 수(`size`와 같은 수)만으로 정해지므로 상태를 저장하지 않고,
+    /// 순서는 「아직 나오지 않은 비율이 가장 큰 종류를 고르고, 같으면 목록의 앞쪽」입니다. 종류마다 나올 수(`counts`)만으로 정해지므로 상태를 저장하지 않고,
     /// 같은 입력은 언제나 같은 종류입니다. 기본 20과 돌격병 10이면 기본, 돌격병, 기본, 기본, 돌격병의 꼴로 고르게 섞입니다. 종류가 하나뿐이면 언제나 그 종류입니다.
     ///
     /// 종류마다 `k`번째 몬스터에 `k / 그 종류의 수`라는 값을 매기면, 순서는 이 값이 작은 쪽부터(같으면 목록의 앞쪽 종류부터)입니다.
     /// 그래서 한 마리를 내보낼 때마다 처음부터 다시 세지 않고, 종류마다 「그 종류의 `k`번째가 무리 전체에서 몇 번째인가」를 이분 탐색으로 찾습니다(`place_of`).
     pub fn kind_at(&self, scaling: WaveScaling, party: u32, nth: u32) -> Option<MonsterKind> {
         let sizes: Vec<u64> = self
-            .packs
-            .iter()
-            .map(|pack| u64::from(scaling.scaled(pack.count, party)))
+            .counts(scaling, party)
+            .into_iter()
+            .map(u64::from)
             .collect();
         let nth = u64::from(nth);
         (0..sizes.len()).find_map(|index| {
@@ -661,6 +694,25 @@ impl Wave {
             (low < sizes[index] && place_of(&sizes, index, low) == nth)
                 .then(|| self.packs[index].kind)
         })
+    }
+
+    /// 방에 플레이어가 `party`명 있을 때 묶음마다 나올 몬스터의 수입니다. `packs`와 같은 순서이고, 그 인원의 방에 나오지 않는 묶음은 0입니다.
+    /// 묶음의 수는 `scaling`으로 바꾼 수이고, 나오지 않는 묶음의 수는 그 묶음이 가리키는 종류의 묶음(`Joins::FromParty`)에 더합니다.
+    /// 무리의 크기(`size`)와 나오는 종류의 순서(`kind_at`)가 모두 이 수를 읽습니다.
+    fn counts(&self, scaling: WaveScaling, party: u32) -> Vec<u32> {
+        let mut counts = vec![0; self.packs.len()];
+        for (index, pack) in self.packs.iter().enumerate() {
+            let receiver = match pack.joins {
+                Joins::FromParty { instead, .. } if !pack.joins_at(party) => self
+                    .packs
+                    .iter()
+                    .position(|other| other.kind == instead && other.joins == Joins::Always)
+                    .expect("a validated wave has an always-joining pack of the kind a pack stands in with"),
+                Joins::Always | Joins::FromParty { .. } => index,
+            };
+            counts[receiver] += scaling.scaled(pack.count, party);
+        }
+        counts
     }
 }
 
@@ -693,6 +745,7 @@ pub enum WaveScaling {
     /// 인원은 그 밤이 시작될 때 방에 있는 플레이어의 수입니다(`Phase::Night::party`). `full_party`는 방의 정원(`max_players`) 이상이어야 하므로, 무리는 수치표보다 커지지 않습니다.
     ByParty { full_party: u32 },
     /// 인원과 관계없이 `plans`의 수 그대로입니다. 몬스터의 수를 정해서 재는 부하 시험(`--stress`)이 씁니다.
+    /// 묶음이 나오는 인원(`Joins`)은 수가 아니라 묶음의 성질이므로, 이 방법에서도 방의 인원을 읽습니다.
     Fixed,
 }
 
@@ -747,7 +800,7 @@ impl NightTuning {
     }
 
     /// `day`번째 밤의 `wave`번째 무리에 나올 몬스터의 수입니다. 방에 플레이어가 `party`명 있을 때의 크기이고, 없는 무리는 0입니다.
-    /// 종류마다 `scaled`로 바꾼 수의 합이므로, 있는 무리는 종류마다 인원이 몇 명이어도 한 마리 이상입니다.
+    /// 묶음마다 `scaled`로 바꾼 수의 합이므로, 있는 무리는 인원이 몇 명이어도 한 마리 이상입니다. 인원 때문에 나오지 않는 묶음(`Joins::FromParty`)의 수도 합에 들어 있습니다(`Wave::size`).
     pub fn wave_size(&self, day: u32, wave: u32, party: u32) -> u32 {
         self.wave(day, wave)
             .map_or(0, |wave| wave.size(self.scaling, party))
@@ -1009,6 +1062,23 @@ impl Tuning {
                         index + 1,
                         u32::MAX
                     ));
+                }
+                // 인원 때문에 나오지 않는 묶음의 수는 다른 묶음으로 가므로(`Wave::counts`), 갈 곳이 항상 있어야 합니다.
+                // 갈 곳은 인원과 관계없이 나오는 묶음이어야 하므로, 어느 인원의 방에서도 나오는 묶음이 하나 이상 있습니다.
+                for pack in &wave.packs {
+                    let Joins::FromParty { min_party, instead } = pack.joins else {
+                        continue;
+                    };
+                    let stands_in =
+                        |other: &Pack| other.kind == instead && other.joins == Joins::Always;
+                    if !wave.packs.iter().any(stands_in) {
+                        return Err(format!(
+                            "night {} wave {}: the {:?} pack is replaced by {instead:?} in a room of fewer than {min_party} players, but the wave has no {instead:?} pack that joins at every party size",
+                            night + 1,
+                            index + 1,
+                            pack.kind
+                        ));
+                    }
                 }
             }
         }
@@ -1710,17 +1780,16 @@ fn check_spawns(
 
 impl Default for Tuning {
     fn default() -> Tuning {
-        let grunts = |count| Pack {
-            kind: MonsterKind::Grunt,
-            count,
-        };
-        let runners = |count| Pack {
-            kind: MonsterKind::Runner,
-            count,
-        };
+        let grunts = |count| Pack::always(MonsterKind::Grunt, count);
+        let runners = |count| Pack::always(MonsterKind::Runner, count);
+        // 파괴병을 막을 사람이 있어야 파괴병이 뜻을 가지므로, 혼자 있는 방에는 나오지 않고 그 수만큼 기본 몬스터가 나옵니다.
         let sappers = |count| Pack {
             kind: MonsterKind::Sapper,
             count,
+            joins: Joins::FromParty {
+                min_party: 2,
+                instead: MonsterKind::Grunt,
+            },
         };
         let wave = |packs: &[Pack]| Wave {
             packs: packs.to_vec(),
@@ -1917,16 +1986,16 @@ impl Default for Tuning {
                 },
                 // 기본 몬스터의 두 배의 HP와 4분의 3쯤의 속도입니다. 플레이어를 쫓지 않고 걸어서 가장 가까운 포탑으로 가서 포탑을 부수고, 포탑에는 기본 몬스터의 네 배의 피해를 줍니다.
                 // 마차와 플레이어에게 주는 피해는 기본 몬스터와 같습니다. 걷는 몸과 공격 거리가 `grunt`와 같으므로 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
-                // 포탑이 준 피해는 절반만 받고(감시탑의 사격 15는 8이 됩니다), 무리의 다른 몬스터와 반대쪽에서 나타납니다. 두 값은 함께 정했습니다.
-                // 같은 쪽에서 나타나면 한 명이 막아도 부서진 감시탑이 줄지 않았고, 포탑이 준 피해를 모두 받으면 아무도 막지 않아도 감시탑이 4개에서 5개만 부서졌습니다(4명, 15개).
-                // 절반보다 적게 받으면 파괴병을 막을 사람이 없는 1명의 방이 모의 원정을 6번 가운데 3번에서 5번만 이겼습니다(25%에서 3번, 45%에서 5번). 측정은 README의 「현재의 한계」에 있습니다.
+                // 포탑이 준 피해는 30%만 받고(감시탑의 사격 15는 5가 됩니다), 무리의 다른 몬스터와 반대쪽에서 나타납니다. 두 값은 함께 정했습니다.
+                // 같은 쪽에서 나타나면 막으러 간 사람이 기본 몬스터에게 둘러싸이고, 포탑이 준 피해를 많이 받으면 포탑이 파괴병을 모두 처치해서 막을 이유가 없습니다.
+                // 몇 명의 방에서 나오는지는 무리의 묶음(`Pack::joins`)이 정하고, 이 표에는 없습니다. 측정은 README의 「현재의 한계」에 있습니다.
                 // `aggro_range`는 `Prey::Nearby`만 읽으므로 쓰이지 않습니다.
                 sapper: MonsterTuning {
                     max_hp: 120,
                     radius: 0.4,
                     hit_margin: 0.0,
                     resist: Resist {
-                        tower_damage_percent: 50,
+                        tower_damage_percent: 30,
                         ..Resist::NONE
                     },
                     speed: 1.7,

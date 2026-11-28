@@ -35,7 +35,7 @@ pub enum Phase {
     /// `day`번째 날의 낮입니다. `ticks_left`가 지나면 밤이 됩니다.
     Day { day: u32, ticks_left: u32 },
     /// `day`번째 날의 밤입니다. 그 밤의 무리가 차례로 나옵니다. `party`는 밤이 시작될 때 방에 있던 플레이어의 수(자리를 비운 플레이어 포함)이고,
-    /// 그 밤의 무리의 크기를 정합니다(`NightTuning::wave_size`). 밤 도중에 들어오거나 나가도 바뀌지 않습니다.
+    /// 그 밤의 무리의 크기(`NightTuning::wave_size`)와 무리에 나오는 종류(`Wave::kind_at`, `Pack::joins`)를 정합니다. 밤 도중에 들어오거나 나가도 바뀌지 않습니다.
     Night {
         day: u32,
         party: u32,

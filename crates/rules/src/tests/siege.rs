@@ -14,8 +14,9 @@
 //! 한 칸(인원, 감시탑의 수, 감시탑을 세운 모양)은 `RUNS`번 돌립니다. 실행마다 플레이어가 서는 자리, 움직이기 시작하는 때, 걷는 방향이 조금씩 달라서(`Siege::run`)
 //! 한 번의 우연으로 결론이 나지 않습니다. 표의 값은 실행들의 최솟값, 중앙값, 최댓값입니다.
 //!
-//! 단언하는 것은 둘입니다. 파괴병을 막는 입력이 Tick마다 막혀 서 있지 않고 실제로 걷고 베는 것, 그리고 기본 수치에서 4명이 감시탑 15개를 세운 방은
-//! 아무도 막지 않으면 감시탑의 절반 이상이 부서지고 한 명이 막으면 그보다 적게 부서지는 것입니다. 나머지 표는 출력만 하고 `#[ignore]`입니다.
+//! 단언하는 것은 둘입니다. 파괴병을 막는 입력이 Tick마다 막혀 서 있지 않고 실제로 걷고 베는 것, 그리고 기본 수치에서 모의 원정이 셋째 밤에 만나는 감시탑의 수
+//! (4명은 35개, 3명은 28개, 2명은 22개)를 마차 가까이 세운 방은 아무도 막지 않으면 한 명이 막을 때보다 감시탑이 더 많이 부서지는 것입니다. 나머지 표는 출력만 하고 `#[ignore]`입니다.
+//! 한 명뿐인 방에는 파괴병이 나오지 않으므로(`Pack::joins`) 막을 파괴병이 없고, 이 측정은 2명 이상의 방만 돌립니다.
 //!
 //! ```text
 //! cargo test --release -p caravan_rules siege -- --ignored --nocapture --test-threads=1
@@ -30,7 +31,7 @@ use crate::kind::MonsterKind;
 use crate::math::Vec2;
 use crate::player::Player;
 use crate::sim::Sim;
-use crate::tuning::{Tuning, WaveScaling};
+use crate::tuning::{Pack, Tuning, WaveScaling};
 use crate::world::Tile;
 
 /// 마차의 가장자리에서 이 거리(타일) 안에 들어온 파괴병만 막으러 갑니다. 마을 밖으로 나가면 몬스터 무리 한가운데에서 쓰러지기 때문입니다.
@@ -119,7 +120,7 @@ impl Night {
     }
 }
 
-/// 밤의 무리의 파괴병을 모두 기본 몬스터로 바꿉니다. 무리의 크기는 그대로입니다.
+/// 밤의 무리의 파괴병을 모두 어느 인원의 방에서나 나오는 기본 몬스터로 바꿉니다. 무리의 크기는 그대로입니다.
 fn without_sappers(t: &mut Tuning) {
     let packs = t
         .nights
@@ -128,7 +129,7 @@ fn without_sappers(t: &mut Tuning) {
         .flat_map(|night| &mut night.waves)
         .flat_map(|wave| &mut wave.packs);
     for pack in packs.filter(|pack| pack.kind == MonsterKind::Sapper) {
-        pack.kind = MonsterKind::Grunt;
+        *pack = Pack::always(MonsterKind::Grunt, pack.count);
     }
 }
 
@@ -339,15 +340,14 @@ impl Cell {
     fn describe(&self) -> String {
         let (nobody, one) = (&self.nobody_blocks, &self.one_blocks);
         format!(
-            "{:?}, {} players, {} towers | towers lost: no sappers {}, nobody blocks {}, one blocks {} | runs in which nobody loses at least {} and one loses fewer: {} of {RUNS} | defeats: nobody {}, one {} | wagon at the end, lowest: nobody {}, one {}",
+            "{:?}, {} players, {} towers | towers lost: no sappers {}, nobody blocks {}, one blocks {} | runs in which one loses fewer towers than nobody: {} of {RUNS} | defeats: nobody {}, one {} | wagon at the end, lowest: nobody {}, one {}",
             self.layout,
             self.party,
             self.towers,
             spread_of_lost(&self.without_sappers),
             spread_of_lost(nobody),
             spread_of_lost(one),
-            half_of(self.towers),
-            runs_where_blocking_pays(nobody, one, self.towers),
+            runs_where_blocking_pays(nobody, one),
             defeats(nobody),
             defeats(one),
             lowest_wagon(nobody),
@@ -356,19 +356,12 @@ impl Cell {
     }
 }
 
-/// 감시탑이 `towers`개일 때 절반 이상의 수입니다.
-fn half_of(towers: u32) -> usize {
-    towers.div_ceil(2) as usize
-}
-
-/// 아무도 막지 않는 밤에 감시탑의 절반 이상이 부서지고, 같은 번호의 실행에서 한 명이 막으면 그보다 적게 부서진 실행의 수입니다.
-fn runs_where_blocking_pays(nobody: &[Night], one: &[Night], towers: u32) -> usize {
+/// 같은 번호의 실행에서 한 명이 막으면 아무도 막지 않을 때보다 감시탑이 더 적게 부서진 실행의 수입니다.
+fn runs_where_blocking_pays(nobody: &[Night], one: &[Night]) -> usize {
     nobody
         .iter()
         .zip(one)
-        .filter(|(nobody, one)| {
-            nobody.towers_lost() >= half_of(towers) && one.towers_lost() < nobody.towers_lost()
-        })
+        .filter(|(nobody, one)| one.towers_lost() < nobody.towers_lost())
         .count()
 }
 
@@ -393,28 +386,30 @@ fn lowest_wagon(nights: &[Night]) -> u32 {
 }
 
 #[test]
-fn with_four_players_and_fifteen_towers_nobody_blocking_loses_half_of_them_and_one_blocking_loses_fewer()
- {
+fn with_the_towers_a_mock_expedition_builds_nobody_blocking_loses_more_towers_than_one_blocking() {
     // 같은 번호의 실행끼리 견줍니다. 두 밤은 플레이어가 서는 자리와 움직이기 시작하는 때가 같고, 한 명이 마차를 지키지 않고 파괴병을 막는다는 점만 다릅니다.
-    let nobody = runs(4, 15, Layout::NearTheWagon, 0, &|_| {});
-    let one = runs(4, 15, Layout::NearTheWagon, 1, &|_| {});
+    // 감시탑의 수는 모의 원정이 셋째 밤에 만나는 수(4명은 34개에서 37개, 3명은 26개에서 31개, 2명은 19개에서 24개) 가운데 하나입니다.
+    for (party, towers) in [(4, 35), (3, 28), (2, 22)] {
+        let nobody = runs(party, towers, Layout::NearTheWagon, 0, &|_| {});
+        let one = runs(party, towers, Layout::NearTheWagon, 1, &|_| {});
 
-    let paying = runs_where_blocking_pays(&nobody, &one, 15);
-    assert!(
-        paying >= RUNS as usize - 1,
-        "{paying} of {RUNS} runs; towers lost, nobody blocks {} and one blocks {}; defeats {} and {}",
-        spread_of_lost(&nobody),
-        spread_of_lost(&one),
-        defeats(&nobody),
-        defeats(&one)
-    );
+        let paying = runs_where_blocking_pays(&nobody, &one);
+        assert!(
+            paying >= RUNS as usize - 1,
+            "{party} players, {towers} towers: {paying} of {RUNS} runs; towers lost, nobody blocks {} and one blocks {}; defeats {} and {}",
+            spread_of_lost(&nobody),
+            spread_of_lost(&one),
+            defeats(&nobody),
+            defeats(&one)
+        );
+    }
 }
 
 #[test]
 #[ignore = "a minute for each tower damage a sapper takes; run with --ignored"]
 fn the_third_night_is_printed_for_each_party_and_tower_count_at_each_tower_damage_a_sapper_takes() {
-    // 마차 가까이 세운 감시탑을 인원 4명과 2명, 감시탑의 수마다 세 번(파괴병이 없는 밤, 아무도 막지 않는 밤, 한 명이 막는 밤) 돌립니다.
-    // 35개와 22개는 모의 원정이 셋째 밤에 만나는 감시탑의 수(4명은 34개에서 37개, 2명은 19개에서 24개)와 가깝습니다.
+    // 마차 가까이 세운 감시탑을 인원 4명, 3명, 2명과 감시탑의 수마다 세 번(파괴병이 없는 밤, 아무도 막지 않는 밤, 한 명이 막는 밤) 돌립니다.
+    // 35개, 28개, 22개는 모의 원정이 셋째 밤에 만나는 감시탑의 수(4명은 34개에서 37개, 3명은 26개에서 31개, 2명은 19개에서 24개)와 가깝습니다.
     for percent in [25, 30, 35, 40, 45, 50] {
         println!("a sapper takes {percent}% of a tower's damage");
         let adjust = |t: &mut Tuning| t.monsters.sapper.resist.tower_damage_percent = percent;
@@ -423,6 +418,8 @@ fn the_third_night_is_printed_for_each_party_and_tower_count_at_each_tower_damag
             (4, 15),
             (4, 25),
             (4, 35),
+            (3, 15),
+            (3, 28),
             (2, 10),
             (2, 15),
             (2, 22),

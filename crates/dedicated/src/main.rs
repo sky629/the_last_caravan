@@ -169,17 +169,14 @@ fn tuning_from(options: &Options) -> Tuning {
                 waves: sizes
                     .iter()
                     .map(|&count| Wave {
-                        packs: vec![Pack {
-                            kind: MonsterKind::Grunt,
-                            count,
-                        }],
+                        packs: vec![Pack::always(MonsterKind::Grunt, count)],
                     })
                     .collect(),
             })
             .collect();
     }
     if options.stress {
-        // 부하의 기준은 기본 몬스터가 몰려오는 것이므로, 기본 수치의 무리에 섞인 다른 종류도 기본 몬스터로 바꿉니다.
+        // 부하의 기준은 기본 몬스터가 몰려오는 것이므로, 기본 수치의 무리에 섞인 다른 종류도 어느 인원의 방에서나 나오는 기본 몬스터로 바꿉니다.
         let packs = tuning
             .nights
             .plans
@@ -187,7 +184,7 @@ fn tuning_from(options: &Options) -> Tuning {
             .flat_map(|night| &mut night.waves)
             .flat_map(|wave| &mut wave.packs);
         for pack in packs {
-            pack.kind = MonsterKind::Grunt;
+            *pack = Pack::always(MonsterKind::Grunt, pack.count);
         }
         tuning.wagon.max_hp = u32::MAX;
         tuning.player.max_hp = u32::MAX;

@@ -9,7 +9,7 @@ use crate::ids::{MonsterId, PlayerId};
 use crate::input::{AimDir, PlayerInput};
 use crate::kind::MonsterKind;
 use crate::tuning::{
-    Debuff, Finale, NightPlan, NightTuning, Pack, Prey, SpawnSide, Tuning, Wave, WaveScaling,
+    Debuff, Finale, Joins, NightPlan, NightTuning, Pack, Prey, SpawnSide, Tuning, Wave, WaveScaling,
 };
 use crate::world::{Hit, Source, Target};
 
@@ -17,7 +17,7 @@ fn wave_of(packs: &[(MonsterKind, u32)]) -> Wave {
     Wave {
         packs: packs
             .iter()
-            .map(|&(kind, count)| Pack { kind, count })
+            .map(|&(kind, count)| Pack::always(kind, count))
             .collect(),
     }
 }
@@ -243,6 +243,15 @@ fn every_kind_of_a_wave_comes_out_at_least_once_whatever_the_party() {
 
 /// 방에 `party`명이 있을 때 `wave` 하나로 이루어진 밤이 실제로 몬스터를 나타낸 순서입니다. 나타난 몬스터를 번호 순서로 읽어 첫 글자로 적습니다.
 fn spawned_order(wave: Wave, party: u32) -> String {
+    spawned_order_after(wave, party, |_, _| {})
+}
+
+/// `spawned_order`와 같고, 첫 몬스터가 나타난 뒤에 `change`가 방의 사람을 바꿉니다. `change`는 처음 있던 플레이어의 번호를 받습니다.
+fn spawned_order_after(
+    wave: Wave,
+    party: u32,
+    change: impl FnOnce(&mut Scenario, &[PlayerId]),
+) -> String {
     let mut s = Scenario::with_cycle(|t| {
         t.cycle.day_secs = 0.05;
         t.nights.scaling = WaveScaling::ByParty { full_party: 4 };
@@ -252,9 +261,9 @@ fn spawned_order(wave: Wave, party: u32) -> String {
         t.wagon.max_hp = u32::MAX;
         t.player.max_hp = u32::MAX;
     });
-    for _ in 0..party {
-        s.player_at(1.0, 1.0);
-    }
+    let players: Vec<PlayerId> = (0..party).map(|_| s.player_at(1.0, 1.0)).collect();
+    s.run_until(600, |sim| sim.monsters().next().is_some());
+    change(&mut s, &players);
     s.run_until(600, |sim| {
         matches!(
             phase(sim),
@@ -568,38 +577,188 @@ fn the_first_night_has_only_grunts_and_the_second_and_third_mix_in_runners_with_
     assert_eq!([total(1), total(2), total(3)], [20, 90, 300]);
 }
 
+/// 기본 수치의 셋째 밤의 `wave`번째 무리에 방에 `party`명이 있을 때 나오는 `(기본 몬스터, 돌격병, 파괴병)`의 수입니다.
+fn third_night_composition(wave: u32, party: u32) -> (u32, u32, u32) {
+    let nights = Tuning::default().nights;
+    let order = order_of(&nights, 3, wave, party);
+    (
+        count_of(&order, MonsterKind::Grunt),
+        count_of(&order, MonsterKind::Runner),
+        count_of(&order, MonsterKind::Sapper),
+    )
+}
+
 #[test]
-fn sappers_come_only_in_the_second_and_third_wave_of_the_third_night_at_every_party_size() {
+fn sappers_come_only_in_the_second_and_third_wave_of_the_third_night_to_rooms_of_two_or_more() {
     let nights = Tuning::default().nights;
     let sappers =
         |day, wave, party| count_of(&order_of(&nights, day, wave, party), MonsterKind::Sapper);
 
     for party in 1..=4 {
-        for (day, waves) in [(1, 2), (2, 3), (3, 3)] {
+        for (day, waves) in [(1, 2), (2, 3), (3, 1)] {
             for wave in 1..=waves {
-                let expected = if day == 3 && wave >= 2 {
-                    nights.scaled(if wave == 2 { 10 } else { 20 }, party)
-                } else {
-                    0
-                };
                 assert_eq!(
                     sappers(day, wave, party),
-                    expected,
+                    0,
                     "night {day} wave {wave}, {party} players"
                 );
             }
         }
     }
+    for (party, second, third) in [(1, 0, 0), (2, 5, 10), (3, 8, 15), (4, 10, 20)] {
+        assert_eq!(
+            [sappers(3, 2, party), sappers(3, 3, party)],
+            [second, third],
+            "{party} players"
+        );
+    }
+}
+
+#[test]
+fn where_the_sappers_do_not_come_grunts_come_in_their_place_and_the_wave_is_as_big_as_with_them() {
+    // 한 명이 있으면 파괴병의 3마리와 5마리 대신 기본 몬스터가 3마리와 5마리 더 나옵니다. 기본 몬스터는 15와 23마리에서 18과 28마리가 됩니다.
+    assert_eq!(third_night_composition(2, 1), (18, 5, 0));
+    assert_eq!(third_night_composition(3, 1), (28, 10, 0));
+    assert_eq!(third_night_composition(2, 2), (30, 10, 5));
+    assert_eq!(third_night_composition(3, 2), (45, 20, 10));
+    assert_eq!(third_night_composition(2, 3), (45, 15, 8));
+    assert_eq!(third_night_composition(3, 3), (68, 30, 15));
+    assert_eq!(third_night_composition(2, 4), (60, 20, 10));
+    assert_eq!(third_night_composition(3, 4), (90, 40, 20));
+
+    let nights = Tuning::default().nights;
+    let mut everyone = Tuning::default().nights;
+    for pack in everyone.plans[2]
+        .waves
+        .iter_mut()
+        .flat_map(|wave| &mut wave.packs)
+    {
+        pack.joins = Joins::Always;
+    }
+    for party in 1..=4 {
+        for wave in 1..=3 {
+            assert_eq!(
+                nights.wave_size(3, wave, party),
+                everyone.wave_size(3, wave, party),
+                "night 3 wave {wave}, {party} players: the sappers' places are not left empty"
+            );
+        }
+    }
+}
+
+/// 기본 몬스터 20마리와 돌격병 10마리가 어느 방에서나 나오고, 파괴병 8마리는 세 명 이상이 있을 때만 나오며 모자라면 기본 몬스터가 대신 나오는 무리입니다.
+fn grunts_runners_and_sappers_from_three() -> Wave {
+    let mut wave = wave_of(&[
+        (MonsterKind::Grunt, 20),
+        (MonsterKind::Runner, 10),
+        (MonsterKind::Sapper, 8),
+    ]);
+    wave.packs[2].joins = Joins::FromParty {
+        min_party: 3,
+        instead: MonsterKind::Grunt,
+    };
+    wave
+}
+
+#[test]
+fn a_pack_that_joins_from_a_party_comes_to_rooms_of_that_party_or_more_and_hands_its_count_over_below_it()
+ {
+    let nights = night_of(grunts_runners_and_sappers_from_three());
+    // 기준 인원일 때 20, 10, 8이므로 한 명이면 5, 3, 2이고 두 명이면 10, 5, 4이고 세 명이면 15, 8, 6입니다.
+    for (party, grunts, runners, sappers) in
+        [(1, 7, 3, 0), (2, 14, 5, 0), (3, 15, 8, 6), (4, 20, 10, 8)]
+    {
+        let order = order_of(&nights, 1, 1, party);
+        assert_eq!(
+            [
+                count_of(&order, MonsterKind::Grunt),
+                count_of(&order, MonsterKind::Runner),
+                count_of(&order, MonsterKind::Sapper),
+            ],
+            [grunts, runners, sappers],
+            "{party} players"
+        );
+        assert_eq!(nights.kind_at(1, 1, party, order.len() as u32), None);
+    }
+}
+
+#[test]
+fn the_monsters_a_pack_hands_over_come_in_the_order_of_a_wave_whose_kind_is_that_big() {
+    // 한 명이 있으면 기본 몬스터 5마리와 파괴병 2마리가 기본 몬스터 7마리가 되고, 돌격병 3마리와 섞이는 순서도 기본 몬스터가 7마리인 무리와 같습니다.
+    let nights = night_of(grunts_runners_and_sappers_from_three());
+    let plain = night_of(wave_of(&[
+        (MonsterKind::Grunt, 28),
+        (MonsterKind::Runner, 10),
+    ]));
     assert_eq!(
-        [sappers(3, 2, 4), sappers(3, 3, 4)],
-        [10, 20],
-        "ten and then twenty with four players"
+        order_of(&nights, 1, 1, 1),
+        order_of(&plain, 1, 1, 1),
+        "7 grunts and 3 runners in either"
     );
-    assert_eq!(
-        [sappers(3, 2, 1), sappers(3, 3, 1)],
-        [3, 5],
-        "a lone player meets three and then five"
-    );
+}
+
+#[test]
+fn a_pack_that_does_not_join_hands_its_count_to_the_first_pack_that_joins_everywhere_of_its_kind() {
+    // 기준 인원일 때 기본 몬스터 8마리와 돌격병 8마리와 기본 몬스터 8마리와 파괴병 8마리입니다. 파괴병은 두 명 이상이 있을 때만 나옵니다.
+    // 한 명이면 2, 2, 2마리이고 파괴병의 2마리가 첫 기본 몬스터에게 가서 4, 2, 2, 0마리입니다. 뒤의 기본 몬스터에게 가면 2, 2, 4, 0마리이고 순서가 다릅니다.
+    let mut wave = wave_of(&[
+        (MonsterKind::Grunt, 8),
+        (MonsterKind::Runner, 8),
+        (MonsterKind::Grunt, 8),
+        (MonsterKind::Sapper, 8),
+    ]);
+    wave.packs[3].joins = Joins::FromParty {
+        min_party: 2,
+        instead: MonsterKind::Grunt,
+    };
+    let nights = night_of(wave);
+    let kinds = [
+        MonsterKind::Grunt,
+        MonsterKind::Runner,
+        MonsterKind::Grunt,
+        MonsterKind::Sapper,
+    ];
+    let expected: Vec<MonsterKind> = replayed_order(&[4, 2, 2, 0])
+        .into_iter()
+        .map(|index| kinds[index])
+        .collect();
+    assert_eq!(order_of(&nights, 1, 1, 1), expected);
+}
+
+/// 나타난 순서(`spawned_order`)에서 기본 몬스터, 돌격병, 파괴병이 몇 마리인지입니다.
+fn grunts_runners_and_sappers_in(order: &str) -> [usize; 3] {
+    ['G', 'R', 'S'].map(|kind| order.chars().filter(|&found| found == kind).count())
+}
+
+#[test]
+fn a_wave_spawns_the_monsters_the_party_gives_it_with_the_sappers_replaced_below_their_party() {
+    // 한 명이면 기본 몬스터 5마리와 돌격병 3마리와 파괴병이 있어야 할 자리의 기본 몬스터 2마리, 네 명이면 20, 10, 8마리가 나타납니다.
+    let spawned = |party| {
+        grunts_runners_and_sappers_in(&spawned_order(
+            grunts_runners_and_sappers_from_three(),
+            party,
+        ))
+    };
+
+    assert_eq!(spawned(1), [7, 3, 0]);
+    assert_eq!(spawned(2), [14, 5, 0]);
+    assert_eq!(spawned(3), [15, 8, 6]);
+    assert_eq!(spawned(4), [20, 10, 8]);
+}
+
+#[test]
+fn which_kinds_a_night_sends_follow_the_party_it_began_with_however_the_room_changes_after() {
+    // 두 명으로 시작한 밤에 세 번째 사람이 들어와도 그 밤에는 파괴병이 나오지 않습니다.
+    let joined = spawned_order_after(grunts_runners_and_sappers_from_three(), 2, |s, _| {
+        s.player_at(1.0, 1.0);
+    });
+    assert_eq!(grunts_runners_and_sappers_in(&joined), [14, 5, 0]);
+
+    // 세 명으로 시작한 밤에 한 명이 나가도 그 밤에는 파괴병이 나옵니다.
+    let left = spawned_order_after(grunts_runners_and_sappers_from_three(), 3, |s, players| {
+        s.sim.remove_player(players[2]);
+    });
+    assert_eq!(grunts_runners_and_sappers_in(&left), [15, 8, 6]);
 }
 
 #[test]

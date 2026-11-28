@@ -326,7 +326,7 @@ fn every_wave_comes_from_another_direction_and_all_eight_are_used() {
 /// 방향은 마차의 중심에서 본 여덟 방향의 번호이고, 동쪽이 0이며 시계 반대 방향으로 셉니다. 몬스터가 걷지 않게 해서 나타난 자리에 서 있습니다.
 /// 무리마다 같은 종류가 모두 한 방향에 서야 하고, 그렇지 않으면 테스트가 실패합니다.
 fn directions_of_mixed_waves(waves: usize, adjust: impl FnOnce(&mut Tuning)) -> Vec<(i32, i32)> {
-    let pack = |kind, count| Pack { kind, count };
+    let pack = Pack::always;
     let mixed = Wave {
         packs: vec![
             pack(MonsterKind::Grunt, 6),
