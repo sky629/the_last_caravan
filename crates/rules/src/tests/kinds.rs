@@ -295,13 +295,14 @@ fn a_runner_is_faster_than_a_grunt_and_slower_than_a_walking_player_and_has_less
         s.monster_of(kind, START.0, START.1);
         s.run_until(400, |sim| sim.wagon().hp < 500)
     };
-    let (runner, grunt) = (
-        ticks_to_the_wagon(MonsterKind::Runner),
-        ticks_to_the_wagon(MonsterKind::Grunt),
-    );
-    assert!(
-        runner < grunt,
-        "the runner needed {runner} ticks and the grunt {grunt}"
+    // `START`는 마차의 가장자리에서 12타일 떨어진 자리이고, README가 이 두 값을 그대로 적습니다.
+    assert_eq!(
+        (
+            ticks_to_the_wagon(MonsterKind::Runner),
+            ticks_to_the_wagon(MonsterKind::Grunt)
+        ),
+        (72, 103),
+        "ticks a runner and a grunt need to hit the wagon from the same start"
     );
 }
 
