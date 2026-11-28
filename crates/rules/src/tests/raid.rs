@@ -3,10 +3,14 @@
 //! 입력을 만드는 쪽(`Bot`)은 화면이 알려 주는 것만 읽습니다. 보스의 몸과 예고된 영역(원과 띠), 졸개, 쓰러진 동료, 자기 자리입니다.
 //! 예고를 읽는 시간이 `REACTION_TICKS`만큼 늦어서 반응이 느린 사람을 흉내 내고, 달리지 않고 걷기만 합니다.
 //! 보스를 때리는 플레이어(`Role::Fighter`)는 보스에게서 마차의 반대쪽에 서서 보스를 마차에서 끌어내고, 곁에 온 졸개는 제자리에서 처치하고,
-//! 쓰러진 동료에게 가장 가까운 한 명이 부활시킵니다. 방에 둘 이상이 있으면 한 명(`Role::Guard`)이 마차 곁에서 졸개를 막습니다.
+//! 쓰러진 동료에게 가장 가까운 한 명이 부활시킵니다. 방에 둘 이상이 있으면 한 명(`Role::Guard`)이 마차를 지킵니다.
+//! 마차를 지키는 플레이어(`guard_the_wagon`)는 졸개가 마차에 가장 가까이 온 쪽의 마차 가장자리에서 `GUARD_POST_GAP`타일 떨어진 자리로 길을 찾아 걸어가고,
+//! 곁에 온 졸개를 제자리에서 벱니다. 졸개가 없으면 서 있습니다.
 //! 포탑을 짓는 일과 수리하는 일은 넣지 않았고, 예고를 읽는 시간 말고는 실수하지 않으므로 이 시간은 사람이 하는 전투의 대표값이 아니라
 //! 「단순한 입력으로도 잡을 수 있는가」와 「수치가 어느 크기인가」를 보는 자로 쓰입니다.
-//! 시간은 출력만 하고 단언하지 않습니다. 단언하는 것은 기본 수치에서 검을 든 4명과 1명이 보스를 잡는 것뿐입니다.
+//! 시간은 출력만 하고 단언하지 않습니다. 단언하는 것은 기본 수치에서 검을 든 4명과 1명이 보스를 잡는 것과,
+//! 감시탑 15개에서 마차를 지키는 한 명이 있는 쪽이 없는 쪽보다 낫다는 것(둘 다 이기면 마차의 HP가 `GUARD_WORTH` 이상 많거나, 없는 쪽만 지는 것)뿐입니다.
+//! 보스가 없는 밤의 측정(`night`)은 같은 입력으로 마차를 지키는 플레이어와 감시탑만 있는 경우를 견주어 출력합니다.
 //!
 //! 시간을 보려면 다음 명령을 실행합니다.
 //!
@@ -22,8 +26,10 @@ use crate::expedition::{NightStep, Outcome, Phase};
 use crate::ids::PlayerId;
 use crate::input::{AimDir, MoveDir, PlayerInput};
 use crate::kind::{MonsterKind, WeaponKind};
-use crate::math::{Rect, Vec2};
+use crate::math::Vec2;
 use crate::monster::Monster;
+use crate::nav::FlowField;
+use crate::player::Player;
 use crate::sim::Sim;
 use crate::telegraph::Zone;
 use crate::tuning::{Delivery, MapSpec, Tuning, WaveScaling};
@@ -37,14 +43,17 @@ const ESCAPE_TILES: f32 = 3.2;
 /// 보스를 때리는 플레이어가 마차의 반대쪽으로 물러서며 보스를 끌어낼 때 맵의 가장자리에서 남겨 두는 거리(타일)입니다.
 const EDGE_MARGIN: f32 = 6.0;
 
-/// 보스를 때리는 플레이어가 곁에 온 졸개를 제자리에서 처치하기 시작하는 거리(타일)입니다.
-const SELF_DEFENCE_REACH: f32 = 1.6;
+/// 곁에 온 졸개를 제자리에서 베기 시작하는 거리(타일)입니다. 검이 닿는 거리 1.0에 플레이어와 돌격병의 반지름을 더하고 조금 줄인 값입니다.
+const SWING_REACH: f32 = 1.55;
 
-/// 졸개를 막는 플레이어가 마차의 가장자리에서 떨어져 기다리는 거리(타일)입니다.
+/// 마차를 지키는 플레이어가 졸개가 가장 가까이 온 쪽의 마차 가장자리에서 떨어져 기다리는 거리(타일)입니다.
 const GUARD_POST_GAP: f32 = 1.5;
 
-/// 졸개를 막는 플레이어가 쫓아가는 졸개가 마차의 가장자리에서 떨어진 가장 먼 거리(타일)입니다. 이보다 먼 졸개는 마차에 올 때까지 기다립니다.
+/// 마차를 지키는 플레이어가 부활시키러 가는 쓰러진 동료가 마차의 가장자리에서 떨어진 가장 먼 거리(타일)입니다. 이보다 먼 동료는 보스를 때리는 사람이 부활시킵니다.
 const GUARD_REACH: f32 = 6.0;
+
+/// 마차를 지키는 한 명이 있는 쪽과 없는 쪽이 둘 다 보스를 잡았을 때, 있는 쪽이 낫다고 보는 마차의 HP 차이입니다.
+const GUARD_WORTH: u32 = 50;
 
 /// 한 번의 모의 전투가 끝났을 때의 모습입니다.
 #[derive(Debug)]
@@ -63,7 +72,7 @@ struct Raid {
 enum Role {
     /// 보스에게 다가가서 때립니다.
     Fighter,
-    /// 마차 곁에서 졸개를 막습니다.
+    /// 마차를 지킵니다.
     Guard,
 }
 
@@ -182,10 +191,10 @@ impl Bot {
         let waits_for_the_strike = delayed.is_some();
 
         if self.role == Role::Fighter
-            && let Some(minion) = minion_within(sim, player.pos, SELF_DEFENCE_REACH)
+            && let Some(swing) = swing_at_minion_beside(sim, player.pos)
         {
-            // 졸개가 곁에서 때리면 보스를 때리던 것을 멈추고 그 졸개를 처치합니다. 제자리에서 때립니다.
-            return walking(Vec2::ZERO, minion - player.pos, true);
+            // 졸개가 곁에서 때리면 보스를 때리던 것을 멈추고 그 졸개를 처치합니다.
+            return swing;
         }
         let wagon = sim.wagon().rect;
         let downed_ally = sim
@@ -216,97 +225,88 @@ impl Bot {
                 ..PlayerInput::default()
             };
         }
-        let (target, target_radius) = match self.mission(sim, player.pos, boss) {
-            Mission::Wait { at } => {
-                // 기다릴 자리로 걸어갑니다. 때릴 상대가 없으므로 공격하지 않습니다.
-                let to = at - player.pos;
-                let step = if to.length() > 0.3 && !waits_for_the_strike {
-                    to.normalize_or_zero()
-                } else {
-                    Vec2::ZERO
-                };
-                return walking(step, boss - player.pos, false);
-            }
-            Mission::Strike { at, radius } => (at, radius),
-        };
-        let stand = stand_off(t, player.loadout.held(), target_radius);
-        let to = target - player.pos;
-        let step = if waits_for_the_strike {
-            Vec2::ZERO
+        match self.role {
+            Role::Fighter => strike_the_boss(sim, player, boss, waits_for_the_strike),
+            Role::Guard => guard_the_wagon(sim, player.pos, waits_for_the_strike),
+        }
+    }
+}
+
+/// 보스를 때리는 플레이어의 입력입니다. 보스에게서 마차의 반대쪽에 서서 보스가 따라오며 마차에서 멀어지게 하고, 제자리에서 보스를 때립니다.
+/// 예고된 영역의 밖에서 영역이 사라지기를 기다리는 동안(`waits_for_the_strike`)에는 걷지 않습니다.
+fn strike_the_boss(
+    sim: &Sim,
+    player: &Player,
+    boss: Vec2,
+    waits_for_the_strike: bool,
+) -> PlayerInput {
+    let t = sim.tuning();
+    let stand = stand_off(t, player.loadout.held(), t.monsters.boss.hit_radius());
+    let step = if waits_for_the_strike {
+        Vec2::ZERO
+    } else {
+        let outward = boss - sim.wagon().rect.center();
+        let spot = boss + outward.normalize_or_zero() * stand;
+        let spot = Vec2::new(
+            spot.x.clamp(EDGE_MARGIN, t.map.width - EDGE_MARGIN),
+            spot.y.clamp(EDGE_MARGIN, t.map.height - EDGE_MARGIN),
+        );
+        let to_spot = spot - player.pos;
+        if to_spot.length() > 0.5 {
+            to_spot.normalize_or_zero()
         } else {
-            let spot = self.spot_to_strike_from(sim, player.pos, target, stand);
-            let to_spot = spot - player.pos;
-            if to_spot.length() > 0.5 {
-                to_spot.normalize_or_zero()
-            } else {
-                Vec2::ZERO
-            }
-        };
-        walking(step, to, true)
-    }
-
-    /// 목표에서 `stand`타일 떨어져 때리러 서는 자리입니다. 보스를 때리는 플레이어는 보스에게서 마차의 반대쪽에 서서,
-    /// 보스가 따라오며 마차에서 멀어지게 합니다. 졸개를 막는 플레이어는 지금 서 있는 쪽에서 졸개를 때립니다.
-    fn spot_to_strike_from(&self, sim: &Sim, from: Vec2, target: Vec2, stand: f32) -> Vec2 {
-        let outward = match self.role {
-            Role::Fighter => target - sim.wagon().rect.center(),
-            Role::Guard => from - target,
-        };
-        let spot = target + outward.normalize_or_zero() * stand;
-        let map = &sim.tuning().map;
-        match self.role {
-            Role::Fighter => Vec2::new(
-                spot.x.clamp(EDGE_MARGIN, map.width - EDGE_MARGIN),
-                spot.y.clamp(EDGE_MARGIN, map.height - EDGE_MARGIN),
-            ),
-            Role::Guard => spot,
+            Vec2::ZERO
         }
+    };
+    walking(step, boss - player.pos, true)
+}
+
+/// 마차를 지키는 플레이어의 입력입니다. 곁에 온 졸개는 제자리에서 벱니다. 곁에 졸개가 없으면 마차에 가장 가까운 졸개가 있는 쪽의 마차 가장자리에서
+/// `GUARD_POST_GAP`타일 떨어진 자리로 길을 따라 걸어가고, 닿으면 그 졸개를 보며 기다립니다. 졸개가 없으면 서 있습니다.
+/// 예고된 영역의 밖에서 영역이 사라지기를 기다리는 동안(`waits_for_the_strike`)에는 걷지 않습니다.
+fn guard_the_wagon(sim: &Sim, at: Vec2, waits_for_the_strike: bool) -> PlayerInput {
+    if let Some(swing) = swing_at_minion_beside(sim, at) {
+        return swing;
     }
-
-    /// 지금 할 일입니다. 때리는 플레이어는 보스를 때리고, 졸개를 막는 플레이어는 가장 가까운 졸개를 때리고 없으면 마차 곁에서 기다립니다.
-    fn mission(&self, sim: &Sim, from: Vec2, boss: Vec2) -> Mission {
-        let t = sim.tuning();
-        match self.role {
-            Role::Fighter => Mission::Strike {
-                at: boss,
-                radius: t.monsters.boss.hit_radius(),
-            },
-            Role::Guard => {
-                let wagon = sim.wagon().rect;
-                match nearest_minion(sim, wagon, from) {
-                    Some((at, kind)) => Mission::Strike {
-                        at,
-                        radius: t.monsters.get(kind).hit_radius(),
-                    },
-                    None => Mission::Wait {
-                        at: post_beside(wagon, boss),
-                    },
-                }
-            }
-        }
-    }
-}
-
-/// 모의 전투의 플레이어가 지금 하는 일입니다.
-enum Mission {
-    /// `at`에 있는 반지름 `radius`의 몸을 때립니다.
-    Strike { at: Vec2, radius: f32 },
-    /// `at`으로 가서 기다립니다.
-    Wait { at: Vec2 },
-}
-
-/// 보스가 부른 졸개입니다. 이 모의 전투에는 보스와 졸개 말고 다른 몬스터가 없습니다.
-fn is_minion(monster: &Monster) -> bool {
-    monster.kind != MonsterKind::Boss
-}
-
-/// `from`에서 `reach`타일 안에 있는 졸개 가운데 가장 가까운 졸개의 자리입니다.
-fn minion_within(sim: &Sim, from: Vec2, reach: f32) -> Option<Vec2> {
-    sim.monsters()
+    let wagon = sim.wagon().rect;
+    let Some(threat) = sim
+        .monsters()
         .filter(|monster| is_minion(monster))
         .map(|monster| monster.pos)
-        .filter(|pos| pos.distance(from) < reach)
-        .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
+        .min_by(|a, b| wagon.distance_to(*a).total_cmp(&wagon.distance_to(*b)))
+    else {
+        return walking(Vec2::ZERO, Vec2::new(1.0, 0.0), false);
+    };
+    let edge = wagon.closest_point(threat);
+    let post = edge + (threat - edge).normalize_or_zero() * GUARD_POST_GAP;
+    if waits_for_the_strike || at.distance(post) < 0.4 {
+        return walking(Vec2::ZERO, threat - at, false);
+    }
+    let tiles = sim.tiles();
+    let goal = tiles
+        .nearest_free(post)
+        .unwrap_or_else(|| tiles.tile_at(post));
+    let step = FlowField::toward(tiles, &[goal])
+        .next_waypoint(tiles, at)
+        .map_or(post - at, |waypoint| waypoint - at)
+        .normalize_or_zero();
+    walking(step, threat - at, false)
+}
+
+/// 곁(`SWING_REACH`타일 안)에 졸개가 있으면 가장 가까운 졸개를 제자리에서 베는 입력입니다.
+fn swing_at_minion_beside(sim: &Sim, at: Vec2) -> Option<PlayerInput> {
+    let minion = sim
+        .monsters()
+        .filter(|monster| is_minion(monster))
+        .map(|monster| monster.pos)
+        .filter(|pos| pos.distance(at) < SWING_REACH)
+        .min_by(|a, b| a.distance(at).total_cmp(&b.distance(at)))?;
+    Some(walking(Vec2::ZERO, minion - at, true))
+}
+
+/// 보스가 아닌 몬스터입니다. 보스의 밤에는 보스가 부른 졸개이고, 보스가 없는 밤의 측정에서는 밤의 무리입니다.
+fn is_minion(monster: &Monster) -> bool {
+    monster.kind != MonsterKind::Boss
 }
 
 /// 쓰러진 플레이어가 `at`에 있을 때 가장 가까이 있는 서 있는 플레이어입니다. 부활시키러 가는 사람은 이 한 명뿐입니다.
@@ -317,22 +317,6 @@ fn nearest_helper(sim: &Sim, at: Vec2) -> Option<PlayerId> {
         .map(|player| player.id)
 }
 
-/// 마차의 가장자리에서 `GUARD_REACH` 안에 있는 졸개 가운데 `from`에서 가장 가까운 졸개의 자리와 종류입니다.
-fn nearest_minion(sim: &Sim, wagon: Rect, from: Vec2) -> Option<(Vec2, MonsterKind)> {
-    sim.monsters()
-        .filter(|monster| is_minion(monster))
-        .filter(|monster| wagon.distance_to(monster.pos) < GUARD_REACH)
-        .map(|monster| (monster.pos, monster.kind))
-        .min_by(|(a, _), (b, _)| a.distance(from).total_cmp(&b.distance(from)))
-}
-
-/// 졸개를 막는 플레이어가 기다리는 자리입니다. 마차의 가장자리에서 `GUARD_POST_GAP`만큼 떨어진 곳 가운데 보스 쪽에 가까운 곳입니다.
-fn post_beside(wagon: Rect, boss: Vec2) -> Vec2 {
-    let edge = wagon.closest_point(boss);
-    let outward = (boss - edge).normalize_or_zero();
-    edge + outward * GUARD_POST_GAP
-}
-
 /// 모의 전투의 조건입니다.
 #[derive(Clone, Copy)]
 struct Setup {
@@ -340,12 +324,12 @@ struct Setup {
     weapon: WeaponKind,
     /// 마을에 서 있는 감시탑의 수입니다.
     towers: u32,
-    /// 마지막 한 명이 마차 곁에서 졸개를 막는지입니다. 아니면 모두가 보스를 때립니다.
+    /// 마지막 한 명이 마차를 지키는지입니다. 아니면 모두가 보스를 때립니다.
     guarded: bool,
 }
 
 impl Setup {
-    /// 기본 마을(감시탑 15개)에서 `party`명이 `weapon`을 듭니다. 방에 둘 이상이 있으면 한 명이 졸개를 막습니다.
+    /// 기본 마을(감시탑 15개)에서 `party`명이 `weapon`을 듭니다. 방에 둘 이상이 있으면 한 명이 마차를 지킵니다.
     fn village(party: u32, weapon: WeaponKind) -> Setup {
         Setup {
             party,
@@ -462,15 +446,23 @@ fn a_mock_raid_of_each_party_size_and_weapon_against_the_default_numbers() {
 
 #[test]
 fn a_mock_raid_with_and_without_a_guard_and_with_fewer_towers_is_printed_for_comparison() {
-    // 마차 곁에서 졸개를 막는 한 명이 결과를 바꾸는지를 봅니다. 감시탑이 적을수록 졸개가 마차에 닿기 쉽습니다. 출력만 하고 단언하지 않습니다.
-    for towers in [3, 5, 10, 15] {
-        for guarded in [true, false] {
-            let setup = Setup {
-                towers,
-                guarded,
-                ..Setup::village(4, WeaponKind::Sword)
-            };
-            println!("{}", describe(setup, &raid(setup)));
+    // 마차를 지키는 한 명이 결과를 바꾸는지를 인원과 무기와 감시탑의 수마다 봅니다. 감시탑이 적을수록 졸개가 마차에 닿기 쉽습니다. 출력만 하고 단언하지 않습니다.
+    // 방에 한 명뿐이면 그 사람이 보스를 때려야 하므로 지키는 쪽은 없습니다.
+    for weapon in [WeaponKind::Sword, WeaponKind::Bow, WeaponKind::Spear] {
+        for party in 1..=4 {
+            for towers in [3, 5, 10, 15, 25] {
+                for guarded in [true, false] {
+                    if party == 1 && guarded {
+                        continue;
+                    }
+                    let setup = Setup {
+                        towers,
+                        guarded,
+                        ..Setup::village(party, weapon)
+                    };
+                    println!("{}", describe(setup, &raid(setup)));
+                }
+            }
         }
     }
 }
@@ -486,5 +478,145 @@ fn four_swordsmen_and_one_swordsman_win_the_mock_raid_against_the_default_number
             "{}",
             describe(setup, &result)
         );
+    }
+}
+
+#[test]
+fn a_guard_at_the_wagon_pays_off_with_fifteen_towers_and_a_lone_player_still_wins_there() {
+    // 감시탑이 돌격병을 모두 잡아 주지 못해야 마차를 지키는 일이 쓸모가 있습니다. 둘 다 이기면 지키는 쪽이 마차의 HP를 `GUARD_WORTH` 이상 더 남기고,
+    // 지키지 않는 쪽이 지면 지키는 쪽이 이기는 것도 지키는 일이 쓸모 있다는 뜻입니다.
+    let guarded = Setup::village(4, WeaponKind::Sword);
+    let bare = Setup {
+        guarded: false,
+        ..guarded
+    };
+    let (with_guard, without_guard) = (raid(guarded), raid(bare));
+    let pays_off = match (with_guard.outcome, without_guard.outcome) {
+        (Some(Outcome::Victory), Some(Outcome::Victory)) => {
+            with_guard.wagon_hp >= without_guard.wagon_hp + GUARD_WORTH
+        }
+        (Some(Outcome::Victory), _) => true,
+        _ => false,
+    };
+    assert!(
+        pays_off,
+        "{}\n{}",
+        describe(guarded, &with_guard),
+        describe(bare, &without_guard)
+    );
+
+    // 방에 한 명뿐이면 마차를 지킬 사람이 없지만, 감시탑 15개가 돌격병을 충분히 막아 주어서 그 한 명이 보스를 잡고 이깁니다.
+    let lone = Setup::village(1, WeaponKind::Sword);
+    let result = raid(lone);
+    assert_eq!(
+        result.outcome,
+        Some(Outcome::Victory),
+        "{}",
+        describe(lone, &result)
+    );
+}
+
+/// 보스가 없는 밤 하나가 끝났을 때의 모습입니다.
+#[derive(Debug)]
+struct Night {
+    /// 마차가 부서지거나 모두가 쓰러지지 않고 밤의 무리를 모두 처치했으면 `Victory`입니다. 제한 시간 안에 끝나지 않았으면 `None`입니다.
+    outcome: Option<Outcome>,
+    secs: f32,
+    wagon_hp: u32,
+    players_standing: usize,
+    towers_standing: usize,
+}
+
+/// 기본 마을에 감시탑 `towers`개가 서 있고 `party`명이 있는 방에서 `day`번째 밤의 무리를 처음부터 끝까지 겪습니다. 보스는 없습니다.
+/// `defend`이면 모두가 검을 들고 마차를 지키고(`guard_the_wagon`), 아니면 모두가 맵 구석에 서 있어서 감시탑만 싸웁니다.
+/// 쓰러진 플레이어를 부활시키지 않고 포탑을 짓거나 수리하지도 않습니다. 돌격병이 받는 포탑의 피해는 `runner_tower_percent`입니다.
+fn night(day: u32, party: u32, towers: u32, defend: bool, runner_tower_percent: u32) -> Night {
+    let mut s = Scenario::default_game(|t| {
+        t.nights.scaling = WaveScaling::ByParty { full_party: 4 };
+        t.guards.per_node = 0;
+        t.guards.per_chest = 0;
+        t.loot.chests_per_day = 0;
+        t.village.start_towers = t.spread_tower_sites(towers);
+        t.monsters.runner.resist.tower_damage_percent = runner_tower_percent;
+    });
+    let spawns = s.sim.tuning().map.player_spawns.clone();
+    let players: Vec<PlayerId> = (0..party)
+        .map(|index| {
+            let spot = if defend {
+                spawns[index as usize % spawns.len()]
+            } else {
+                Vec2::new(2.0 + index as f32, 2.0)
+            };
+            s.player_at(spot.x, spot.y)
+        })
+        .collect();
+    s.sim.set_phase(Phase::Night {
+        day,
+        party,
+        step: NightStep::Waiting {
+            next_wave: 1,
+            ticks_left: 1,
+        },
+    });
+
+    let in_this_night =
+        |sim: &Sim| matches!(sim.phase(), Some(Phase::Night { day: now, .. }) if now == day);
+    for _ in 0..s.ticks(300.0) {
+        for &id in &players {
+            let input = match s.sim.player(id).filter(|player| player.is_alive()) {
+                Some(player) if defend => guard_the_wagon(&s.sim, player.pos, false),
+                _ => PlayerInput::default(),
+            };
+            s.hold(id, input);
+        }
+        s.run_ticks(1);
+        if s.sim.debrief().is_some() || !in_this_night(&s.sim) {
+            break;
+        }
+    }
+    let outcome = match s.sim.debrief() {
+        Some(debrief) => Some(debrief.outcome()),
+        None if in_this_night(&s.sim) => None,
+        None => Some(Outcome::Victory),
+    };
+    Night {
+        outcome,
+        secs: s.sim.tick() as f32 * s.sim.tuning().dt(),
+        wagon_hp: s.sim.wagon().hp,
+        players_standing: s.sim.players().filter(|player| player.is_alive()).count(),
+        towers_standing: s.sim.towers().filter(|tower| tower.is_standing()).count(),
+    }
+}
+
+#[test]
+fn the_second_and_third_night_with_towers_alone_and_with_players_at_the_wagon_are_printed_for_comparison()
+ {
+    // 돌격병이 포탑의 피해를 모두 받을 때와 기본 수치일 때를 견주어서, 돌격병이 밤을 얼마나 어렵게 하는지를 봅니다. 출력만 하고 단언하지 않습니다.
+    let by_default = Tuning::default()
+        .monsters
+        .runner
+        .resist
+        .tower_damage_percent;
+    for day in [2, 3] {
+        for party in [1, 4] {
+            for defend in [false, true] {
+                for percent in [100, by_default] {
+                    let result = night(day, party, 15, defend, percent);
+                    println!(
+                        "night {day}, {party} players, 15 towers, {}, runners take {percent}% of a tower hit: {:?} after {:.0}s, wagon {}, {} players standing, {} towers",
+                        if defend {
+                            "players at the wagon"
+                        } else {
+                            "towers alone"
+                        },
+                        result.outcome,
+                        result.secs,
+                        result.wagon_hp,
+                        result.players_standing,
+                        result.towers_standing
+                    );
+                }
+            }
+        }
     }
 }
