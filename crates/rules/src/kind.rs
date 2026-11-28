@@ -13,13 +13,16 @@ pub enum MonsterKind {
     /// 마지막 밤의 끝에 하나만 나타나는 보스입니다. 걷는 몸은 `Grunt`와 같은 크기이고 맞는 몸은 훨씬 큽니다.
     /// 밤의 무리와 낮의 몬스터로는 놓이지 않고, 보스의 상태(`World::boss`)와 함께 `World::spawn_boss`가 만듭니다.
     Boss,
+    /// 플레이어와 포탑을 쫓지 않고 마차로 곧장 달려가서 마차를 때리는 약하고 빠른 몬스터입니다. 걷는 몸은 `Grunt`보다 작습니다.
+    Runner,
 }
 
 impl MonsterKind {
-    pub const ALL: [MonsterKind; 3] = [
+    pub const ALL: [MonsterKind; 4] = [
         MonsterKind::Grunt,
         MonsterKind::Scarecrow,
         MonsterKind::Boss,
+        MonsterKind::Runner,
     ];
 }
 

@@ -14,7 +14,7 @@ use crate::kind::MonsterKind;
 use crate::math::Vec2;
 use crate::nav::{FlowField, Paths};
 use crate::stats::UnitStats;
-use crate::tuning::Tuning;
+use crate::tuning::{Prey, Tuning};
 use crate::world::{Ctx, Hit, Source, Target, Tile, World};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,7 +40,7 @@ pub struct Monster {
 pub enum Order {
     /// `post`를 지킵니다. 자리에서 `chase_range` 안에 들어온 플레이어를 쫓고, 아무도 없으면 자리로 돌아갑니다.
     Guard { post: Tile },
-    /// 마차를 향합니다. 가는 길에 `aggro_range` 안에 들어온 플레이어나 포탑을 쫓습니다.
+    /// 마차를 향합니다. 가는 길에 무엇을 쫓는지는 종류의 수치(`MonsterTuning::prey`)가 정합니다.
     Raid,
     /// 제자리에 서 있습니다. 아무것도 쫓지 않고 공격하지 않습니다. 야영지의 허수아비가 받는 명령입니다.
     Stand,
@@ -262,13 +262,21 @@ fn guard_goal(world: &World, monster: &Monster, post: Tile, ctx: &Ctx) -> Goal {
     }
 }
 
-/// 마차를 향하는 몬스터의 목표입니다.
+/// 마차를 향하는 몬스터의 목표입니다. 무엇을 쫓는지는 종류의 수치(`MonsterTuning::prey`)가 정합니다.
+fn raid_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
+    match ctx.t.monsters.get(monster.kind).prey {
+        Prey::Nearby => nearby_goal(world, monster, ctx, paths),
+        Prey::Wagon => Goal::Wagon,
+    }
+}
+
+/// 가까운 대상을 쫓는 몬스터(`Prey::Nearby`)의 목표입니다.
 ///
 /// 후보는 추적 거리(`aggro_range`) 안에 있고 몬스터와 적대하는 노릴 수 있는(`Player::is_targetable`) 플레이어와, 걸어서 추적 거리 안에 있는 서 있는 포탑입니다.
 /// 플레이어까지의 거리는 직선으로 재고, 포탑까지의 거리는 포탑 흐름장의 걸음 수로 잽니다.
 /// 그래서 벽 너머에 있는 포탑을 쫓아서 돌아가지 않습니다.
 /// 후보 가운데 가장 가까운 대상을 고르고, 후보가 없으면 마차를 고릅니다.
-fn raid_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
+fn nearby_goal(world: &World, monster: &Monster, ctx: &Ctx, paths: &Paths) -> Goal {
     let t = ctx.t;
     let aggro_range = t.monsters.get(monster.kind).aggro_range;
     let mut best: Option<(f32, Goal)> = None;

@@ -34,6 +34,9 @@ pub const RACK_HEIGHT: f32 = 26.0;
 // 캐릭터의 몸통입니다. 발 위치에서 위로 서 있는 직사각형이고, 그림자는 규칙이 쓰는 충돌 원을 지면에 그린 타원입니다.
 pub const PLAYER_BODY: Vec2 = Vec2::new(14.0, 30.0);
 pub const MONSTER_BODY: Vec2 = Vec2::new(12.0, 20.0);
+/// 돌격병은 몬스터보다 작아서, 무리 속에서도 몸집으로 구분됩니다. 걷는 몸과 맞는 몸의 반지름이 몬스터보다 작은 것과 같은 방향입니다.
+pub const RUNNER_BODY: Vec2 = Vec2::new(9.0, 15.0);
+const _: () = assert!(RUNNER_BODY.x < MONSTER_BODY.x && RUNNER_BODY.y < MONSTER_BODY.y);
 /// 야영지의 허수아비입니다. 몬스터보다 키가 크고 막대기에 걸린 모습이라 가늘어서, 몬스터와 한눈에 구분됩니다.
 pub const SCARECROW_BODY: Vec2 = Vec2::new(10.0, 34.0);
 /// 보스는 플레이어보다 두 배쯤 크게 그립니다. 그림자는 맞는 몸의 원이므로 몸통도 그 폭에 가깝습니다.
@@ -129,6 +132,9 @@ pub const AWAY_ALPHA: f32 = 0.4;
 pub const DOWNED: Color = Color::srgb(0.95, 0.45, 0.15);
 pub const DEAD: Color = Color::srgb(0.40, 0.40, 0.42);
 pub const MONSTER: Color = Color::srgb(0.85, 0.22, 0.28);
+/// 돌격병은 몬스터(빨강)와 달리 밝은 주황이어서, 마차로 곧장 달려오는 것이 무리 속에서 한눈에 구분됩니다.
+/// 쓰러진 플레이어(주황)와 내 캐릭터(노랑) 사이에 있고, 둘과 모두 테스트가 확인하는 거리만큼 떨어져 있습니다.
+pub const RUNNER: Color = Color::srgb(1.00, 0.68, 0.00);
 /// 허수아비는 몬스터(빨강)와 달리 밀짚색이어서, 때려도 되는 과녁임을 알 수 있습니다.
 pub const SCARECROW: Color = Color::srgb(0.82, 0.70, 0.40);
 /// 보스는 몬스터(빨강)보다 어두운 검붉은색이어서, 무리 속에서도 한눈에 구분됩니다. 효과에 걸린 색과도 구분됩니다.
@@ -199,6 +205,7 @@ mod tests {
     fn the_boss_stands_apart_from_the_monsters_the_effects_the_players_and_the_ground() {
         let others = [
             MONSTER,
+            RUNNER,
             SCARECROW,
             EFFECT_STUN,
             EFFECT_SLOW,
@@ -219,11 +226,45 @@ mod tests {
     }
 
     #[test]
+    fn the_runner_stands_apart_from_the_other_monsters_the_boss_the_effects_the_players_and_the_ground()
+     {
+        let others = [
+            MONSTER,
+            SCARECROW,
+            BOSS,
+            EFFECT_STUN,
+            EFFECT_SLOW,
+            EFFECT_BLEED,
+            YOU,
+            ALLY,
+            HOSTILE_PLAYER,
+            DOWNED,
+            DEAD,
+            SHADOW,
+            WAGON,
+            GROUND_A,
+            GROUND_B,
+        ];
+        for other in others {
+            assert!(apart(RUNNER, other) >= 0.25, "{other:?}");
+        }
+    }
+
+    #[test]
     fn the_colours_of_the_kinds_other_than_the_watchtower_stand_apart_from_the_bodies_that_stand_beside_them()
      {
         let other_kinds = [SLOW_TOWER, STUN_TOWER, HASTE_TOWER, SWIFT_TOWER];
         // 같은 편 플레이어(파랑)는 몸통이 작고 서 있는 모양이 달라서 포탑의 파랑 계열과 같은 계열이어도 헷갈리지 않으므로 뺍니다.
-        let bodies = [YOU, HOSTILE_PLAYER, DOWNED, DEAD, MONSTER, SCARECROW, BOSS];
+        let bodies = [
+            YOU,
+            HOSTILE_PLAYER,
+            DOWNED,
+            DEAD,
+            MONSTER,
+            RUNNER,
+            SCARECROW,
+            BOSS,
+        ];
         for tower in other_kinds {
             for body in bodies {
                 assert!(apart(tower, body) >= 0.25, "{tower:?} and {body:?}");

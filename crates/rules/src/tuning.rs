@@ -241,7 +241,9 @@ pub struct MonsterTuning {
     /// 몬스터의 가장자리에서 대상의 가장자리까지 잰 근접 공격 거리입니다. 근접 공격을 하지 않는 몬스터에게는 대상에게 다가가서 멈추는 거리입니다.
     pub attack_reach: f32,
     pub attack_cooldown_secs: f32,
-    /// 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 포탑을 쫓습니다.
+    /// 마차로 가는 도중에 무엇을 쫓는지입니다.
+    pub prey: Prey,
+    /// `Prey::Nearby`인 몬스터가 마차로 가는 도중에 이 거리 안에 들어온 플레이어나 포탑을 쫓습니다. 다른 몬스터는 읽지 않습니다.
     /// 몬스터의 중심에서 대상의 가장자리까지 잰 거리입니다.
     pub aggro_range: f32,
     /// 몬스터끼리 겹쳤을 때 서로 밀려나는 최대 속도입니다. 걷는 속도와 더한 값으로 한 Tick에 움직이는 거리가
@@ -256,7 +258,17 @@ impl MonsterTuning {
     }
 }
 
-/// 몬스터 종류가 피해와 효과를 받는 방식입니다. 보통 몬스터는 모두 받으므로 `Resist::NONE`입니다.
+/// 마차로 가는 몬스터가 가는 도중에 무엇을 쫓는지입니다. 이 값을 읽는 곳은 `monster::raid_goal` 하나입니다.
+/// 맞아도 쫓는 대상이 바뀌지 않는 것은 별도의 규칙이 아니라, 몬스터가 목표를 기억하지 않고 Tick마다 이 값으로 새로 고르기 때문입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prey {
+    /// 추적 거리(`MonsterTuning::aggro_range`) 안의 가장 가까운 플레이어나 포탑을 쫓고, 없으면 마차로 갑니다.
+    Nearby,
+    /// 아무것도 쫓지 않고 마차로 곧장 갑니다.
+    Wagon,
+}
+
+/// 몬스터 종류가 피해와 효과를 받는 방식입니다. 기본 몬스터와 허수아비는 모두 받으므로 `Resist::NONE`이고, 돌격병은 포탑의 피해만 줄여서 받고, 보스는 그에 더해 효과도 줄여서 받습니다.
 /// 이 값을 읽는 곳은 `World::apply_hits`(피해)와 `MonsterEffects`의 `would_take`와 `apply`(효과) 셋이고, 규칙의 다른 곳은 종류를 보고 갈라지지 않습니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Resist {
@@ -312,6 +324,9 @@ pub struct MonsterTable {
     /// 마지막 밤의 보스입니다. 걷는 몸은 `grunt`와 같아서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않고, 맞는 몸만 큽니다.
     /// `max_hp`는 밤의 무리와 같은 기준 인원(`WaveScaling`)일 때의 값입니다.
     pub boss: MonsterTuning,
+    /// 마차로 곧장 달려가는 약하고 빠른 몬스터입니다. 포탑의 피해를 줄여서 받으므로 포탑이 대신 잡아 주지 못하고 플레이어가 잡아야 합니다.
+    /// 걷는 몸과 공격 거리는 `grunt` 이하여서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
+    pub runner: MonsterTuning,
 }
 
 impl MonsterTable {
@@ -320,6 +335,7 @@ impl MonsterTable {
             MonsterKind::Grunt => &self.grunt,
             MonsterKind::Scarecrow => &self.scarecrow,
             MonsterKind::Boss => &self.boss,
+            MonsterKind::Runner => &self.runner,
         }
     }
 
@@ -564,14 +580,87 @@ pub struct CampTuning {
 /// 밤 하나입니다. 무리는 목록의 순서대로 나옵니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NightPlan {
-    pub waves: Vec<WavePlan>,
+    pub waves: Vec<Wave>,
 }
 
-/// 무리 하나입니다. 무리가 나타나는 방법은 종류와 수뿐이므로, 새 종류의 몬스터가 나오는 밤은 이 목록에 항목을 더해서 만듭니다.
+/// 무리 하나입니다. 무리는 종류마다 한 묶음(`Pack`)을 가지고, 모든 묶음의 몬스터가 한 무리 안에서 섞여 나타납니다.
+/// 새 종류의 몬스터가 나오는 밤은 이 목록에 묶음을 더해서 만듭니다. 비어 있을 수 없습니다(`Tuning::validate`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wave {
+    pub packs: Vec<Pack>,
+}
+
+/// 한 무리 안의 한 종류입니다. `count`는 `WaveScaling`이 정하는 기준 인원일 때의 수입니다.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct WavePlan {
+pub struct Pack {
     pub kind: MonsterKind,
     pub count: u32,
+}
+
+impl Wave {
+    /// 기준 인원일 때 이 무리의 몬스터 수입니다. 묶음마다의 수를 더한 값입니다.
+    pub fn count(&self) -> u32 {
+        self.packs.iter().map(|pack| pack.count).sum()
+    }
+
+    /// 방에 플레이어가 `party`명 있을 때 이 무리의 몬스터 수입니다. 종류마다 `scaling`으로 바꾼 수의 합이므로, 묶음이 하나 이상이면 인원이 몇 명이어도 한 마리 이상입니다.
+    pub fn size(&self, scaling: WaveScaling, party: u32) -> u32 {
+        self.packs
+            .iter()
+            .map(|pack| scaling.scaled(pack.count, party))
+            .sum()
+    }
+
+    /// 방에 플레이어가 `party`명 있을 때 `nth`번째(0부터 셉니다)로 나올 몬스터의 종류입니다. 모두 나온 뒤의 순서는 `None`입니다.
+    ///
+    /// 순서는 「아직 나오지 않은 비율이 가장 큰 종류를 고르고, 같으면 목록의 앞쪽」입니다. 종류마다 나올 수(`size`와 같은 수)만으로 정해지므로 상태를 저장하지 않고,
+    /// 같은 입력은 언제나 같은 종류입니다. 기본 20과 돌격병 10이면 기본, 돌격병, 기본, 기본, 돌격병의 꼴로 고르게 섞입니다. 종류가 하나뿐이면 언제나 그 종류입니다.
+    ///
+    /// 종류마다 `k`번째 몬스터에 `k / 그 종류의 수`라는 값을 매기면, 순서는 이 값이 작은 쪽부터(같으면 목록의 앞쪽 종류부터)입니다.
+    /// 그래서 한 마리를 내보낼 때마다 처음부터 다시 세지 않고, 종류마다 「그 종류의 `k`번째가 무리 전체에서 몇 번째인가」를 이분 탐색으로 찾습니다(`place_of`).
+    pub fn kind_at(&self, scaling: WaveScaling, party: u32, nth: u32) -> Option<MonsterKind> {
+        let sizes: Vec<u64> = self
+            .packs
+            .iter()
+            .map(|pack| u64::from(scaling.scaled(pack.count, party)))
+            .collect();
+        let nth = u64::from(nth);
+        (0..sizes.len()).find_map(|index| {
+            let (mut low, mut high) = (0, sizes[index]);
+            while low < high {
+                let middle = (low + high) / 2;
+                if place_of(&sizes, index, middle) < nth {
+                    low = middle + 1;
+                } else {
+                    high = middle;
+                }
+            }
+            (low < sizes[index] && place_of(&sizes, index, low) == nth)
+                .then(|| self.packs[index].kind)
+        })
+    }
+}
+
+/// 종류마다 나올 수가 `sizes`일 때, `index`번째 종류의 `k`번째(0부터 셉니다) 몬스터가 무리 전체에서 몇 번째로 나오는지입니다.
+/// 그보다 먼저 나오는 몬스터는 자기 종류의 `k`마리와, 다른 종류마다 나온 비율이 `k / sizes[index]`보다 작은 몬스터입니다.
+/// 비율이 같으면 앞쪽 종류가 먼저이므로, 앞쪽 종류는 같은 비율까지 세고 뒤쪽 종류는 같은 비율 앞까지 셉니다.
+fn place_of(sizes: &[u64], index: usize, k: u64) -> u64 {
+    let own = sizes[index];
+    let before: u64 = sizes
+        .iter()
+        .enumerate()
+        .filter(|&(other, _)| other != index)
+        .map(|(other, &size)| {
+            let reach = k * size;
+            let earlier = if other < index {
+                reach / own + 1
+            } else {
+                reach.div_ceil(own)
+            };
+            earlier.min(size)
+        })
+        .sum();
+    k + before
 }
 
 /// 무리의 크기가 방의 인원에 따라 달라지는지입니다.
@@ -582,6 +671,20 @@ pub enum WaveScaling {
     ByParty { full_party: u32 },
     /// 인원과 관계없이 `plans`의 수 그대로입니다. 몬스터의 수를 정해서 재는 부하 시험(`--stress`)이 씁니다.
     Fixed,
+}
+
+impl WaveScaling {
+    /// 기준 인원일 때의 수 `count`를 방에 플레이어가 `party`명 있을 때의 수로 바꿉니다. 무리의 크기와 보스의 HP가 모두 이 함수 하나를 거칩니다.
+    /// `count`가 1 이상이면 결과도 1 이상입니다.
+    pub fn scaled(self, count: u32, party: u32) -> u32 {
+        match self {
+            WaveScaling::Fixed => count,
+            WaveScaling::ByParty { full_party } => {
+                let scaled = (u64::from(count) * u64::from(party)).div_ceil(u64::from(full_party));
+                u32::try_from(scaled.max(1)).unwrap_or(u32::MAX)
+            }
+        }
+    }
 }
 
 /// 밤의 진행과 밤의 몬스터가 나타나는 방법입니다.
@@ -615,28 +718,27 @@ impl NightTuning {
     }
 
     /// `day`번째 밤의 `wave`번째 무리입니다(둘 다 1부터 셉니다).
-    pub fn wave(&self, day: u32, wave: u32) -> Option<WavePlan> {
+    pub fn wave(&self, day: u32, wave: u32) -> Option<&Wave> {
         let index = (wave as usize).checked_sub(1)?;
-        self.plan(day)?.waves.get(index).copied()
+        self.plan(day)?.waves.get(index)
     }
 
     /// `day`번째 밤의 `wave`번째 무리에 나올 몬스터의 수입니다. 방에 플레이어가 `party`명 있을 때의 크기이고, 없는 무리는 0입니다.
-    /// 인원에 따라 달라지는 값은 이 함수 한 곳에서 정합니다. 있는 무리는 인원이 몇 명이어도 한 마리 이상입니다.
+    /// 종류마다 `scaled`로 바꾼 수의 합이므로, 있는 무리는 종류마다 인원이 몇 명이어도 한 마리 이상입니다.
     pub fn wave_size(&self, day: u32, wave: u32, party: u32) -> u32 {
         self.wave(day, wave)
-            .map_or(0, |plan| self.scaled(plan.count, party))
+            .map_or(0, |wave| wave.size(self.scaling, party))
     }
 
-    /// 기준 인원일 때의 수 `count`를 방에 플레이어가 `party`명 있을 때의 수로 바꿉니다. 무리의 크기와 보스의 HP가 모두 이 함수 하나를 거칩니다.
-    /// `count`가 1 이상이면 결과도 1 이상입니다.
+    /// `day`번째 밤의 `wave`번째 무리에서 방에 플레이어가 `party`명 있을 때 `nth`번째(0부터 셉니다)로 나올 몬스터의 종류입니다.
+    /// 없는 무리와 무리의 크기(`wave_size`) 이후의 순서는 `None`입니다. 순서의 규칙은 `Wave::kind_at`에 있습니다.
+    pub fn kind_at(&self, day: u32, wave: u32, party: u32, nth: u32) -> Option<MonsterKind> {
+        self.wave(day, wave)?.kind_at(self.scaling, party, nth)
+    }
+
+    /// 기준 인원일 때의 수 `count`를 방에 플레이어가 `party`명 있을 때의 수로 바꿉니다(`WaveScaling::scaled`).
     pub fn scaled(&self, count: u32, party: u32) -> u32 {
-        match self.scaling {
-            WaveScaling::Fixed => count,
-            WaveScaling::ByParty { full_party } => {
-                let scaled = (u64::from(count) * u64::from(party)).div_ceil(u64::from(full_party));
-                u32::try_from(scaled.max(1)).unwrap_or(u32::MAX)
-            }
-        }
+        self.scaling.scaled(count, party)
     }
 
     /// 원정의 모든 밤의 무리를 합친 수입니다. 무리가 나타나는 방향은 첫 무리부터 센 순번으로 정해지므로, 보스는 이 수를 순번으로 받습니다.
@@ -864,12 +966,27 @@ impl Tuning {
         if self.nights.plans.is_empty() {
             return Err("there must be at least one night".to_string());
         }
-        for plan in &self.nights.plans {
-            if plan.waves.is_empty() || plan.waves.iter().any(|wave| wave.count == 0) {
+        for (night, plan) in self.nights.plans.iter().enumerate() {
+            let empty_wave = |wave: &Wave| {
+                wave.packs.is_empty() || wave.packs.iter().any(|pack| pack.count == 0)
+            };
+            if plan.waves.is_empty() || plan.waves.iter().any(empty_wave) {
                 return Err(
                     "every night needs at least one wave, and every wave at least one monster"
                         .to_string(),
                 );
+            }
+            // 무리의 크기(`Wave::count`와 `Wave::size`)는 `u32`로 더하므로, 묶음의 합이 넘치는 무리는 만들 수 없습니다.
+            for (index, wave) in plan.waves.iter().enumerate() {
+                let total: u64 = wave.packs.iter().map(|pack| u64::from(pack.count)).sum();
+                if total > u64::from(u32::MAX) {
+                    return Err(format!(
+                        "night {} wave {} adds up to {total} monsters, which is more than {}",
+                        night + 1,
+                        index + 1,
+                        u32::MAX
+                    ));
+                }
             }
         }
         // 기준 인원이 정원보다 작으면, 꽉 찬 방의 무리가 수치표보다 커집니다.
@@ -892,7 +1009,8 @@ impl Tuning {
             .nights
             .plans
             .iter()
-            .flat_map(|plan| plan.waves.iter().map(|wave| wave.kind))
+            .flat_map(|plan| &plan.waves)
+            .flat_map(|wave| wave.packs.iter().map(|pack| pack.kind))
             .chain([self.guards.kind]);
         for kind in expedition_kinds {
             if kind == MonsterKind::Scarecrow {
@@ -906,6 +1024,14 @@ impl Tuning {
                         .to_string(),
                 );
             }
+        }
+        // 경비는 자리에서 가까운 플레이어를 쫓는 명령(`Order::Guard`)을 받습니다. 마차로 곧장 가는 종류는 이 명령을 받으면 플레이어를 쫓게 되어 종류의 수치와 어긋납니다.
+        if self.monsters.get(self.guards.kind).prey != Prey::Nearby {
+            return Err(format!(
+                "guards.kind {:?} goes straight to the wagon (prey {:?}), but a guard chases the players who come near its post",
+                self.guards.kind,
+                self.monsters.get(self.guards.kind).prey
+            ));
         }
         // HP가 0인 개체는 만들어지는 순간 쓰러지거나 제거되므로, 모든 최대 HP는 1 이상이어야 합니다.
         let all_hp = [self.player.max_hp, self.wagon.max_hp]
@@ -1561,9 +1687,16 @@ fn check_spawns(
 
 impl Default for Tuning {
     fn default() -> Tuning {
-        let grunts = |count| WavePlan {
+        let grunts = |count| Pack {
             kind: MonsterKind::Grunt,
             count,
+        };
+        let runners = |count| Pack {
+            kind: MonsterKind::Runner,
+            count,
+        };
+        let wave = |packs: &[Pack]| Wave {
+            packs: packs.to_vec(),
         };
         // 포탑은 종류와 관계없이 HP, 수리, 건설 시간이 같습니다. 1초에 20 HP를 수리하고, HP가 거의 없는 감시탑을 가득 수리하면 건설 비용(10)과 같은 자원이 듭니다.
         let tower = |range, build_cost, action| StructureTuning {
@@ -1693,6 +1826,7 @@ impl Default for Tuning {
                     attack_damage: 10,
                     attack_reach: 0.5,
                     attack_cooldown_secs: 1.0,
+                    prey: Prey::Nearby,
                     aggro_range: 5.0,
                     separation_speed: 1.0,
                 },
@@ -1705,6 +1839,7 @@ impl Default for Tuning {
                     attack_damage: 0,
                     attack_reach: 0.0,
                     attack_cooldown_secs: 1.0,
+                    prey: Prey::Nearby,
                     aggro_range: 0.0,
                     separation_speed: 0.0,
                 },
@@ -1723,6 +1858,25 @@ impl Default for Tuning {
                     attack_damage: 0,
                     attack_reach: 0.5,
                     attack_cooldown_secs: 1.0,
+                    prey: Prey::Nearby,
+                    aggro_range: 0.0,
+                    separation_speed: 1.0,
+                },
+                // 기본 몬스터의 반값의 HP와 1.45배의 속도입니다. 플레이어가 걷는 속도(4.0)보다는 느립니다. 플레이어와 포탑을 쫓지 않고 마차로 곧장 가므로 `aggro_range`는 읽히지 않습니다.
+                // 포탑의 피해는 4분의 1만 받습니다. 포탑이 빠른 몬스터를 모두 잡아 주면 마차를 지키는 사람이 필요 없으므로, 사람이 잡아야 하는 몬스터로 만드는 값입니다.
+                runner: MonsterTuning {
+                    max_hp: 30,
+                    radius: 0.3,
+                    hit_margin: 0.0,
+                    resist: Resist {
+                        tower_damage_percent: 25,
+                        ..Resist::NONE
+                    },
+                    speed: 3.2,
+                    attack_damage: 8,
+                    attack_reach: 0.5,
+                    attack_cooldown_secs: 1.0,
+                    prey: Prey::Wagon,
                     aggro_range: 0.0,
                     separation_speed: 1.0,
                 },
@@ -1830,13 +1984,21 @@ impl Default for Tuning {
             nights: NightTuning {
                 plans: vec![
                     NightPlan {
-                        waves: vec![grunts(8), grunts(12)],
+                        waves: vec![wave(&[grunts(8)]), wave(&[grunts(12)])],
                     },
                     NightPlan {
-                        waves: vec![grunts(20), grunts(30), grunts(40)],
+                        waves: vec![
+                            wave(&[grunts(20)]),
+                            wave(&[grunts(20), runners(10)]),
+                            wave(&[grunts(25), runners(15)]),
+                        ],
                     },
                     NightPlan {
-                        waves: vec![grunts(60), grunts(90), grunts(150)],
+                        waves: vec![
+                            wave(&[grunts(40), runners(20)]),
+                            wave(&[grunts(70), runners(20)]),
+                            wave(&[grunts(110), runners(40)]),
+                        ],
                     },
                 ],
                 // 위의 무리는 네 명이 모였을 때의 크기입니다.
@@ -1881,7 +2043,7 @@ impl Default for Tuning {
                     summon: SummonTuning {
                         roar_secs: 2.0,
                         count: 12,
-                        kind: MonsterKind::Grunt,
+                        kind: MonsterKind::Runner,
                     },
                 }),
             },

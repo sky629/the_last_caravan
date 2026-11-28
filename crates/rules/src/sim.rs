@@ -550,6 +550,11 @@ impl Sim {
         &mut self.world
     }
 
+    /// 모의 전투의 플레이어가 길을 찾으려고 타일 지도를 읽을 때만 씁니다.
+    pub(crate) fn tiles(&self) -> &crate::world::TileMap {
+        &self.world.tiles
+    }
+
     /// 원정 중인 방의 단계를 바꿉니다. 원정 중이 아니면 테스트가 잘못 만든 것이므로 멈춥니다.
     pub(crate) fn set_phase(&mut self, phase: Phase) {
         assert!(

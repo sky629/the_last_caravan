@@ -9,8 +9,8 @@ use caravan_protocol::{
     WireWeaponKind,
 };
 use caravan_rules::{
-    AimDir, Finale, Loadout, MonsterKind, MoveDir, NightPlan, PlayerInput, PlayerInputs, Seed, Sim,
-    Start, Tile, Tuning, Vec2, WavePlan, WeaponKind,
+    AimDir, Finale, Loadout, MonsterKind, MoveDir, NightPlan, Pack, PlayerInput, PlayerInputs,
+    Seed, Sim, Start, Tile, Tuning, Vec2, Wave, WeaponKind,
 };
 
 fn room() -> RoomCode {
@@ -26,9 +26,11 @@ fn step(sim: &mut Sim, inputs: &PlayerInputs, ticks: u32) {
 /// 밤이 하나이고 무리가 하나이며 몬스터가 한 마리인 구성입니다.
 fn one_monster() -> Vec<NightPlan> {
     vec![NightPlan {
-        waves: vec![WavePlan {
-            kind: MonsterKind::Grunt,
-            count: 1,
+        waves: vec![Wave {
+            packs: vec![Pack {
+                kind: MonsterKind::Grunt,
+                count: 1,
+            }],
         }],
     }]
 }
@@ -261,8 +263,8 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
         .collect();
     assert_eq!(sites, expected, "the nodes of the map, numbered from 1");
     assert_eq!(world.player_radius, 0.35);
-    let [grunt, scarecrow, boss] = world.monster_kinds[..] else {
-        panic!("the grunt, the scarecrow and the boss expected");
+    let [grunt, scarecrow, boss, runner] = world.monster_kinds[..] else {
+        panic!("the grunt, the scarecrow, the boss and the runner expected");
     };
     assert_eq!(grunt.kind, WireMonsterKind::Grunt);
     assert_eq!((grunt.radius, grunt.max_hp), (0.4, 60));
@@ -274,6 +276,8 @@ fn welcome_describes_the_fixed_world_and_the_joining_player() {
         (boss.radius, boss.max_hp),
         (1.0, Tuning::default().monsters.boss.max_hp)
     );
+    assert_eq!(runner.kind, WireMonsterKind::Runner);
+    assert_eq!((runner.radius, runner.max_hp), (0.3, 30));
     let info = world.boss.expect("the default tuning has a boss");
     assert_eq!(info.slam_radius, 2.5);
 }
@@ -1322,9 +1326,11 @@ fn a_charge_its_dash_the_push_it_causes_and_the_roar_reach_the_wire_in_order() {
         t.cycle.day_secs = 0.1;
         t.nights.plans = vec![NightPlan {
             waves: vec![
-                WavePlan {
-                    kind: MonsterKind::Grunt,
-                    count: 1,
+                Wave {
+                    packs: vec![Pack {
+                        kind: MonsterKind::Grunt,
+                        count: 1,
+                    }],
                 };
                 2
             ],

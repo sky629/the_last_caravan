@@ -224,6 +224,23 @@ fn monsters_with_every_effect_cost_the_same_nine_bytes_as_monsters_with_none() {
 }
 
 #[test]
+fn monsters_of_every_kind_cost_the_same_nine_bytes_as_grunts() {
+    let grunts = encoded_len(crowded_snapshot(10_000, 300, 0));
+    let mut mixed = crowded_snapshot(10_000, 300, 0);
+    let kinds = [
+        WireMonsterKind::Grunt,
+        WireMonsterKind::Runner,
+        WireMonsterKind::Scarecrow,
+        WireMonsterKind::Boss,
+    ];
+    for (index, monster) in mixed.monsters.iter_mut().enumerate() {
+        let effects = monster.status.effects();
+        monster.status = WireMonsterStatus::new(kinds[index % kinds.len()], effects);
+    }
+    assert_eq!(grunts, encoded_len(mixed));
+}
+
+#[test]
 fn eight_projectiles_in_the_air_add_about_fifty_bytes_and_stay_under_the_bound() {
     // 네 명이 0.4초마다 쏘고 탄환이 0.65초 날아가면 동시에 8개 안팎입니다.
     let without = encoded_len(crowded_snapshot(10_000, 300, 0));

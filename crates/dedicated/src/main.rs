@@ -6,6 +6,7 @@
 //! - `--stats`: 1초에 한 줄씩 방, 플레이어, 몬스터의 수와 Tick 시간의 평균과 최대를 출력합니다. 부하를 시험할 때 씁니다.
 //! - `--waves 8,12/20,30,40/60,90,150`: 밤마다 무리의 몬스터 수를 바꿉니다. 밤은 `/`로, 무리는 `,`로 나누고, 밤의 수가 원정의 날 수입니다.
 //!   수는 네 명이 있을 때의 크기이고, 방에 있는 사람이 적으면 그에 비례해서 줄어듭니다(`--stress`는 줄이지 않습니다). 부하를 시험할 때 씁니다.
+//!   이 옵션은 무리의 몬스터 수만 정하므로 모든 무리가 기본 몬스터 한 묶음이고(돌격병이 섞이지 않습니다), 보스의 졸개는 이 옵션과 관계없이 기본 수치 그대로 돌격병입니다.
 //! - `--stress`: 마차, 포탑, 플레이어를 죽지 않게 하고, 감시탑을 상한만큼 미리 세우고, 낮을 한 Tick으로 줄이고,
 //!   몬스터를 Tick마다 한 마리씩 등장시킵니다. 기본 수치에서는 몬스터가 수십 마리 쌓이기 전에 원정이 실패로 끝나므로,
 //!   감시탑이 가득 찬 마을에 몬스터 수백 마리가 몰리는 부하는 이 옵션으로 만듭니다. 플레이어는 검과 활을 함께 가지고 시작합니다.
@@ -28,7 +29,8 @@ mod report;
 
 use caravan_protocol::{LinkId, ServerEvent, ServerLimits, ServerMsg, ServerTransport};
 use caravan_rules::{
-    Finale, Loadout, MonsterKind, NightPlan, Seed, Start, Tuning, WavePlan, WaveScaling, WeaponKind,
+    Finale, Loadout, MonsterKind, NightPlan, Pack, Seed, Start, Tuning, Wave, WaveScaling,
+    WeaponKind,
 };
 use caravan_server::{GameServer, RandomSource, RoomSeeds};
 use caravan_ws_server::{PublicUrl, WebFiles, WsServer};
@@ -54,7 +56,7 @@ struct Options {
     debug_net: bool,
     /// 1초마다 서버의 규모와 Tick 시간을 한 줄로 출력합니다.
     stats: bool,
-    /// 밤마다, 무리마다 몬스터의 수입니다. 없으면 기본 수치를 씁니다.
+    /// 밤마다, 무리마다 몬스터의 수입니다. 없으면 기본 수치를 씁니다. 수만 정하므로 종류는 모두 기본 몬스터입니다(`tuning_from`).
     waves: Option<Vec<Vec<u32>>>,
     stress: bool,
     /// 모든 방이 쓸 씨앗입니다. 없으면 방마다 다른 씨앗을 씁니다.
@@ -159,20 +161,34 @@ fn parse_waves(list: &str) -> Result<Vec<Vec<u32>>, String> {
 fn tuning_from(options: &Options) -> Tuning {
     let mut tuning = Tuning::default();
     if let Some(nights) = &options.waves {
+        // `--waves`는 무리의 몬스터 수를 정하는 부하 시험용 옵션이므로 무리마다 기본 몬스터 한 묶음을 만들고, 종류를 정하지 않습니다.
+        // 보스의 졸개(`SummonTuning::kind`)는 이 옵션이 건드리지 않아서 기본 수치의 종류인 돌격병 그대로입니다.
         tuning.nights.plans = nights
             .iter()
             .map(|sizes| NightPlan {
                 waves: sizes
                     .iter()
-                    .map(|&count| WavePlan {
-                        kind: MonsterKind::Grunt,
-                        count,
+                    .map(|&count| Wave {
+                        packs: vec![Pack {
+                            kind: MonsterKind::Grunt,
+                            count,
+                        }],
                     })
                     .collect(),
             })
             .collect();
     }
     if options.stress {
+        // 부하의 기준은 기본 몬스터가 몰려오는 것이므로, 기본 수치의 무리에 섞인 다른 종류도 기본 몬스터로 바꿉니다.
+        let packs = tuning
+            .nights
+            .plans
+            .iter_mut()
+            .flat_map(|night| &mut night.waves)
+            .flat_map(|wave| &mut wave.packs);
+        for pack in packs {
+            pack.kind = MonsterKind::Grunt;
+        }
         tuning.wagon.max_hp = u32::MAX;
         tuning.player.max_hp = u32::MAX;
         tuning.structures.watchtower.max_hp = u32::MAX;
@@ -313,7 +329,7 @@ fn main() -> ExitCode {
             .nights
             .plans
             .iter()
-            .map(|night| night.waves.iter().map(|wave| wave.count).collect())
+            .map(|night| night.waves.iter().map(Wave::count).collect())
             .collect();
         match tuning.nights.scaling {
             WaveScaling::ByParty { full_party } => {
@@ -369,6 +385,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use caravan_rules::StructureKind;
+    use std::collections::BTreeSet;
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -473,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn waves_replace_the_wave_sizes_and_nothing_else() {
+    fn waves_replace_the_wave_sizes_and_keep_the_pacing() {
         let options = parse_args(&args(&["--waves", "100,200/300"])).unwrap();
         assert_eq!(options.waves, Some(vec![vec![100, 200], vec![300]]));
         let tuning = tuning_from(&options);
@@ -486,7 +503,7 @@ mod tests {
             .nights
             .plans
             .iter()
-            .map(|night| night.waves.iter().map(|wave| wave.count).collect())
+            .map(|night| night.waves.iter().map(Wave::count).collect())
             .collect();
         assert_eq!(counts, [vec![100, 200], vec![300]]);
         assert_eq!(
@@ -500,6 +517,27 @@ mod tests {
             Ok(vec![vec![7, 8]]),
             "spaces are allowed, and one night needs no slash"
         );
+    }
+
+    #[test]
+    fn waves_make_every_wave_one_pack_of_grunts_and_leave_the_boss_summons_as_they_are() {
+        let summon = |tuning: &Tuning| match &tuning.nights.finale {
+            Finale::Boss(boss) => boss.summon,
+            Finale::LastWave => panic!("the default tuning has a boss"),
+        };
+        let tuning = tuning_from(&parse_args(&args(&["--waves", "8,12/20,30,40"])).unwrap());
+
+        for pack_kinds in tuning
+            .nights
+            .plans
+            .iter()
+            .flat_map(|night| &night.waves)
+            .map(|wave| wave.packs.iter().map(|pack| pack.kind).collect::<Vec<_>>())
+        {
+            assert_eq!(pack_kinds, [MonsterKind::Grunt]);
+        }
+        assert_eq!(summon(&tuning), summon(&Tuning::default()));
+        assert_eq!(summon(&tuning).kind, MonsterKind::Runner);
     }
 
     #[test]
@@ -521,11 +559,29 @@ mod tests {
             1,
             "the first night is at once"
         );
-        assert_eq!(
-            tuning.nights.plans,
-            Tuning::default().nights.plans,
-            "wave sizes stay"
-        );
+        let sizes = |tuning: &Tuning| -> Vec<Vec<u32>> {
+            let night_sizes = |night: &NightPlan| night.waves.iter().map(Wave::count).collect();
+            tuning.nights.plans.iter().map(night_sizes).collect()
+        };
+        assert_eq!(sizes(&tuning), sizes(&Tuning::default()), "wave sizes stay");
+    }
+
+    #[test]
+    fn stress_sends_only_grunts_and_a_normal_server_keeps_the_kinds_the_default_waves_mix() {
+        let kinds = |arguments: &[&str]| -> BTreeSet<MonsterKind> {
+            let tuning = tuning_from(&parse_args(&args(arguments)).unwrap());
+            tuning
+                .nights
+                .plans
+                .iter()
+                .flat_map(|night| &night.waves)
+                .flat_map(|wave| &wave.packs)
+                .map(|pack| pack.kind)
+                .collect()
+        };
+
+        assert_eq!(kinds(&["--stress"]), BTreeSet::from([MonsterKind::Grunt]));
+        assert!(kinds(&[]).contains(&MonsterKind::Runner));
     }
 
     #[test]

@@ -500,6 +500,7 @@ pub enum WireMonsterKind {
     Grunt,
     Scarecrow,
     Boss,
+    Runner,
 }
 
 impl WireMonsterKind {
@@ -509,6 +510,7 @@ impl WireMonsterKind {
             MonsterKind::Grunt => WireMonsterKind::Grunt,
             MonsterKind::Scarecrow => WireMonsterKind::Scarecrow,
             MonsterKind::Boss => WireMonsterKind::Boss,
+            MonsterKind::Runner => WireMonsterKind::Runner,
         }
     }
 
@@ -519,6 +521,7 @@ impl WireMonsterKind {
             WireMonsterKind::Grunt => 0,
             WireMonsterKind::Scarecrow => 1,
             WireMonsterKind::Boss => 2,
+            WireMonsterKind::Runner => 3,
         }
     }
 

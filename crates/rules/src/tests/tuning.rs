@@ -1207,14 +1207,87 @@ fn a_hit_body_smaller_than_nothing_is_rejected() {
 }
 
 #[test]
+fn a_wave_without_a_monster_is_rejected() {
+    let mut t = Tuning::default();
+    t.nights.plans[0].waves[0].packs.clear();
+    assert!(t.validate().is_err(), "a wave of no pack");
+
+    let mut t = Tuning::default();
+    t.nights.plans[0].waves[0].packs[0].count = 0;
+    assert!(t.validate().is_err(), "a pack of no monster");
+
+    let mut t = Tuning::default();
+    let mut second = t.nights.plans[0].waves[0].packs[0];
+    second.count = 0;
+    t.nights.plans[0].waves[0].packs.push(second);
+    assert!(
+        t.validate().is_err(),
+        "a pack of no monster beside a pack of some"
+    );
+}
+
+#[test]
 fn the_boss_cannot_come_in_a_wave_or_as_a_guard() {
     let mut t = Tuning::default();
-    t.nights.plans[0].waves[0].kind = crate::kind::MonsterKind::Boss;
+    t.nights.plans[0].waves[0].packs[0].kind = crate::kind::MonsterKind::Boss;
     assert!(t.validate().is_err(), "a boss in a wave");
 
     let mut t = Tuning::default();
     t.guards.kind = crate::kind::MonsterKind::Boss;
     assert!(t.validate().is_err(), "a boss as a guard");
+}
+
+#[test]
+fn a_guard_has_to_be_a_kind_that_chases_players_and_the_reason_names_the_row() {
+    use crate::kind::MonsterKind;
+    use crate::tuning::Prey;
+
+    let mut t = Tuning::default();
+    t.guards.kind = MonsterKind::Runner;
+    let why = t.validate().expect_err("a runner that guards");
+    assert!(why.contains("guards.kind"), "{why}");
+
+    // 이름이 아니라 종류의 수치가 정합니다. 기본 몬스터도 마차로 곧장 가면 경비가 될 수 없고, 돌격병도 가까운 플레이어를 쫓으면 될 수 있습니다.
+    let mut t = Tuning::default();
+    t.monsters.grunt.prey = Prey::Wagon;
+    assert!(
+        t.validate()
+            .expect_err("a grunt that only goes to the wagon")
+            .contains("guards.kind")
+    );
+
+    let mut t = Tuning::default();
+    t.guards.kind = MonsterKind::Runner;
+    t.monsters.runner.prey = Prey::Nearby;
+    assert_eq!(t.validate(), Ok(()));
+}
+
+#[test]
+fn a_wave_that_adds_up_to_more_monsters_than_a_u32_counts_is_rejected_and_one_that_just_fits_is_not()
+ {
+    use crate::kind::MonsterKind;
+    use crate::tuning::Pack;
+
+    let wave_of_two = |grunts, runners| {
+        let mut t = Tuning::default();
+        t.nights.plans[1].waves[2].packs = vec![
+            Pack {
+                kind: MonsterKind::Grunt,
+                count: grunts,
+            },
+            Pack {
+                kind: MonsterKind::Runner,
+                count: runners,
+            },
+        ];
+        t
+    };
+
+    let why = wave_of_two(u32::MAX, 1)
+        .validate()
+        .expect_err("one monster more than a u32 counts");
+    assert!(why.contains("night 2 wave 3"), "{why}");
+    assert_eq!(wave_of_two(u32::MAX - 1, 1).validate(), Ok(()));
 }
 
 /// 기본 수치에서 보스의 행동만 `change`로 바꾼 수치입니다.

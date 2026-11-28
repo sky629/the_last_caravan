@@ -13,7 +13,7 @@ fn performing_field(adjust: impl FnOnce(&mut Tuning)) -> Scenario {
     Scenario::with_cycle(|t| {
         with_boss(t);
         t.monsters.boss.speed = 0.0;
-        t.monsters.grunt.speed = 0.0;
+        t.monsters.runner.speed = 0.0;
         t.nights.plans = nights(&[&[1]]);
         t.wagon.max_hp = u32::MAX;
         adjust(t);
@@ -166,10 +166,11 @@ fn summoning(party: u32, cap: u32) -> Scenario {
     s
 }
 
-fn grunts(s: &Scenario) -> usize {
+/// 보스가 부른 졸개의 수입니다. 졸개의 종류는 돌격병입니다.
+fn runners(s: &Scenario) -> usize {
     s.sim
         .monsters()
-        .filter(|monster| monster.kind == MonsterKind::Grunt)
+        .filter(|monster| monster.kind == MonsterKind::Runner)
         .count()
 }
 
@@ -193,11 +194,11 @@ fn the_roar_lasts_two_seconds_and_then_the_minions_come_in_proportion_to_the_par
             panic!("roaring");
         };
         assert_eq!(total_ticks, s.ticks(2.0));
-        assert_eq!(grunts(&s), 0, "nobody comes during the roar");
+        assert_eq!(runners(&s), 0, "nobody comes during the roar");
 
         run_until_the_minions_are_out(&mut s, minions);
 
-        assert_eq!(grunts(&s) as u32, minions, "{party} players");
+        assert_eq!(runners(&s) as u32, minions, "{party} players");
     }
 }
 
@@ -209,7 +210,7 @@ fn the_minions_come_one_at_a_time_after_the_roar_and_walk_to_the_wagon() {
     let mut counts = Vec::new();
     for _ in 0..4 * s.ticks(0.3) {
         s.run_ticks(1);
-        counts.push(grunts(&s));
+        counts.push(runners(&s));
     }
 
     assert!(
@@ -228,7 +229,7 @@ fn the_minions_arrive_where_the_night_waves_arrive() {
 
     let wagon = s.sim.wagon().rect;
     let distance = s.sim.tuning().nights.spawn_distance;
-    for monster in s.sim.monsters().filter(|m| m.kind == MonsterKind::Grunt) {
+    for monster in s.sim.monsters().filter(|m| m.kind == MonsterKind::Runner) {
         let gap = wagon.distance_to(monster.pos);
         assert!(
             (gap - distance).abs() < 3.0,
@@ -256,7 +257,7 @@ fn the_minions_never_push_the_number_of_living_monsters_over_the_cap() {
     let victim = s
         .sim
         .monsters()
-        .find(|monster| monster.kind == MonsterKind::Grunt)
+        .find(|monster| monster.kind == MonsterKind::Runner)
         .map(|monster| monster.id)
         .expect("a minion");
     s.sim
@@ -272,7 +273,7 @@ fn the_minions_called_before_the_boss_falls_stay_and_the_boss_fall_ends_the_expe
     let mut s = summoning(4, 300);
     run_until_roaring(&mut s);
     run_until_the_minions_are_out(&mut s, 12);
-    let minions = grunts(&s);
+    let minions = runners(&s);
     assert_eq!(minions, 12);
 
     let slayer = s.sim.players().next().expect("a player").id;
@@ -284,5 +285,5 @@ fn the_minions_called_before_the_boss_falls_stay_and_the_boss_fall_ends_the_expe
         Some(Outcome::Victory),
         "the same tick the boss falls"
     );
-    assert_eq!(grunts(&s), minions, "the minions are still there");
+    assert_eq!(runners(&s), minions, "the minions are still there");
 }

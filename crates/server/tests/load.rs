@@ -9,7 +9,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use caravan_protocol::{ClientTransport, ServerMsg, encode_server};
-use caravan_rules::{MonsterKind, NightPlan, Tuning, WavePlan, WaveScaling};
+use caravan_rules::{MonsterKind, NightPlan, Pack, Tuning, Wave, WaveScaling};
 use common::rig_in_expedition;
 
 /// 이 크기를 넘으면 접속 하나의 전송량이 측정한 값보다 늘어난 것입니다.
@@ -21,9 +21,11 @@ fn crowd_tuning() -> Tuning {
     let mut tuning = Tuning::default();
     tuning.cycle.day_secs = 0.1;
     tuning.nights.plans = vec![NightPlan {
-        waves: vec![WavePlan {
-            kind: MonsterKind::Grunt,
-            count: 300,
+        waves: vec![Wave {
+            packs: vec![Pack {
+                kind: MonsterKind::Grunt,
+                count: 300,
+            }],
         }],
     }];
     // 접속한 클라이언트는 하나이지만 무리는 300마리 그대로 나옵니다.

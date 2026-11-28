@@ -360,10 +360,14 @@ fn the_monsters_of_a_small_wave_stand_where_the_first_ones_of_the_full_wave_stan
 }
 
 #[test]
-fn a_wave_for_an_empty_room_is_still_one_monster() {
+fn a_wave_for_an_empty_room_is_still_one_monster_of_each_of_its_kinds() {
     let t = Tuning::default();
     assert_eq!(t.nights.wave_size(1, 1, 0), 1);
-    assert_eq!(t.nights.wave_size(3, 3, 0), 1);
+    assert_eq!(
+        t.nights.wave_size(3, 3, 0),
+        2,
+        "the last wave has two kinds, one monster of each"
+    );
     assert_eq!(
         t.nights.wave_size(4, 1, 1),
         0,

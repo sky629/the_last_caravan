@@ -60,7 +60,7 @@ fn attacker_facing_east(s: &mut Scenario, x: f32, y: f32, weapon: WeaponKind) ->
 #[test]
 fn the_scarecrow_is_refused_in_waves_and_as_a_guard() {
     let mut t = Tuning::default();
-    t.nights.plans[0].waves[0].kind = MonsterKind::Scarecrow;
+    t.nights.plans[0].waves[0].packs[0].kind = MonsterKind::Scarecrow;
     assert!(t.validate().is_err());
 
     let mut t = Tuning::default();

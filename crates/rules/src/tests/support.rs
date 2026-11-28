@@ -17,7 +17,7 @@ use crate::stage::Stage;
 use crate::structures::{Tower, TowerState};
 use crate::tuning::{
     Buff, CampLayout, Debuff, Finale, GuardTuning, LootTuning, MapSpec, NightPlan, NightTuning,
-    ShootTuning, TowerAction, Tuning, WavePlan, WaveScaling,
+    Pack, ShootTuning, TowerAction, Tuning, Wave, WaveScaling,
 };
 use crate::world::{Source, Tile};
 
@@ -139,6 +139,14 @@ impl Scenario {
             Vec2::new(x, y),
             &t,
         )
+    }
+
+    /// `(x, y)`에 마차를 향하는 `kind` 몬스터를 놓습니다. 기본 몬스터가 아닌 종류를 시험할 때 씁니다.
+    pub fn monster_of(&mut self, kind: MonsterKind, x: f32, y: f32) -> MonsterId {
+        let t = self.sim.tuning().clone();
+        self.sim
+            .world_mut()
+            .spawn_monster(kind, Order::Raid, Vec2::new(x, y), &t)
     }
 
     /// 몬스터에게 효과를 직접 겁니다. `owner`가 건 것으로 칩니다. 무기를 거치지 않고 효과의 규칙만 시험할 때 씁니다.
@@ -543,9 +551,11 @@ pub(crate) fn nights(counts: &[&[u32]]) -> Vec<NightPlan> {
         .map(|waves| NightPlan {
             waves: waves
                 .iter()
-                .map(|&count| WavePlan {
-                    kind: MonsterKind::Grunt,
-                    count,
+                .map(|&count| Wave {
+                    packs: vec![Pack {
+                        kind: MonsterKind::Grunt,
+                        count,
+                    }],
                 })
                 .collect(),
         })
