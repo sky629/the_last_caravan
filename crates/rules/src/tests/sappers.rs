@@ -234,7 +234,7 @@ fn a_tower_that_stands_at_last_becomes_a_target_for_a_sapper_that_was_walking_to
 #[test]
 fn a_standing_tower_that_no_free_tile_reaches_is_not_a_target_for_a_sapper() {
     // 타일 (5, 5)의 감시탑은 서 있지만 둘레의 여덟 타일에 무기 상자가 있어서, 파괴병이 공격할 수 있는 자리에 걸어서 닿지 못합니다.
-    // 파괴병은 마차보다 이 감시탑에 훨씬 가까운 자리(감시탑까지 약 7타일, 마차까지 약 15타일)에서 출발하지만, 마차로 걸어가서 마차를 때립니다.
+    // 파괴병은 마차보다 이 감시탑에 훨씬 가까운 자리(감시탑까지 약 7타일, 마차까지 약 14타일)에서 출발하지만, 마차로 걸어가서 마차를 때립니다.
     let mut s = field(|_| {});
     s.tower_at(5, 5);
     for (x, y) in [
