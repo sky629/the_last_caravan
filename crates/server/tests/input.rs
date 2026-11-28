@@ -251,6 +251,7 @@ fn a_move_longer_than_one_or_not_a_number_cannot_beat_the_speed_limit() {
         toggle_ready: false,
         confirm: false,
         cycle_tower: false,
+        drop_weapon: false,
     }));
     rig.run_ticks(3);
 
@@ -314,6 +315,42 @@ fn one_press_of_q_switches_the_weapon_once_and_the_ticks_without_a_message_do_no
         WireWeaponKind::Bow,
         "the held input did not press Q again"
     );
+}
+
+fn press_g(seq: u32) -> ClientMsg {
+    ClientMsg::Input(InputMsg {
+        seq,
+        drop_weapon: true,
+        ..InputMsg::default()
+    })
+}
+
+#[test]
+fn a_press_of_g_reaches_the_rules_and_drops_the_held_weapon_on_an_expedition_but_not_in_the_camp() {
+    let mut rig = rig_with(armed());
+    let (mut in_camp, camper) = rig.join_ok("camp");
+    in_camp.send(&press_g(1));
+    rig.run_ticks(1);
+    let loadout = player(&last_snapshot(&mut in_camp), camper).loadout;
+    assert_eq!(
+        (loadout.held, loadout.spare),
+        (WireWeaponKind::Sword, Some(WireWeaponKind::Bow)),
+        "nothing is dropped in the camp"
+    );
+
+    let mut rig = rig_in_expedition(armed());
+    let (mut on_expedition, fighter) = rig.join_ok("test");
+    rig.run_ticks(1);
+    on_expedition.send(&press_g(1));
+    rig.run_ticks(1);
+    let snapshot = last_snapshot(&mut on_expedition);
+    let loadout = player(&snapshot, fighter).loadout;
+    assert_eq!(
+        (loadout.held, loadout.spare),
+        (WireWeaponKind::Bow, None),
+        "the sword was dropped, and the sword every joining player is given does not lie on the ground"
+    );
+    assert!(snapshot.ground_weapons.is_empty());
 }
 
 #[test]
