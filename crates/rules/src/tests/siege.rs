@@ -11,27 +11,27 @@
 //! 입력은 `Sim`의 공개 입력(`PlayerInput`)뿐이고, 입력을 만들 때 읽는 것은 화면이 알려 주는 것(몬스터의 종류와 위치, 플레이어 자기 자리)과 길을 찾으려고 읽는 타일 지도뿐입니다.
 //! 쓰러진 플레이어를 부활시키지 않고 포탑을 짓거나 수리하지도 않습니다. 감시탑은 모두 가득 찬 HP로 시작하고 밤 동안 부서진 것은 다시 서지 않습니다.
 //!
-//! 숫자는 출력합니다. 단언하는 것은 파괴병을 막는 입력이 Tick마다 막혀 서 있지 않고 실제로 걷고 베는 것뿐입니다.
-//! 「아무도 막지 않으면 감시탑의 절반 이상이 부서지고, 한 명이 막으면 부서지는 감시탑이 더 적다」가 성립하는지는 출력한 표를 읽어서 판단합니다.
+//! 한 칸(인원, 감시탑의 수, 감시탑을 세운 모양)은 `RUNS`번 돌립니다. 실행마다 플레이어가 서는 자리, 움직이기 시작하는 때, 걷는 방향이 조금씩 달라서(`Siege::run`)
+//! 한 번의 우연으로 결론이 나지 않습니다. 표의 값은 실행들의 최솟값, 중앙값, 최댓값입니다.
 //!
-//! 출력을 보려면 다음 명령을 실행합니다.
+//! 단언하는 것은 둘입니다. 파괴병을 막는 입력이 Tick마다 막혀 서 있지 않고 실제로 걷고 베는 것, 그리고 기본 수치에서 4명이 감시탑 15개를 세운 방은
+//! 아무도 막지 않으면 감시탑의 절반 이상이 부서지고 한 명이 막으면 그보다 적게 부서지는 것입니다. 나머지 표는 출력만 하고 `#[ignore]`입니다.
 //!
 //! ```text
-//! cargo test --release -p caravan_rules siege -- --nocapture --test-threads=1
+//! cargo test --release -p caravan_rules siege -- --ignored --nocapture --test-threads=1
 //! ```
-
-use std::collections::BTreeMap;
 
 use super::raid::{SWING_REACH, guard_the_wagon, walk_toward, walking};
 use super::support::Scenario;
 use crate::expedition::{NightStep, Outcome, Phase};
-use crate::ids::{MonsterId, PlayerId};
-use crate::input::PlayerInput;
+use crate::ids::PlayerId;
+use crate::input::{MoveDir, PlayerInput};
 use crate::kind::MonsterKind;
 use crate::math::Vec2;
 use crate::player::Player;
 use crate::sim::Sim;
 use crate::tuning::{Tuning, WaveScaling};
+use crate::world::Tile;
 
 /// 마차의 가장자리에서 이 거리(타일) 안에 들어온 파괴병만 막으러 갑니다. 마을 밖으로 나가면 몬스터 무리 한가운데에서 쓰러지기 때문입니다.
 const VILLAGE_REACH: f32 = 14.0;
@@ -45,6 +45,12 @@ const RUN_FROM: u8 = 5;
 /// 걸으려는 입력이 한 Tick에 걷는 거리(걷는 속도와 한 Tick의 길이의 곱)의 이 비율보다 적게 움직이면, 입력이 막혀 서 있는 Tick으로 셉니다.
 const BLOCKED_BELOW: f32 = 0.1;
 
+/// 한 칸을 돌리는 실행의 수입니다.
+const RUNS: u32 = 7;
+
+/// 걷는 방향을 돌리는 가장 큰 각도(라디안)입니다. 0.4는 약 23도입니다.
+const STEER_NOISE: f32 = 0.4;
+
 /// 감시탑을 세운 모양입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Layout {
@@ -56,7 +62,7 @@ enum Layout {
 
 impl Layout {
     /// 이 모양으로 감시탑 `towers`개를 세울 자리입니다.
-    fn sites(self, t: &Tuning, towers: u32) -> Vec<crate::world::Tile> {
+    fn sites(self, t: &Tuning, towers: u32) -> Vec<Tile> {
         match self {
             Layout::NearTheWagon => t.spread_tower_sites(towers),
             Layout::AcrossTheVillage => {
@@ -80,6 +86,10 @@ struct Siege {
     layout: Layout,
     /// 파괴병을 막는 사람의 수입니다. 나머지 플레이어는 마차를 지킵니다.
     blockers: u32,
+    /// 같은 조건을 몇 번째로 돌리는지입니다(`RUNS` 미만). 같은 번호이면 언제나 같은 밤이고, 번호마다 사람의 움직임이 조금씩 어긋납니다.
+    /// 플레이어가 서는 자리를 사방 4타일 안에서 옮기고, 밤이 시작된 뒤 첫 입력까지 0에서 59 Tick을 기다리게 하고,
+    /// 0번째를 뺀 실행에서는 걷는 방향을 8 Tick마다 `STEER_NOISE` 안에서 돌립니다. 모든 조건에 같은 식으로 더하므로 어느 한쪽에 유리하지 않습니다.
+    run: u32,
 }
 
 /// 셋째 밤 하나가 끝났을 때의 모습입니다.
@@ -92,8 +102,6 @@ struct Night {
     players_standing: usize,
     towers_at_start: usize,
     towers_standing: usize,
-    /// 파괴병이 공격한 횟수입니다. 감시탑을 때린 공격이 대부분이고, 마차를 때린 공격도 섞여 있습니다.
-    sapper_hits: u32,
     /// 파괴병을 막는 사람이 걷고 있던 Tick의 수와 베고 있던 Tick의 수입니다.
     blocker_walking_ticks: u32,
     blocker_swinging_ticks: u32,
@@ -104,6 +112,10 @@ struct Night {
 impl Night {
     fn towers_lost(&self) -> usize {
         self.towers_at_start - self.towers_standing
+    }
+
+    fn defeated(&self) -> bool {
+        self.outcome != Some(Outcome::Victory)
     }
 }
 
@@ -144,13 +156,35 @@ fn block_the_sappers(sim: &Sim, me: &Player) -> PlayerInput {
     go_for_a_sapper(sim, me).unwrap_or_else(|| guard_the_wagon(sim, me.pos, false))
 }
 
+/// 걷는 방향을 `STEER_NOISE` 안에서 돌립니다. 각도는 8 Tick마다 플레이어마다 새로 정하고, 같은 (`run`, 플레이어, 시간)이면 언제나 같습니다.
+/// 사람이 정확하게 조준해서 걷지 못하는 것을 흉내 냅니다.
+fn steer_noise(input: PlayerInput, run: u32, index: u32, tick: u64) -> PlayerInput {
+    let step = input.move_dir.get();
+    if step == Vec2::ZERO {
+        return input;
+    }
+    let mut hash = u64::from(run) << 40 ^ u64::from(index) << 32 ^ (tick / 8);
+    hash = hash.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    hash = (hash ^ (hash >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    hash = (hash ^ (hash >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    hash ^= hash >> 31;
+    let angle = ((hash % 2001) as f32 / 1000.0 - 1.0) * STEER_NOISE;
+    let (sin, cos) = angle.sin_cos();
+    let turned = Vec2::new(step.x * cos - step.y * sin, step.x * sin + step.y * cos);
+    PlayerInput {
+        move_dir: MoveDir::new(turned.x, turned.y),
+        ..input
+    }
+}
+
 /// `siege`의 조건으로 기본 마을에서 셋째 밤의 무리를 처음부터 끝까지 겪습니다. `adjust`가 수치를 더 바꿉니다. 5분 안에 끝나지 않으면 거기서 멈춥니다.
-fn third_night(siege: Siege, adjust: impl FnOnce(&mut Tuning)) -> Night {
+fn third_night(siege: Siege, adjust: &dyn Fn(&mut Tuning)) -> Night {
     let Siege {
         party,
         towers,
         layout,
         blockers,
+        run,
     } = siege;
     let mut s = Scenario::default_game(|t| {
         t.nights.scaling = WaveScaling::ByParty { full_party: 4 };
@@ -164,8 +198,19 @@ fn third_night(siege: Siege, adjust: impl FnOnce(&mut Tuning)) -> Night {
     let players: Vec<PlayerId> = (0..party)
         .map(|index| {
             let spot = spawns[index as usize % spawns.len()];
-            s.player_at(spot.x, spot.y)
+            let dx = ((run * 5 + index * 3) % 9) as f32 - 4.0;
+            let dy = ((run * 3 + index * 7) % 9) as f32 - 4.0;
+            let wanted = Vec2::new(spot.x + dx, spot.y + dy);
+            let at = s
+                .sim
+                .tiles()
+                .nearest_free(wanted)
+                .map_or(wanted, |tile| tile.center());
+            s.player_at(at.x, at.y)
         })
+        .collect();
+    let lags: Vec<u64> = (0..party)
+        .map(|index| u64::from(((run + 1) * 7 + index * 13) % 60))
         .collect();
     let blocking = &players[..blockers as usize];
     let towers_at_start = s.sim.towers().count();
@@ -180,15 +225,18 @@ fn third_night(siege: Siege, adjust: impl FnOnce(&mut Tuning)) -> Night {
 
     let in_the_third_night = |sim: &Sim| matches!(sim.phase(), Some(Phase::Night { day: 3, .. }));
     let full_step = s.sim.tuning().player.speed * s.sim.tuning().dt();
-    let mut last_attacks: BTreeMap<MonsterId, Option<u64>> = BTreeMap::new();
-    let (mut sapper_hits, mut walking_ticks, mut swinging_ticks, mut blocked_ticks) = (0, 0, 0, 0);
+    let (mut walking_ticks, mut swinging_ticks, mut blocked_ticks) = (0, 0, 0);
     for _ in 0..s.ticks(300.0) {
         let mut walkers = Vec::new();
-        for &id in &players {
+        for (index, &id) in players.iter().enumerate() {
             let Some(player) = s.sim.player(id).filter(|player| player.is_alive()) else {
                 s.hold(id, PlayerInput::default());
                 continue;
             };
+            if s.sim.tick() < lags[index] {
+                s.hold(id, PlayerInput::default());
+                continue;
+            }
             let input = if blocking.contains(&id) {
                 let input = block_the_sappers(&s.sim, player);
                 if input.attack {
@@ -201,6 +249,11 @@ fn third_night(siege: Siege, adjust: impl FnOnce(&mut Tuning)) -> Night {
             } else {
                 guard_the_wagon(&s.sim, player.pos, false)
             };
+            let input = if run > 0 {
+                steer_noise(input, run, index as u32, s.sim.tick())
+            } else {
+                input
+            };
             s.hold(id, input);
         }
         s.run_ticks(1);
@@ -211,18 +264,6 @@ fn third_night(siege: Siege, adjust: impl FnOnce(&mut Tuning)) -> Night {
                 .map_or(f32::INFINITY, |player| player.pos.distance(from));
             if moved < full_step * BLOCKED_BELOW {
                 blocked_ticks += 1;
-            }
-        }
-        // 파괴병의 `last_attack_tick`이 바뀐 Tick이 공격 한 번입니다.
-        for sapper in s
-            .sim
-            .monsters()
-            .filter(|monster| monster.kind == MonsterKind::Sapper)
-        {
-            let seen = last_attacks.entry(sapper.id).or_insert(None);
-            if *seen != sapper.last_attack_tick {
-                *seen = sapper.last_attack_tick;
-                sapper_hits += 1;
             }
         }
         if s.sim.debrief().is_some() || !in_the_third_night(&s.sim) {
@@ -241,16 +282,175 @@ fn third_night(siege: Siege, adjust: impl FnOnce(&mut Tuning)) -> Night {
         players_standing: s.sim.players().filter(|player| player.is_alive()).count(),
         towers_at_start,
         towers_standing: s.sim.towers().filter(|tower| tower.is_standing()).count(),
-        sapper_hits,
         blocker_walking_ticks: walking_ticks,
         blocker_swinging_ticks: swinging_ticks,
         blocker_blocked_ticks: blocked_ticks,
     }
 }
 
-fn describe(siege: Siege, night: &Night) -> String {
+/// `party`명이 `towers`개의 감시탑을 `layout`으로 세운 방에서 `blockers`명이 파괴병을 막는 셋째 밤을 `RUNS`번 돌립니다. 실행의 번호가 곧 `Siege::run`입니다.
+fn runs(
+    party: u32,
+    towers: u32,
+    layout: Layout,
+    blockers: u32,
+    adjust: &dyn Fn(&mut Tuning),
+) -> Vec<Night> {
+    (0..RUNS)
+        .map(|run| {
+            let siege = Siege {
+                party,
+                towers,
+                layout,
+                blockers,
+                run,
+            };
+            third_night(siege, adjust)
+        })
+        .collect()
+}
+
+/// 한 칸의 세 가지 밤을 `RUNS`번씩 돌린 결과입니다.
+struct Cell {
+    party: u32,
+    towers: u32,
+    layout: Layout,
+    without_sappers: Vec<Night>,
+    nobody_blocks: Vec<Night>,
+    one_blocks: Vec<Night>,
+}
+
+impl Cell {
+    fn measure(party: u32, towers: u32, layout: Layout, adjust: &dyn Fn(&mut Tuning)) -> Cell {
+        Cell {
+            party,
+            towers,
+            layout,
+            without_sappers: runs(party, towers, layout, 0, &|t| {
+                adjust(t);
+                without_sappers(t);
+            }),
+            nobody_blocks: runs(party, towers, layout, 0, adjust),
+            one_blocks: runs(party, towers, layout, 1, adjust),
+        }
+    }
+
+    /// 칸의 결과를 한 줄로 적습니다. 값은 실행들의 최솟값/중앙값/최댓값입니다.
+    fn describe(&self) -> String {
+        let (nobody, one) = (&self.nobody_blocks, &self.one_blocks);
+        format!(
+            "{:?}, {} players, {} towers | towers lost: no sappers {}, nobody blocks {}, one blocks {} | runs in which nobody loses at least {} and one loses fewer: {} of {RUNS} | defeats: nobody {}, one {} | wagon at the end, lowest: nobody {}, one {}",
+            self.layout,
+            self.party,
+            self.towers,
+            spread_of_lost(&self.without_sappers),
+            spread_of_lost(nobody),
+            spread_of_lost(one),
+            half_of(self.towers),
+            runs_where_blocking_pays(nobody, one, self.towers),
+            defeats(nobody),
+            defeats(one),
+            lowest_wagon(nobody),
+            lowest_wagon(one),
+        )
+    }
+}
+
+/// 감시탑이 `towers`개일 때 절반 이상의 수입니다.
+fn half_of(towers: u32) -> usize {
+    towers.div_ceil(2) as usize
+}
+
+/// 아무도 막지 않는 밤에 감시탑의 절반 이상이 부서지고, 같은 번호의 실행에서 한 명이 막으면 그보다 적게 부서진 실행의 수입니다.
+fn runs_where_blocking_pays(nobody: &[Night], one: &[Night], towers: u32) -> usize {
+    nobody
+        .iter()
+        .zip(one)
+        .filter(|(nobody, one)| {
+            nobody.towers_lost() >= half_of(towers) && one.towers_lost() < nobody.towers_lost()
+        })
+        .count()
+}
+
+/// 실행마다 부서진 감시탑의 수를 `최솟값/중앙값/최댓값`으로 적습니다.
+fn spread_of_lost(nights: &[Night]) -> String {
+    let mut lost: Vec<usize> = nights.iter().map(Night::towers_lost).collect();
+    lost.sort_unstable();
     format!(
-        "{:?}, {} players, {} block the sappers: {:?} after {:.0}s, {} of {} towers lost, {} sapper hits, wagon {}, {} players standing; the blocker walked {} ticks, swung {} ticks and was blocked {} ticks",
+        "{}/{}/{}",
+        lost[0],
+        lost[lost.len() / 2],
+        lost[lost.len() - 1]
+    )
+}
+
+fn defeats(nights: &[Night]) -> usize {
+    nights.iter().filter(|night| night.defeated()).count()
+}
+
+fn lowest_wagon(nights: &[Night]) -> u32 {
+    nights.iter().map(|night| night.wagon_hp).min().unwrap_or(0)
+}
+
+#[test]
+fn with_four_players_and_fifteen_towers_nobody_blocking_loses_half_of_them_and_one_blocking_loses_fewer()
+ {
+    // 같은 번호의 실행끼리 견줍니다. 두 밤은 플레이어가 서는 자리와 움직이기 시작하는 때가 같고, 한 명이 마차를 지키지 않고 파괴병을 막는다는 점만 다릅니다.
+    let nobody = runs(4, 15, Layout::NearTheWagon, 0, &|_| {});
+    let one = runs(4, 15, Layout::NearTheWagon, 1, &|_| {});
+
+    let paying = runs_where_blocking_pays(&nobody, &one, 15);
+    assert!(
+        paying >= RUNS as usize - 1,
+        "{paying} of {RUNS} runs; towers lost, nobody blocks {} and one blocks {}; defeats {} and {}",
+        spread_of_lost(&nobody),
+        spread_of_lost(&one),
+        defeats(&nobody),
+        defeats(&one)
+    );
+}
+
+#[test]
+#[ignore = "a minute for each tower damage a sapper takes; run with --ignored"]
+fn the_third_night_is_printed_for_each_party_and_tower_count_at_each_tower_damage_a_sapper_takes() {
+    // 마차 가까이 세운 감시탑을 인원 4명과 2명, 감시탑의 수마다 세 번(파괴병이 없는 밤, 아무도 막지 않는 밤, 한 명이 막는 밤) 돌립니다.
+    // 35개와 22개는 모의 원정이 셋째 밤에 만나는 감시탑의 수(4명은 34개에서 37개, 2명은 19개에서 24개)와 가깝습니다.
+    for percent in [25, 30, 35, 40, 45, 50] {
+        println!("a sapper takes {percent}% of a tower's damage");
+        let adjust = |t: &mut Tuning| t.monsters.sapper.resist.tower_damage_percent = percent;
+        for (party, towers) in [
+            (4, 10),
+            (4, 15),
+            (4, 25),
+            (4, 35),
+            (2, 10),
+            (2, 15),
+            (2, 22),
+            (2, 25),
+        ] {
+            println!(
+                "{}",
+                Cell::measure(party, towers, Layout::NearTheWagon, &adjust).describe()
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "about a minute; run with --ignored"]
+fn the_third_night_is_printed_with_the_towers_spread_across_the_village() {
+    // 감시탑을 마을 전체에 같은 간격으로 세우면, 마차를 지키는 사람이 닿지 못하는 감시탑을 파괴병이 노립니다. 기본 수치로 돌립니다.
+    for (party, towers) in [(4, 10), (4, 15), (4, 25), (2, 10), (2, 15), (2, 25)] {
+        println!(
+            "{}",
+            Cell::measure(party, towers, Layout::AcrossTheVillage, &|_| {}).describe()
+        );
+    }
+}
+
+fn describe_one(siege: Siege, night: &Night) -> String {
+    format!(
+        "{:?}, {} players, {} block the sappers: {:?} after {:.0}s, {} of {} towers lost, wagon {}, {} players standing; the blocker walked {} ticks, swung {} ticks and was blocked {} ticks",
         siege.layout,
         siege.party,
         siege.blockers,
@@ -258,44 +458,12 @@ fn describe(siege: Siege, night: &Night) -> String {
         night.secs,
         night.towers_lost(),
         night.towers_at_start,
-        night.sapper_hits,
         night.wagon_hp,
         night.players_standing,
         night.blocker_walking_ticks,
         night.blocker_swinging_ticks,
         night.blocker_blocked_ticks
     )
-}
-
-#[test]
-fn the_third_night_is_printed_for_each_layout_party_and_tower_count_with_nobody_and_one_player_blocking_the_sappers()
- {
-    // 감시탑을 세운 모양, 인원 4명과 2명, 감시탑 10개와 15개와 25개마다 세 번 겪습니다. 파괴병이 없는 밤, 파괴병이 있고 아무도 막지 않는 밤, 한 명이 막는 밤입니다.
-    for layout in [Layout::NearTheWagon, Layout::AcrossTheVillage] {
-        for party in [4, 2] {
-            for towers in [10, 15, 25] {
-                let siege = |blockers| Siege {
-                    party,
-                    towers,
-                    layout,
-                    blockers,
-                };
-                let control = third_night(siege(0), without_sappers);
-                let nobody = third_night(siege(0), |_| {});
-                let one = third_night(siege(1), |_| {});
-                println!(
-                    "{layout:?}, {party} players, {towers} towers: towers lost {} without sappers, {} with sappers and nobody blocking them, {} with one blocking them; sapper hits {} and {}; {:?} and {:?}",
-                    control.towers_lost(),
-                    nobody.towers_lost(),
-                    one.towers_lost(),
-                    nobody.sapper_hits,
-                    one.sapper_hits,
-                    nobody.outcome,
-                    one.outcome
-                );
-            }
-        }
-    }
 }
 
 #[test]
@@ -308,18 +476,19 @@ fn the_player_who_blocks_the_sappers_is_never_stuck_and_does_walk_and_swing() {
                 towers: 15,
                 layout,
                 blockers: 1,
+                run: 0,
             };
-            let night = third_night(siege, |_| {});
+            let night = third_night(siege, &|_| {});
             assert_eq!(
                 night.blocker_blocked_ticks,
                 0,
                 "{}",
-                describe(siege, &night)
+                describe_one(siege, &night)
             );
             assert!(
                 night.blocker_walking_ticks > 0 && night.blocker_swinging_ticks > 0,
                 "{}",
-                describe(siege, &night)
+                describe_one(siege, &night)
             );
         }
     }
