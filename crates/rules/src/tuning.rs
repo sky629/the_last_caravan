@@ -238,6 +238,9 @@ pub struct MonsterTuning {
     pub speed: f32,
     /// 근접 공격의 피해입니다. 0이면 근접 공격을 하지 않습니다(허수아비와 보스).
     pub attack_damage: u32,
+    /// 포탑을 때릴 때의 피해 비율(%)입니다. 포탑에게는 `attack_damage`의 이 비율(올림)을 주고, 마차와 플레이어에게는 `attack_damage`를 그대로 줍니다.
+    /// 100이면 포탑도 같은 피해를 받습니다.
+    pub siege_percent: u32,
     /// 몬스터의 가장자리에서 대상의 가장자리까지 잰 근접 공격 거리입니다. 근접 공격을 하지 않는 몬스터에게는 대상에게 다가가서 멈추는 거리입니다.
     pub attack_reach: f32,
     pub attack_cooldown_secs: f32,
@@ -1824,6 +1827,7 @@ impl Default for Tuning {
                     resist: Resist::NONE,
                     speed: 2.2,
                     attack_damage: 10,
+                    siege_percent: 100,
                     attack_reach: 0.5,
                     attack_cooldown_secs: 1.0,
                     prey: Prey::Nearby,
@@ -1837,6 +1841,7 @@ impl Default for Tuning {
                     resist: Resist::NONE,
                     speed: 0.0,
                     attack_damage: 0,
+                    siege_percent: 100,
                     attack_reach: 0.0,
                     attack_cooldown_secs: 1.0,
                     prey: Prey::Nearby,
@@ -1856,6 +1861,7 @@ impl Default for Tuning {
                     },
                     speed: 1.2,
                     attack_damage: 0,
+                    siege_percent: 100,
                     attack_reach: 0.5,
                     attack_cooldown_secs: 1.0,
                     prey: Prey::Nearby,
@@ -1874,6 +1880,7 @@ impl Default for Tuning {
                     },
                     speed: 3.2,
                     attack_damage: 8,
+                    siege_percent: 100,
                     attack_reach: 0.5,
                     attack_cooldown_secs: 1.0,
                     prey: Prey::Wagon,
