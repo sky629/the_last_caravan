@@ -3,7 +3,7 @@
 //! 입력을 만드는 쪽(`Bot`)은 화면이 알려 주는 것만 읽습니다. 보스의 몸과 예고된 영역(원과 띠), 졸개, 쓰러진 동료, 자기 자리입니다.
 //! 예고를 읽는 시간이 `REACTION_TICKS`만큼 늦어서 반응이 느린 사람을 흉내 내고, 달리지 않고 걷기만 합니다.
 //! 보스를 때리는 플레이어(`Role::Fighter`)는 보스에게서 마차의 반대쪽에 서서 보스를 마차에서 끌어내고, 곁에 온 졸개는 제자리에서 처치하고,
-//! 쓰러진 동료에게 가장 가까운 한 명이 부활시킵니다. 방에 둘 이상이 있으면 한 명(`Role::Guard`)이 마차를 지킵니다.
+//! 쓰러진 동료를 한 명이 부활시킵니다(`reviver_of`). 방에 둘 이상이 있으면 한 명(`Role::Guard`)이 마차를 지킵니다.
 //! 마차를 지키는 플레이어(`guard_the_wagon`)는 졸개가 마차에 가장 가까이 온 쪽의 마차 가장자리에서 `GUARD_POST_GAP`타일 떨어진 자리로 길을 찾아 걸어가고,
 //! 곁에 온 졸개를 제자리에서 벱니다. 졸개가 없으면 서 있습니다.
 //! 포탑을 짓는 일과 수리하는 일은 넣지 않았고, 예고를 읽는 시간 말고는 실수하지 않으므로 이 시간은 사람이 하는 전투의 대표값이 아니라
@@ -49,7 +49,8 @@ const SWING_REACH: f32 = 1.55;
 /// 마차를 지키는 플레이어가 졸개가 가장 가까이 온 쪽의 마차 가장자리에서 떨어져 기다리는 거리(타일)입니다.
 const GUARD_POST_GAP: f32 = 1.5;
 
-/// 마차를 지키는 플레이어가 부활시키러 가는 쓰러진 동료가 마차의 가장자리에서 떨어진 가장 먼 거리(타일)입니다. 이보다 먼 동료는 보스를 때리는 사람이 부활시킵니다.
+/// 마차를 지키는 플레이어가 부활시키러 가는 쓰러진 동료가 마차의 가장자리에서 떨어진 가장 먼 거리(타일)입니다. 이보다 먼 동료는 보스를 때리는 사람이 부활시키고,
+/// 보스를 때리는 사람이 아무도 서 있지 않을 때만 마차를 지키는 사람이 갑니다(`reviver_of`).
 const GUARD_REACH: f32 = 6.0;
 
 /// 마차를 지키는 한 명이 있는 쪽과 없는 쪽이 둘 다 보스를 잡았을 때, 있는 쪽이 낫다고 보는 마차의 HP 차이입니다.
@@ -163,7 +164,8 @@ fn walking(step: Vec2, aim: Vec2, attack: bool) -> PlayerInput {
 }
 
 impl Bot {
-    fn input(&mut self, sim: &Sim) -> PlayerInput {
+    /// 이번 Tick의 입력입니다. `roster`는 방에 있는 모든 플레이어의 번호와 하는 일이고, 누가 쓰러진 동료를 부활시키러 가는지 정하는 데 읽습니다.
+    fn input(&mut self, sim: &Sim, roster: &[(PlayerId, Role)]) -> PlayerInput {
         self.seen.push_back(zone_now(sim));
         let Some(player) = sim.player(self.id).filter(|player| player.is_alive()) else {
             return PlayerInput::default();
@@ -196,14 +198,10 @@ impl Bot {
             // 졸개가 곁에서 때리면 보스를 때리던 것을 멈추고 그 졸개를 처치합니다.
             return swing;
         }
-        let wagon = sim.wagon().rect;
         let downed_ally = sim
             .players()
             .filter(|other| other.id != self.id && other.is_downed())
-            .filter(|other| {
-                self.role == Role::Fighter || wagon.distance_to(other.pos) < GUARD_REACH
-            })
-            .filter(|other| nearest_helper(sim, other.pos) == Some(self.id))
+            .filter(|other| reviver_of(sim, roster, other) == Some(self.id))
             .min_by(|a, b| {
                 (a.pos - player.pos)
                     .length()
@@ -309,12 +307,29 @@ fn is_minion(monster: &Monster) -> bool {
     monster.kind != MonsterKind::Boss
 }
 
-/// 쓰러진 플레이어가 `at`에 있을 때 가장 가까이 있는 서 있는 플레이어입니다. 부활시키러 가는 사람은 이 한 명뿐입니다.
-fn nearest_helper(sim: &Sim, at: Vec2) -> Option<PlayerId> {
-    sim.players()
-        .filter(|player| player.is_alive())
-        .min_by(|a, b| (a.pos - at).length().total_cmp(&(b.pos - at).length()))
-        .map(|player| player.id)
+/// 쓰러진 플레이어 `downed`를 부활시키러 가는 사람입니다. 갈 수 있는 서 있는 사람 가운데 가장 가까운 한 명이고, 부활시키러 가는 사람은 이 한 명뿐입니다.
+/// 보스를 때리는 사람은 어디든 가고, 마차를 지키는 사람은 마차 곁(`GUARD_REACH`타일 안)의 동료에게만 갑니다.
+/// 다만 보스를 때리는 사람이 아무도 서 있지 않으면 마차를 지키는 사람이 먼 동료에게도 갑니다. 아무도 가지 않으면 쓰러진 동료가 출혈로 죽기 때문입니다.
+fn reviver_of(sim: &Sim, roster: &[(PlayerId, Role)], downed: &Player) -> Option<PlayerId> {
+    let standing: Vec<(&Player, Role)> = roster
+        .iter()
+        .filter_map(|&(id, role)| {
+            sim.player(id)
+                .filter(|player| player.is_alive())
+                .map(|player| (player, role))
+        })
+        .collect();
+    let a_fighter_stands = standing.iter().any(|(_, role)| *role == Role::Fighter);
+    let beside_the_wagon = sim.wagon().rect.distance_to(downed.pos) < GUARD_REACH;
+    standing
+        .iter()
+        .filter(|(_, role)| *role == Role::Fighter || beside_the_wagon || !a_fighter_stands)
+        .min_by(|(a, _), (b, _)| {
+            (a.pos - downed.pos)
+                .length()
+                .total_cmp(&(b.pos - downed.pos).length())
+        })
+        .map(|(player, _)| player.id)
 }
 
 /// 모의 전투의 조건입니다.
@@ -373,6 +388,7 @@ fn raid(setup: Setup) -> Raid {
             }
         })
         .collect();
+    let roster: Vec<(PlayerId, Role)> = bots.iter().map(|bot| (bot.id, bot.role)).collect();
     s.sim.set_phase(Phase::Night {
         day: 3,
         party,
@@ -383,7 +399,7 @@ fn raid(setup: Setup) -> Raid {
     let limit = s.ticks(300.0);
     for tick in 0..limit + s.ticks(10.0) {
         for bot in &mut bots {
-            let input = bot.input(&s.sim);
+            let input = bot.input(&s.sim, &roster);
             s.hold(bot.id, input);
         }
         s.run_ticks(1);
@@ -619,4 +635,90 @@ fn the_second_and_third_night_with_towers_alone_and_with_players_at_the_wagon_ar
             }
         }
     }
+}
+
+/// 마차(가장자리 x = 34) 곁에 마차를 지키는 사람이 서 있고, `downed_at`에 쓰러진 사람(보스를 때리는 사람)이 있고, `others`가 하는 일과 자리를 가진 방입니다.
+/// 쓰러진 사람을 부활시키러 가는 사람과, 마차를 지키는 사람과, `others`의 번호를 돌려줍니다.
+fn reviver_among(
+    others: &[(Role, Vec2)],
+    downed_at: Vec2,
+) -> (Option<PlayerId>, PlayerId, Vec<PlayerId>) {
+    let mut s = Scenario::default_game(|_| {});
+    let guard = s.player_at(36.0, 32.0);
+    let others_ids: Vec<PlayerId> = others
+        .iter()
+        .map(|(_, at)| s.player_at(at.x, at.y))
+        .collect();
+    let downed = s.player_at(downed_at.x, downed_at.y);
+    s.knock_down(downed);
+    let mut roster = vec![(guard, Role::Guard)];
+    roster.extend(
+        others
+            .iter()
+            .zip(&others_ids)
+            .map(|((role, _), id)| (*id, *role)),
+    );
+    roster.push((downed, Role::Fighter));
+    let chosen = reviver_of(&s.sim, &roster, s.player(downed));
+    (chosen, guard, others_ids)
+}
+
+#[test]
+fn a_fighter_revives_an_ally_far_from_the_wagon_even_when_the_guard_is_nearer() {
+    // 쓰러진 사람은 마차의 가장자리에서 8타일이므로 마차를 지키는 사람(6타일 떨어짐)이 가장 가깝지만 가지 않고, 10타일 떨어진 보스를 때리는 사람이 갑니다.
+    let (chosen, guard, others) = reviver_among(
+        &[(Role::Fighter, Vec2::new(52.0, 32.0))],
+        Vec2::new(42.0, 32.0),
+    );
+
+    assert_eq!(chosen, Some(others[0]));
+    assert_ne!(chosen, Some(guard));
+}
+
+#[test]
+fn the_guard_revives_an_ally_far_from_the_wagon_when_no_fighter_is_standing() {
+    let (chosen, guard, _) = reviver_among(&[], Vec2::new(42.0, 32.0));
+
+    assert_eq!(chosen, Some(guard));
+}
+
+#[test]
+fn the_guard_revives_an_ally_beside_the_wagon_when_it_is_the_nearest() {
+    let (chosen, guard, _) = reviver_among(
+        &[(Role::Fighter, Vec2::new(52.0, 32.0))],
+        Vec2::new(36.5, 35.0),
+    );
+
+    assert_eq!(chosen, Some(guard));
+}
+
+#[test]
+fn a_far_downed_fighter_gets_a_guard_who_walks_to_revive_it_when_it_is_the_only_one_standing() {
+    // 2명 방입니다. 보스를 때리는 사람이 마차에서 13타일 떨어진 곳에서 쓰러졌고, 서 있는 사람은 마차를 지키는 사람뿐입니다.
+    let mut s = Scenario::default_game(|t| {
+        t.nights.finale = Tuning::default().nights.finale;
+    });
+    let guard = s.player_at(36.0, 32.0);
+    let fighter = s.player_at(47.0, 32.0);
+    s.knock_down(fighter);
+    s.sim.set_phase(Phase::Night {
+        day: 3,
+        party: 2,
+        step: NightStep::Warning { ticks_left: 1 },
+    });
+    s.run_until(100, |sim| sim.boss().is_some());
+    let roster = [(fighter, Role::Fighter), (guard, Role::Guard)];
+    let mut bot = Bot {
+        id: guard,
+        role: Role::Guard,
+        seen: VecDeque::new(),
+    };
+
+    let input = bot.input(&s.sim, &roster);
+
+    assert!(input.interact, "the guard sets out to revive the fighter");
+    assert!(
+        input.move_dir.get().x > 0.0,
+        "and walks toward the fighter, away from the wagon"
+    );
 }
