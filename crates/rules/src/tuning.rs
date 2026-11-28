@@ -315,6 +315,8 @@ pub struct MonsterTable {
     /// 마지막 밤의 보스입니다. 걷는 몸은 `grunt`와 같아서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않고, 맞는 몸만 큽니다.
     /// `max_hp`는 밤의 무리와 같은 기준 인원(`WaveScaling`)일 때의 값입니다.
     pub boss: MonsterTuning,
+    /// 마차로 곧장 달려가는 약하고 빠른 몬스터입니다. 걷는 몸과 공격 거리는 `grunt` 이하여서 `largest_radius`와 `longest_engage_distance`를 바꾸지 않습니다.
+    pub runner: MonsterTuning,
 }
 
 impl MonsterTable {
@@ -323,6 +325,7 @@ impl MonsterTable {
             MonsterKind::Grunt => &self.grunt,
             MonsterKind::Scarecrow => &self.scarecrow,
             MonsterKind::Boss => &self.boss,
+            MonsterKind::Runner => &self.runner,
         }
     }
 
@@ -1635,6 +1638,10 @@ impl Default for Tuning {
             kind: MonsterKind::Grunt,
             count,
         };
+        let runners = |count| Pack {
+            kind: MonsterKind::Runner,
+            count,
+        };
         let wave = |packs: &[Pack]| Wave {
             packs: packs.to_vec(),
         };
@@ -1802,6 +1809,20 @@ impl Default for Tuning {
                     aggro_range: 0.0,
                     separation_speed: 1.0,
                 },
+                // 기본 몬스터의 반값의 HP와 1.45배의 속도입니다. 플레이어가 걷는 속도(4.0)보다는 느립니다. 플레이어와 포탑을 쫓지 않고 마차로 곧장 가므로 `aggro_range`는 읽히지 않습니다.
+                runner: MonsterTuning {
+                    max_hp: 30,
+                    radius: 0.3,
+                    hit_margin: 0.0,
+                    resist: Resist::NONE,
+                    speed: 3.2,
+                    attack_damage: 8,
+                    attack_reach: 0.5,
+                    attack_cooldown_secs: 1.0,
+                    prey: Prey::Wagon,
+                    aggro_range: 0.0,
+                    separation_speed: 1.0,
+                },
             },
             wagon: WagonTuning {
                 max_hp: 500,
@@ -1911,15 +1932,15 @@ impl Default for Tuning {
                     NightPlan {
                         waves: vec![
                             wave(&[grunts(20)]),
-                            wave(&[grunts(30)]),
-                            wave(&[grunts(40)]),
+                            wave(&[grunts(20), runners(10)]),
+                            wave(&[grunts(25), runners(15)]),
                         ],
                     },
                     NightPlan {
                         waves: vec![
-                            wave(&[grunts(60)]),
-                            wave(&[grunts(90)]),
-                            wave(&[grunts(150)]),
+                            wave(&[grunts(40), runners(20)]),
+                            wave(&[grunts(70), runners(20)]),
+                            wave(&[grunts(110), runners(40)]),
                         ],
                     },
                 ],
@@ -1965,7 +1986,7 @@ impl Default for Tuning {
                     summon: SummonTuning {
                         roar_secs: 2.0,
                         count: 12,
-                        kind: MonsterKind::Grunt,
+                        kind: MonsterKind::Runner,
                     },
                 }),
             },

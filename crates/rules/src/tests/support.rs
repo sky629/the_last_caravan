@@ -141,6 +141,14 @@ impl Scenario {
         )
     }
 
+    /// `(x, y)`에 마차를 향하는 `kind` 몬스터를 놓습니다. 기본 몬스터가 아닌 종류를 시험할 때 씁니다.
+    pub fn monster_of(&mut self, kind: MonsterKind, x: f32, y: f32) -> MonsterId {
+        let t = self.sim.tuning().clone();
+        self.sim
+            .world_mut()
+            .spawn_monster(kind, Order::Raid, Vec2::new(x, y), &t)
+    }
+
     /// 몬스터에게 효과를 직접 겁니다. `owner`가 건 것으로 칩니다. 무기를 거치지 않고 효과의 규칙만 시험할 때 씁니다.
     pub fn afflict(&mut self, id: MonsterId, debuff: Debuff, owner: PlayerId) {
         let t = self.sim.tuning().clone();

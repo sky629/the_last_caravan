@@ -176,6 +176,16 @@ fn tuning_from(options: &Options) -> Tuning {
             .collect();
     }
     if options.stress {
+        // 부하의 기준은 기본 몬스터가 몰려오는 것이므로, 기본 수치의 무리에 섞인 다른 종류도 기본 몬스터로 바꿉니다.
+        let packs = tuning
+            .nights
+            .plans
+            .iter_mut()
+            .flat_map(|night| &mut night.waves)
+            .flat_map(|wave| &mut wave.packs);
+        for pack in packs {
+            pack.kind = MonsterKind::Grunt;
+        }
         tuning.wagon.max_hp = u32::MAX;
         tuning.player.max_hp = u32::MAX;
         tuning.structures.watchtower.max_hp = u32::MAX;
@@ -372,6 +382,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use caravan_rules::StructureKind;
+    use std::collections::BTreeSet;
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -524,11 +535,29 @@ mod tests {
             1,
             "the first night is at once"
         );
-        assert_eq!(
-            tuning.nights.plans,
-            Tuning::default().nights.plans,
-            "wave sizes stay"
-        );
+        let sizes = |tuning: &Tuning| -> Vec<Vec<u32>> {
+            let night_sizes = |night: &NightPlan| night.waves.iter().map(Wave::count).collect();
+            tuning.nights.plans.iter().map(night_sizes).collect()
+        };
+        assert_eq!(sizes(&tuning), sizes(&Tuning::default()), "wave sizes stay");
+    }
+
+    #[test]
+    fn stress_sends_only_grunts_and_a_normal_server_keeps_the_kinds_the_default_waves_mix() {
+        let kinds = |arguments: &[&str]| -> BTreeSet<MonsterKind> {
+            let tuning = tuning_from(&parse_args(&args(arguments)).unwrap());
+            tuning
+                .nights
+                .plans
+                .iter()
+                .flat_map(|night| &night.waves)
+                .flat_map(|wave| &wave.packs)
+                .map(|pack| pack.kind)
+                .collect()
+        };
+
+        assert_eq!(kinds(&["--stress"]), BTreeSet::from([MonsterKind::Grunt]));
+        assert!(kinds(&[]).contains(&MonsterKind::Runner));
     }
 
     #[test]

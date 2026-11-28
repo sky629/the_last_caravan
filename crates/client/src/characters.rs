@@ -172,12 +172,10 @@ fn monster_look(
     max_hp: u32,
     palette: &Palette,
 ) -> Look {
+    let hurt_bar = (monster.hp < max_hp).then(|| bar_fraction(monster.hp, max_hp));
     let (body, body_size, bar) = match monster.kind {
-        WireMonsterKind::Grunt => (
-            &palette.monster,
-            config::MONSTER_BODY,
-            (monster.hp < max_hp).then(|| bar_fraction(monster.hp, max_hp)),
-        ),
+        WireMonsterKind::Grunt => (&palette.monster, config::MONSTER_BODY, hurt_bar),
+        WireMonsterKind::Runner => (&palette.runner, config::RUNNER_BODY, hurt_bar),
         WireMonsterKind::Scarecrow => (&palette.scarecrow, config::SCARECROW_BODY, None),
         WireMonsterKind::Boss => (&palette.boss, config::BOSS_BODY, None),
     };
@@ -912,6 +910,55 @@ mod tests {
     }
 
     #[test]
+    fn a_runner_is_smaller_than_a_grunt_wears_its_own_color_and_shows_a_bar_only_once_hurt() {
+        let mut app = app();
+        let max_hp = caravan_rules::Tuning::default().monsters.runner.max_hp;
+        let runner = |hp| MonsterView {
+            kind: WireMonsterKind::Runner,
+            ..monster(2, 4.0, 3.0, hp)
+        };
+        let body_of = |app: &App, id: u32| {
+            let parts = *app.world().get::<Parts>(monster_entity(app, id)).unwrap();
+            (
+                app.world()
+                    .get::<MeshMaterial2d<ColorMaterial>>(parts.body)
+                    .unwrap()
+                    .0
+                    .clone(),
+                app.world()
+                    .get::<Transform>(parts.body)
+                    .unwrap()
+                    .scale
+                    .truncate(),
+                *app.world()
+                    .get::<Visibility>(parts.bar.entities()[0])
+                    .unwrap(),
+            )
+        };
+
+        show(
+            &mut app,
+            frame(vec![], vec![monster(1, 3.0, 3.0, 60), runner(max_hp)]),
+        );
+        let palette = app.world().resource::<Palette>();
+        assert_ne!(palette.runner, palette.monster);
+        let (color, size, bar) = body_of(&app, 2);
+        assert_eq!(color, palette.runner);
+        assert_eq!(size, config::RUNNER_BODY);
+        assert_eq!(bar, Visibility::Hidden, "a whole runner shows no bar");
+
+        show(
+            &mut app,
+            frame(vec![], vec![monster(1, 3.0, 3.0, 60), runner(max_hp - 1)]),
+        );
+        assert_eq!(body_of(&app, 2).2, Visibility::Inherited, "a hurt one does");
+
+        let scene = app.world().resource::<Scene>();
+        let radius = |kind| scene.monster(kind).unwrap().footprint.radius;
+        assert!(radius(WireMonsterKind::Runner) < radius(WireMonsterKind::Grunt));
+    }
+
+    #[test]
     fn a_monster_under_an_effect_wears_its_color_and_gets_its_own_back_when_it_ends() {
         let mut app = app();
         let afflicted = |kind, stunned, slowed, bleeding| MonsterView {
@@ -1002,6 +1049,7 @@ mod tests {
         ];
         let bodies = [
             config::MONSTER,
+            config::RUNNER,
             config::SCARECROW,
             config::YOU,
             config::ALLY,
